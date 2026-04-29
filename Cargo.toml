@@ -1,0 +1,37 @@
+[package]
+name = "tigrimos"
+version = "1.4.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.31"
+egui = "0.31"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["stream", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+rfd = "0.15"
+open = "5"
+num_cpus = "1"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+
+# Server dependencies (tiger_cowork replacement)
+axum = { version = "0.8", features = ["multipart", "ws"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+hyper = { version = "1", features = ["full"] }
+rand = "0.8"
+cron = "0.15"
+serde_yaml = "0.9"
+url = "2"
+tokio-cron-scheduler = "0.13"
+regex = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }

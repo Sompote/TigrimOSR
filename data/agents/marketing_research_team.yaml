@@ -1,0 +1,78 @@
+system:
+  name: Marketing Research Team
+  orchestration_mode: hybrid
+  communication_protocol: structured_handoff
+  context_passing: full_chain
+agents:
+  - id: human
+    name: Human Manager
+    role: human
+    persona: >-
+      The project lead who initiates research projects and provides strategic direction for the team.
+    responsibilities:
+      - initiate_research_requests
+      - validate_findings
+      - approve_final_reports
+  - id: orchestrator
+    name: Research Orchestrator
+    role: orchestrator
+    persona: >-
+      Coordinates all research activities, delegates tasks to specialized workers, and manages the overall workflow progression.
+    responsibilities:
+      - coordinate_research_tasks
+      - delegate_to_workers
+      - manage_workflow
+      - quality_assurance
+  - id: market_researcher
+    name: Market Researcher
+    role: researcher
+    persona: >-
+      Specializes in gathering market intelligence through competitor analysis, industry trends, and consumer behavior research.
+    responsibilities:
+      - collect_market_data
+      - competitor_analysis
+      - consumer_research
+      - validate_sources
+    mesh:
+      enabled: true
+  - id: data_analyst
+    name: Data Analyst
+    role: worker
+    persona: >-
+      Processes and analyzes collected market data to identify patterns, correlations, and actionable insights.
+    responsibilities:
+      - statistical_analysis
+      - pattern_detection
+      - insight_extraction
+      - data_validation
+    mesh:
+      enabled: true
+  - id: report_compiler
+    name: Report Compiler
+    role: reporter
+    persona: >-
+      Synthesizes research findings into comprehensive reports with actionable recommendations for stakeholders.
+    responsibilities:
+      - compile_reports
+      - summarize_findings
+      - create_presentations
+      - formulate_recommendations
+    mesh:
+      enabled: true
+connections:
+  - from: human
+    to: orchestrator
+    label: research_directive
+    protocol: queue
+  - from: orchestrator
+    to: market_researcher
+    label: research_task_assignment
+    protocol: queue
+  - from: orchestrator
+    to: data_analyst
+    label: analysis_task_assignment
+    protocol: queue
+  - from: orchestrator
+    to: report_compiler
+    label: report_request
+    protocol: queue

@@ -1,0 +1,208 @@
+//! VM configuration — paths, constants, and helpers.
+//!
+//! Rust equivalent of the Swift `VMConfig` struct.  All VM artefacts live under
+//! `<data_dir>/TigrimOS/` where `data_dir` is `~/Library/Application Support`
+//! on macOS (provided by [`dirs::data_dir`]).  A custom storage path can be
+//! persisted in `settings.json` inside that directory.
+
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+
+// ---------------------------------------------------------------------------
+// Settings file (JSON stored at <app_support_dir>/settings.json)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct Settings {
+    /// Optional override for the VM storage directory.
+    vm_storage_path: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// VmConfig
+// ---------------------------------------------------------------------------
+
+/// Central configuration for the TigrimOS virtual machine.
+///
+/// Every method is an associated function (no `&self`) so callers can use
+/// `VmConfig::raw_disk_path()` etc. without instantiation — mirrors the Swift
+/// `static` approach.
+pub struct VmConfig;
+
+impl VmConfig {
+    // -----------------------------------------------------------------------
+    // Directories
+    // -----------------------------------------------------------------------
+
+    /// Default Application Support directory: `<data_dir>/TigrimOS/`.
+    pub fn default_app_support_dir() -> PathBuf {
+        let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+        base.join("TigrimOS")
+    }
+
+    /// Effective storage root.  Returns the custom path from `settings.json`
+    /// when present, otherwise falls back to [`Self::default_app_support_dir`].
+    pub fn app_support_dir() -> PathBuf {
+        if let Ok(data) = fs::read_to_string(Self::settings_path()) {
+            if let Ok(settings) = serde_json::from_str::<Settings>(&data) {
+                if let Some(ref custom) = settings.vm_storage_path {
+                    if !custom.is_empty() {
+                        return PathBuf::from(custom);
+                    }
+                }
+            }
+        }
+        Self::default_app_support_dir()
+    }
+
+    /// Persist (or clear) a custom storage path.
+    pub fn set_storage_path(path: Option<&str>) {
+        let settings = Settings {
+            vm_storage_path: path.map(|s| s.to_string()),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&settings) {
+            let _ = fs::create_dir_all(Self::default_app_support_dir());
+            let _ = fs::write(Self::settings_path(), json);
+        }
+    }
+
+    /// Path to the settings file itself.
+    fn settings_path() -> PathBuf {
+        Self::default_app_support_dir().join("settings.json")
+    }
+
+    // -----------------------------------------------------------------------
+    // VM file paths (all relative to app_support_dir)
+    // -----------------------------------------------------------------------
+
+    /// Raw disk image converted from the Ubuntu QCOW2 cloud image.
+    pub fn raw_disk_path() -> PathBuf {
+        Self::app_support_dir().join("ubuntu-raw.img")
+    }
+
+    /// Cached Ubuntu QCOW2 cloud image (downloaded once).
+    pub fn cloud_image_path() -> PathBuf {
+        Self::app_support_dir().join("ubuntu-cloud.qcow2")
+    }
+
+    /// Linux kernel (vmlinuz) — used on Intel for direct kernel boot.
+    pub fn kernel_path() -> PathBuf {
+        Self::app_support_dir().join("vmlinuz")
+    }
+
+    /// Initial ramdisk — used on Intel for direct kernel boot.
+    pub fn initrd_path() -> PathBuf {
+        Self::app_support_dir().join("initrd")
+    }
+
+    /// Cloud-init seed image (FAT12 with meta-data, user-data, network-config).
+    pub fn seed_iso_path() -> PathBuf {
+        Self::app_support_dir().join("seed.img")
+    }
+
+    /// EFI variable store (kept for compatibility with UEFI boot path).
+    pub fn efi_store_path() -> PathBuf {
+        Self::app_support_dir().join("efi_vars.fd")
+    }
+
+    /// Machine identifier (binary blob).
+    pub fn machine_id_path() -> PathBuf {
+        Self::app_support_dir().join("machine_id.bin")
+    }
+
+    /// Default shared folder on the host — `~/TigrimOS_Shared/`.
+    pub fn default_shared_dir() -> PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("TigrimOS_Shared")
+    }
+
+    /// Marker file created after the first successful provision.
+    pub fn provisioned_marker() -> PathBuf {
+        Self::app_support_dir().join(".provisioned")
+    }
+
+    // -----------------------------------------------------------------------
+    // Constants
+    // -----------------------------------------------------------------------
+
+    /// Number of virtual CPUs: min(4, host_logical_cores).
+    pub fn cpu_count() -> usize {
+        std::cmp::min(4, num_cpus::get())
+    }
+
+    /// Guest RAM in GiB.
+    pub const MEMORY_GB: u64 = 4;
+
+    /// Guest RAM in bytes.
+    pub const MEMORY_SIZE_BYTES: u64 = Self::MEMORY_GB * 1024 * 1024 * 1024;
+
+    /// Virtual disk size in GiB.
+    pub const DISK_SIZE_GB: u64 = 5;
+
+    /// Virtual disk size in bytes.
+    pub const DISK_SIZE_BYTES: u64 = Self::DISK_SIZE_GB * 1024 * 1024 * 1024;
+
+    /// Port the TigrimOS service listens on inside the guest.
+    pub const VM_PORT: u16 = 3001;
+
+    /// Port forwarded to the host via QEMU user-mode networking.
+    pub const HOST_FORWARD_PORT: u16 = 3001;
+
+    // -----------------------------------------------------------------------
+    // Utilities
+    // -----------------------------------------------------------------------
+
+    /// Returns `true` when the VM has been fully provisioned at least once.
+    pub fn is_provisioned() -> bool {
+        Self::provisioned_marker().exists()
+    }
+
+    /// Human-readable size of the raw disk image, e.g. `"4.2 GB"`.
+    pub fn disk_usage() -> String {
+        match fs::metadata(Self::raw_disk_path()) {
+            Ok(meta) => {
+                let gb = meta.len() as f64 / (1024.0 * 1024.0 * 1024.0);
+                format!("{:.1} GB", gb)
+            }
+            Err(_) => "Not created".to_string(),
+        }
+    }
+
+    /// Create the app-support and default-shared directories if they do not
+    /// already exist.
+    pub fn ensure_directories() -> std::io::Result<()> {
+        fs::create_dir_all(Self::app_support_dir())?;
+        fs::create_dir_all(Self::default_shared_dir())?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_count_bounded() {
+        let cpus = VmConfig::cpu_count();
+        assert!(cpus >= 1 && cpus <= 4);
+    }
+
+    #[test]
+    fn paths_under_app_support() {
+        let base = VmConfig::app_support_dir();
+        assert!(VmConfig::raw_disk_path().starts_with(&base));
+        assert!(VmConfig::cloud_image_path().starts_with(&base));
+        assert!(VmConfig::seed_iso_path().starts_with(&base));
+        assert!(VmConfig::provisioned_marker().starts_with(&base));
+    }
+
+    #[test]
+    fn disk_usage_not_created() {
+        // Unless someone actually provisioned a VM in the test env, this
+        // should return the fallback string.
+        let usage = VmConfig::disk_usage();
+        assert!(usage == "Not created" || usage.contains("GB"));
+    }
+}

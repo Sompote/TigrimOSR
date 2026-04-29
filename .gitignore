@@ -1,0 +1,31 @@
+# Tigrimos subapp (separate project)
+Tigrimos/
+
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# Data directories (user-specific, not part of source)
+data/chat_logs/
+data/agent_history/
+data/sessions/
+output_file/
+sandbox/
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+nohup.out
+
+# Environment / secrets
+.env
+*.key
