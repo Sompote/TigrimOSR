@@ -1,6 +1,8 @@
 # TigrimOS
 
-A native desktop AI assistant with multi-agent collaboration, tool calling, and file output — built with Rust + egui.
+**TigrimOS in Rust** — a high-performance native desktop rewrite of [TigerCowork](https://github.com/Sompote/TigerCowork), the original Python/Node.js AI assistant. This version is built entirely in Rust using egui for the UI, delivering faster startup, lower memory usage, and a single self-contained binary with no Node.js or Python runtime required to run the app itself.
+
+TigrimOS is a native desktop AI assistant with multi-agent collaboration, tool calling, and file output. It connects to any OpenAI-compatible API (OpenAI, Anthropic via proxy, DeepSeek, local Ollama, etc.) and lets you orchestrate teams of specialist AI agents defined in simple YAML files.
 
 ## Features
 
