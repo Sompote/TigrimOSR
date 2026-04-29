@@ -29,29 +29,87 @@ pip install duckduckgo-search matplotlib numpy pandas requests
 
 ## Installation
 
-### 1. Clone the repository
+### Step 1 — Install Rust
+
+Rust is required to build the app. Install it via `rustup` (the official Rust installer):
+
+**macOS / Linux:**
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+
+**Windows:**
+Download and run [rustup-init.exe](https://win.rustup.rs/) from https://rustup.rs
+
+Verify the installation:
+```bash
+rustc --version
+cargo --version
+```
+
+---
+
+### Step 2 — Install Python
+
+Python is used for code execution, web search, and data analysis tools inside the app.
+
+**macOS (recommended via Homebrew):**
+```bash
+brew install python
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt update && sudo apt install python3 python3-pip
+```
+
+**Windows:**
+Download from https://www.python.org/downloads/ — make sure to check **"Add Python to PATH"** during install.
+
+Verify:
+```bash
+python3 --version
+pip3 --version
+```
+
+Install recommended Python packages:
+```bash
+pip3 install duckduckgo-search matplotlib numpy pandas requests
+```
+
+---
+
+### Step 3 — Clone the repository
 
 ```bash
 git clone https://github.com/Sompote/TigrimOSR.git
 cd TigrimOSR
 ```
 
-### 2. Build
+### Step 4 — Build
 
 ```bash
 cargo build --release
 ```
 
-### 3. Run
+> First build downloads all Rust dependencies and may take 2-5 minutes.
+
+### Step 5 — Run
 
 ```bash
 cargo run --release
 ```
 
-Or run the compiled binary directly:
+Or run the compiled binary directly after building:
 
 ```bash
 ./target/release/tigrimos
+```
+
+**Windows:**
+```bash
+target\release\tigrimos.exe
 ```
 
 ## Configuration
