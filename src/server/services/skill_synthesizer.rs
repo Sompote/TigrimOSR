@@ -1,6 +1,22 @@
+//! Skill Synthesizer — faithful port of tiger_cowork/server/services/skill-synthesizer.ts
+//!
+//! Two-pass architecture:
+//!   Pass 1: Remediation — sessions with thumbs-down feedback drive focused single-skill rewrites
+//!   Pass 2: Synthesis — remaining sessions propose new skills or updates
+//!
+//! Features:
+//!   - Rich session summaries with user queries, final assistant, feedback, subagent workflow
+//!   - Chat log parsing for subagent workflow traces (AGENT_SPAWN/DONE/WORKING/COMPLETE)
+//!   - Feedback-aware prompting (thumbs-up reinforces, thumbs-down blocks)
+//!   - Source protection (never overwrite custom/clawhub/claude skills)
+//!   - Robust JSON extraction with balanced brace parser
+//!   - Configurable cron interval, max candidates, approval requirements
+
+use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
@@ -9,9 +25,26 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::server::data::{
-    get_chat_history, get_settings, get_skills, save_settings, save_skills,
-    ChatSession, Skill, SkillAutoMeta,
+    get_chat_history, get_settings, get_skills, save_settings, save_skills, ChatSession, Skill,
+    SkillAutoMeta,
 };
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MAX_NAME_LEN: usize = 64;
+const MAX_DESC_LEN: usize = 1024;
+const MAX_BODY_CHARS: usize = 100_000;
+const EXISTING_SKILL_BODY_BUDGET: usize = 4000;
+const CHAT_LOG_TAIL_BYTES: u64 = 256 * 1024;
+const MAX_REMEDIATIONS_PER_RUN: usize = 5;
+const REMEDIATION_MIN_SCORE: usize = 2;
+
+fn name_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap())
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,15 +55,15 @@ pub struct SkillProposal {
     pub id: String,
     pub name: String,
     pub description: String,
-    pub kind: String, // "create" or "update"
-    pub content: String, // full SKILL.md content
+    pub kind: String,
+    pub content: String,
     pub rationale: String,
-    pub based_on: Vec<String>, // session IDs
+    pub based_on: Vec<String>,
     pub generated_at: String,
     pub model: String,
-    pub review_status: String, // "pending", "approved", "rejected"
+    pub review_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub existing_content: Option<String>, // for diff on updates
+    pub existing_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +85,60 @@ impl Default for SynthesizerStatus {
     }
 }
 
+#[derive(Debug, Clone)]
+struct Proposal {
+    kind: String, // "create" or "update"
+    name: String,
+    description: String,
+    content: String,
+    based_on: Vec<String>,
+    rationale: String,
+}
+
+#[derive(Debug, Clone)]
+struct FeedbackEntry {
+    role: String,
+    rating: Option<String>,
+    comment: Option<String>,
+    excerpt: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SubagentTrace {
+    label: String,
+    task: Option<String>,
+    tools_used: Vec<String>,
+    skills_loaded: Vec<String>,
+    completed: bool,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionSummary {
+    session_id: String,
+    title: String,
+    updated_at: String,
+    user_queries: Vec<String>,
+    final_assistant: String,
+    feedback: Vec<FeedbackEntry>,
+    subagent_workflow: Vec<SubagentTrace>,
+}
+
+struct RunSummary {
+    ok: bool,
+    created: usize,
+    updated: usize,
+    skipped: usize,
+    reasons: Vec<String>,
+}
+
+struct RemediationOutcome {
+    updated: usize,
+    skipped: usize,
+    reasons: Vec<String>,
+    consumed_session_ids: HashSet<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Global state
 // ---------------------------------------------------------------------------
@@ -59,6 +146,11 @@ impl Default for SynthesizerStatus {
 fn synth_status() -> &'static Arc<Mutex<SynthesizerStatus>> {
     static INSTANCE: OnceLock<Arc<Mutex<SynthesizerStatus>>> = OnceLock::new();
     INSTANCE.get_or_init(|| Arc::new(Mutex::new(SynthesizerStatus::default())))
+}
+
+static INFLIGHT: OnceLock<Arc<Mutex<bool>>> = OnceLock::new();
+fn inflight() -> &'static Arc<Mutex<bool>> {
+    INFLIGHT.get_or_init(|| Arc::new(Mutex::new(false)))
 }
 
 pub async fn get_synth_status() -> SynthesizerStatus {
@@ -70,166 +162,894 @@ pub async fn get_synth_status() -> SynthesizerStatus {
 // ---------------------------------------------------------------------------
 
 fn skills_dir() -> PathBuf {
-    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    base.join("data").join("skills")
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("data")
+        .join("skills")
 }
 
-async fn list_existing_skills() -> Vec<(String, String)> {
-    let dir = skills_dir();
-    let mut skills = Vec::new();
-    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
-                let skill_md = entry.path().join("SKILL.md");
-                if let Ok(content) = tokio::fs::read_to_string(&skill_md).await {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    // Truncate for prompt
-                    let truncated = if content.len() > 4000 {
-                        format!("{}...(truncated)", &content[..4000])
-                    } else {
-                        content
-                    };
-                    skills.push((name, truncated));
-                }
+fn sanitize_slug(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
             }
-        }
-    }
-    skills
+        })
+        .collect()
 }
 
-async fn write_skill(name: &str, content: &str, proposed: bool) -> Result<(), String> {
+async fn read_auto_skill_content(name: &str) -> Option<String> {
+    let slug = sanitize_slug(name);
+    let path = skills_dir().join(slug).join("SKILL.md");
+    tokio::fs::read_to_string(&path).await.ok()
+}
+
+async fn list_existing_skill_summaries() -> Vec<ExistingSkillInfo> {
+    let skills = get_skills().await;
+    let mut out = Vec::new();
+    for s in &skills {
+        let body = if s.source == "auto" {
+            read_auto_skill_content(&s.name).await
+        } else {
+            None
+        };
+        out.push(ExistingSkillInfo {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            source: s.source.clone(),
+            body,
+        });
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+struct ExistingSkillInfo {
+    name: String,
+    description: String,
+    source: String,
+    body: Option<String>,
+}
+
+async fn write_skill_file(name: &str, content: &str, proposed: bool) -> Result<(), String> {
     let dir = skills_dir().join(name);
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("Failed to create skill dir: {e}"))?;
-
-    let filename = if proposed {
-        "SKILL.md.proposed"
-    } else {
-        "SKILL.md"
-    };
-
+    let filename = if proposed { "SKILL.md.proposed" } else { "SKILL.md" };
     tokio::fs::write(dir.join(filename), content)
         .await
         .map_err(|e| format!("Failed to write {filename}: {e}"))
 }
 
 // ---------------------------------------------------------------------------
-// Session analysis
+// Error detection
 // ---------------------------------------------------------------------------
 
 fn is_error_reply(content: &str) -> bool {
-    let lower = content.to_lowercase();
-    lower.starts_with("error:")
-        || lower.starts_with("i'm sorry")
-        || lower.contains("i cannot")
-        || lower.contains("i can't help")
-        || (lower.len() < 50 && lower.contains("error"))
+    if content.is_empty() {
+        return true;
+    }
+    let head: String = content.chars().take(200).collect::<String>().to_lowercase();
+    head.starts_with("connection error:")
+        || head.contains("api key not configured")
+        || head.contains("unauthorized")
+        || head.starts_with("tigerbot api key not configured")
+        || head.starts_with("no response from tigerbot")
+        || head.starts_with("context overflow")
+        || head.starts_with("api error (")
+        || head.starts_with("error:")
 }
 
-fn summarise_session(session: &ChatSession) -> Option<String> {
-    if session.messages.len() < 2 {
-        return None;
+// ---------------------------------------------------------------------------
+// Chat log parsing for subagent workflows
+// ---------------------------------------------------------------------------
+
+async fn read_chat_log_tail(session_id: &str) -> String {
+    let file = PathBuf::from("data")
+        .join("chat_logs")
+        .join(format!("{}.log", session_id));
+    match tokio::fs::metadata(&file).await {
+        Ok(meta) => {
+            let size = meta.len();
+            let start = if size > CHAT_LOG_TAIL_BYTES {
+                size - CHAT_LOG_TAIL_BYTES
+            } else {
+                0
+            };
+            if let Ok(content) = tokio::fs::read_to_string(&file).await {
+                if start > 0 {
+                    // Skip the first partial line
+                    let skip = start as usize;
+                    if skip < content.len() {
+                        content[skip..].to_string()
+                    } else {
+                        content
+                    }
+                } else {
+                    content
+                }
+            } else {
+                String::new()
+            }
+        }
+        Err(_) => String::new(),
+    }
+}
+
+/// Parse the chat-log into per-agent traces.
+/// Sees AGENT_SPAWN/DONE, AGENT_WORKING/COMPLETE, and tool calls.
+fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
+    if log.is_empty() {
+        return Vec::new();
     }
 
-    // Must have at least one user and one assistant message
-    let has_user = session.messages.iter().any(|m| m.role == "user");
-    let has_assistant = session.messages.iter().any(|m| m.role == "assistant");
-    if !has_user || !has_assistant {
-        return None;
+    let mut traces: HashMap<String, SubagentTrace> = HashMap::new();
+
+    macro_rules! ensure_trace {
+        ($map:expr, $label:expr) => {
+            $map.entry($label.to_string()).or_insert_with(|| SubagentTrace {
+                label: $label.to_string(),
+                task: None,
+                tools_used: Vec::new(),
+                skills_loaded: Vec::new(),
+                completed: false,
+                error: None,
+            })
+        };
     }
 
-    // Last assistant reply should not be an error
-    if let Some(last_asst) = session
-        .messages
-        .iter()
-        .rev()
-        .find(|m| m.role == "assistant")
-    {
-        if is_error_reply(&last_asst.content) {
-            return None;
+    // AGENT_SPAWN/WORKING
+    let re_spawn = Regex::new(r"AGENT_(?:SPAWN|WORKING): ([^\n]+)\n(?:\s+TASK:\s*([^\n]+))?").unwrap();
+    for cap in re_spawn.captures_iter(log) {
+        let label = cap[1].trim().to_string();
+        let t = ensure_trace!(traces, label);
+        if let Some(task_match) = cap.get(2) {
+            if t.task.is_none() {
+                let task: String = task_match.as_str().trim().chars().take(240).collect();
+                t.task = Some(task);
+            }
         }
     }
 
-    // Build a compact summary
-    let mut summary = String::new();
-    summary.push_str(&format!("Session: {} ({})\n", session.title, session.id));
-
-    // Check for feedback
-    let has_thumbs_down = session.messages.iter().any(|m| {
-        m.feedback
-            .as_ref()
-            .and_then(|f| f.rating.as_deref())
-            .map(|r| r == "down")
-            .unwrap_or(false)
-    });
-    if has_thumbs_down {
-        summary.push_str("[HAS NEGATIVE FEEDBACK]\n");
+    // Tool calls per agent
+    let re_tool = Regex::new(r"(?m)^\[[^\]]+\]\s+([^\n]+?) → tool: ([^\n]+)$").unwrap();
+    for cap in re_tool.captures_iter(log) {
+        let label = cap[1].trim().to_string();
+        let tool = cap[2].trim().to_string();
+        let t = ensure_trace!(traces, label);
+        if !t.tools_used.contains(&tool) {
+            t.tools_used.push(tool);
+        }
     }
 
-    for msg in &session.messages {
-        let role = &msg.role;
-        let content = if msg.content.len() > 500 {
-            format!("{}...", &msg.content[..500])
-        } else {
-            msg.content.clone()
-        };
-        summary.push_str(&format!("{}: {}\n", role, content));
+    // load_skill calls
+    let re_skill = Regex::new(r#"TOOL_CALL: load_skill(?: \(([^)]+)\))?[\s\S]{0,500}?"skill"\s*:\s*"([^"]+)""#).unwrap();
+    for cap in re_skill.captures_iter(log) {
+        let label = cap
+            .get(1)
+            .map(|m| m.as_str().trim())
+            .unwrap_or("main")
+            .to_string();
+        let skill = cap[2].to_string();
+        let t = ensure_trace!(traces, label);
+        if !t.skills_loaded.contains(&skill) {
+            t.skills_loaded.push(skill);
+        }
+        if !t.tools_used.contains(&"load_skill".to_string()) {
+            t.tools_used.push("load_skill".to_string());
+        }
     }
 
-    Some(summary)
+    // AGENT_DONE/COMPLETE
+    let re_done = Regex::new(r"AGENT_(?:DONE|COMPLETE): ([^\n]+)").unwrap();
+    for cap in re_done.captures_iter(log) {
+        let label = cap[1].trim().to_string();
+        if let Some(t) = traces.get_mut(&label) {
+            t.completed = true;
+        }
+    }
+
+    // AGENT_ERROR
+    let re_error = Regex::new(r"AGENT_ERROR: ([^:\n]+): ([^\n]+)").unwrap();
+    for cap in re_error.captures_iter(log) {
+        let label = cap[1].trim().to_string();
+        let err: String = cap[2].trim().chars().take(200).collect();
+        let t = ensure_trace!(traces, label);
+        t.error = Some(err);
+    }
+
+    traces
+        .into_values()
+        .filter(|t| !t.tools_used.is_empty() || !t.skills_loaded.is_empty() || t.task.is_some() || t.error.is_some())
+        .collect()
+}
+
+fn collect_loaded_skills(traces: &[SubagentTrace]) -> Vec<String> {
+    let mut set = HashSet::new();
+    for t in traces {
+        for s in &t.skills_loaded {
+            set.insert(s.clone());
+        }
+    }
+    set.into_iter().collect()
 }
 
 // ---------------------------------------------------------------------------
-// LLM skill synthesis
+// Session summary
 // ---------------------------------------------------------------------------
 
-async fn call_llm_for_skills(
-    api_key: &str,
-    api_url: &str,
-    model: &str,
-    session_summaries: &[String],
-    existing_skills: &[(String, String)],
-) -> Result<Vec<Value>, String> {
-    let skills_list = existing_skills
+async fn summarise_session(s: &ChatSession) -> Option<SessionSummary> {
+    let user_msgs: Vec<&crate::server::data::ChatMessage> =
+        s.messages.iter().filter(|m| m.role == "user").collect();
+    let assistant_msgs: Vec<&crate::server::data::ChatMessage> =
+        s.messages.iter().filter(|m| m.role == "assistant").collect();
+
+    if user_msgs.is_empty() || assistant_msgs.is_empty() {
+        return None;
+    }
+
+    let last = assistant_msgs.last().unwrap();
+    if is_error_reply(&last.content) {
+        return None;
+    }
+
+    // Collect feedback
+    let mut feedback = Vec::new();
+    for m in &s.messages {
+        if let Some(ref fb) = m.feedback {
+            if fb.rating.is_none() && fb.comment.is_none() {
+                continue;
+            }
+            let excerpt: String = m.content.chars().take(240).collect();
+            feedback.push(FeedbackEntry {
+                role: m.role.clone(),
+                rating: fb.rating.clone(),
+                comment: fb.comment.clone(),
+                excerpt: Some(excerpt),
+            });
+        }
+    }
+
+    // Parse subagent workflow from chat log
+    let log = read_chat_log_tail(&s.id).await;
+    let subagent_workflow = parse_subagent_workflow(&log);
+
+    let user_queries: Vec<String> = user_msgs
         .iter()
-        .map(|(name, content)| format!("### {}\n{}", name, content))
+        .take(6)
+        .map(|m| m.content.chars().take(600).collect())
+        .collect();
+
+    let final_assistant: String = last.content.chars().take(3000).collect();
+
+    Some(SessionSummary {
+        session_id: s.id.clone(),
+        title: s.title.clone(),
+        updated_at: s.updated_at.clone(),
+        user_queries,
+        final_assistant,
+        feedback,
+        subagent_workflow,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Prompt builders
+// ---------------------------------------------------------------------------
+
+fn build_prompt(
+    candidates: &[SessionSummary],
+    existing: &[ExistingSkillInfo],
+    exclude_session_ids: &HashSet<String>,
+) -> String {
+    let candidates_block: String = candidates
+        .iter()
+        .filter(|c| !exclude_session_ids.contains(&c.session_id))
+        .enumerate()
+        .map(|(i, c)| {
+            let feedback_block = if !c.feedback.is_empty() {
+                let lines: Vec<String> = c
+                    .feedback
+                    .iter()
+                    .map(|f| {
+                        let tag = match f.rating.as_deref() {
+                            Some("up") => "LIKED",
+                            Some("down") => "DISLIKED",
+                            _ => "NOTE",
+                        };
+                        let cmt = f
+                            .comment
+                            .as_ref()
+                            .map(|c| format!(" — comment: {}", c.replace('\n', " ")))
+                            .unwrap_or_default();
+                        let ex = f
+                            .excerpt
+                            .as_ref()
+                            .map(|e| format!(" (on: {})", e.replace('\n', " ")))
+                            .unwrap_or_default();
+                        format!("- {}{}{}", tag, cmt, ex)
+                    })
+                    .collect();
+                format!("\nhuman_feedback:\n{}", lines.join("\n"))
+            } else {
+                String::new()
+            };
+
+            let workflow_block = if !c.subagent_workflow.is_empty() {
+                let lines: Vec<String> = c
+                    .subagent_workflow
+                    .iter()
+                    .take(10)
+                    .map(|w| {
+                        let mut parts = vec![format!("- {}", w.label)];
+                        if let Some(ref task) = w.task {
+                            parts.push(format!("task=\"{}\"", task.replace('"', "'")));
+                        }
+                        if !w.skills_loaded.is_empty() {
+                            parts.push(format!("skills_loaded=[{}]", w.skills_loaded.join(", ")));
+                        }
+                        if !w.tools_used.is_empty() {
+                            let tools: Vec<&str> = w.tools_used.iter().take(8).map(|s| s.as_str()).collect();
+                            let suffix = if w.tools_used.len() > 8 { ", ..." } else { "" };
+                            parts.push(format!("tools_used=[{}{}]", tools.join(", "), suffix));
+                        }
+                        if let Some(ref err) = w.error {
+                            parts.push(format!("error=\"{}\"", err.replace('"', "'")));
+                        } else if !w.completed {
+                            parts.push("incomplete".to_string());
+                        }
+                        parts.join(" | ")
+                    })
+                    .collect();
+                format!(
+                    "\nsubagent_workflow (parsed from data/chat_logs/{}.log):\n{}",
+                    c.session_id,
+                    lines.join("\n")
+                )
+            } else {
+                String::new()
+            };
+
+            let user_queries_block = c
+                .user_queries
+                .iter()
+                .map(|q| format!("- {}", q.replace('\n', " ")))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            format!(
+                "## Session {}\nid: {}\ntitle: {}\nuser_queries:\n{}\nfinal_assistant_excerpt:\n{}{}{}",
+                i + 1,
+                c.session_id,
+                c.title,
+                user_queries_block,
+                c.final_assistant,
+                workflow_block,
+                feedback_block
+            )
+        })
         .collect::<Vec<_>>()
-        .join("\n\n");
+        .join("\n\n---\n\n");
 
-    let sessions_text = session_summaries.join("\n---\n");
+    let existing_block = existing
+        .iter()
+        .map(|e| {
+            let head = format!("- {} ({}): {}", e.name, e.source, e.description);
+            match &e.body {
+                Some(body) => {
+                    let truncated = body.len() > EXISTING_SKILL_BODY_BUDGET;
+                    let body_text: String = body.chars().take(EXISTING_SKILL_BODY_BUDGET).collect();
+                    format!(
+                        "{}\n  CURRENT SKILL.md{}:\n  ```\n{}\n  ```",
+                        head,
+                        if truncated { " (truncated)" } else { "" },
+                        body_text
+                    )
+                }
+                None => head,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    let system_prompt = r#"You are the SkillSynthesiser for TigrimOS. Your job is to analyze chat sessions and propose reusable SKILL.md files.
+    format!(
+        r#"You are the SkillSynthesiser for the cowork agent. Recent successful chats just completed. Decide whether any of them embed a *reusable procedure* worth capturing as a SKILL.md, and (optionally) propose updates to an existing skill where the new conversation extends or corrects it.
+
+Return STRICT JSON in this exact shape, with NO surrounding prose, NO markdown fences:
+
+{{"proposals":[{{"kind":"create"|"update","name":"kebab-name","description":"one line, <=200 chars","content":"---\nname: kebab-name\ndescription: ...\n---\n\n# Title\n\nbody...","basedOn":["session-id-1"],"rationale":"why this skill is useful"}}]}}
 
 Rules:
-1. Output ONLY valid JSON array. No markdown fences, no explanation.
-2. Each element: {"kind":"create"|"update", "name":"kebab-case", "description":"max 200 chars", "content":"full SKILL.md with YAML frontmatter", "rationale":"why this skill"}
-3. name: [a-zA-Z0-9_-]+, max 64 chars
-4. content must include YAML frontmatter with name and description
-5. Only propose skills for patterns that appear useful and reusable
-6. For "update", name must match an existing skill
-7. If no useful skills can be extracted, return []
-8. Maximum 5 proposals per run"#;
+- name must match [a-zA-Z0-9_-]+, max 64 chars.
+- For update, name MUST exactly match an EXISTING skill below.
+- NEVER overwrite a skill whose source is custom, clawhub, claude, or openclaw — only propose updates to skills with source "auto".
+- Skip casual chats / one-off Q&A that don't generalise. Quality > quantity.
+- If nothing is worth capturing, return {{"proposals":[]}}.
+- content MUST be a complete SKILL.md including YAML frontmatter (name + description) followed by markdown body. Body <= 100,000 chars.
+- Treat human_feedback as authoritative: LIKED responses indicate workflows worth capturing or reinforcing; DISLIKED responses indicate the procedure failed or misled the user — DO NOT distil a skill from those, and if an existing auto-skill produced the disliked behaviour, propose an update that addresses the comment.
+- If subagent_workflow is non-empty, the session ran a multi-agent topology. The final_assistant_excerpt is the orchestrator's merged summary and HIDES which sub-agent did what. Use the workflow block as ground truth for the actual procedure: capture the agent labels, the order they ran, the skills_loaded each used, and any errors. A skill body for a multi-agent workflow should prescribe the topology (which roles to spawn, in what order, with which skills loaded), not just the outcome. If skills_loaded names an existing auto-skill that produced a great result, prefer "update" to refine it over creating a near-duplicate "create".
 
-    let user_prompt = format!(
-        "## Existing Skills\n{}\n\n## Recent Chat Sessions\n{}\n\nAnalyze these sessions and propose new or updated skills. Return JSON array only.",
-        if skills_list.is_empty() {
+EXISTING SKILLS:
+{}
+
+CANDIDATE CHAT SESSIONS:
+{}"#,
+        if existing_block.is_empty() {
             "(none)".to_string()
         } else {
-            skills_list
+            existing_block
         },
-        sessions_text
-    );
+        candidates_block
+    )
+}
 
+fn build_remediation_prompt(
+    skill_name: &str,
+    current_skill_md: &str,
+    excerpt: &str,
+    comment: &str,
+    workflow: &[SubagentTrace],
+) -> String {
+    let workflow_hint = if !workflow.is_empty() {
+        let lines: Vec<String> = workflow
+            .iter()
+            .take(8)
+            .map(|w| {
+                let skills = if !w.skills_loaded.is_empty() {
+                    format!(" skills_loaded=[{}]", w.skills_loaded.join(", "))
+                } else {
+                    String::new()
+                };
+                let tools = if !w.tools_used.is_empty() {
+                    let t: Vec<&str> = w.tools_used.iter().take(6).map(|s| s.as_str()).collect();
+                    format!(" tools=[{}]", t.join(", "))
+                } else {
+                    String::new()
+                };
+                let status = if let Some(ref err) = w.error {
+                    format!(" ERROR=\"{}\"", err.replace('"', "'"))
+                } else if !w.completed {
+                    " (incomplete)".to_string()
+                } else {
+                    String::new()
+                };
+                format!("- {}{}{}{}", w.label, skills, tools, status)
+            })
+            .collect();
+        format!(
+            "\nSUB-AGENT WORKFLOW:\n{}\n",
+            lines.join("\n")
+        )
+    } else {
+        String::new()
+    };
+
+    let body: String = current_skill_md.chars().take(30000).collect();
+
+    format!(
+        r#"You are fixing an existing SKILL.md because a user marked an assistant response that this skill produced as NOT HELPFUL and explained why.
+
+Your job: rewrite the skill so the same failure does not recur. Preserve everything that still works. Address the user's complaint directly — change procedures, add a guard, remove a misleading instruction, or clarify scope as needed.
+
+Return STRICT JSON, NO surrounding prose, NO markdown fences:
+{{"name":"{skill_name}","description":"<=200 chars","content":"---\nname: {skill_name}\ndescription: ...\n---\n\n# Title\n\nbody...","rationale":"what you changed and why"}}
+
+Rules:
+- name MUST equal "{skill_name}" exactly.
+- content MUST be a complete SKILL.md with YAML frontmatter (name + description) followed by markdown body. Body <= 100,000 chars.
+- Do not delete the skill — only revise it.
+- If the complaint is unrelated to this skill (wrong target), return {{"name":"{skill_name}","skip":true,"reason":"<short>"}} instead.
+- If the failure was at the orchestration layer (wrong sub-agent loaded the skill, wrong order, missing prerequisite), describe the correction in the skill body.
+
+CURRENT SKILL ({skill_name}):
+```
+{body}
+```
+{workflow_hint}
+DISLIKED ASSISTANT RESPONSE EXCERPT:
+{excerpt}
+
+USER COMMENT (what went wrong / what to fix):
+{comment}"#
+    )
+}
+
+// ---------------------------------------------------------------------------
+// JSON extraction (balanced brace parser)
+// ---------------------------------------------------------------------------
+
+fn strip_reasoning(text: &str) -> String {
+    let mut t = text.to_string();
+    // Strip all reasoning tag variants
+    for tag in &["think", "thinking", "reasoning", "reflection"] {
+        let open = format!("<{}>", tag);
+        let close = format!("</{}>", tag);
+        loop {
+            if let Some(start) = t.to_lowercase().find(&open) {
+                if let Some(end_rel) = t[start..].to_lowercase().find(&close) {
+                    let end = start + end_rel + close.len();
+                    t = format!("{}{}", &t[..start], &t[end..]);
+                } else {
+                    // Unclosed tag — remove from here to end
+                    t = t[..start].to_string();
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+    t.trim().to_string()
+}
+
+fn extract_json(text: &str) -> Result<Value, String> {
+    let t = strip_reasoning(text);
+    let t = t.trim();
+
+    // Strip markdown fences
+    let t = if let Some(cap) = Regex::new(r"(?s)```(?:json)?\s*([\s\S]+?)\s*```")
+        .ok()
+        .and_then(|re| re.captures(t))
+    {
+        cap[1].trim().to_string()
+    } else {
+        t.to_string()
+    };
+
+    let start = t.find('{').ok_or("no JSON object found")?;
+
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escape = false;
+
+    let bytes = t.as_bytes();
+    for i in start..bytes.len() {
+        let ch = bytes[i] as char;
+        if escape {
+            escape = false;
+            continue;
+        }
+        if in_str {
+            if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_str = true;
+            continue;
+        }
+        if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+            if depth == 0 {
+                let json_str = &t[start..=i];
+                return serde_json::from_str(json_str)
+                    .map_err(|e| format!("JSON parse error: {e}"));
+            }
+        }
+    }
+
+    Err("no balanced JSON object found".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+fn validate_proposal(
+    raw: &Value,
+    existing: &[(String, String)], // (name, source)
+) -> Result<Proposal, String> {
+    let kind = raw["kind"]
+        .as_str()
+        .ok_or("bad kind")?;
+    if kind != "create" && kind != "update" {
+        return Err(format!("bad kind: {kind}"));
+    }
+
+    let name = raw["name"]
+        .as_str()
+        .ok_or("missing name")?
+        .to_string();
+    if !name_re().is_match(&name) || name.len() > MAX_NAME_LEN {
+        return Err(format!("bad name: {name}"));
+    }
+
+    let description = raw["description"]
+        .as_str()
+        .ok_or(format!("bad description for {name}"))?
+        .to_string();
+    if description.trim().is_empty() || description.len() > MAX_DESC_LEN {
+        return Err(format!("bad description for {name}"));
+    }
+
+    let content = raw["content"]
+        .as_str()
+        .ok_or(format!("bad content for {name}"))?
+        .to_string();
+    if content.is_empty() || content.len() > MAX_BODY_CHARS {
+        return Err(format!("bad content for {name}"));
+    }
+
+    // Validate YAML frontmatter
+    if !content.starts_with("---") {
+        return Err(format!("{name}: missing frontmatter"));
+    }
+
+    let matched = existing.iter().find(|(n, _)| n == &name);
+
+    if kind == "create" && matched.is_some() {
+        let src = &matched.unwrap().1;
+        return Err(format!("{name}: name already exists (source={src})"));
+    }
+    if kind == "update" {
+        match matched {
+            None => return Err(format!("{name}: update target does not exist")),
+            Some((_, src)) if src != "auto" => {
+                return Err(format!("{name}: refuse to update non-auto skill"))
+            }
+            _ => {}
+        }
+    }
+
+    let based_on: Vec<String> = raw["basedOn"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let rationale = raw["rationale"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    Ok(Proposal {
+        kind: kind.to_string(),
+        name,
+        description,
+        content,
+        based_on,
+        rationale,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Skill writing
+// ---------------------------------------------------------------------------
+
+async fn write_new_auto_skill(p: &Proposal, model: &str) {
+    let slug = sanitize_slug(&p.name);
+    if let Err(e) = write_skill_file(&slug, &p.content, false).await {
+        error!("[SkillSynth] Failed to write new skill: {e}");
+        return;
+    }
+
+    let settings = get_settings().await;
+    let require_approval = settings
+        .skill_auto_update_require_approval
+        .unwrap_or(true);
+
+    let skill = Skill {
+        id: Uuid::new_v4().to_string(),
+        name: p.name.clone(),
+        description: p.description.clone(),
+        source: "auto".to_string(),
+        script: p.name.clone(),
+        enabled: !require_approval,
+        installed_at: chrono::Utc::now().to_rfc3339(),
+        review_status: Some(if require_approval {
+            "pending".to_string()
+        } else {
+            "approved".to_string()
+        }),
+        auto_meta: Some(SkillAutoMeta {
+            kind: "create".to_string(),
+            based_on: p.based_on.clone(),
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            model: model.to_string(),
+            proposed_path: None,
+            rationale: Some(p.rationale.clone()),
+        }),
+    };
+
+    let mut skills = get_skills().await;
+    skills.push(skill);
+    save_skills(&skills).await;
+}
+
+async fn write_proposed_update(p: &Proposal, model: &str) {
+    let slug = sanitize_slug(&p.name);
+    let settings = get_settings().await;
+    let require_approval = settings
+        .skill_auto_update_require_approval
+        .unwrap_or(true);
+
+    let mut skills = get_skills().await;
+    let idx = skills.iter().position(|s| s.name == p.name && s.source == "auto");
+
+    if idx.is_none() {
+        // Target doesn't exist — create instead
+        write_new_auto_skill(p, model).await;
+        return;
+    }
+    let idx = idx.unwrap();
+
+    if !require_approval {
+        if let Err(e) = write_skill_file(&slug, &p.content, false).await {
+            error!("[SkillSynth] Failed to write skill update: {e}");
+            return;
+        }
+        skills[idx].description = p.description.clone();
+        skills[idx].review_status = Some("approved".to_string());
+        skills[idx].enabled = true;
+        skills[idx].auto_meta = Some(SkillAutoMeta {
+            kind: "update".to_string(),
+            based_on: p.based_on.clone(),
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            model: model.to_string(),
+            proposed_path: None,
+            rationale: Some(p.rationale.clone()),
+        });
+    } else {
+        if let Err(e) = write_skill_file(&slug, &p.content, true).await {
+            error!("[SkillSynth] Failed to write proposed update: {e}");
+            return;
+        }
+        skills[idx].review_status = Some("pending".to_string());
+        skills[idx].auto_meta = Some(SkillAutoMeta {
+            kind: "update".to_string(),
+            based_on: p.based_on.clone(),
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            model: model.to_string(),
+            proposed_path: Some("SKILL.md.proposed".to_string()),
+            rationale: Some(p.rationale.clone()),
+        });
+    }
+    save_skills(&skills).await;
+}
+
+// ---------------------------------------------------------------------------
+// Approval / Rejection
+// ---------------------------------------------------------------------------
+
+pub async fn approve_proposal(proposal_id: &str) -> Result<(), String> {
+    let proposal_name;
+    let proposal_content;
+
+    {
+        let mut status = synth_status().lock().await;
+        let proposal = status
+            .proposals
+            .iter_mut()
+            .find(|p| p.id == proposal_id)
+            .ok_or_else(|| "Proposal not found".to_string())?;
+        proposal.review_status = "approved".to_string();
+        proposal_name = proposal.name.clone();
+        proposal_content = proposal.content.clone();
+    }
+
+    let slug = sanitize_slug(&proposal_name);
+    let skill_dir = skills_dir().join(&slug);
+    let proposed_path = skill_dir.join("SKILL.md.proposed");
+    let live_path = skill_dir.join("SKILL.md");
+
+    if proposed_path.exists() {
+        tokio::fs::rename(&proposed_path, &live_path)
+            .await
+            .map_err(|e| format!("rename failed: {e}"))?;
+    } else {
+        write_skill_file(&slug, &proposal_content, false).await?;
+    }
+
+    let mut skills = get_skills().await;
+    if let Some(skill) = skills.iter_mut().find(|s| s.name == proposal_name) {
+        skill.enabled = true;
+        skill.review_status = Some("approved".to_string());
+        if let Some(ref mut meta) = skill.auto_meta {
+            meta.proposed_path = None;
+        }
+    }
+    save_skills(&skills).await;
+    info!("[SkillSynth] Approved skill: {}", proposal_name);
+    Ok(())
+}
+
+pub async fn reject_proposal(proposal_id: &str) -> Result<(), String> {
+    let proposal_name;
+    let proposal_kind;
+
+    {
+        let mut status = synth_status().lock().await;
+        let proposal = status
+            .proposals
+            .iter_mut()
+            .find(|p| p.id == proposal_id)
+            .ok_or_else(|| "Proposal not found".to_string())?;
+        proposal.review_status = "rejected".to_string();
+        proposal_name = proposal.name.clone();
+        proposal_kind = proposal.kind.clone();
+    }
+
+    let slug = sanitize_slug(&proposal_name);
+    let skill_dir = skills_dir().join(&slug);
+
+    // For updates: just remove the proposed file
+    let proposed_path = skill_dir.join("SKILL.md.proposed");
+    let _ = tokio::fs::remove_file(&proposed_path).await;
+
+    if proposal_kind == "update" {
+        // Keep existing skill, just reset status
+        let mut skills = get_skills().await;
+        if let Some(skill) = skills.iter_mut().find(|s| s.name == proposal_name) {
+            skill.review_status = Some("approved".to_string());
+            if let Some(ref mut meta) = skill.auto_meta {
+                meta.proposed_path = None;
+            }
+        }
+        save_skills(&skills).await;
+    } else {
+        // Create rejection: delete the whole folder + drop registry row
+        let _ = tokio::fs::remove_dir_all(&skill_dir).await;
+        let mut skills = get_skills().await;
+        skills.retain(|s| s.name != proposal_name);
+        save_skills(&skills).await;
+    }
+
+    info!("[SkillSynth] Rejected skill: {}", proposal_name);
+    Ok(())
+}
+
+pub async fn get_proposed_diff(
+    skill_id: &str,
+) -> Result<(String, String), String> {
+    let skills = get_skills().await;
+    let skill = skills
+        .iter()
+        .find(|s| s.id == skill_id)
+        .ok_or("not found")?;
+    if skill.source != "auto" {
+        return Err("not auto".to_string());
+    }
+    let slug = sanitize_slug(&skill.name);
+    let skill_dir = skills_dir().join(&slug);
+
+    let current = tokio::fs::read_to_string(skill_dir.join("SKILL.md"))
+        .await
+        .unwrap_or_default();
+
+    let proposed = if let Some(ref pp) = skill.auto_meta.as_ref().and_then(|m| m.proposed_path.as_ref()) {
+        tokio::fs::read_to_string(skill_dir.join(pp))
+            .await
+            .unwrap_or_default()
+    } else if skill.auto_meta.as_ref().map(|m| m.kind.as_str()) == Some("create") {
+        let p = current.clone();
+        return Ok((String::new(), p));
+    } else {
+        String::new()
+    };
+
+    Ok((current, proposed))
+}
+
+// ---------------------------------------------------------------------------
+// LLM call
+// ---------------------------------------------------------------------------
+
+async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value>) -> Result<String, String> {
     let client = Client::new();
     let body = json!({
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.3,
-        "max_tokens": 4096,
+        "messages": messages,
     });
 
     let resp = client
@@ -250,58 +1070,294 @@ Rules:
         return Err(format!("API error: {}", err));
     }
 
-    let raw_content = resp_json["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("[]");
+    // Parse OpenAI-compatible response
+    let content = resp_json["choices"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|c| c["message"]["content"].as_str())
+        .or_else(|| {
+            resp_json["content"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|b| b["text"].as_str())
+        })
+        .unwrap_or("")
+        .to_string();
 
-    info!("[SkillSynth] LLM raw response length: {} chars", raw_content.len());
-
-    // Strip <think>...</think> tags (models like DeepSeek, MiniMax output these)
-    let content = {
-        let mut s = raw_content.to_string();
-        while let Some(start) = s.find("<think>") {
-            if let Some(end) = s.find("</think>") {
-                s = format!("{}{}", &s[..start], &s[end + 8..]);
-            } else {
-                // Unclosed think tag — remove everything from <think> onwards
-                s = s[..start].to_string();
-                break;
-            }
-        }
-        s
-    };
-
-    info!("[SkillSynth] After stripping think tags: {} chars", content.len());
-    info!("[SkillSynth] Content preview: {}", &content[..content.len().min(500)]);
-
-    // Extract JSON from potential markdown fences
-    let json_str = if let Some(start) = content.find('[') {
-        if let Some(end) = content.rfind(']') {
-            &content[start..=end]
-        } else {
-            warn!("[SkillSynth] Found '[' but no matching ']' in LLM response");
-            "[]"
-        }
-    } else {
-        warn!("[SkillSynth] No JSON array found in LLM response");
-        "[]"
-    };
-
-    let proposals: Vec<Value> = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(e) => {
-            error!("[SkillSynth] Failed to parse JSON: {e}");
-            error!("[SkillSynth] JSON string was: {}", &json_str[..json_str.len().min(500)]);
-            return Err(format!("Invalid JSON from LLM: {e}"));
-        }
-    };
-
-    info!("[SkillSynth] Parsed {} proposals from LLM", proposals.len());
-    Ok(proposals)
+    Ok(content)
 }
 
 // ---------------------------------------------------------------------------
-// Core synthesis run
+// Remediation — token overlap matching
+// ---------------------------------------------------------------------------
+
+fn tokenize(s: &str) -> HashSet<String> {
+    let stop_words: HashSet<&str> = [
+        "the", "and", "for", "with", "this", "that", "your", "from", "into", "have",
+        "should", "would", "could", "about", "user", "agent", "skill", "code", "use", "using",
+    ]
+    .into_iter()
+    .collect();
+
+    let re = Regex::new(r"[a-z0-9_-]{3,}").unwrap();
+    re.find_iter(&s.to_lowercase())
+        .map(|m| m.as_str().to_string())
+        .filter(|t| !stop_words.contains(t.as_str()))
+        .collect()
+}
+
+fn select_remediation_target(
+    excerpt: &str,
+    comment: &str,
+    auto_skills: &[(String, String)], // (name, description)
+    contents: &HashMap<String, String>,
+) -> Option<(String, usize)> {
+    let needle = tokenize(&format!("{} {}", excerpt, comment));
+    if needle.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<(String, usize)> = None;
+    for (name, desc) in auto_skills {
+        let hay_str = format!(
+            "{} {} {}",
+            name,
+            desc,
+            contents.get(name).map(|c| &c[..c.len().min(4000)]).unwrap_or("")
+        );
+        let hay_tokens = tokenize(&hay_str);
+        let hits = needle.iter().filter(|t| hay_tokens.contains(*t)).count();
+        if best.is_none() || hits > best.as_ref().unwrap().1 {
+            best = Some((name.clone(), hits));
+        }
+    }
+
+    best.filter(|(_, score)| *score >= REMEDIATION_MIN_SCORE)
+}
+
+async fn run_remediations(
+    candidates: &[SessionSummary],
+    api_key: &str,
+    api_url: &str,
+    model: &str,
+) -> RemediationOutcome {
+    let mut out = RemediationOutcome {
+        updated: 0,
+        skipped: 0,
+        reasons: Vec::new(),
+        consumed_session_ids: HashSet::new(),
+    };
+
+    // Find sessions with thumbs-down + comment on assistant messages
+    struct Target {
+        session_id: String,
+        excerpt: String,
+        comment: String,
+        workflow: Vec<SubagentTrace>,
+    }
+    let mut targets: Vec<Target> = Vec::new();
+    for c in candidates {
+        for f in &c.feedback {
+            if f.rating.as_deref() == Some("down")
+                && f.comment.as_ref().map(|c| !c.trim().is_empty()).unwrap_or(false)
+                && f.role == "assistant"
+            {
+                let excerpt: String = f
+                    .excerpt
+                    .as_ref()
+                    .unwrap_or(&c.final_assistant)
+                    .chars()
+                    .take(1200)
+                    .collect();
+                targets.push(Target {
+                    session_id: c.session_id.clone(),
+                    excerpt,
+                    comment: f.comment.as_ref().unwrap().trim().to_string(),
+                    workflow: c.subagent_workflow.clone(),
+                });
+                break;
+            }
+        }
+    }
+
+    if targets.is_empty() {
+        return out;
+    }
+
+    let all_skills = get_skills().await;
+    let auto_skills: Vec<(String, String)> = all_skills
+        .iter()
+        .filter(|s| s.source == "auto")
+        .map(|s| (s.name.clone(), s.description.clone()))
+        .collect();
+
+    if auto_skills.is_empty() {
+        for t in &targets {
+            out.skipped += 1;
+            out.reasons
+                .push(format!("remediation skipped ({}): no auto skill exists to update", t.session_id));
+        }
+        return out;
+    }
+
+    let auto_skill_names: HashSet<String> = auto_skills.iter().map(|(n, _)| n.clone()).collect();
+
+    let mut contents: HashMap<String, String> = HashMap::new();
+    for (name, _) in &auto_skills {
+        if let Some(c) = read_auto_skill_content(name).await {
+            contents.insert(name.clone(), c);
+        }
+    }
+
+    let capped = &targets[..targets.len().min(MAX_REMEDIATIONS_PER_RUN)];
+    if targets.len() > capped.len() {
+        out.reasons.push(format!(
+            "remediation cap reached: {} sessions deferred to next run",
+            targets.len() - capped.len()
+        ));
+    }
+
+    for t in capped {
+        // Determine which auto-skill to remediate
+        let loaded_auto: Vec<String> = collect_loaded_skills(&t.workflow)
+            .into_iter()
+            .filter(|n| auto_skill_names.contains(n))
+            .collect();
+
+        let (pick, strategy) = if loaded_auto.len() == 1 {
+            (Some((loaded_auto[0].clone(), usize::MAX)), "chatlog-unique")
+        } else if loaded_auto.len() > 1 {
+            let subset: Vec<(String, String)> = auto_skills
+                .iter()
+                .filter(|(n, _)| loaded_auto.contains(n))
+                .cloned()
+                .collect();
+            (
+                select_remediation_target(&t.excerpt, &t.comment, &subset, &contents),
+                "chatlog-subset",
+            )
+        } else {
+            (
+                select_remediation_target(&t.excerpt, &t.comment, &auto_skills, &contents),
+                "token-overlap",
+            )
+        };
+
+        let pick = match pick {
+            Some(p) => p,
+            None => {
+                out.skipped += 1;
+                out.reasons.push(format!(
+                    "remediation skipped ({}): no auto skill matched the disliked turn",
+                    t.session_id
+                ));
+                continue;
+            }
+        };
+
+        let skill_md = match contents.get(&pick.0) {
+            Some(md) => md.clone(),
+            None => {
+                out.skipped += 1;
+                out.reasons.push(format!(
+                    "remediation skipped ({}): could not read {}/SKILL.md",
+                    t.session_id, pick.0
+                ));
+                continue;
+            }
+        };
+
+        let prompt = build_remediation_prompt(&pick.0, &skill_md, &t.excerpt, &t.comment, &t.workflow);
+        let reply = match call_llm(
+            api_key,
+            api_url,
+            model,
+            vec![
+                json!({"role": "system", "content": "You are a careful skill remediator. Output strict JSON only."}),
+                json!({"role": "user", "content": prompt}),
+            ],
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                out.skipped += 1;
+                out.reasons
+                    .push(format!("remediation LLM error for {}: {}", pick.0, e));
+                continue;
+            }
+        };
+
+        if is_error_reply(&reply) {
+            out.skipped += 1;
+            let preview: String = reply.chars().take(120).collect();
+            out.reasons
+                .push(format!("remediation LLM error for {}: {}", pick.0, preview));
+            continue;
+        }
+
+        let parsed = match extract_json(&reply) {
+            Ok(v) => v,
+            Err(e) => {
+                out.skipped += 1;
+                out.reasons
+                    .push(format!("remediation parse failed for {}: {}", pick.0, e));
+                continue;
+            }
+        };
+
+        if parsed.get("skip").and_then(|v| v.as_bool()) == Some(true) {
+            out.skipped += 1;
+            let reason = parsed["reason"].as_str().unwrap_or("model said skip");
+            out.reasons
+                .push(format!("remediation declined for {}: {}", pick.0, reason));
+            continue;
+        }
+
+        let proposal_raw = json!({
+            "kind": "update",
+            "name": pick.0,
+            "description": parsed["description"],
+            "content": parsed["content"],
+            "basedOn": [t.session_id],
+            "rationale": format!(
+                "remediation from disliked comment: {}{}",
+                &t.comment[..t.comment.len().min(160)],
+                parsed["rationale"]
+                    .as_str()
+                    .map(|r| format!(" | {}", &r[..r.len().min(200)]))
+                    .unwrap_or_default()
+            ),
+        });
+
+        let existing_for_collision: Vec<(String, String)> = all_skills
+            .iter()
+            .map(|s| (s.name.clone(), s.source.clone()))
+            .collect();
+
+        match validate_proposal(&proposal_raw, &existing_for_collision) {
+            Ok(proposal) => {
+                write_proposed_update(&proposal, model).await;
+                out.updated += 1;
+                out.consumed_session_ids.insert(t.session_id.clone());
+                out.reasons.push(format!(
+                    "remediated {} from disliked in {} (target picked via {})",
+                    pick.0, t.session_id, strategy
+                ));
+            }
+            Err(reason) => {
+                out.skipped += 1;
+                out.reasons
+                    .push(format!("remediation invalid for {}: {}", pick.0, reason));
+            }
+        }
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Main synthesis
 // ---------------------------------------------------------------------------
 
 pub async fn run_synthesis_forced() -> Result<String, String> {
@@ -313,6 +1369,26 @@ pub async fn run_synthesis() -> Result<String, String> {
 }
 
 async fn run_synthesis_inner(force: bool) -> Result<String, String> {
+    // Inflight guard
+    {
+        let mut lock = inflight().lock().await;
+        if *lock {
+            return Err("already-running".to_string());
+        }
+        *lock = true;
+    }
+
+    let result = run_synthesis_core(force).await;
+
+    {
+        let mut lock = inflight().lock().await;
+        *lock = false;
+    }
+
+    result
+}
+
+async fn run_synthesis_core(force: bool) -> Result<String, String> {
     info!("[SkillSynth] Starting synthesis run (force={})", force);
 
     {
@@ -321,9 +1397,23 @@ async fn run_synthesis_inner(force: bool) -> Result<String, String> {
     }
 
     let settings = get_settings().await;
+    if settings
+        .skill_auto_update_enabled
+        .map(|e| !e)
+        .unwrap_or(false)
+    {
+        let mut status = synth_status().lock().await;
+        status.running = false;
+        return Err("disabled".to_string());
+    }
+
     let api_key = settings.tiger_bot_api_key.clone();
     let api_url_raw = settings.tiger_bot_api_url.clone().unwrap_or_default();
-    let model = settings.tiger_bot_model.clone();
+    let model = if settings.tiger_bot_model.is_empty() {
+        "unknown".to_string()
+    } else {
+        settings.tiger_bot_model.clone()
+    };
 
     if api_key.is_empty() {
         let mut status = synth_status().lock().await;
@@ -337,7 +1427,7 @@ async fn run_synthesis_inner(force: bool) -> Result<String, String> {
         format!("{}/chat/completions", api_url_raw.trim_end_matches('/'))
     };
 
-    // Get cursor (last processed timestamp) — ignored when force=true
+    // Cursor (last processed timestamp) — ignored when force=true
     let cursor = if force {
         String::new()
     } else {
@@ -345,317 +1435,258 @@ async fn run_synthesis_inner(force: bool) -> Result<String, String> {
             .extra
             .get("skillAutoUpdateCursor")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
+            .unwrap_or("1970-01-01T00:00:00.000Z")
             .to_string()
     };
 
-    let require_approval = settings
-        .skill_auto_update_require_approval
-        .unwrap_or(true);
+    let max_candidates = settings
+        .extra
+        .get("skillAutoUpdateMaxCandidates")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30) as usize;
 
-    // Load chat sessions
-    let sessions = get_chat_history().await;
-    info!("[SkillSynth] Total sessions in history: {}", sessions.len());
+    // Load chat sessions sorted ascending by updatedAt
+    let mut sessions = get_chat_history().await;
+    sessions.sort_by(|a, b| a.updated_at.cmp(&b.updated_at));
 
-    // Filter sessions newer than cursor
-    let recent_sessions: Vec<&ChatSession> = sessions
-        .iter()
-        .filter(|s| {
-            if cursor.is_empty() {
-                true
-            } else {
-                s.updated_at.as_str() > cursor.as_str()
-            }
-        })
-        .take(30)
-        .collect();
-
-    info!("[SkillSynth] Sessions after cursor filter: {}", recent_sessions.len());
-
-    if recent_sessions.is_empty() {
-        let mut status = synth_status().lock().await;
-        status.running = false;
-        status.last_run_at = Some(chrono::Utc::now().to_rfc3339());
-        status.last_run_summary = Some("No new sessions to analyze".to_string());
-        return Ok("No new sessions to analyze".to_string());
-    }
+    let fresh: Vec<&ChatSession> = if force {
+        sessions.iter().collect()
+    } else {
+        sessions.iter().filter(|s| s.updated_at.as_str() > cursor.as_str()).collect()
+    };
 
     // Summarize sessions
-    let summaries: Vec<String> = recent_sessions
-        .iter()
-        .filter_map(|s| summarise_session(s))
-        .collect();
-
-    if summaries.is_empty() {
-        let mut status = synth_status().lock().await;
-        status.running = false;
-        status.last_run_at = Some(chrono::Utc::now().to_rfc3339());
-        status.last_run_summary =
-            Some("No eligible sessions (all too short or errors)".to_string());
-        return Ok("No eligible sessions".to_string());
-    }
-
-    // Load existing skills
-    let existing_skills = list_existing_skills().await;
-
-    info!("[SkillSynth] {} eligible sessions, {} existing skills. Calling LLM (model={})...", summaries.len(), existing_skills.len(), model);
-
-    // Call LLM
-    let proposals = match call_llm_for_skills(&api_key, &api_url, &model, &summaries, &existing_skills)
-        .await {
-            Ok(p) => p,
-            Err(e) => {
-                error!("[SkillSynth] LLM call failed: {}", e);
-                let mut status = synth_status().lock().await;
-                status.running = false;
-                status.last_run_at = Some(chrono::Utc::now().to_rfc3339());
-                status.last_run_summary = Some(format!("Error: {}", e));
-                return Err(e);
-            }
-        };
-
-    let mut created = 0;
-    let mut updated = 0;
-
-    for proposal in &proposals {
-        let kind = proposal["kind"].as_str().unwrap_or("create");
-        let name = proposal["name"].as_str().unwrap_or("").to_string();
-        let description = proposal["description"].as_str().unwrap_or("").to_string();
-        let content = proposal["content"].as_str().unwrap_or("").to_string();
-        let rationale = proposal["rationale"].as_str().unwrap_or("").to_string();
-
-        if name.is_empty() || content.is_empty() {
-            warn!("[SkillSynth] Skipping proposal with empty name or content. name='{}', content_len={}", name, content.len());
-            continue;
-        }
-
-        // Validate name
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            warn!("[SkillSynth] Invalid name: {}", name);
-            continue;
-        }
-
-        let is_update = kind == "update";
-
-        // Get existing content for diff
-        let existing_content = if is_update {
-            let skill_path = skills_dir().join(&name).join("SKILL.md");
-            tokio::fs::read_to_string(&skill_path).await.ok()
-        } else {
-            None
-        };
-
-        // Write the skill file
-        if require_approval {
-            if let Err(e) = write_skill(&name, &content, true).await {
-                error!("[SkillSynth] Failed to write proposed skill: {e}");
-                continue;
-            }
-        } else {
-            if let Err(e) = write_skill(&name, &content, false).await {
-                error!("[SkillSynth] Failed to write skill: {e}");
-                continue;
-            }
-        }
-
-        let session_ids: Vec<String> = recent_sessions
-            .iter()
-            .take(5)
-            .map(|s| s.id.clone())
-            .collect();
-
-        let skill_id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-        let review_status = if require_approval {
-            "pending".to_string()
-        } else {
-            "approved".to_string()
-        };
-
-        // Register in skills.json
-        let mut skills = get_skills().await;
-        // Remove any existing entry with same name (for updates)
-        skills.retain(|s| s.name != name);
-        skills.push(Skill {
-            id: skill_id.clone(),
-            name: name.clone(),
-            description: description.clone(),
-            source: "auto".to_string(),
-            script: name.clone(), // folder name
-            enabled: !require_approval, // enabled immediately if no approval needed
-            installed_at: now.clone(),
-            review_status: Some(review_status.clone()),
-            auto_meta: Some(SkillAutoMeta {
-                kind: kind.to_string(),
-                based_on: session_ids.clone(),
-                generated_at: now.clone(),
-                model: model.clone(),
-                proposed_path: if require_approval {
-                    Some("SKILL.md.proposed".to_string())
-                } else {
-                    None
-                },
-                rationale: Some(rationale.clone()),
-            }),
-        });
-        save_skills(&skills).await;
-        info!("[SkillSynth] Registered skill '{}' in skills.json (status={})", name, review_status);
-
-        let skill_proposal = SkillProposal {
-            id: skill_id,
-            name: name.clone(),
-            description,
-            kind: kind.to_string(),
-            content,
-            rationale,
-            based_on: session_ids,
-            generated_at: now,
-            model: model.clone(),
-            review_status,
-            existing_content,
-        };
-
-        {
-            let mut status = synth_status().lock().await;
-            status.proposals.push(skill_proposal);
-        }
-
-        if is_update {
-            updated += 1;
-        } else {
-            created += 1;
+    let mut candidates: Vec<SessionSummary> = Vec::new();
+    for s in &fresh {
+        if let Some(summary) = summarise_session(s).await {
+            candidates.push(summary);
         }
     }
+    // Take the last N
+    if candidates.len() > max_candidates {
+        candidates = candidates[candidates.len() - max_candidates..].to_vec();
+    }
 
-    // Update cursor to latest session timestamp
-    if let Some(latest) = recent_sessions
-        .iter()
-        .map(|s| s.updated_at.as_str())
-        .max()
-    {
+    if candidates.is_empty() {
+        let summary_msg = if force {
+            "no successful sessions found"
+        } else {
+            "no new successful sessions"
+        };
         let mut settings = get_settings().await;
-        settings
-            .extra
-            .insert("skillAutoUpdateCursor".to_string(), json!(latest));
         settings.extra.insert(
             "skillAutoUpdateLastRunAt".to_string(),
             json!(chrono::Utc::now().to_rfc3339()),
         );
-        let summary = format!(
-            "Analyzed {} sessions, created {} skills, updated {}",
-            summaries.len(),
-            created,
-            updated
-        );
         settings.extra.insert(
             "skillAutoUpdateLastRunSummary".to_string(),
-            json!(&summary),
+            json!(summary_msg),
         );
         save_settings(&settings).await;
-    }
-
-    let summary = format!(
-        "Created {} skill(s), updated {} skill(s) from {} session(s)",
-        created,
-        updated,
-        summaries.len()
-    );
-
-    {
         let mut status = synth_status().lock().await;
         status.running = false;
         status.last_run_at = Some(chrono::Utc::now().to_rfc3339());
-        status.last_run_summary = Some(summary.clone());
+        status.last_run_summary = Some(summary_msg.to_string());
+        return Ok(summary_msg.to_string());
     }
 
-    info!("[SkillSynth] {}", summary);
-    Ok(summary)
-}
+    info!(
+        "[SkillSynth] {} candidate sessions for synthesis",
+        candidates.len()
+    );
 
-// ---------------------------------------------------------------------------
-// Approve / Reject
-// ---------------------------------------------------------------------------
+    // ── Pass 1: Remediation ──
+    let remediation = run_remediations(&candidates, &api_key, &api_url, &model).await;
 
-pub async fn approve_proposal(proposal_id: &str) -> Result<(), String> {
-    let proposal_name;
-    let proposal_content;
+    // Filter out sessions consumed by remediation
+    let remaining: Vec<&SessionSummary> = candidates
+        .iter()
+        .filter(|c| !remediation.consumed_session_ids.contains(&c.session_id))
+        .collect();
 
+    if remaining.is_empty() {
+        let new_cursor = &candidates.last().unwrap().updated_at;
+        let summary_msg = format!(
+            "created=0 updated={} skipped={} candidates={} (all consumed by remediation)",
+            remediation.updated, remediation.skipped, candidates.len()
+        );
+        update_settings_after_run(new_cursor, &summary_msg, &remediation.reasons).await;
+        finish_status(&summary_msg).await;
+        return Ok(summary_msg);
+    }
+
+    // ── Pass 2: Synthesis ──
+    let existing = list_existing_skill_summaries().await;
+    let prompt = build_prompt(
+        &candidates,
+        &existing,
+        &remediation.consumed_session_ids,
+    );
+
+    let reply = match call_llm(
+        &api_key,
+        &api_url,
+        &model,
+        vec![
+            json!({"role": "system", "content": "You are a careful skill synthesiser. Output strict JSON only."}),
+            json!({"role": "user", "content": prompt}),
+        ],
+    )
+    .await
     {
-        let mut status = synth_status().lock().await;
-        let proposal = status
-            .proposals
-            .iter_mut()
-            .find(|p| p.id == proposal_id)
-            .ok_or_else(|| "Proposal not found".to_string())?;
+        Ok(r) => r,
+        Err(e) => {
+            let summary_msg = format!("LLM error: {}", &e[..e.len().min(200)]);
+            let new_cursor = &candidates.last().unwrap().updated_at;
+            let mut reasons = remediation.reasons.clone();
+            reasons.push(summary_msg.clone());
+            update_settings_after_run(new_cursor, &summary_msg, &reasons).await;
+            finish_status(&summary_msg).await;
+            return Err(e);
+        }
+    };
 
-        proposal.review_status = "approved".to_string();
-        proposal_name = proposal.name.clone();
-        proposal_content = proposal.content.clone();
+    if is_error_reply(&reply) {
+        let preview: String = reply.chars().take(200).collect();
+        let summary_msg = format!("LLM error: {}", preview);
+        let new_cursor = &candidates.last().unwrap().updated_at;
+        let mut reasons = remediation.reasons.clone();
+        reasons.push(summary_msg.clone());
+        update_settings_after_run(new_cursor, &summary_msg, &reasons).await;
+        finish_status(&summary_msg).await;
+        return Err(summary_msg);
     }
 
-    // Move SKILL.md.proposed -> SKILL.md
-    let proposed_path = skills_dir().join(&proposal_name).join("SKILL.md.proposed");
-    let final_path = skills_dir().join(&proposal_name).join("SKILL.md");
+    // Parse proposals
+    let parsed = match extract_json(&reply) {
+        Ok(v) => v,
+        Err(e) => {
+            // Check if reply is effectively "no proposals"
+            let stripped = strip_reasoning(&reply);
+            let head: String = stripped.trim().to_lowercase().chars().take(200).collect();
+            let looks_empty = stripped.trim().is_empty()
+                || head.contains("no proposals")
+                || head.contains("nothing to propose")
+                || head.contains("no skill")
+                || head.contains("no worthwhile")
+                || head.contains("not worth");
 
-    if proposed_path.exists() {
-        tokio::fs::rename(&proposed_path, &final_path)
-            .await
-            .map_err(|e| format!("Failed to approve skill: {e}"))?;
-    } else {
-        write_skill(&proposal_name, &proposal_content, false).await?;
-    }
+            if looks_empty {
+                json!({"proposals": []})
+            } else {
+                let reply_preview: String = reply.chars().take(300).collect();
+                error!("[SkillSynth] JSON parse failed. LLM reply (first 300 chars): {}", reply_preview);
+                let summary_msg = format!("LLM JSON parse failed: {}", e);
+                let new_cursor = &candidates.last().unwrap().updated_at;
+                let mut reasons = remediation.reasons.clone();
+                reasons.push(summary_msg.clone());
+                update_settings_after_run(new_cursor, &summary_msg, &reasons).await;
+                finish_status(&summary_msg).await;
+                return Err(summary_msg);
+            }
+        }
+    };
 
-    // Enable the skill in skills.json
-    let mut skills = get_skills().await;
-    if let Some(skill) = skills.iter_mut().find(|s| s.name == proposal_name) {
-        skill.enabled = true;
-        skill.review_status = Some("approved".to_string());
-        if let Some(ref mut meta) = skill.auto_meta {
-            meta.proposed_path = None;
+    let proposals = parsed["proposals"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let mut created = 0usize;
+    let mut updated = remediation.updated;
+    let mut skipped = remediation.skipped;
+    let mut reasons = remediation.reasons;
+
+    let mut existing_for_collision: Vec<(String, String)> = get_skills()
+        .await
+        .iter()
+        .map(|s| (s.name.clone(), s.source.clone()))
+        .collect();
+
+    for raw in &proposals {
+        match validate_proposal(raw, &existing_for_collision) {
+            Ok(proposal) => {
+                if proposal.kind == "create" {
+                    write_new_auto_skill(&proposal, &model).await;
+                    created += 1;
+                    existing_for_collision.push((proposal.name.clone(), "auto".to_string()));
+
+                    // Add to synth_status proposals
+                    add_proposal_to_status(&proposal, &model, None).await;
+                } else {
+                    // Get existing content for diff
+                    let existing_content = read_auto_skill_content(&proposal.name).await;
+                    write_proposed_update(&proposal, &model).await;
+                    updated += 1;
+
+                    add_proposal_to_status(&proposal, &model, existing_content.as_deref()).await;
+                }
+            }
+            Err(reason) => {
+                skipped += 1;
+                reasons.push(reason);
+            }
         }
     }
-    save_skills(&skills).await;
 
-    info!("[SkillSynth] Approved skill: {}", proposal_name);
-    Ok(())
+    let new_cursor = &candidates.last().unwrap().updated_at;
+    let summary_msg = format!(
+        "created={} updated={} skipped={} candidates={}",
+        created, updated, skipped, candidates.len()
+    );
+    update_settings_after_run(new_cursor, &summary_msg, &reasons).await;
+    finish_status(&summary_msg).await;
+
+    info!("[SkillSynth] {}", summary_msg);
+    Ok(summary_msg)
 }
 
-pub async fn reject_proposal(proposal_id: &str) -> Result<(), String> {
-    let proposal_name;
+async fn add_proposal_to_status(proposal: &Proposal, model: &str, existing_content: Option<&str>) {
+    let mut status = synth_status().lock().await;
+    status.proposals.push(SkillProposal {
+        id: Uuid::new_v4().to_string(),
+        name: proposal.name.clone(),
+        description: proposal.description.clone(),
+        kind: proposal.kind.clone(),
+        content: proposal.content.clone(),
+        rationale: proposal.rationale.clone(),
+        based_on: proposal.based_on.clone(),
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        model: model.to_string(),
+        review_status: "pending".to_string(),
+        existing_content: existing_content.map(|s| s.to_string()),
+    });
+}
 
-    {
-        let mut status = synth_status().lock().await;
-        let proposal = status
-            .proposals
-            .iter_mut()
-            .find(|p| p.id == proposal_id)
-            .ok_or_else(|| "Proposal not found".to_string())?;
+async fn update_settings_after_run(cursor: &str, summary: &str, reasons: &[String]) {
+    let mut settings = get_settings().await;
+    settings
+        .extra
+        .insert("skillAutoUpdateCursor".to_string(), json!(cursor));
+    settings.extra.insert(
+        "skillAutoUpdateLastRunAt".to_string(),
+        json!(chrono::Utc::now().to_rfc3339()),
+    );
+    let reason_suffix = if !reasons.is_empty() {
+        format!(
+            " | {}",
+            reasons.iter().take(3).cloned().collect::<Vec<_>>().join("; ")
+        )
+    } else {
+        String::new()
+    };
+    settings.extra.insert(
+        "skillAutoUpdateLastRunSummary".to_string(),
+        json!(format!("{}{}", summary, reason_suffix)),
+    );
+    save_settings(&settings).await;
+}
 
-        proposal.review_status = "rejected".to_string();
-        proposal_name = proposal.name.clone();
-    }
-
-    // Remove SKILL.md.proposed
-    let proposed_path = skills_dir().join(&proposal_name).join("SKILL.md.proposed");
-    let _ = tokio::fs::remove_file(&proposed_path).await;
-
-    // If it was a new skill with no SKILL.md, remove the whole dir
-    let skill_md = skills_dir().join(&proposal_name).join("SKILL.md");
-    if !skill_md.exists() {
-        let dir = skills_dir().join(&proposal_name);
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    // Remove from skills.json
-    let mut skills = get_skills().await;
-    skills.retain(|s| s.name != proposal_name);
-    save_skills(&skills).await;
-
-    info!("[SkillSynth] Rejected skill: {}", proposal_name);
-    Ok(())
+async fn finish_status(summary: &str) {
+    let mut status = synth_status().lock().await;
+    status.running = false;
+    status.last_run_at = Some(chrono::Utc::now().to_rfc3339());
+    status.last_run_summary = Some(summary.to_string());
 }
 
 // ---------------------------------------------------------------------------
@@ -673,7 +1704,8 @@ pub fn start_cron(runtime: tokio::runtime::Handle) {
             let interval_mins = settings
                 .skill_auto_update_interval_minutes
                 .unwrap_or(60)
-                .max(1);
+                .max(5)
+                .min(1440);
 
             if enabled {
                 info!("[SkillSynth] Cron triggered");
@@ -683,7 +1715,6 @@ pub fn start_cron(runtime: tokio::runtime::Handle) {
                 }
             }
 
-            // Sleep for the configured interval
             tokio::time::sleep(Duration::from_secs(interval_mins * 60)).await;
         }
     });

@@ -202,6 +202,19 @@ pub async fn save_settings(settings: &Settings) {
     write_json("settings.json", settings).await;
 }
 
+/// Synchronous sandbox dir accessor for UI code.
+pub fn get_sandbox_dir_sync() -> String {
+    let path = std::path::Path::new("data/settings.json");
+    if let Ok(content) = std::fs::read_to_string(path) {
+        if let Ok(settings) = serde_json::from_str::<Settings>(&content) {
+            if !settings.sandbox_dir.is_empty() {
+                return settings.sandbox_dir;
+            }
+        }
+    }
+    "sandbox".to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------------

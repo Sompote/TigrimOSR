@@ -6,7 +6,10 @@ use crate::server::data::{
     get_chat_history, get_projects, get_settings, save_chat_history, ChatMessage,
     ChatMessageFeedback, ChatSession, Project,
 };
-use crate::server::services::toolbox::{call_with_tools, load_agent_yaml, SubAgentConfig, ToolUpdate};
+use crate::server::services::toolbox::{
+    call_with_tools, call_with_tools_realtime, load_agent_yaml,
+    start_realtime_session, SubAgentConfig, ToolUpdate,
+};
 use crate::ui::output_panel::OutputPanel;
 
 // -------------------------------------------------------------------------
@@ -266,6 +269,78 @@ fn parse_inline_segments(text: &str, segments: &mut Vec<MdSegment>) {
 }
 
 // -------------------------------------------------------------------------
+// Graphic monitor types (agent network diagram)
+// -------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+struct GraphicAgent {
+    id: String,
+    name: String,
+    role: String,     // orchestrator, worker, peer, human
+    status: String,   // idle, working, done
+    x: f32,
+    y: f32,
+    color: egui::Color32,
+    last_tool: String,
+}
+
+#[derive(Clone, Debug)]
+struct GraphicEdge {
+    from: String,
+    to: String,
+    label: String,
+    protocol: String, // tcp, bus, delegate, spawn
+    state: String,    // idle, active, done
+}
+
+#[derive(Clone, Debug)]
+struct GraphicSignal {
+    from: String,
+    to: String,
+    kind: String,     // delegate, direct, bus, spawn
+    tool: String,
+    started_at: f64,  // seconds since epoch
+}
+
+// Color palette for agent nodes
+fn agent_node_color(index: usize) -> egui::Color32 {
+    const PALETTE: &[(u8, u8, u8)] = &[
+        (99, 102, 241),   // indigo
+        (236, 72, 153),   // pink
+        (34, 197, 94),    // green
+        (245, 158, 11),   // amber
+        (6, 182, 212),    // cyan
+        (168, 85, 247),   // purple
+        (239, 68, 68),    // red
+        (59, 130, 246),   // blue
+        (16, 185, 129),   // emerald
+        (249, 115, 22),   // orange
+    ];
+    let (r, g, b) = PALETTE[index % PALETTE.len()];
+    egui::Color32::from_rgb(r, g, b)
+}
+
+fn link_kind_color(kind: &str) -> egui::Color32 {
+    match kind {
+        "delegate" => egui::Color32::from_rgb(245, 158, 11),  // amber
+        "direct"   => egui::Color32::from_rgb(219, 39, 119),  // pink
+        "bus"      => egui::Color32::from_rgb(8, 145, 178),   // cyan
+        "spawn"    => egui::Color32::from_rgb(124, 58, 237),  // purple
+        _          => egui::Color32::from_rgb(156, 163, 175), // gray
+    }
+}
+
+fn tool_to_link_kind(tool: &str) -> &'static str {
+    match tool {
+        "send_task" | "wait_result" | "bb_propose" | "bb_bid" | "bb_award" => "delegate",
+        "spawn_subagent" => "spawn",
+        "proto_tcp_send" | "proto_tcp_read" => "direct",
+        "proto_bus_publish" | "proto_bus_history" => "bus",
+        _ => "delegate",
+    }
+}
+
+// -------------------------------------------------------------------------
 // ChatView
 // -------------------------------------------------------------------------
 
@@ -303,7 +378,17 @@ pub struct ChatView {
     log_session_id: Option<String>,
     log_content: String,
     log_agent_history: String,
-    log_tab: u8, // 0=chat log, 1=agent history
+    log_tab: u8, // 0=chat log, 1=agent history, 2=graphic monitor
+
+    // --- Graphic monitor ---
+    graphic_agents: Vec<GraphicAgent>,
+    graphic_edges: Vec<GraphicEdge>,
+    graphic_signals: Vec<GraphicSignal>,
+    graphic_loaded_config: String, // track which config was loaded
+    graphic_pan: egui::Vec2,
+    graphic_zoom: f32,
+    graphic_drag_start: Option<egui::Pos2>,
+    graphic_last_reload: f64, // last auto-reload time (seconds)
 }
 
 #[derive(Clone)]
@@ -343,6 +428,14 @@ impl ChatView {
             log_content: String::new(),
             log_agent_history: String::new(),
             log_tab: 0,
+            graphic_agents: Vec::new(),
+            graphic_edges: Vec::new(),
+            graphic_signals: Vec::new(),
+            graphic_loaded_config: String::new(),
+            graphic_pan: egui::Vec2::ZERO,
+            graphic_zoom: 1.0,
+            graphic_drag_start: None,
+            graphic_last_reload: 0.0,
         }
     }
 
@@ -613,6 +706,9 @@ impl ChatView {
             .unwrap_or_default();
 
         // Build sub-agent config from settings + active project
+        let sub_agent_mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string());
+        let is_realtime = sub_agent_mode == "realtime";
+
         let sub_agent_config = {
             let enabled = settings.sub_agent_enabled.unwrap_or(false);
 
@@ -639,6 +735,20 @@ impl ChatView {
                 let agent_ids = load_agent_yaml(&config_file)
                     .map(|(_, ids)| ids)
                     .unwrap_or_default();
+
+                // Boot realtime session if mode is "realtime"
+                if is_realtime {
+                    let sid2 = sid.clone();
+                    let cf2 = config_file.clone();
+                    let ak2 = api_key.clone();
+                    let au2 = api_url.clone();
+                    let m2 = settings.sub_agent_model.clone().unwrap_or_else(|| model.clone());
+                    let sd2 = sandbox_dir.clone();
+                    runtime.block_on(async move {
+                        start_realtime_session(&sid2, &cf2, &ak2, &au2, &m2, &sd2).await;
+                    });
+                }
+
                 SubAgentConfig {
                     enabled: true,
                     config_file,
@@ -648,6 +758,7 @@ impl ChatView {
                     model: settings.sub_agent_model.clone().unwrap_or_else(|| model.clone()),
                     depth: 0,
                     session_id: sid.clone(),
+                    agent_id: "main".to_string(),
                 }
             } else {
                 SubAgentConfig::default()
@@ -655,25 +766,46 @@ impl ChatView {
         };
 
         // Build system prompt: base + project context + sub-agent info
-        let sub_agent_prompt = if sub_agent_config.enabled && !sub_agent_config.agent_ids.is_empty() {
-            format!(
-                "\nYou also have access to a multi-agent system. Use spawn_subagent to delegate tasks to specialist agents: {}. \
-Use sub-agents when the task benefits from specialization or parallel work.",
-                sub_agent_config.agent_ids.join(", ")
-            )
+        let (sub_agent_prompt, research_instruction) = if sub_agent_config.enabled && !sub_agent_config.agent_ids.is_empty() {
+            let agents = sub_agent_config.agent_ids.join(", ");
+            if is_realtime {
+                let prompt = format!(
+                    "\n\nREALTIME AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
+Available agents: [{}]. \
+Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
+Only use run_python/write_file for formatting the final output. \
+Always delegate, even for simple tasks. If an orchestrator exists, send tasks ONLY to the orchestrator.",
+                    agents
+                );
+                (prompt, "Use send_task/wait_result to delegate ALL tasks to realtime agents.")
+            } else {
+                let prompt = format!(
+                    "\n\nMULTI-AGENT SYSTEM ACTIVE: You have specialist sub-agents available: [{}]. \
+IMPORTANT: For research, analysis, marketing, data gathering, or any complex multi-step task, you MUST call spawn_subagent FIRST to delegate to the appropriate specialist agent. \
+Do NOT use web_search or run_python directly for tasks that sub-agents can handle. \
+Only use your own tools (web_search, run_python, etc.) for quick lookups or tasks not covered by any sub-agent.",
+                    agents
+                );
+                (prompt, "Use spawn_subagent to delegate research and analysis tasks to specialist agents.")
+            }
         } else {
-            String::new()
+            (String::new(), "Always use web_search when the user asks for research, information lookup, or current events.")
+        };
+
+        let tool_list = if is_realtime {
+            "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, send_task, wait_result, check_agents"
+        } else {
+            "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent"
         };
 
         let base_system = format!(
             "You are TigrimOS, an AI assistant with tool-calling capabilities. \
-You have access to these tools: web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill. \
-When the user asks you to search the web, analyze data, run code, or work with files, USE the appropriate tools. \
-Always use web_search when the user asks for research, information lookup, or current events. \
+You have access to these tools: {}. \
+{} \
 Use run_python for data analysis, charts, and calculations. \
 Use run_shell for system commands. \
 Provide helpful, detailed responses based on tool results.{}",
-            sub_agent_prompt
+            tool_list, research_instruction, sub_agent_prompt
         );
         let system_prompt = match self.build_project_system_prompt(runtime) {
             Some(project_prompt) => Some(format!("{}\n\n{}", base_system, project_prompt)),
@@ -699,99 +831,132 @@ Provide helpful, detailed responses based on tool results.{}",
             { state_log_lines.lock().unwrap().push(format!("[{}] === Session: {} ===", ts, sid)); }
             { state_log_lines.lock().unwrap().push(format!("[{}] USER: {}", ts, messages.last().and_then(|m| m["content"].as_str()).unwrap_or(""))); }
 
-            let result = call_with_tools(
-                &api_key,
-                &api_url,
-                &model,
-                messages,
-                system_prompt,
-                &sandbox_dir,
-                move |update| {
-                    match update {
-                        ToolUpdate::ToolCall { name, args } => {
-                            let mut calls = state_tool_calls.lock().unwrap();
-                            // Build a useful preview of args for display
-                            let args_preview = if name == "spawn_subagent" {
-                                let agent = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("?");
-                                let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                                let task_short = if task.len() > 80 { format!("{}...", &task[..80]) } else { task.to_string() };
-                                format!("\u{2192} {} | {}", agent, task_short)
-                            } else if name == "run_python" {
-                                let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
-                                let first_line = code.lines().next().unwrap_or("");
-                                format!("\u{2192} {}", first_line)
-                            } else if name == "web_search" {
-                                let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                                format!("\u{2192} \"{}\"" , q)
-                            } else if name == "fetch_url" {
-                                let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                                format!("\u{2192} {}", url)
-                            } else {
-                                String::new()
-                            };
-                            // Log tool call
-                            {
-                                let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
-                                let full_args = serde_json::to_string(&args).unwrap_or_default();
-                                let args_log = if full_args.len() > 500 { format!("{}...", &full_args[..500]) } else { full_args };
-                                { state_log_lines.lock().unwrap().push(format!("[{}] TOOL CALL: {}", ts, name)); }
-                                { state_log_lines.lock().unwrap().push(format!("  args: {}", args_log)); }
-                            }
-                            calls.push(ToolCallDisplay {
-                                name,
-                                status: "calling...".to_string(),
-                                args_preview,
-                                result_preview: String::new(),
-                            });
-                        }
-                        ToolUpdate::ToolResult { name, result } => {
-                            let mut calls = state_tool_calls.lock().unwrap();
-                            // Log tool result
-                            {
-                                let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
-                                let result_str = serde_json::to_string(&result).unwrap_or_default();
-                                let short_r = if result_str.len() > 1000 { format!("{}...", &result_str[..1000]) } else { result_str };
-                                { state_log_lines.lock().unwrap().push(format!("[{}] TOOL RESULT: {}", ts, name)); }
-                                { state_log_lines.lock().unwrap().push(format!("  {}", short_r)); }
-                            }
-                            // Update the last matching tool call
-                            if let Some(tc) = calls.iter_mut().rev().find(|c| c.name == name && c.status == "calling...") {
-                                tc.status = "done".to_string();
-                                // Build a short preview of the result
-                                let preview = result
-                                    .as_object()
-                                    .and_then(|o| {
-                                        o.get("stdout")
-                                            .or_else(|| o.get("content"))
-                                            .or_else(|| o.get("result"))
-                                            .or_else(|| o.get("body"))
-                                            .and_then(|v| v.as_str())
-                                    })
-                                    .unwrap_or("");
-                                let short = if preview.len() > 200 {
-                                    format!("{}...", &preview[..200])
-                                } else {
-                                    preview.to_string()
-                                };
-                                tc.result_preview = short;
-                            }
-                        }
-                        ToolUpdate::TextChunk(chunk) => {
-                            let mut text = state_text.lock().unwrap();
-                            text.push_str(&chunk);
-                        }
-                        ToolUpdate::Error(err) => {
+            // Clone for subagent listener (before on_update_cb moves the originals)
+            let subagent_log_lines = state_log_lines.clone();
+            let subagent_sid = sid.clone();
+            let subagent_ctx = ctx_cb.clone();
+
+            // Build the on_update closure (same logic for both realtime and manual modes)
+            let on_update_cb = move |update: ToolUpdate| {
+                match update {
+                    ToolUpdate::ToolCall { name, args } => {
+                        let mut calls = state_tool_calls.lock().unwrap();
+                        // Build a useful preview of args for display
+                        let args_preview = if name == "spawn_subagent" {
+                            let agent = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("?");
+                            let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+                            let task_short = if task.len() > 80 { format!("{}...", &task[..80]) } else { task.to_string() };
+                            format!("\u{2192} {} | {}", agent, task_short)
+                        } else if name == "send_task" {
+                            let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("?");
+                            let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+                            let task_short = if task.len() > 80 { format!("{}...", &task[..80]) } else { task.to_string() };
+                            format!("\u{2192} {} | {}", to, task_short)
+                        } else if name == "wait_result" {
+                            let from = args.get("from").and_then(|v| v.as_str()).unwrap_or("?");
+                            format!("\u{23F3} waiting for {}", from)
+                        } else if name == "run_python" {
+                            let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                            let first_line = code.lines().next().unwrap_or("");
+                            format!("\u{2192} {}", first_line)
+                        } else if name == "web_search" {
+                            let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                            format!("\u{2192} \"{}\"", q)
+                        } else if name == "fetch_url" {
+                            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                            format!("\u{2192} {}", url)
+                        } else {
+                            String::new()
+                        };
+                        // Log tool call
+                        {
                             let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
-                            { state_log_lines.lock().unwrap().push(format!("[{}] ERROR: {}", ts, err)); }
-                            let mut error = state_error.lock().unwrap();
-                            *error = Some(err);
+                            let full_args = serde_json::to_string(&args).unwrap_or_default();
+                            let args_log = if full_args.len() > 500 { format!("{}...", &full_args[..500]) } else { full_args };
+                            state_log_lines.lock().unwrap().push(format!("[{}] TOOL CALL: {}", ts, name));
+                            state_log_lines.lock().unwrap().push(format!("  args: {}", args_log));
+                        }
+                        calls.push(ToolCallDisplay {
+                            name,
+                            status: "calling...".to_string(),
+                            args_preview,
+                            result_preview: String::new(),
+                        });
+                    }
+                    ToolUpdate::ToolResult { name, result } => {
+                        let mut calls = state_tool_calls.lock().unwrap();
+                        {
+                            let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                            let result_str = serde_json::to_string(&result).unwrap_or_default();
+                            let short_r = if result_str.len() > 1000 { format!("{}...", &result_str[..1000]) } else { result_str };
+                            state_log_lines.lock().unwrap().push(format!("[{}] TOOL RESULT: {}", ts, name));
+                            state_log_lines.lock().unwrap().push(format!("  {}", short_r));
+                        }
+                        if let Some(tc) = calls.iter_mut().rev().find(|c| c.name == name && c.status == "calling...") {
+                            tc.status = "done".to_string();
+                            let preview = result
+                                .as_object()
+                                .and_then(|o| {
+                                    o.get("stdout")
+                                        .or_else(|| o.get("content"))
+                                        .or_else(|| o.get("result"))
+                                        .or_else(|| o.get("body"))
+                                        .and_then(|v| v.as_str())
+                                })
+                                .unwrap_or("");
+                            let short = if preview.len() > 200 { format!("{}...", &preview[..200]) } else { preview.to_string() };
+                            tc.result_preview = short;
                         }
                     }
-                    ctx_cb.request_repaint();
-                },
-                sub_agent_config,
-            )
-            .await;
+                    ToolUpdate::TextChunk(chunk) => {
+                        state_text.lock().unwrap().push_str(&chunk);
+                    }
+                    ToolUpdate::Error(err) => {
+                        let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                        state_log_lines.lock().unwrap().push(format!("[{}] ERROR: {}", ts, err));
+                        *state_error.lock().unwrap() = Some(err);
+                    }
+                }
+                ctx_cb.request_repaint();
+            };
+
+            // Spawn a listener for subagent activity so it appears in the chat log
+            let subagent_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let subagent_stop2 = subagent_stop.clone();
+            let subagent_listener = tokio::spawn(async move {
+                let mut rx = crate::server::services::toolbox::subscribe_subagent_log();
+                loop {
+                    if subagent_stop2.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
+                        Ok(Ok((session_id, agent_id, line))) => {
+                            if session_id == subagent_sid {
+                                subagent_log_lines.lock().unwrap().push(line);
+                                subagent_ctx.request_repaint();
+                            }
+                        }
+                        Ok(Err(_)) => break, // channel closed
+                        Err(_) => {} // timeout, loop again
+                    }
+                }
+            });
+
+            let result = if is_realtime {
+                call_with_tools_realtime(
+                    &api_key, &api_url, &model, messages, system_prompt, &sandbox_dir,
+                    on_update_cb, sub_agent_config,
+                ).await
+            } else {
+                call_with_tools(
+                    &api_key, &api_url, &model, messages, system_prompt, &sandbox_dir,
+                    on_update_cb, sub_agent_config,
+                ).await
+            };
+
+            // Stop the subagent log listener
+            subagent_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = subagent_listener.await;
 
             // If call_with_tools returned content and text is still empty, set it
             {
@@ -1175,6 +1340,7 @@ Provide helpful, detailed responses based on tool results.{}",
                     .color(egui::Color32::from_rgb(31, 35, 40)),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(8.0);
                 let btn = egui::Button::new(
                     egui::RichText::new("+ New").size(12.0).color(egui::Color32::WHITE),
                 )
@@ -1290,12 +1456,13 @@ Provide helpful, detailed responses based on tool results.{}",
                                         // Delete X button on the right
                                         let del_btn = ui.add(
                                             egui::Button::new(
-                                                egui::RichText::new("\u{2715}")
-                                                    .size(10.0)
+                                                egui::RichText::new("x")
+                                                    .size(12.0)
+                                                    .strong()
                                                     .color(egui::Color32::from_rgb(180, 186, 192)),
                                             )
                                             .fill(egui::Color32::TRANSPARENT)
-                                            .min_size(egui::vec2(16.0, 16.0)),
+                                            .min_size(egui::vec2(18.0, 18.0)),
                                         );
                                         if del_btn.clicked() {
                                             delete_id = Some(summary.id.clone());
@@ -1333,7 +1500,7 @@ Provide helpful, detailed responses based on tool results.{}",
                         });
 
                     let response = frame_resp.response.interact(egui::Sense::click());
-                    if response.clicked() {
+                    if response.clicked() && delete_id.is_none() {
                         select_id = Some(summary.id.clone());
                     }
                     response.context_menu(|ui| {
@@ -1350,14 +1517,13 @@ Provide helpful, detailed responses based on tool results.{}",
                     ui.add_space(3.0);
                 }
 
-                // Apply deferred actions
-                if let Some(id) = select_id {
+                // Apply deferred actions (delete takes priority over select)
+                if let Some(id) = delete_id {
+                    self.confirm_delete_id = Some(id);
+                } else if let Some(id) = select_id {
                     self.selected_session_id = Some(id);
                     self.scroll_to_bottom = true;
                     self.needs_refresh = true;
-                }
-                if let Some(id) = delete_id {
-                    self.confirm_delete_id = Some(id);
                 }
                 if let Some(id) = start_rename_id {
                     // Pre-fill rename text with current title
@@ -1380,7 +1546,7 @@ Provide helpful, detailed responses based on tool results.{}",
         // Handle delete confirmation
         self.delete_dialog(ui, runtime);
 
-        let Some(ref session) = self.selected_session else {
+        let Some(session) = self.selected_session.clone() else {
             let mut suggestion_clicked: Option<String> = None;
             ui.vertical_centered(|ui| {
                 ui.add_space(60.0);
@@ -1432,6 +1598,9 @@ Provide helpful, detailed responses based on tool results.{}",
             return;
         };
 
+        // Clone session id before entering closures to avoid borrow conflict
+        let session_id_for_gfx = session.id.clone();
+
         // Session header with project info
         ui.horizontal(|ui| {
             ui.heading(&session.title);
@@ -1468,12 +1637,28 @@ Provide helpful, detailed responses based on tool results.{}",
                     .corner_radius(6.0);
                     if ui.add(log_btn).on_hover_text("View agent activity log").clicked() {
                         self.show_log_panel = !self.show_log_panel;
+                        self.log_tab = 0;
                         self.log_session_id = Some(session.id.clone());
                         let log_path = std::path::Path::new("data")
                             .join("chat_logs")
                             .join(format!("{}.log", session.id));
                         self.log_content = std::fs::read_to_string(&log_path)
                             .unwrap_or_else(|_| "(No log yet -- send a message first)".to_string());
+                    }
+
+                    // Graphic button
+                    let gfx_btn = egui::Button::new(
+                        egui::RichText::new("\u{1F4CA} Graphic")
+                            .size(12.0)
+                            .color(egui::Color32::WHITE),
+                    )
+                    .fill(egui::Color32::from_rgb(99, 102, 241))
+                    .corner_radius(6.0);
+                    if ui.add(gfx_btn).on_hover_text("View agent network diagram").clicked() {
+                        self.show_log_panel = true;
+                        self.log_tab = 2;
+                        self.log_session_id = Some(session_id_for_gfx.clone());
+                        self.load_graphic_data(&session_id_for_gfx);
                     }
                     ui.add_space(8.0);
                     ui.label(
@@ -1554,9 +1739,33 @@ Provide helpful, detailed responses based on tool results.{}",
                                 self.log_agent_history = std::fs::read_to_string(&hist_path)
                                     .unwrap_or_else(|_| "(No agent history yet - sub-agents haven't been used in this session)".to_string());
                             }
+                            let tab2_color = if self.log_tab == 2 {
+                                egui::Color32::from_rgb(99, 102, 241)
+                            } else {
+                                egui::Color32::GRAY
+                            };
+                            if ui.add(egui::Button::new(
+                                egui::RichText::new("\u{1F4CA} Graphic").size(12.0).color(tab2_color)
+                            ).frame(self.log_tab == 2)).clicked() {
+                                self.log_tab = 2;
+                                self.load_graphic_data(log_sid);
+                            }
                         });
                         ui.separator();
 
+                        if self.log_tab == 2 {
+                            // Auto-reload graphic data while streaming (every 2 seconds)
+                            if self.streaming.is_some() {
+                                let now = ui.input(|i| i.time);
+                                if now - self.graphic_last_reload > 2.0 {
+                                    self.graphic_last_reload = now;
+                                    self.load_graphic_data(log_sid);
+                                }
+                                ui.ctx().request_repaint();
+                            }
+                            // Graphic monitor tab — renders inline, no scroll area
+                            self.render_graphic_monitor(ui);
+                        } else {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
                             .stick_to_bottom(true)
@@ -1589,51 +1798,80 @@ Provide helpful, detailed responses based on tool results.{}",
                                     }
                                 } else {
                                     // Agent history view (JSONL)
-                                    for line in self.log_agent_history.lines() {
-                                        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
-                                            let event = entry.get("event").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
-                                            let ts = entry.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
-                                            let ts_short = &ts.get(11..19).unwrap_or(ts);
-                                            let data = entry.get("data");
-                                            let (prefix_color, header) = match event {
-                                                "SUBAGENT_SPAWN" => {
-                                                    let agent = data.and_then(|d| d.get("agent_name")).and_then(|v| v.as_str()).unwrap_or("?");
-                                                    let role = data.and_then(|d| d.get("role")).and_then(|v| v.as_str()).unwrap_or("?");
-                                                    let depth = data.and_then(|d| d.get("depth")).and_then(|v| v.as_u64()).unwrap_or(0);
-                                                    let task = data.and_then(|d| d.get("task")).and_then(|v| v.as_str()).unwrap_or("");
-                                                    let task_short = if task.len() > 100 { &task[..100] } else { task };
-                                                    (egui::Color32::from_rgb(250, 176, 5),
-                                                     format!("[{}] \u{25B6} SPAWN {} ({}) depth={} | {}", ts_short, agent, role, depth, task_short))
-                                                }
-                                                "SUBAGENT_DONE" => {
-                                                    let agent = data.and_then(|d| d.get("agent_name")).and_then(|v| v.as_str()).unwrap_or("?");
-                                                    let tools = data.and_then(|d| d.get("tool_calls")).and_then(|v| v.as_u64()).unwrap_or(0);
-                                                    let files = data.and_then(|d| d.get("files_generated")).and_then(|v| v.as_u64()).unwrap_or(0);
-                                                    let preview = data.and_then(|d| d.get("result_preview")).and_then(|v| v.as_str()).unwrap_or("");
-                                                    let preview_short = if preview.len() > 80 { &preview[..80] } else { preview };
-                                                    (egui::Color32::from_rgb(34, 197, 94),
-                                                     format!("[{}] \u{2714} DONE  {} | tools={} files={} | {}", ts_short, agent, tools, files, preview_short))
-                                                }
-                                                _ => (egui::Color32::GRAY, format!("[{}] {} {:?}", ts_short, event, data))
-                                            };
-                                            ui.add(egui::Label::new(
-                                                egui::RichText::new(header)
-                                                    .size(11.5)
-                                                    .monospace()
-                                                    .color(prefix_color),
-                                            ).wrap());
-                                        } else {
-                                            // Fallback: show raw line
-                                            ui.add(egui::Label::new(
-                                                egui::RichText::new(line)
-                                                    .size(11.0)
-                                                    .monospace()
-                                                    .color(egui::Color32::GRAY),
-                                            ).wrap());
+                                    if self.log_agent_history.is_empty()
+                                        || self.log_agent_history.starts_with("(No agent history")
+                                    {
+                                        ui.label(
+                                            egui::RichText::new("(No activity recorded yet)")
+                                                .size(12.0)
+                                                .color(egui::Color32::GRAY),
+                                        );
+                                    } else {
+                                        for line in self.log_agent_history.lines() {
+                                            if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
+                                                let event = entry.get("event").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+                                                let ts = entry.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+                                                let ts_short = ts.get(11..19).unwrap_or(ts);
+                                                let data = entry.get("data");
+                                                let agent_id = data.and_then(|d| d.get("agent_id")).and_then(|v| v.as_str()).unwrap_or("main");
+
+                                                let (color, header) = match event {
+                                                    "TOOL_CALL" => {
+                                                        let tool = data.and_then(|d| d.get("tool")).and_then(|v| v.as_str()).unwrap_or("?");
+                                                        let args = data.and_then(|d| d.get("args_preview")).and_then(|v| v.as_str()).unwrap_or("");
+                                                        let args_short = if args.len() > 120 { &args[..120] } else { args };
+                                                        (egui::Color32::from_rgb(59, 130, 246),
+                                                         format!("[{}] {} > {} {}", ts_short, agent_id, tool, args_short))
+                                                    }
+                                                    "TOOL_RESULT" => {
+                                                        let tool = data.and_then(|d| d.get("tool")).and_then(|v| v.as_str()).unwrap_or("?");
+                                                        let ok = data.and_then(|d| d.get("ok")).and_then(|v| v.as_bool()).unwrap_or(false);
+                                                        let preview = data.and_then(|d| d.get("result_preview")).and_then(|v| v.as_str()).unwrap_or("");
+                                                        let preview_short = if preview.len() > 100 { &preview[..100] } else { preview };
+                                                        let status = if ok { "ok" } else { "ERR" };
+                                                        (if ok { egui::Color32::from_rgb(34, 197, 94) } else { egui::Color32::from_rgb(239, 68, 68) },
+                                                         format!("[{}] {} < {} [{}] {}", ts_short, agent_id, tool, status, preview_short))
+                                                    }
+                                                    "SUBAGENT_SPAWN" => {
+                                                        let agent = data.and_then(|d| d.get("agent_name")).and_then(|v| v.as_str()).unwrap_or("?");
+                                                        let role = data.and_then(|d| d.get("role")).and_then(|v| v.as_str()).unwrap_or("?");
+                                                        let depth = data.and_then(|d| d.get("depth")).and_then(|v| v.as_u64()).unwrap_or(0);
+                                                        let task = data.and_then(|d| d.get("task")).and_then(|v| v.as_str()).unwrap_or("");
+                                                        let task_short = if task.len() > 100 { &task[..100] } else { task };
+                                                        (egui::Color32::from_rgb(250, 176, 5),
+                                                         format!("[{}] SPAWN {} ({}) depth={} | {}", ts_short, agent, role, depth, task_short))
+                                                    }
+                                                    "SUBAGENT_DONE" => {
+                                                        let agent = data.and_then(|d| d.get("agent_name")).and_then(|v| v.as_str()).unwrap_or("?");
+                                                        let tools = data.and_then(|d| d.get("tool_calls")).and_then(|v| v.as_u64()).unwrap_or(0);
+                                                        let files = data.and_then(|d| d.get("files_generated")).and_then(|v| v.as_u64()).unwrap_or(0);
+                                                        let preview = data.and_then(|d| d.get("result_preview")).and_then(|v| v.as_str()).unwrap_or("");
+                                                        let preview_short = if preview.len() > 80 { &preview[..80] } else { preview };
+                                                        (egui::Color32::from_rgb(34, 197, 94),
+                                                         format!("[{}] DONE  {} | tools={} files={} | {}", ts_short, agent, tools, files, preview_short))
+                                                    }
+                                                    _ => (egui::Color32::GRAY, format!("[{}] {} {:?}", ts_short, event, data))
+                                                };
+                                                ui.add(egui::Label::new(
+                                                    egui::RichText::new(header)
+                                                        .size(11.5)
+                                                        .monospace()
+                                                        .color(color),
+                                                ).wrap());
+                                            } else {
+                                                // Fallback: show raw line
+                                                ui.add(egui::Label::new(
+                                                    egui::RichText::new(line)
+                                                        .size(11.0)
+                                                        .monospace()
+                                                        .color(egui::Color32::GRAY),
+                                                ).wrap());
+                                            }
                                         }
                                     }
                                 }
                             });
+                        } // close else (non-graphic tabs)
                     });
                 self.show_log_panel = open;
             }
@@ -2153,6 +2391,658 @@ Provide helpful, detailed responses based on tool results.{}",
         if !open {
             self.confirm_delete_id = None;
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Graphic monitor — load data from agent history
+    // -----------------------------------------------------------------
+
+    fn load_graphic_data(&mut self, session_id: &str) {
+        self.graphic_agents.clear();
+        self.graphic_edges.clear();
+        self.graphic_signals.clear();
+        self.graphic_loaded_config = session_id.to_string();
+
+        // Read agent history JSONL
+        let hist_path = std::path::Path::new("data")
+            .join("agent_history")
+            .join(session_id)
+            .join("spawn.jsonl");
+        let hist = std::fs::read_to_string(&hist_path).unwrap_or_default();
+
+        // Collect agents, tool usage, and connections from history
+        let mut agent_map: std::collections::HashMap<String, (String, String, Vec<String>)> =
+            std::collections::HashMap::new(); // id -> (role, status, tools)
+        let mut edge_set: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+
+        // Always add "main" orchestrator
+        agent_map
+            .entry("main".to_string())
+            .or_insert_with(|| ("orchestrator".to_string(), "idle".to_string(), Vec::new()));
+
+        for line in hist.lines() {
+            let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let event = entry
+                .get("event")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let data = entry.get("data");
+
+            match event {
+                "SUBAGENT_SPAWN" => {
+                    let name = data
+                        .and_then(|d| d.get("agent_name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let role = data
+                        .and_then(|d| d.get("role"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("worker");
+                    let parent = data
+                        .and_then(|d| d.get("parent"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("main");
+                    agent_map
+                        .entry(name.to_string())
+                        .or_insert_with(|| (role.to_string(), "working".to_string(), Vec::new()));
+                    edge_set.insert((parent.to_string(), name.to_string()));
+                }
+                "SUBAGENT_DONE" => {
+                    let name = data
+                        .and_then(|d| d.get("agent_name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    if let Some(entry) = agent_map.get_mut(name) {
+                        entry.1 = "done".to_string();
+                    }
+                }
+                "TOOL_CALL" => {
+                    let agent_id = data
+                        .and_then(|d| d.get("agent_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("main");
+                    let tool = data
+                        .and_then(|d| d.get("tool"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let ts = entry
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    agent_map
+                        .entry(agent_id.to_string())
+                        .or_insert_with(|| {
+                            ("worker".to_string(), "working".to_string(), Vec::new())
+                        });
+                    if let Some(e) = agent_map.get_mut(agent_id) {
+                        e.2.push(tool.to_string());
+                        e.1 = "working".to_string();
+                    }
+
+                    // Extract target from args_preview for send_task / wait_result
+                    let kind = tool_to_link_kind(tool);
+                    let mut target_agent = String::new();
+                    if tool == "send_task" || tool == "wait_result" || tool == "spawn_subagent" {
+                        let args_str = data
+                            .and_then(|d| d.get("args_preview"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        // Try to parse agent name from args_preview JSON
+                        if let Ok(args_val) = serde_json::from_str::<serde_json::Value>(args_str) {
+                            // send_task has "to" or target in the args
+                            if let Some(t) = args_val.get("to").and_then(|v| v.as_str()) {
+                                target_agent = t.to_string();
+                            } else if let Some(t) = args_val.get("from").and_then(|v| v.as_str()) {
+                                target_agent = t.to_string();
+                            } else if let Some(t) = args_val.get("agent").and_then(|v| v.as_str()) {
+                                target_agent = t.to_string();
+                            }
+                        }
+                    }
+
+                    if !target_agent.is_empty() {
+                        if tool == "wait_result" {
+                            edge_set.insert((target_agent.clone(), agent_id.to_string()));
+                        } else {
+                            edge_set.insert((agent_id.to_string(), target_agent.clone()));
+                        }
+                    }
+
+                    // Add signal
+                    let ts_f64 = chrono::DateTime::parse_from_rfc3339(&ts)
+                        .map(|dt| dt.timestamp() as f64)
+                        .unwrap_or(0.0);
+                    self.graphic_signals.push(GraphicSignal {
+                        from: agent_id.to_string(),
+                        to: target_agent,
+                        kind: kind.to_string(),
+                        tool: tool.to_string(),
+                        started_at: ts_f64,
+                    });
+                }
+                "TOOL_RESULT" => {
+                    let agent_id = data
+                        .and_then(|d| d.get("agent_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("main");
+                    let tool = data
+                        .and_then(|d| d.get("tool"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    // Extract target from send_task results (agentId in result_preview)
+                    if tool == "send_task" {
+                        let result_str = data
+                            .and_then(|d| d.get("result_preview"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if let Ok(res_val) = serde_json::from_str::<serde_json::Value>(result_str) {
+                            if let Some(target) = res_val.get("agentId").and_then(|v| v.as_str()) {
+                                edge_set.insert((agent_id.to_string(), target.to_string()));
+                                // Also register the target agent
+                                agent_map
+                                    .entry(target.to_string())
+                                    .or_insert_with(|| {
+                                        let name = res_val.get("agentName")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or(target);
+                                        (name.to_string(), "working".to_string(), Vec::new())
+                                    });
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Layout agents: orchestrator at top center, workers in grid below
+        let names: Vec<String> = {
+            let mut n: Vec<String> = agent_map.keys().cloned().collect();
+            // Put orchestrators first
+            n.sort_by(|a, b| {
+                let ra = &agent_map[a].0;
+                let rb = &agent_map[b].0;
+                let oa = if ra == "orchestrator" { 0 } else { 1 };
+                let ob = if rb == "orchestrator" { 0 } else { 1 };
+                oa.cmp(&ob).then(a.cmp(b))
+            });
+            n
+        };
+
+        let total = names.len();
+        let cols = (total as f32).sqrt().ceil().max(1.0) as usize;
+        let canvas_w: f32 = 700.0;
+        let spacing_x = canvas_w / (cols as f32 + 1.0);
+        let mut row = 0usize;
+        let mut col = 0usize;
+
+        for (i, name) in names.iter().enumerate() {
+            let (ref role, ref status, ref _tools) = agent_map[name];
+            let is_orch = role == "orchestrator";
+
+            if is_orch {
+                // Orchestrator centered at top
+                let x = canvas_w / 2.0 - 50.0;
+                let y = 30.0;
+                self.graphic_agents.push(GraphicAgent {
+                    id: name.clone(),
+                    name: name.clone(),
+                    role: role.clone(),
+                    status: status.clone(),
+                    x,
+                    y,
+                    color: agent_node_color(i),
+                    last_tool: _tools.last().cloned().unwrap_or_default(),
+                });
+            } else {
+                let x = spacing_x * (col as f32 + 1.0) - 50.0;
+                let y = 140.0 + row as f32 * 100.0;
+                self.graphic_agents.push(GraphicAgent {
+                    id: name.clone(),
+                    name: name.clone(),
+                    role: role.clone(),
+                    status: status.clone(),
+                    x,
+                    y,
+                    color: agent_node_color(i),
+                    last_tool: _tools.last().cloned().unwrap_or_default(),
+                });
+                col += 1;
+                if col >= cols {
+                    col = 0;
+                    row += 1;
+                }
+            }
+        }
+
+        // Build edges
+        for (from, to) in &edge_set {
+            let kind = "delegate";
+            self.graphic_edges.push(GraphicEdge {
+                from: from.clone(),
+                to: to.clone(),
+                label: String::new(),
+                protocol: kind.to_string(),
+                state: "idle".to_string(),
+            });
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Graphic monitor — render network diagram with egui painter
+    // -----------------------------------------------------------------
+
+    fn render_graphic_monitor(&mut self, ui: &mut egui::Ui) {
+        if self.graphic_agents.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(
+                    egui::RichText::new("No agent activity recorded yet.")
+                        .size(14.0)
+                        .color(egui::Color32::GRAY),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("Send a message with sub-agents to see the network diagram.")
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(120, 120, 120)),
+                );
+            });
+            return;
+        }
+
+        // Controls
+        ui.horizontal(|ui| {
+            if ui.small_button("\u{1F504} Reload").clicked() {
+                let sid = self.graphic_loaded_config.clone();
+                self.load_graphic_data(&sid);
+            }
+            ui.separator();
+            if ui.small_button("Zoom +").clicked() {
+                self.graphic_zoom = (self.graphic_zoom + 0.1).min(3.0);
+            }
+            if ui.small_button("Zoom -").clicked() {
+                self.graphic_zoom = (self.graphic_zoom - 0.1).max(0.3);
+            }
+            if ui.small_button("Reset View").clicked() {
+                self.graphic_zoom = 1.0;
+                self.graphic_pan = egui::Vec2::ZERO;
+            }
+            ui.separator();
+            // Legend
+            let legend = [
+                ("Orchestrator", egui::Color32::from_rgb(99, 102, 241)),
+                ("Working", egui::Color32::from_rgb(34, 197, 94)),
+                ("Done", egui::Color32::from_rgb(156, 163, 175)),
+                ("Idle", egui::Color32::from_rgb(75, 85, 99)),
+            ];
+            for (label, color) in legend {
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(8.0, 8.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter().circle_filled(rect.center(), 4.0, color);
+                ui.label(egui::RichText::new(label).size(10.0).color(egui::Color32::GRAY));
+            }
+        });
+        ui.separator();
+
+        // Canvas area
+        let available = ui.available_size();
+        let canvas_size = egui::vec2(available.x.max(200.0), available.y.max(200.0));
+        let (response, painter) =
+            ui.allocate_painter(canvas_size, egui::Sense::click_and_drag());
+        let canvas_rect = response.rect;
+
+        // Handle pan via drag
+        if response.dragged() {
+            self.graphic_pan += response.drag_delta();
+        }
+
+        // Background
+        painter.rect_filled(
+            canvas_rect,
+            4.0,
+            egui::Color32::from_rgb(15, 20, 30),
+        );
+
+        let zoom = self.graphic_zoom;
+        let pan = self.graphic_pan;
+        let origin = canvas_rect.min.to_vec2() + pan;
+
+        // Build position lookup
+        let positions: std::collections::HashMap<String, egui::Pos2> = self
+            .graphic_agents
+            .iter()
+            .map(|a| {
+                let pos = egui::pos2(
+                    origin.x + a.x * zoom,
+                    origin.y + a.y * zoom,
+                );
+                (a.id.clone(), pos)
+            })
+            .collect();
+
+        // Build node rects lookup for edge clipping
+        let node_w = 100.0 * zoom;
+        let node_h = 60.0 * zoom;
+        let node_rects: std::collections::HashMap<String, egui::Rect> = positions
+            .iter()
+            .map(|(id, &pos)| {
+                (id.clone(), egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h)))
+            })
+            .collect();
+
+        // Helper: compute connection point on node rect border toward a target point
+        let edge_point = |rect: &egui::Rect, target: egui::Pos2| -> egui::Pos2 {
+            let center = rect.center();
+            let dx = target.x - center.x;
+            let dy = target.y - center.y;
+            if dx.abs() < 0.001 && dy.abs() < 0.001 {
+                return center;
+            }
+            let hw = rect.width() / 2.0;
+            let hh = rect.height() / 2.0;
+            // Scale to hit the border
+            let sx = if dx.abs() > 0.001 { hw / dx.abs() } else { f32::MAX };
+            let sy = if dy.abs() > 0.001 { hh / dy.abs() } else { f32::MAX };
+            let s = sx.min(sy);
+            egui::pos2(center.x + dx * s, center.y + dy * s)
+        };
+
+        // Draw edges
+        for edge in &self.graphic_edges {
+            let Some(from_rect) = node_rects.get(&edge.from) else { continue };
+            let Some(to_rect) = node_rects.get(&edge.to) else { continue };
+
+            let from_pt = edge_point(from_rect, to_rect.center());
+            let to_pt = edge_point(to_rect, from_rect.center());
+
+            let edge_color = link_kind_color(&edge.protocol);
+            let stroke = egui::Stroke::new(1.5 * zoom, edge_color.gamma_multiply(0.7));
+            painter.line_segment([from_pt, to_pt], stroke);
+
+            // Arrow head at to_pt
+            let dir = (to_pt - from_pt).normalized();
+            let perp = egui::vec2(-dir.y, dir.x);
+            let arrow_size = 7.0 * zoom;
+            let tip = to_pt;
+            let left = tip - dir * arrow_size + perp * arrow_size * 0.4;
+            let right = tip - dir * arrow_size - perp * arrow_size * 0.4;
+            painter.add(egui::Shape::convex_polygon(
+                vec![tip, left, right],
+                edge_color.gamma_multiply(0.8),
+                egui::Stroke::NONE,
+            ));
+        }
+
+        // Draw animated signal dots along edges
+        let time = ui.input(|i| i.time);
+        for signal in &self.graphic_signals {
+            if signal.from.is_empty() || signal.to.is_empty() {
+                continue;
+            }
+            let Some(from_rect) = node_rects.get(&signal.from) else { continue };
+            let Some(to_rect) = node_rects.get(&signal.to) else { continue };
+
+            let from_pt = edge_point(from_rect, to_rect.center());
+            let to_pt = edge_point(to_rect, from_rect.center());
+
+            // Animate: cycle every 4 seconds
+            let t = ((time - signal.started_at) % 4.0 / 4.0) as f32;
+            let dot_pos = from_pt + (to_pt - from_pt) * t;
+            let color = link_kind_color(&signal.kind);
+            painter.circle_filled(dot_pos, 3.5 * zoom, color);
+        }
+
+        // Draw agent nodes
+        for agent in &self.graphic_agents {
+            let Some(&pos) = positions.get(&agent.id) else { continue };
+
+            let node_rect = egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h));
+
+            // Clip check
+            if !canvas_rect.intersects(node_rect) {
+                continue;
+            }
+
+            // Node background
+            let bg_color = match agent.status.as_str() {
+                "working" => agent.color.gamma_multiply(0.3),
+                "done" => egui::Color32::from_rgb(30, 40, 30),
+                _ => egui::Color32::from_rgb(25, 30, 45),
+            };
+            painter.rect_filled(node_rect, 6.0 * zoom, bg_color);
+            painter.rect_stroke(
+                node_rect,
+                6.0 * zoom,
+                egui::Stroke::new(
+                    if agent.status == "working" { 2.0 } else { 1.0 } * zoom,
+                    if agent.status == "working" {
+                        agent.color
+                    } else if agent.status == "done" {
+                        egui::Color32::from_rgb(34, 197, 94)
+                    } else {
+                        egui::Color32::from_rgb(75, 85, 99)
+                    },
+                ),
+                egui::epaint::StrokeKind::Middle,
+            );
+
+            // Working glow pulse
+            if agent.status == "working" {
+                let pulse = (0.15 + 0.1 * (time * 2.0).sin() as f32).max(0.0);
+                painter.rect_stroke(
+                    node_rect.expand(2.0 * zoom),
+                    8.0 * zoom,
+                    egui::Stroke::new(
+                        1.5 * zoom,
+                        agent.color.gamma_multiply(pulse),
+                    ),
+                    egui::epaint::StrokeKind::Outside,
+                );
+            }
+
+            // Role icon (use text symbols that egui can render)
+            let icon = match agent.role.as_str() {
+                "orchestrator" => "\u{2605}", // star
+                "worker" => "\u{25A0}",       // filled square
+                "peer" => "\u{25C6}",         // diamond
+                "human" => "\u{25CF}",        // filled circle
+                _ => "\u{25CB}",              // open circle
+            };
+            let icon_pos = pos + egui::vec2(6.0 * zoom, 6.0 * zoom);
+            painter.text(
+                icon_pos,
+                egui::Align2::LEFT_TOP,
+                icon,
+                egui::FontId::proportional(12.0 * zoom),
+                egui::Color32::WHITE,
+            );
+
+            // Agent name
+            let name_pos = pos + egui::vec2(22.0 * zoom, 6.0 * zoom);
+            let display_name = if agent.name.len() > 14 {
+                format!("{}..", &agent.name[..12])
+            } else {
+                agent.name.clone()
+            };
+            painter.text(
+                name_pos,
+                egui::Align2::LEFT_TOP,
+                &display_name,
+                egui::FontId::monospace(10.0 * zoom),
+                egui::Color32::WHITE,
+            );
+
+            // Status + last tool
+            let status_color = match agent.status.as_str() {
+                "working" => egui::Color32::from_rgb(34, 197, 94),
+                "done" => egui::Color32::from_rgb(156, 163, 175),
+                _ => egui::Color32::from_rgb(75, 85, 99),
+            };
+            let status_text = if !agent.last_tool.is_empty() {
+                format!("{} > {}", agent.status, agent.last_tool)
+            } else {
+                agent.status.clone()
+            };
+            let status_display = if status_text.len() > 20 {
+                format!("{}..", &status_text[..18])
+            } else {
+                status_text
+            };
+            painter.text(
+                pos + egui::vec2(6.0 * zoom, 32.0 * zoom),
+                egui::Align2::LEFT_TOP,
+                &status_display,
+                egui::FontId::monospace(8.5 * zoom),
+                status_color,
+            );
+
+            // Done checkmark
+            if agent.status == "done" {
+                painter.text(
+                    pos + egui::vec2(node_w - 14.0 * zoom, 6.0 * zoom),
+                    egui::Align2::LEFT_TOP,
+                    "\u{2713}",
+                    egui::FontId::proportional(14.0 * zoom),
+                    egui::Color32::from_rgb(34, 197, 94),
+                );
+            }
+        }
+
+        // Scoreboard overlay on canvas
+        let total = self.graphic_agents.len();
+        let working = self.graphic_agents.iter().filter(|a| a.status == "working").count();
+        let done = self.graphic_agents.iter().filter(|a| a.status == "done").count();
+        let idle = total - working - done;
+        let score_text = format!(
+            "Agents: {}  |  Working: {}  |  Done: {}  |  Idle: {}  |  Edges: {}",
+            total, working, done, idle, self.graphic_edges.len()
+        );
+        painter.text(
+            canvas_rect.min + egui::vec2(8.0, 8.0),
+            egui::Align2::LEFT_TOP,
+            &score_text,
+            egui::FontId::monospace(10.0),
+            egui::Color32::from_rgb(156, 163, 175),
+        );
+
+        // Request repaint for animation
+        if working > 0 || !self.graphic_signals.is_empty() {
+            ui.ctx().request_repaint();
+        }
+
+        // ── Agent summary table at bottom ──
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new("Agent Summary")
+                .size(12.0)
+                .strong()
+                .color(egui::Color32::WHITE),
+        );
+        ui.add_space(2.0);
+
+        egui::ScrollArea::vertical()
+            .id_salt("graphic_summary_scroll")
+            .max_height(140.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // Collect tool counts per agent
+                let tool_counts: std::collections::HashMap<String, std::collections::HashMap<String, usize>> = {
+                    let mut m: std::collections::HashMap<String, std::collections::HashMap<String, usize>> = std::collections::HashMap::new();
+                    for sig in &self.graphic_signals {
+                        *m.entry(sig.from.clone())
+                            .or_default()
+                            .entry(sig.tool.clone())
+                            .or_insert(0) += 1;
+                    }
+                    m
+                };
+
+                // Connections per agent
+                let connections: std::collections::HashMap<String, Vec<String>> = {
+                    let mut m: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+                    for edge in &self.graphic_edges {
+                        m.entry(edge.from.clone()).or_default().push(edge.to.clone());
+                    }
+                    m
+                };
+
+                for agent in &self.graphic_agents {
+                    ui.horizontal(|ui| {
+                        // Status dot
+                        let dot_color = match agent.status.as_str() {
+                            "working" => egui::Color32::from_rgb(34, 197, 94),
+                            "done" => egui::Color32::from_rgb(156, 163, 175),
+                            _ => egui::Color32::from_rgb(75, 85, 99),
+                        };
+                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                        ui.painter().circle_filled(dot_rect.center(), 4.0, dot_color);
+
+                        // Role icon
+                        let icon = match agent.role.as_str() {
+                            "orchestrator" => "\u{2605}",
+                            "worker" => "\u{25A0}",
+                            _ => "\u{25CB}",
+                        };
+                        ui.label(egui::RichText::new(icon).size(11.0));
+
+                        // Name
+                        ui.label(
+                            egui::RichText::new(&agent.name)
+                                .size(11.0)
+                                .strong()
+                                .color(agent.color),
+                        );
+
+                        // Status
+                        ui.label(
+                            egui::RichText::new(format!("[{}]", agent.status))
+                                .size(10.0)
+                                .color(dot_color),
+                        );
+
+                        // Tool usage summary
+                        if let Some(tools) = tool_counts.get(&agent.id) {
+                            let tool_summary: Vec<String> = tools
+                                .iter()
+                                .map(|(t, c)| format!("{}({})", t, c))
+                                .collect();
+                            let summary = tool_summary.join(", ");
+                            let display = if summary.len() > 60 {
+                                format!("{}..", &summary[..58])
+                            } else {
+                                summary
+                            };
+                            ui.label(
+                                egui::RichText::new(display)
+                                    .size(10.0)
+                                    .monospace()
+                                    .color(egui::Color32::from_rgb(150, 160, 180)),
+                            );
+                        }
+
+                        // Connections
+                        if let Some(conns) = connections.get(&agent.id) {
+                            let conn_str = format!("\u{2192} {}", conns.join(", "));
+                            ui.label(
+                                egui::RichText::new(conn_str)
+                                    .size(10.0)
+                                    .color(egui::Color32::from_rgb(245, 158, 11)),
+                            );
+                        }
+                    });
+                }
+            });
     }
 }
 

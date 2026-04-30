@@ -10,6 +10,8 @@ pub mod terminal;
 pub mod local_files;
 pub mod python;
 pub mod tools;
+pub mod clawhub;
+pub mod remote;
 
 use std::sync::Arc;
 use axum::Router;
@@ -28,4 +30,6 @@ pub fn build_api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .nest("/local-files", local_files::router())
         .nest("/python", python::router())
         .nest("/tools", tools::router())
+        .nest("/clawhub", clawhub::router())
+        .nest("/remote", remote::router())
 }

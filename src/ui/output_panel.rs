@@ -68,7 +68,7 @@ impl OutputPanel {
     fn is_text(path: &str) -> bool {
         matches!(
             Self::ext(path).to_lowercase().as_str(),
-            "txt" | "yaml" | "yml" | "xml" | "py" | "js" | "ts" | "rs"
+            "txt" | "yaml" | "yml" | "xml" | "py" | "js" | "jsx" | "ts" | "tsx" | "rs" | "css" | "scss"
         )
     }
 
@@ -84,9 +84,28 @@ impl OutputPanel {
         path.split('/').last().unwrap_or(path)
     }
 
-    /// Resolve relative path (e.g. "output_file/chart.png") to absolute
+    /// Resolve relative path (e.g. "output_file/chart.png") to absolute.
+    /// Tries the path as-is first, then resolves relative to common sandbox dirs.
     fn full_path(rel: &str) -> PathBuf {
-        PathBuf::from(rel)
+        let p = PathBuf::from(rel);
+        if p.exists() {
+            return p;
+        }
+        // Try resolving relative to sandbox dir
+        let sandbox_dir = crate::server::data::get_sandbox_dir_sync();
+        let resolved = PathBuf::from(&sandbox_dir).join(rel);
+        if resolved.exists() {
+            return resolved;
+        }
+        // Try common fallback locations
+        for prefix in &["sandbox", ".", "/tmp/tigrimos_sandbox"] {
+            let candidate = PathBuf::from(prefix).join(rel);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+        // Return original path even if not found
+        p
     }
 
     fn file_icon(path: &str) -> &'static str {

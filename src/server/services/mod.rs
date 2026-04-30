@@ -2,3 +2,8 @@ pub mod socket;
 pub mod scheduler;
 pub mod toolbox;
 pub mod skill_synthesizer;
+pub mod protocols;
+pub mod clawhub;
+pub mod mcp;
+pub mod tunnel;
+pub mod compact;
