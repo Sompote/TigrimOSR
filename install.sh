@@ -51,12 +51,12 @@ select_location() {
     echo "  2) Applications Support (~/Library/Application Support/$APP_NAME)"
     echo "  3) Custom location"
     echo ""
-    read -rp "Select [1-3] (default: 1): " choice
+    read -rp "Select [1-3] (default: 1): " choice </dev/tty
 
     case "$choice" in
         2) INSTALL_DIR="$HOME/Library/Application Support/$APP_NAME" ;;
         3)
-            read -rp "Enter full path: " custom_path
+            read -rp "Enter full path: " custom_path </dev/tty
             if [ -z "$custom_path" ]; then
                 echo -e "${RED}No path provided. Aborting.${NC}"
                 exit 1
@@ -81,6 +81,11 @@ clone_repo() {
     else
         echo ""
         echo -e "${BLUE}Cloning TigrimOS...${NC}"
+        # Remove existing non-git directory if present
+        if [ -d "$INSTALL_DIR" ]; then
+            echo -e "${YELLOW}Removing existing non-git directory...${NC}"
+            rm -rf "$INSTALL_DIR"
+        fi
         mkdir -p "$(dirname "$INSTALL_DIR")"
         git clone "$REPO_URL" "$INSTALL_DIR"
         cd "$INSTALL_DIR"
@@ -90,6 +95,7 @@ clone_repo() {
 
 # ── Build ──
 build_app() {
+    cd "$INSTALL_DIR"
     echo ""
     echo -e "${BLUE}Building TigrimOS (release mode)...${NC}"
     echo "This may take a few minutes on first build."
@@ -171,7 +177,7 @@ PLIST
 
     # ── Copy to /Applications ──
     echo ""
-    read -rp "Copy $APP_NAME.app to /Applications? [Y/n]: " copy_choice
+    read -rp "Copy $APP_NAME.app to /Applications? [Y/n]: " copy_choice </dev/tty
     if [[ "$copy_choice" != "n" && "$copy_choice" != "N" ]]; then
         if [ -d "/Applications/$APP_NAME.app" ]; then
             rm -rf "/Applications/$APP_NAME.app"
@@ -200,7 +206,7 @@ finish() {
     echo "  Or:      $INSTALL_DIR/target/release/$BINARY_NAME"
     echo ""
 
-    read -rp "Launch $APP_NAME now? [Y/n]: " launch
+    read -rp "Launch $APP_NAME now? [Y/n]: " launch </dev/tty
     if [[ "$launch" != "n" && "$launch" != "N" ]]; then
         if [ -d "/Applications/$APP_NAME.app" ]; then
             open "/Applications/$APP_NAME.app"

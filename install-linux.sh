@@ -57,7 +57,7 @@ check_prereqs() {
         echo "  Fedora:        sudo dnf install libxcb-devel libxkbcommon-devel gtk3-devel"
         echo "  Arch:          sudo pacman -S libxcb libxkbcommon gtk3"
         echo ""
-        read -rp "Continue anyway? [Y/n]: " cont
+        read -rp "Continue anyway? [Y/n]: " cont </dev/tty
         if [[ "$cont" == "n" || "$cont" == "N" ]]; then
             exit 1
         fi
@@ -75,12 +75,12 @@ select_location() {
     echo "  2) Opt directory        (/opt/$APP_NAME)"
     echo "  3) Custom location"
     echo ""
-    read -rp "Select [1-3] (default: 1): " choice
+    read -rp "Select [1-3] (default: 1): " choice </dev/tty
 
     case "$choice" in
         2) INSTALL_DIR="/opt/$APP_NAME" ;;
         3)
-            read -rp "Enter full path: " custom_path
+            read -rp "Enter full path: " custom_path </dev/tty
             if [ -z "$custom_path" ]; then
                 echo -e "${RED}No path provided. Aborting.${NC}"
                 exit 1
@@ -105,6 +105,11 @@ clone_repo() {
     else
         echo ""
         echo -e "${BLUE}Cloning TigrimOS...${NC}"
+        # Remove existing non-git directory if present
+        if [ -d "$INSTALL_DIR" ]; then
+            echo -e "${YELLOW}Removing existing non-git directory...${NC}"
+            rm -rf "$INSTALL_DIR"
+        fi
         mkdir -p "$(dirname "$INSTALL_DIR")"
         git clone "$REPO_URL" "$INSTALL_DIR"
         cd "$INSTALL_DIR"
@@ -114,6 +119,7 @@ clone_repo() {
 
 # ── Build ──
 build_app() {
+    cd "$INSTALL_DIR"
     echo ""
     echo -e "${BLUE}Building TigrimOS (release mode)...${NC}"
     echo "This may take a few minutes on first build."
@@ -150,7 +156,7 @@ create_desktop_entry() {
     local DIST_DIR="$INSTALL_DIR/dist"
 
     echo ""
-    read -rp "Create application menu entry (.desktop)? [Y/n]: " create_entry
+    read -rp "Create application menu entry (.desktop)? [Y/n]: " create_entry </dev/tty
     if [[ "$create_entry" == "n" || "$create_entry" == "N" ]]; then
         return
     fi
@@ -189,7 +195,7 @@ DESKTOP
     echo -e "${GREEN}[OK]${NC} Application menu entry created"
 
     # Desktop shortcut
-    read -rp "Create desktop shortcut? [Y/n]: " create_shortcut
+    read -rp "Create desktop shortcut? [Y/n]: " create_shortcut </dev/tty
     if [[ "$create_shortcut" != "n" && "$create_shortcut" != "N" ]]; then
         local DESKTOP_FILE="$HOME/Desktop/tigrimos.desktop"
         cp "$DESKTOP_DIR/tigrimos.desktop" "$DESKTOP_FILE"
@@ -207,7 +213,7 @@ add_to_path() {
     local DIST_DIR="$INSTALL_DIR/dist"
 
     echo ""
-    read -rp "Add tigrimos to PATH (symlink to ~/.local/bin)? [Y/n]: " add_path
+    read -rp "Add tigrimos to PATH (symlink to ~/.local/bin)? [Y/n]: " add_path </dev/tty
     if [[ "$add_path" == "n" || "$add_path" == "N" ]]; then
         return
     fi
@@ -240,7 +246,7 @@ finish() {
     fi
     echo ""
 
-    read -rp "Launch $APP_NAME now? [Y/n]: " launch
+    read -rp "Launch $APP_NAME now? [Y/n]: " launch </dev/tty
     if [[ "$launch" != "n" && "$launch" != "N" ]]; then
         nohup "$DIST_DIR/$BINARY_NAME" &>/dev/null &
         echo -e "${GREEN}Launched!${NC}"
