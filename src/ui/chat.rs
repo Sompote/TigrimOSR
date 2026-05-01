@@ -52,6 +52,8 @@ struct StreamingState {
     files: Arc<Mutex<Vec<String>>>,
     /// Log lines for agent activity
     log_lines: Arc<Mutex<Vec<String>>>,
+    /// Pending tool approval: (tool_name, args_preview)
+    pending_approval: Arc<Mutex<Option<(String, String)>>>,
 }
 
 impl StreamingState {
@@ -63,6 +65,7 @@ impl StreamingState {
             tool_calls: Arc::new(Mutex::new(Vec::new())),
             files: Arc::new(Mutex::new(Vec::new())),
             log_lines: Arc::new(Mutex::new(Vec::new())),
+            pending_approval: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -346,12 +349,12 @@ fn tool_to_link_kind(tool: &str) -> &'static str {
 
 pub struct ChatView {
     sessions: Vec<ChatSessionSummary>,
-    selected_session_id: Option<String>,
+    pub selected_session_id: Option<String>,
     selected_session: Option<ChatSession>,
     input_text: String,
     rename_text: String,
     renaming_session_id: Option<String>,
-    needs_refresh: bool,
+    pub needs_refresh: bool,
     scroll_to_bottom: bool,
     confirm_delete_id: Option<String>,
 
@@ -364,7 +367,7 @@ pub struct ChatView {
 
     // --- Project selector ---
     projects: Vec<Project>,
-    selected_project_id: Option<String>,
+    pub selected_project_id: Option<String>,
     projects_loaded: bool,
 
     // --- Output panel ---
@@ -379,6 +382,9 @@ pub struct ChatView {
     log_content: String,
     log_agent_history: String,
     log_tab: u8, // 0=chat log, 1=agent history, 2=graphic monitor
+
+    // --- Tool approval ---
+    pending_approval: Option<(String, String)>, // (tool_name, args_preview)
 
     // --- Graphic monitor ---
     graphic_agents: Vec<GraphicAgent>,
@@ -428,6 +434,7 @@ impl ChatView {
             log_content: String::new(),
             log_agent_history: String::new(),
             log_tab: 0,
+            pending_approval: None,
             graphic_agents: Vec::new(),
             graphic_edges: Vec::new(),
             graphic_signals: Vec::new(),
@@ -759,6 +766,7 @@ impl ChatView {
                     depth: 0,
                     session_id: sid.clone(),
                     agent_id: "main".to_string(),
+                    mode: sub_agent_mode.clone(),
                 }
             } else {
                 SubAgentConfig::default()
@@ -768,34 +776,78 @@ impl ChatView {
         // Build system prompt: base + project context + sub-agent info
         let (sub_agent_prompt, research_instruction) = if sub_agent_config.enabled && !sub_agent_config.agent_ids.is_empty() {
             let agents = sub_agent_config.agent_ids.join(", ");
-            if is_realtime {
-                let prompt = format!(
-                    "\n\nREALTIME AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
+            match sub_agent_mode.as_str() {
+                "realtime" => {
+                    let prompt = format!(
+                        "\n\nREALTIME AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
 Available agents: [{}]. \
 Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
 Only use run_python/write_file for formatting the final output. \
 Always delegate, even for simple tasks. If an orchestrator exists, send tasks ONLY to the orchestrator.",
-                    agents
-                );
-                (prompt, "Use send_task/wait_result to delegate ALL tasks to realtime agents.")
-            } else {
-                let prompt = format!(
-                    "\n\nMULTI-AGENT SYSTEM ACTIVE: You have specialist sub-agents available: [{}]. \
+                        agents
+                    );
+                    (prompt, "Use send_task/wait_result to delegate ALL tasks to realtime agents.")
+                }
+                "auto_create" => {
+                    let prompt = "\n\nAUTO-CREATE MODE: You MUST call create_architecture FIRST to design and boot an agent team for the user's task. \
+After the architecture is created, all agents will be LIVE. Then use send_task/wait_result to delegate work. \
+Do NOT attempt to do work yourself until agents are created.".to_string();
+                    (prompt, "Call create_architecture first, then delegate via send_task/wait_result.")
+                }
+                "auto_swarm" => {
+                    // List available YAML files for the LLM to pick from
+                    let mut swarm_list = String::new();
+                    if let Ok(entries) = std::fs::read_dir("data/agents") {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if name.ends_with(".yaml") || name.ends_with(".yml") {
+                                if let Some((config, _)) = load_agent_yaml(&name) {
+                                    let sys_name = config["system"]["name"].as_str().unwrap_or(&name);
+                                    let mode = config["system"]["orchestration_mode"].as_str().unwrap_or("hierarchical");
+                                    let agent_count = config["agents"].as_array().map(|a| a.len()).unwrap_or(0);
+                                    swarm_list.push_str(&format!("\n  - \"{}\": {} [{}] ({} agents)", name, sys_name, mode, agent_count));
+                                }
+                            }
+                        }
+                    }
+                    let prompt = format!(
+                        "\n\nAUTO-SWARM MODE: You MUST call select_swarm FIRST to choose the best agent team for the user's task. \
+Available swarm configurations:{}\n\
+After selecting a swarm, all agents will be LIVE. Then use send_task/wait_result to delegate work. \
+Do NOT attempt to do work yourself until a swarm is selected.",
+                        if swarm_list.is_empty() { "\n  (No swarm configs found in data/agents/)".to_string() } else { swarm_list }
+                    );
+                    (prompt, "Call select_swarm first, then delegate via send_task/wait_result.")
+                }
+                "manual" => {
+                    let prompt = format!(
+                        "\n\nMANUAL AGENT MODE: You have specialist sub-agents available: [{}]. \
+Use spawn_subagent to delegate tasks to specific agents. Each agent runs independently and returns results.",
+                        agents
+                    );
+                    (prompt, "Use spawn_subagent to delegate tasks to specialist agents.")
+                }
+                _ => {
+                    // "auto" mode
+                    let prompt = format!(
+                        "\n\nMULTI-AGENT SYSTEM ACTIVE: You have specialist sub-agents available: [{}]. \
 IMPORTANT: For research, analysis, marketing, data gathering, or any complex multi-step task, you MUST call spawn_subagent FIRST to delegate to the appropriate specialist agent. \
 Do NOT use web_search or run_python directly for tasks that sub-agents can handle. \
 Only use your own tools (web_search, run_python, etc.) for quick lookups or tasks not covered by any sub-agent.",
-                    agents
-                );
-                (prompt, "Use spawn_subagent to delegate research and analysis tasks to specialist agents.")
+                        agents
+                    );
+                    (prompt, "Use spawn_subagent to delegate research and analysis tasks to specialist agents.")
+                }
             }
         } else {
             (String::new(), "Always use web_search when the user asks for research, information lookup, or current events.")
         };
 
-        let tool_list = if is_realtime {
-            "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, send_task, wait_result, check_agents"
-        } else {
-            "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent"
+        let tool_list = match sub_agent_mode.as_str() {
+            "realtime" => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, send_task, wait_result, check_agents",
+            "auto_create" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
+            "auto_swarm" => "select_swarm, send_task, wait_result, check_agents, run_python, write_file",
+            _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
         };
 
         let base_system = format!(
@@ -816,12 +868,29 @@ Provide helpful, detailed responses based on tool results.{}",
         self.streaming = Some(state.clone());
         self.streaming_session_id = Some(sid.clone());
 
+        // Register active chat session in the shared tasks list
+        {
+            let title = self.selected_session.as_ref()
+                .map(|s| s.title.clone())
+                .unwrap_or_else(|| "Chat".to_string());
+            let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
+            chats.retain(|c| c.session_id != sid);
+            chats.push(crate::ui::tasks_view::ActiveChatSession {
+                session_id: sid.clone(),
+                title,
+                started_at: chrono::Utc::now(),
+                agent_count: 0,
+                tool_calls: 0,
+            });
+        }
+
         let ctx_clone = ctx.clone();
 
         runtime.spawn(async move {
             let state_text = state.text.clone();
             let state_tool_calls = state.tool_calls.clone();
             let state_error = state.error.clone();
+            let state_approval = state.pending_approval.clone();
             let state_log_lines = state.log_lines.clone();
             let state_log_lines2 = state_log_lines.clone();
             let ctx_cb = ctx_clone.clone();
@@ -915,6 +984,19 @@ Provide helpful, detailed responses based on tool results.{}",
                         let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
                         state_log_lines.lock().unwrap().push(format!("[{}] ERROR: {}", ts, err));
                         *state_error.lock().unwrap() = Some(err);
+                    }
+                    ToolUpdate::ApprovalRequired { name, args } => {
+                        let args_str = serde_json::to_string_pretty(&args).unwrap_or_default();
+                        let preview = if args_str.len() > 500 {
+                            format!("{}...", &args_str[..500])
+                        } else {
+                            args_str
+                        };
+                        *state_approval.lock().unwrap() = Some((name.clone(), preview));
+                        let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                        state_log_lines.lock().unwrap().push(
+                            format!("[{}] APPROVAL REQUIRED: {} — waiting for user", ts, name)
+                        );
                     }
                 }
                 ctx_cb.request_repaint();
@@ -1045,6 +1127,14 @@ Provide helpful, detailed responses based on tool results.{}",
         };
 
         if !state.is_done() {
+            // Update tool call count in active chats while streaming
+            if let Some(ref sid) = self.streaming_session_id {
+                let tc = state.get_tool_calls().len();
+                let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
+                if let Some(chat) = chats.iter_mut().find(|c| c.session_id == *sid) {
+                    chat.tool_calls = tc;
+                }
+            }
             return;
         }
 
@@ -1113,6 +1203,12 @@ Provide helpful, detailed responses based on tool results.{}",
             }
             save_chat_history(&sessions).await;
         });
+
+        // Unregister from active chat sessions
+        if let Some(ref sid) = self.streaming_session_id {
+            let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
+            chats.retain(|c| c.session_id != *sid);
+        }
 
         self.streaming = None;
         self.streaming_session_id = None;
@@ -1193,15 +1289,29 @@ Provide helpful, detailed responses based on tool results.{}",
         let border_color   = egui::Color32::from_rgb(225, 228, 232);
 
         // Collect all output files from current session messages
-        let output_files: Vec<String> = self.selected_session
-            .as_ref()
-            .map(|s| {
-                s.messages
-                    .iter()
-                    .flat_map(|m| m.files.iter().flatten().cloned())
-                    .collect()
-            })
+        // Also include files from streaming state
+        let streaming_files: Vec<String> = self.streaming.as_ref()
+            .map(|s| s.get_files())
             .unwrap_or_default();
+
+        let output_files: Vec<String> = {
+            let mut files: Vec<String> = self.selected_session
+                .as_ref()
+                .map(|s| {
+                    s.messages
+                        .iter()
+                        .flat_map(|m| m.files.iter().flatten().cloned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Merge streaming files
+            for f in &streaming_files {
+                if !files.contains(f) {
+                    files.push(f.clone());
+                }
+            }
+            files
+        };
 
         // Auto-open output panel when new files appear
         if !output_files.is_empty() && !self.output_panel.open {
@@ -1321,6 +1431,87 @@ Provide helpful, detailed responses based on tool results.{}",
         // Advance parent layout
         ui.allocate_rect(full_rect, egui::Sense::hover());
 
+        // ── Tool approval dialog ──
+        if let Some(ref state) = self.streaming {
+            let approval = state.pending_approval.lock().unwrap().clone();
+            if let Some((tool_name, args_preview)) = approval {
+                let mut response: Option<bool> = None;
+                egui::Window::new("\u{1F6E1} Tool Approval Required")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(500.0)
+                    .show(ui.ctx(), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "The AI wants to execute: {}",
+                                tool_name
+                            ))
+                            .size(14.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(234, 179, 8)),
+                        );
+                        ui.add_space(8.0);
+                        egui::Frame::default()
+                            .inner_margin(egui::Margin::same(8))
+                            .rounding(egui::Rounding::same(4))
+                            .fill(egui::Color32::from_gray(240))
+                            .show(ui, |ui| {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("approval_args_scroll")
+                                    .max_height(200.0)
+                                    .show(ui, |ui| {
+                                        ui.monospace(
+                                            egui::RichText::new(&args_preview)
+                                                .size(11.0)
+                                                .color(egui::Color32::from_gray(40)),
+                                        );
+                                    });
+                            });
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("Allow")
+                                            .size(14.0)
+                                            .color(egui::Color32::WHITE),
+                                    )
+                                    .fill(egui::Color32::from_rgb(34, 197, 94))
+                                    .min_size(egui::vec2(100.0, 32.0)),
+                                )
+                                .clicked()
+                            {
+                                response = Some(true);
+                            }
+                            ui.add_space(12.0);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("Deny")
+                                            .size(14.0)
+                                            .color(egui::Color32::WHITE),
+                                    )
+                                    .fill(egui::Color32::from_rgb(239, 68, 68))
+                                    .min_size(egui::vec2(100.0, 32.0)),
+                                )
+                                .clicked()
+                            {
+                                response = Some(false);
+                            }
+                        });
+                    });
+                if let Some(approved) = response {
+                    // Clear the pending approval
+                    *state.pending_approval.lock().unwrap() = None;
+                    // Send response to the toolbox
+                    runtime.block_on(async {
+                        crate::server::services::toolbox::respond_tool_approval(approved).await;
+                    });
+                }
+            }
+        }
+
         // Keep repainting during streaming
         if self.streaming.is_some() {
             ui.ctx().request_repaint();
@@ -1432,6 +1623,8 @@ Provide helpful, detailed responses based on tool results.{}",
                     // Format relative timestamp
                     let time_label = format_relative_time(&summary.updated_at);
 
+                    let is_streaming = self.streaming_session_id.as_deref() == Some(&summary.id);
+
                     let frame_resp = egui::Frame::new()
                         .fill(card_bg)
                         .corner_radius(8.0)
@@ -1442,6 +1635,18 @@ Provide helpful, detailed responses based on tool results.{}",
                                 ui.set_width(220.0);
                                 // Title row + timestamp
                                 ui.horizontal(|ui| {
+                                    // Yellow dot for active/streaming chat
+                                    if is_streaming {
+                                        let (dot_rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(10.0, 10.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().circle_filled(
+                                            dot_rect.center(),
+                                            4.5,
+                                            egui::Color32::from_rgb(250, 204, 21), // yellow
+                                        );
+                                    }
                                     ui.label(
                                         egui::RichText::new(truncate_str(label_text, 22))
                                             .size(13.0)
@@ -1669,6 +1874,116 @@ Provide helpful, detailed responses based on tool results.{}",
                 },
             );
         });
+
+        // Architecture / Swarm info card
+        {
+            let settings = runtime.block_on(get_settings());
+            let sub_enabled = settings.sub_agent_enabled.unwrap_or(false);
+            let mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "single".to_string());
+            let config_file = settings.sub_agent_config_file.clone().unwrap_or_default();
+
+            // Check project-level override
+            let (arch_label, arch_file) = if let Some(ref pid) = session.project_id {
+                let projects = runtime.block_on(get_projects());
+                if let Some(p) = projects.iter().find(|p| p.id == *pid) {
+                    if let Some(ref ov) = p.agent_override {
+                        if ov.enabled.unwrap_or(false) {
+                            let f = ov.sub_agent_config_file.clone().unwrap_or_default();
+                            let name = f.rsplit('/').next().unwrap_or(&f).replace(".yaml", "").replace(".yml", "");
+                            (if name.is_empty() { "Default".to_string() } else { name }, f)
+                        } else {
+                            let name = config_file.rsplit('/').next().unwrap_or(&config_file).replace(".yaml", "").replace(".yml", "");
+                            (if name.is_empty() { "None".to_string() } else { name }, config_file.clone())
+                        }
+                    } else {
+                        let name = config_file.rsplit('/').next().unwrap_or(&config_file).replace(".yaml", "").replace(".yml", "");
+                        (if name.is_empty() { "None".to_string() } else { name }, config_file.clone())
+                    }
+                } else {
+                    ("None".to_string(), String::new())
+                }
+            } else {
+                let name = config_file.rsplit('/').next().unwrap_or(&config_file).replace(".yaml", "").replace(".yml", "");
+                (if name.is_empty() { "None".to_string() } else { name }, config_file.clone())
+            };
+
+            let swarm_label = if !sub_enabled {
+                "Single Agent"
+            } else {
+                match mode.as_str() {
+                    "realtime" => "Realtime Swarm",
+                    "auto" => "Auto Swarm",
+                    "manual" => "Manual Swarm",
+                    _ => "Swarm",
+                }
+            };
+
+            let mode_color = if !sub_enabled {
+                egui::Color32::from_rgb(107, 114, 128) // gray
+            } else {
+                match mode.as_str() {
+                    "realtime" => egui::Color32::from_rgb(239, 68, 68),   // red
+                    "auto" => egui::Color32::from_rgb(34, 197, 94),       // green
+                    "manual" => egui::Color32::from_rgb(245, 158, 11),    // orange
+                    _ => egui::Color32::from_rgb(59, 130, 246),           // blue
+                }
+            };
+
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgb(240, 242, 245))
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::symmetric(10, 4))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 215, 220)))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        // Swarm mode badge
+                        egui::Frame::new()
+                            .fill(mode_color)
+                            .corner_radius(4.0)
+                            .inner_margin(egui::Margin::symmetric(6, 2))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(swarm_label)
+                                        .size(11.0)
+                                        .color(egui::Color32::WHITE)
+                                        .strong(),
+                                );
+                            });
+
+                        ui.add_space(6.0);
+
+                        // Architecture badge
+                        if sub_enabled && !arch_file.is_empty() {
+                            ui.label(
+                                egui::RichText::new("Arch:")
+                                    .size(11.0)
+                                    .color(egui::Color32::from_rgb(80, 85, 95)),
+                            );
+                            egui::Frame::new()
+                                .fill(egui::Color32::from_rgb(59, 130, 246))
+                                .corner_radius(4.0)
+                                .inner_margin(egui::Margin::symmetric(6, 2))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(&arch_label)
+                                            .size(11.0)
+                                            .color(egui::Color32::WHITE),
+                                    );
+                                });
+                        }
+
+                        // Model info
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new(format!("Model: {}", settings.tiger_bot_model))
+                                .size(10.0)
+                                .color(egui::Color32::from_rgb(100, 105, 115)),
+                        );
+                    });
+                });
+
+            ui.add_space(2.0);
+        }
 
         // Log panel floating window
         if self.show_log_panel {
@@ -2917,7 +3232,28 @@ Provide helpful, detailed responses based on tool results.{}",
             }
         }
 
-        // Scoreboard overlay on canvas
+        // ── All text painted on canvas (scoreboard + agent summary) ──
+
+        // Collect tool counts and connections for summary
+        let mut tool_counts: std::collections::HashMap<String, std::collections::HashMap<String, usize>> =
+            std::collections::HashMap::new();
+        for sig in &self.graphic_signals {
+            *tool_counts
+                .entry(sig.from.clone())
+                .or_default()
+                .entry(sig.tool.clone())
+                .or_insert(0) += 1;
+        }
+        let mut connections: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for edge in &self.graphic_edges {
+            let targets = connections.entry(edge.from.clone()).or_default();
+            if !targets.contains(&edge.to) {
+                targets.push(edge.to.clone());
+            }
+        }
+
+        // Scoreboard (top-left)
         let total = self.graphic_agents.len();
         let working = self.graphic_agents.iter().filter(|a| a.status == "working").count();
         let done = self.graphic_agents.iter().filter(|a| a.status == "done").count();
@@ -2934,115 +3270,93 @@ Provide helpful, detailed responses based on tool results.{}",
             egui::Color32::from_rgb(156, 163, 175),
         );
 
+        // Agent summary (bottom of canvas)
+        let line_h = 14.0;
+        let summary_h = line_h * self.graphic_agents.len() as f32 + 20.0;
+        let summary_top = canvas_rect.bottom() - summary_h;
+
+        // Summary background bar
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(canvas_rect.left(), summary_top),
+                canvas_rect.max,
+            ),
+            0.0,
+            egui::Color32::from_rgba_premultiplied(10, 14, 25, 220),
+        );
+
+        // Divider line
+        painter.line_segment(
+            [
+                egui::pos2(canvas_rect.left(), summary_top),
+                egui::pos2(canvas_rect.right(), summary_top),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 65, 80)),
+        );
+
+        // "Summary" label
+        painter.text(
+            egui::pos2(canvas_rect.left() + 8.0, summary_top + 3.0),
+            egui::Align2::LEFT_TOP,
+            "Agent Summary",
+            egui::FontId::monospace(10.0),
+            egui::Color32::from_rgb(180, 180, 190),
+        );
+
+        // Each agent on one line
+        let font = egui::FontId::monospace(9.5);
+        for (i, agent) in self.graphic_agents.iter().enumerate() {
+            let y = summary_top + 18.0 + i as f32 * line_h;
+            let x = canvas_rect.left() + 10.0;
+
+            // Status dot
+            let dot_color = match agent.status.as_str() {
+                "working" => egui::Color32::from_rgb(34, 197, 94),
+                "done" => egui::Color32::from_rgb(156, 163, 175),
+                _ => egui::Color32::from_rgb(75, 85, 99),
+            };
+            painter.circle_filled(egui::pos2(x + 4.0, y + 5.0), 3.0, dot_color);
+
+            // Role icon
+            let icon = match agent.role.as_str() {
+                "orchestrator" => "\u{2605}",
+                "worker" => "\u{25A0}",
+                _ => "\u{25CB}",
+            };
+
+            // Build summary line: icon name [status] tools → targets
+            let mut line = format!("{} {} [{}]", icon, agent.name, agent.status);
+
+            if let Some(tools) = tool_counts.get(&agent.id) {
+                let tool_parts: Vec<String> = tools
+                    .iter()
+                    .map(|(t, c)| format!("{}({})", t, c))
+                    .collect();
+                let tools_str = tool_parts.join(", ");
+                if tools_str.len() > 50 {
+                    line.push_str(&format!("  {}..", &tools_str[..48]));
+                } else {
+                    line.push_str(&format!("  {}", tools_str));
+                }
+            }
+
+            if let Some(conns) = connections.get(&agent.id) {
+                line.push_str(&format!("  \u{2192} {}", conns.join(", ")));
+            }
+
+            painter.text(
+                egui::pos2(x + 12.0, y),
+                egui::Align2::LEFT_TOP,
+                &line,
+                font.clone(),
+                agent.color,
+            );
+        }
+
         // Request repaint for animation
         if working > 0 || !self.graphic_signals.is_empty() {
             ui.ctx().request_repaint();
         }
-
-        // ── Agent summary table at bottom ──
-        ui.add_space(4.0);
-        ui.separator();
-        ui.add_space(2.0);
-        ui.label(
-            egui::RichText::new("Agent Summary")
-                .size(12.0)
-                .strong()
-                .color(egui::Color32::WHITE),
-        );
-        ui.add_space(2.0);
-
-        egui::ScrollArea::vertical()
-            .id_salt("graphic_summary_scroll")
-            .max_height(140.0)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                // Collect tool counts per agent
-                let tool_counts: std::collections::HashMap<String, std::collections::HashMap<String, usize>> = {
-                    let mut m: std::collections::HashMap<String, std::collections::HashMap<String, usize>> = std::collections::HashMap::new();
-                    for sig in &self.graphic_signals {
-                        *m.entry(sig.from.clone())
-                            .or_default()
-                            .entry(sig.tool.clone())
-                            .or_insert(0) += 1;
-                    }
-                    m
-                };
-
-                // Connections per agent
-                let connections: std::collections::HashMap<String, Vec<String>> = {
-                    let mut m: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-                    for edge in &self.graphic_edges {
-                        m.entry(edge.from.clone()).or_default().push(edge.to.clone());
-                    }
-                    m
-                };
-
-                for agent in &self.graphic_agents {
-                    ui.horizontal(|ui| {
-                        // Status dot
-                        let dot_color = match agent.status.as_str() {
-                            "working" => egui::Color32::from_rgb(34, 197, 94),
-                            "done" => egui::Color32::from_rgb(156, 163, 175),
-                            _ => egui::Color32::from_rgb(75, 85, 99),
-                        };
-                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                        ui.painter().circle_filled(dot_rect.center(), 4.0, dot_color);
-
-                        // Role icon
-                        let icon = match agent.role.as_str() {
-                            "orchestrator" => "\u{2605}",
-                            "worker" => "\u{25A0}",
-                            _ => "\u{25CB}",
-                        };
-                        ui.label(egui::RichText::new(icon).size(11.0));
-
-                        // Name
-                        ui.label(
-                            egui::RichText::new(&agent.name)
-                                .size(11.0)
-                                .strong()
-                                .color(agent.color),
-                        );
-
-                        // Status
-                        ui.label(
-                            egui::RichText::new(format!("[{}]", agent.status))
-                                .size(10.0)
-                                .color(dot_color),
-                        );
-
-                        // Tool usage summary
-                        if let Some(tools) = tool_counts.get(&agent.id) {
-                            let tool_summary: Vec<String> = tools
-                                .iter()
-                                .map(|(t, c)| format!("{}({})", t, c))
-                                .collect();
-                            let summary = tool_summary.join(", ");
-                            let display = if summary.len() > 60 {
-                                format!("{}..", &summary[..58])
-                            } else {
-                                summary
-                            };
-                            ui.label(
-                                egui::RichText::new(display)
-                                    .size(10.0)
-                                    .monospace()
-                                    .color(egui::Color32::from_rgb(150, 160, 180)),
-                            );
-                        }
-
-                        // Connections
-                        if let Some(conns) = connections.get(&agent.id) {
-                            let conn_str = format!("\u{2192} {}", conns.join(", "));
-                            ui.label(
-                                egui::RichText::new(conn_str)
-                                    .size(10.0)
-                                    .color(egui::Color32::from_rgb(245, 158, 11)),
-                            );
-                        }
-                    });
-                }
-            });
     }
 }
 

@@ -2,7 +2,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::{Mutex as TokioMutex, Notify};
@@ -21,6 +21,77 @@ pub enum ToolUpdate {
     ToolResult { name: String, result: Value },
     TextChunk(String),
     Error(String),
+    /// Request user approval before executing a dangerous tool.
+    /// The UI must call `respond_tool_approval(true/false)` to continue.
+    ApprovalRequired { name: String, args: Value },
+}
+
+// ---------------------------------------------------------------------------
+// Tool approval gate (global channel for UI ↔ toolbox)
+// ---------------------------------------------------------------------------
+
+static APPROVAL_TX: OnceLock<TokioMutex<Option<tokio::sync::oneshot::Sender<bool>>>> =
+    OnceLock::new();
+static APPROVAL_RX: OnceLock<TokioMutex<Option<tokio::sync::oneshot::Receiver<bool>>>> =
+    OnceLock::new();
+
+/// Check if a tool requires user approval based on settings
+async fn tool_requires_approval(tool_name: &str) -> bool {
+    let settings = crate::server::data::get_settings().await;
+    match tool_name {
+        "run_shell" => settings.approval_required_for_shell.unwrap_or(true),
+        "run_python" | "run_react" => settings.approval_required_for_python.unwrap_or(true),
+        "write_file" => settings.approval_required_for_file_write.unwrap_or(false),
+        "delete_file" => settings.approval_required_for_file_delete.unwrap_or(true),
+        "claude_code_agent" => settings.approval_required_for_agent_spawn.unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Called by the tool dispatch to request approval. Returns true if approved.
+async fn request_tool_approval(
+    tool_name: &str,
+    tool_args: &Value,
+    on_update: &Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static>,
+) -> bool {
+    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+
+    // Store the receiver so the approval response can be read
+    {
+        let lock = APPROVAL_RX.get_or_init(|| TokioMutex::new(None));
+        *lock.lock().await = Some(rx);
+    }
+    {
+        let lock = APPROVAL_TX.get_or_init(|| TokioMutex::new(None));
+        *lock.lock().await = Some(tx);
+    }
+
+    // Notify UI
+    on_update(ToolUpdate::ApprovalRequired {
+        name: tool_name.to_string(),
+        args: tool_args.clone(),
+    });
+
+    // Wait for user response (with timeout)
+    let rx_lock = APPROVAL_RX.get_or_init(|| TokioMutex::new(None));
+    let rx = rx_lock.lock().await.take();
+    match rx {
+        Some(rx) => {
+            match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+                Ok(Ok(approved)) => approved,
+                _ => false, // timeout or channel error → deny
+            }
+        }
+        None => false,
+    }
+}
+
+/// Called by the UI to approve or deny a pending tool execution.
+pub async fn respond_tool_approval(approved: bool) {
+    let lock = APPROVAL_TX.get_or_init(|| TokioMutex::new(None));
+    if let Some(tx) = lock.lock().await.take() {
+        let _ = tx.send(approved);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +122,7 @@ pub struct SubAgentConfig {
     pub depth: usize,                 // recursion depth (prevent infinite loops)
     pub session_id: String,           // for JSONL history logging
     pub agent_id: String,             // current agent's own ID (for protocol tools)
+    pub mode: String,                 // "auto", "auto_create", "auto_swarm", "realtime", "manual"
 }
 
 impl Default for SubAgentConfig {
@@ -65,6 +137,7 @@ impl Default for SubAgentConfig {
             depth: 0,
             session_id: String::new(),
             agent_id: "main".to_string(),
+            mode: "auto".to_string(),
         }
     }
 }
@@ -148,6 +221,17 @@ pub fn subscribe_subagent_log() -> tokio::sync::broadcast::Receiver<(String, Str
 
 /// Boot all agents in the YAML config as persistent tokio tasks.
 /// Returns immediately; agents wait for tasks on their mpsc channels.
+/// Fire-and-forget helper to boot a realtime session without blocking the caller.
+/// Uses a oneshot to wait for the session to be ready before returning.
+fn boot_realtime_session_deferred(
+    session_id: String, config_file: String,
+    api_key: String, api_url: String, model: String,
+) {
+    tokio::spawn(async move {
+        start_realtime_session(&session_id, &config_file, &api_key, &api_url, &model, "sandbox").await;
+    });
+}
+
 pub async fn start_realtime_session(
     session_id: &str,
     config_file: &str,
@@ -395,6 +479,9 @@ async fn realtime_agent_loop(
                     }
                     ToolUpdate::Error(e) => {
                         format!("[{}] [{}] ERROR: {}", ts, log_aid, e)
+                    }
+                    ToolUpdate::ApprovalRequired { name, .. } => {
+                        format!("[{}] [{}] APPROVAL REQUIRED: {}", ts, log_aid, name)
                     }
                 };
                 let _ = log_tx.send((log_sid.clone(), log_aid.clone(), line));
@@ -1200,143 +1287,173 @@ pub fn tool_definitions() -> Vec<Value> {
 }
 
 /// Tool definitions with sub-agent tools added when enabled
+/// Build tool definitions for a given sub-agent config and mode.
+/// `session_activated` is true if a swarm/architecture has been created/selected this session.
 pub fn tool_definitions_with_subagent(sub_agent: &SubAgentConfig, realtime: bool) -> Vec<Value> {
-    let mut tools = tool_definitions();
-    if sub_agent.enabled && !sub_agent.agent_ids.is_empty() && sub_agent.depth < 3 {
-        let agent_list = sub_agent.agent_ids.join(", ");
-        if realtime {
-            // Realtime mode: send_task / wait_result / check_agents
-            tools.push(json!({
-                "type": "function",
-                "function": {
-                    "name": "send_task",
-                    "description": format!(
-                        "Send a task to a live realtime agent. Available agents: {}. Use this to delegate work, then call wait_result to get the response.",
-                        agent_list
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "to": {
-                                "type": "string",
-                                "description": format!("ID of the target agent. Must be one of: {}", agent_list)
-                            },
-                            "task": {
-                                "type": "string",
-                                "description": "Clear description of the task for the agent"
-                            },
-                            "context": {
-                                "type": "string",
-                                "description": "Optional context or data to pass to the agent"
-                            }
-                        },
-                        "required": ["to", "task"]
-                    }
+    tool_definitions_for_mode(sub_agent, realtime, false)
+}
+
+fn realtime_tools(agent_list: &str) -> Vec<Value> {
+    vec![
+        json!({
+            "type": "function",
+            "function": {
+                "name": "send_task",
+                "description": format!(
+                    "Send a task to a live realtime agent. Available agents: {}. Use this to delegate work, then call wait_result to get the response.",
+                    agent_list
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "to": { "type": "string", "description": format!("ID of the target agent. Must be one of: {}", agent_list) },
+                        "task": { "type": "string", "description": "Clear description of the task for the agent" },
+                        "context": { "type": "string", "description": "Optional context or data to pass to the agent" }
+                    },
+                    "required": ["to", "task"]
                 }
-            }));
-            tools.push(json!({
-                "type": "function",
-                "function": {
-                    "name": "wait_result",
-                    "description": "Wait for a result from an agent that was previously sent a task via send_task. Blocks until the agent finishes.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "from": {
-                                "type": "string",
-                                "description": format!("ID of the agent to wait for. Must be one of: {}", agent_list)
-                            },
-                            "timeout": {
-                                "type": "integer",
-                                "description": "Optional timeout in seconds (default: 120)"
-                            }
-                        },
-                        "required": ["from"]
-                    }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "wait_result",
+                "description": "Wait for a result from an agent that was previously sent a task via send_task. Blocks until the agent finishes.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "from": { "type": "string", "description": format!("ID of the agent to wait for. Must be one of: {}", agent_list) },
+                        "timeout": { "type": "integer", "description": "Optional timeout in seconds (default: 120)" }
+                    },
+                    "required": ["from"]
                 }
-            }));
-            tools.push(json!({
-                "type": "function",
-                "function": {
-                    "name": "check_agents",
-                    "description": "Check the current status of all realtime agents (idle, working, etc.)",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
-                }
-            }));
-        } else {
-            // Manual mode: spawn_subagent
-            tools.push(json!({
-                "type": "function",
-                "function": {
-                    "name": "spawn_subagent",
-                    "description": format!(
-                        "Delegate a task to a sub-agent. Available agents: {}. Use this when a task is better handled by a specialist agent.",
-                        agent_list
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "agent_id": {
-                                "type": "string",
-                                "description": format!("ID of the agent to spawn. Must be one of: {}", agent_list)
-                            },
-                            "task": {
-                                "type": "string",
-                                "description": "Clear description of the task for the sub-agent"
-                            },
-                            "context": {
-                                "type": "string",
-                                "description": "Optional context or data to pass to the sub-agent"
-                            }
-                        },
-                        "required": ["agent_id", "task"]
-                    }
-                }
-            }));
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "check_agents",
+                "description": "Check the current status of all realtime agents (idle, working, etc.)",
+                "parameters": { "type": "object", "properties": {}, "required": [] }
+            }
+        }),
+    ]
+}
+
+fn create_architecture_tool() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "create_architecture",
+            "description": "Analyze the user's task and create an appropriate multi-agent architecture. Generates a YAML agent config, saves it, and boots all agents in realtime mode. Call this FIRST before doing any work.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": { "type": "string", "description": "Description of the task/goal for the agent team" },
+                    "architectureType": {
+                        "type": "string",
+                        "enum": ["hierarchical", "flat", "mesh", "hybrid", "pipeline", "p2p"],
+                        "description": "Architecture type"
+                    },
+                    "agentCount": { "type": "string", "description": "Number of agents or 'auto'" }
+                },
+                "required": ["description"]
+            }
         }
+    })
+}
 
-        // create_architecture — available when sub-agents enabled
-        tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": "create_architecture",
-                "description": "Analyze the user's task and create an appropriate multi-agent architecture. Generates a YAML agent config, saves it, and boots all agents in realtime mode. Call this FIRST before doing any work.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "description": { "type": "string", "description": "Description of the task/goal for the agent team" },
-                        "architectureType": {
-                            "type": "string",
-                            "enum": ["hierarchical", "flat", "mesh", "hybrid", "pipeline", "p2p"],
-                            "description": "Architecture type: hierarchical, flat, mesh, hybrid, pipeline, or p2p"
-                        },
-                        "agentCount": { "type": "string", "description": "Number of agents or 'auto'" }
-                    },
-                    "required": ["description"]
-                }
+fn select_swarm_tool() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "select_swarm",
+            "description": "Select the best agent swarm configuration for the current task. Review available swarms and pick the one whose description best matches the user's request.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": { "type": "string", "description": "The YAML filename to select (e.g. 'research_team.yaml')" },
+                    "reason": { "type": "string", "description": "Brief explanation of why this swarm is the best fit" }
+                },
+                "required": ["filename"]
             }
-        }));
+        }
+    })
+}
 
-        // select_swarm — available when sub-agents enabled
-        tools.push(json!({
-            "type": "function",
-            "function": {
-                "name": "select_swarm",
-                "description": "Select the best agent swarm configuration for the current task. Review available swarms and pick the one whose description best matches the user's request.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "filename": { "type": "string", "description": "The YAML filename to select (e.g. 'research_team.yaml')" },
-                        "reason": { "type": "string", "description": "Brief explanation of why this swarm is the best fit" }
-                    },
-                    "required": ["filename"]
-                }
+fn spawn_subagent_tool(agent_list: &str) -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "spawn_subagent",
+            "description": format!(
+                "Delegate a task to a sub-agent. Available agents: {}. Use this when a task is better handled by a specialist agent.",
+                agent_list
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string", "description": format!("ID of the agent to spawn. Must be one of: {}", agent_list) },
+                    "task": { "type": "string", "description": "Clear description of the task for the sub-agent" },
+                    "context": { "type": "string", "description": "Optional context or data to pass to the sub-agent" }
+                },
+                "required": ["agent_id", "task"]
             }
-        }));
+        }
+    })
+}
+
+/// Build tool list dynamically based on mode and whether a session has been activated.
+pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, session_activated: bool) -> Vec<Value> {
+    let mut tools = tool_definitions();
+    if !sub_agent.enabled || sub_agent.agent_ids.is_empty() || sub_agent.depth >= 3 {
+        return tools;
+    }
+    let agent_list = sub_agent.agent_ids.join(", ");
+    let mode = sub_agent.mode.as_str();
+
+    match mode {
+        "realtime" => {
+            // Pure realtime: send_task / wait_result / check_agents
+            tools.extend(realtime_tools(&agent_list));
+        }
+        "auto_create" => {
+            if session_activated {
+                // Architecture created, agents running — use realtime tools
+                tools.extend(realtime_tools(&agent_list));
+                tools.push(create_architecture_tool()); // allow recreation
+            } else {
+                // No architecture yet — ONLY create_architecture (forces LLM to create first)
+                return vec![create_architecture_tool()];
+            }
+        }
+        "auto_swarm" => {
+            if session_activated {
+                // Swarm selected, agents running — use realtime tools
+                tools.extend(realtime_tools(&agent_list));
+                tools.push(select_swarm_tool()); // allow switching
+            } else {
+                // No swarm selected — ONLY select_swarm
+                return vec![select_swarm_tool()];
+            }
+        }
+        "manual" => {
+            // Manual: spawn_subagent + optional realtime if session booted
+            tools.push(spawn_subagent_tool(&agent_list));
+            if realtime || session_activated {
+                tools.extend(realtime_tools(&agent_list));
+            }
+        }
+        _ => {
+            // "auto" mode: spawn_subagent (depth-limited)
+            if realtime {
+                tools.extend(realtime_tools(&agent_list));
+            } else {
+                tools.push(spawn_subagent_tool(&agent_list));
+            }
+            tools.push(create_architecture_tool());
+            tools.push(select_swarm_tool());
+        }
     }
     tools
 }
@@ -2942,8 +3059,12 @@ RULES:
     auto_created_architectures().lock().await.insert(session_id.clone(), filename.clone());
     auto_swarm_selections().lock().await.insert(session_id.clone(), filename.clone());
 
-    // Note: session booting is handled by the UI/caller layer to avoid
-    // async recursive type cycles. The YAML is saved and ready to boot.
+    // Boot the realtime session (fire-and-forget to avoid recursive type cycle)
+    boot_realtime_session_deferred(
+        session_id.clone(), filename.clone(),
+        sub_agent.api_key.clone(), sub_agent.api_url.clone(),
+        sub_agent.model.clone(),
+    );
 
     let all_agents: Vec<Value> = parsed["agents"]
         .as_array()
@@ -3030,8 +3151,12 @@ async fn exec_select_swarm(
 
     auto_swarm_selections().lock().await.insert(session_id.clone(), filename.to_string());
 
-    // Note: session booting is handled by the UI/caller layer to avoid
-    // async recursive type cycles. The YAML selection is recorded.
+    // Boot the realtime session (fire-and-forget to avoid recursive type cycle)
+    boot_realtime_session_deferred(
+        session_id.clone(), filename.to_string(),
+        sub_agent.api_key.clone(), sub_agent.api_url.clone(),
+        sub_agent.model.clone(),
+    );
 
     let mode = config["system"]["orchestration_mode"]
         .as_str()
@@ -3185,6 +3310,7 @@ fn exec_spawn_subagent(
         depth: sub_agent.depth + 1,
         session_id: sub_agent.session_id.clone(),
         agent_id: agent_id.to_string(),
+        mode: sub_agent.mode.clone(),
     };
 
     // Recursive call — propagate ToolCall/ToolResult to parent UI (drop TextChunk to avoid mangling main text)
@@ -3752,8 +3878,10 @@ async fn call_with_tools_inner(
 ) -> ToolLoopResult {
     let on_update = std::sync::Arc::new(on_update);
     let client = Client::new();
-    let tools = if sub_agent.enabled {
-        tool_definitions_with_subagent(&sub_agent, realtime)
+    // Track whether a swarm/architecture has been activated this session
+    let mut session_activated = realtime; // realtime mode is pre-activated
+    let mut tools = if sub_agent.enabled {
+        tool_definitions_for_mode(&sub_agent, realtime, session_activated)
     } else {
         tool_definitions()
     };
@@ -4163,6 +4291,17 @@ async fn call_with_tools_inner(
 
                 tool_records.push(ToolCallRecord { tool: tool_name.clone(), result: result.clone() });
 
+                // After create_architecture or select_swarm: refresh tools to include realtime
+                if (tool_name == "create_architecture" || tool_name == "select_swarm")
+                    && result.get("ok").and_then(|v| v.as_bool()) == Some(true)
+                    && !session_activated
+                {
+                    session_activated = true;
+                    // Refresh tool set to include send_task/wait_result
+                    tools = tool_definitions_for_mode(&sub_agent, true, true);
+                    info!("[ToolLoop] Session activated via {}, tools refreshed with realtime tools", tool_name);
+                }
+
                 // Collect output files
                 if let Some(files) = result.get("output_files").and_then(|v| v.as_array()) {
                     for f in files {
@@ -4417,6 +4556,17 @@ async fn execute_tool_dispatch(
     on_update: Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static>,
     _realtime: bool,
 ) -> Value {
+    // Gate: require user approval for dangerous tools
+    if tool_requires_approval(tool_name).await {
+        let approved = request_tool_approval(tool_name, tool_args, &on_update).await;
+        if !approved {
+            return json!({
+                "ok": false,
+                "error": format!("User denied execution of '{}'", tool_name)
+            });
+        }
+    }
+
     if tool_name == "spawn_subagent" {
         exec_spawn_subagent(tool_args, sub_agent, sandbox_dir, on_update).await
     } else if tool_name == "send_task" {

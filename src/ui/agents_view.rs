@@ -58,8 +58,9 @@ pub struct AgentsView {
     drag_offset: Vec2,
     canvas_offset: Vec2,
 
-    // Connection drawing
+    // Connection drawing & selection
     connecting_from: Option<usize>,
+    selected_connection_idx: Option<usize>,
 
     // Auto Architecture
     auto_arch_description: String,
@@ -99,6 +100,7 @@ impl Default for AgentsView {
             drag_offset: Vec2::ZERO,
             canvas_offset: Vec2::ZERO,
             connecting_from: None,
+            selected_connection_idx: None,
             auto_arch_description: String::new(),
             auto_arch_type: "hierarchical".to_string(),
             auto_arch_count: "auto".to_string(),
@@ -113,6 +115,20 @@ impl Default for AgentsView {
             auto_arch_result: Arc::new(Mutex::new(None)),
         }
     }
+}
+
+/// Distance from point `p` to line segment `a`-`b`.
+fn point_to_segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let ap = p - a;
+    let len_sq = ab.length_sq();
+    if len_sq < 1e-6 {
+        return ap.length();
+    }
+    let t = (ap.x * ab.x + ap.y * ab.y) / len_sq;
+    let t = t.clamp(0.0, 1.0);
+    let proj = Pos2::new(a.x + t * ab.x, a.y + t * ab.y);
+    (p - proj).length()
 }
 
 impl AgentsView {
@@ -324,7 +340,9 @@ impl AgentsView {
             ui.separator();
 
             // --- Center: Graph Canvas ---
-            let canvas_width = if self.selected_node_idx.is_some() {
+            let has_right_panel = self.selected_node_idx.is_some()
+                || self.selected_connection_idx.is_some();
+            let canvas_width = if has_right_panel {
                 available.x - 200.0 - 240.0 - 20.0
             } else {
                 available.x - 200.0 - 20.0
@@ -403,8 +421,15 @@ impl AgentsView {
                     y += grid_size;
                 }
 
-                // Draw connections
-                for conn in &self.connections {
+                // Draw connections + hit-test for click
+                let mut clicked_conn: Option<usize> = None;
+                let click_pointer = if response.clicked() {
+                    response.interact_pointer_pos()
+                } else {
+                    None
+                };
+
+                for (ci, conn) in self.connections.iter().enumerate() {
                     let from_pos = self
                         .nodes
                         .iter()
@@ -417,15 +442,18 @@ impl AgentsView {
                         .map(|n| canvas_rect.min + n.pos.to_vec2());
 
                     if let (Some(from), Some(to)) = (from_pos, to_pos) {
+                        let is_selected_conn = self.selected_connection_idx == Some(ci);
                         let color = match conn.protocol.as_str() {
                             "tcp" => Color32::from_rgb(59, 130, 246),
                             "queue" => Color32::from_rgb(245, 158, 11),
                             "bus" => Color32::from_rgb(168, 85, 247),
+                            "blackboard" => Color32::from_rgb(34, 197, 94),
                             _ => Color32::GRAY,
                         };
+                        let line_width = if is_selected_conn { 4.0 } else { 2.0 };
 
                         // Draw line
-                        painter.line_segment([from, to], Stroke::new(2.0, color));
+                        painter.line_segment([from, to], Stroke::new(line_width, color));
 
                         // Arrowhead
                         let dir = (to - from).normalized();
@@ -446,8 +474,20 @@ impl AgentsView {
                             egui::Align2::CENTER_BOTTOM,
                             &label,
                             FontId::proportional(10.0),
-                            Color32::from_rgb(180, 180, 200),
+                            if is_selected_conn {
+                                Color32::WHITE
+                            } else {
+                                Color32::from_rgb(180, 180, 200)
+                            },
                         );
+
+                        // Hit-test: check if click is near this line segment
+                        if let Some(ptr) = click_pointer {
+                            let dist = point_to_segment_distance(ptr, from, to);
+                            if dist < 12.0 {
+                                clicked_conn = Some(ci);
+                            }
+                        }
                     }
                 }
 
@@ -587,13 +627,19 @@ impl AgentsView {
                         self.connecting_from = None;
                     } else {
                         self.selected_node_idx = Some(idx);
+                        self.selected_connection_idx = None;
                     }
+                } else if let Some(ci) = clicked_conn {
+                    // Clicked a connection line
+                    self.selected_connection_idx = Some(ci);
+                    self.selected_node_idx = None;
                 } else if response.clicked() {
                     // Clicked empty space
                     if self.connecting_from.is_some() {
                         self.connecting_from = None;
                     } else {
                         self.selected_node_idx = None;
+                        self.selected_connection_idx = None;
                     }
                 }
 
@@ -602,7 +648,7 @@ impl AgentsView {
                     self.connecting_from = None;
                 }
 
-                // Delete key removes selected node
+                // Delete key removes selected node or connection
                 if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
                 {
                     if let Some(idx) = self.selected_node_idx {
@@ -612,17 +658,30 @@ impl AgentsView {
                             self.nodes.remove(idx);
                             self.selected_node_idx = None;
                         }
+                    } else if let Some(ci) = self.selected_connection_idx {
+                        if ci < self.connections.len() {
+                            self.connections.remove(ci);
+                            self.selected_connection_idx = None;
+                        }
                     }
                 }
             });
 
-            // --- Right panel: Node properties ---
+            // --- Right panel: Node or Connection properties ---
             if let Some(idx) = self.selected_node_idx {
                 if idx < self.nodes.len() {
                     ui.separator();
                     ui.vertical(|ui| {
                         ui.set_width(230.0);
                         self.show_node_properties(ui, idx);
+                    });
+                }
+            } else if let Some(ci) = self.selected_connection_idx {
+                if ci < self.connections.len() {
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        ui.set_width(230.0);
+                        self.show_connection_properties(ui, ci);
                     });
                 }
             }
@@ -739,11 +798,22 @@ impl AgentsView {
         // List connections from/to this node
         let node_id = self.nodes[idx].id.clone();
         let mut conn_to_remove = None;
+        let mut conn_to_select = None;
         for (ci, conn) in self.connections.iter_mut().enumerate() {
             if conn.from == node_id || conn.to == node_id {
                 ui.horizontal(|ui| {
-                    let label = format!("{} -> {} [{}]", conn.from, conn.to, conn.protocol);
-                    ui.label(RichText::new(&label).small());
+                    let label = format!("{} -> {}", conn.from, conn.to);
+                    if ui.small_button(RichText::new(&label).small()).clicked() {
+                        conn_to_select = Some(ci);
+                    }
+                    let proto_color = match conn.protocol.as_str() {
+                        "tcp" => Color32::from_rgb(59, 130, 246),
+                        "queue" => Color32::from_rgb(245, 158, 11),
+                        "bus" => Color32::from_rgb(168, 85, 247),
+                        "blackboard" => Color32::from_rgb(34, 197, 94),
+                        _ => Color32::GRAY,
+                    };
+                    ui.label(RichText::new(format!("[{}]", conn.protocol)).small().color(proto_color));
                     if ui.small_button("x").clicked() {
                         conn_to_remove = Some(ci);
                     }
@@ -753,14 +823,118 @@ impl AgentsView {
         if let Some(ci) = conn_to_remove {
             self.connections.remove(ci);
         }
-
-        // Edit connection protocol for selected connections
+        if let Some(ci) = conn_to_select {
+            self.selected_connection_idx = Some(ci);
+            self.selected_node_idx = None;
+        }
         ui.add_space(4.0);
         if ui.small_button("Delete this node").clicked() && node_id != "human" {
             self.connections
                 .retain(|c| c.from != node_id && c.to != node_id);
             self.nodes.remove(idx);
             self.selected_node_idx = None;
+        }
+    }
+
+    fn show_connection_properties(&mut self, ui: &mut egui::Ui, ci: usize) {
+        ui.label(RichText::new("Connection Properties").strong());
+        ui.add_space(4.0);
+
+        let conn = &mut self.connections[ci];
+
+        // From / To (read-only)
+        egui::Grid::new("conn_props_grid")
+            .num_columns(2)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                ui.label("From:");
+                ui.label(RichText::new(&conn.from).monospace());
+                ui.end_row();
+
+                ui.label("To:");
+                ui.label(RichText::new(&conn.to).monospace());
+                ui.end_row();
+            });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // Protocol selector
+        ui.label(RichText::new("Protocol:").strong());
+        let protocol_color = match conn.protocol.as_str() {
+            "tcp" => Color32::from_rgb(59, 130, 246),
+            "queue" => Color32::from_rgb(245, 158, 11),
+            "bus" => Color32::from_rgb(168, 85, 247),
+            "blackboard" => Color32::from_rgb(34, 197, 94),
+            _ => Color32::GRAY,
+        };
+        egui::ComboBox::from_id_salt(format!("conn_protocol_{}", ci))
+            .selected_text(RichText::new(&conn.protocol).color(protocol_color))
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut conn.protocol,
+                    "tcp".to_string(),
+                    RichText::new("tcp").color(Color32::from_rgb(59, 130, 246)),
+                );
+                ui.selectable_value(
+                    &mut conn.protocol,
+                    "queue".to_string(),
+                    RichText::new("queue").color(Color32::from_rgb(245, 158, 11)),
+                );
+                ui.selectable_value(
+                    &mut conn.protocol,
+                    "bus".to_string(),
+                    RichText::new("bus").color(Color32::from_rgb(168, 85, 247)),
+                );
+                ui.selectable_value(
+                    &mut conn.protocol,
+                    "blackboard".to_string(),
+                    RichText::new("blackboard").color(Color32::from_rgb(34, 197, 94)),
+                );
+            });
+
+        ui.add_space(8.0);
+
+        // Label
+        ui.label(RichText::new("Label:").strong());
+        ui.add(egui::TextEdit::singleline(&mut conn.label).desired_width(180.0));
+
+        ui.add_space(8.0);
+
+        // Topics (for bus/queue)
+        if conn.protocol == "bus" || conn.protocol == "queue" {
+            ui.label(RichText::new("Topics (comma-sep):").strong());
+            let mut topics_str = conn.topics.join(", ");
+            if ui
+                .add(egui::TextEdit::singleline(&mut topics_str).desired_width(180.0))
+                .changed()
+            {
+                conn.topics = topics_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
+        }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // Delete connection
+        if ui
+            .add(
+                egui::Button::new(
+                    RichText::new("Delete connection")
+                        .color(Color32::from_rgb(239, 68, 68)),
+                ),
+            )
+            .clicked()
+        {
+            self.connections.remove(ci);
+            self.selected_connection_idx = None;
         }
     }
 

@@ -101,7 +101,9 @@ pub struct FilesView {
 impl Default for FilesView {
     fn default() -> Self {
         let sandbox_dir =
-            std::env::var("TIGRIMOS_SANDBOX_DIR").unwrap_or_else(|_| ".".to_string());
+            std::env::var("TIGRIMOS_SANDBOX_DIR").unwrap_or_else(|_| "sandbox".to_string());
+        // Ensure the sandbox directory exists
+        let _ = std::fs::create_dir_all(&sandbox_dir);
         Self {
             sandbox_dir,
             current_path: String::new(),
@@ -188,7 +190,16 @@ impl FilesView {
 
     fn load_file_content(&mut self, runtime: &tokio::runtime::Handle, file_path: &str) {
         let file_type = classify_file(file_path);
-        if !is_text_like(&file_type) && file_type != FileType::Image {
+
+        // Images are rendered directly by egui::Image from file URI — no content to load
+        if file_type == FileType::Image {
+            self.file_content.clear();
+            self.editing = false;
+            self.status_message = None;
+            return;
+        }
+
+        if !is_text_like(&file_type) {
             // Binary file - read raw bytes for size info, show placeholder
             let sandbox = self.sandbox_dir.clone();
             match data::validate_path(&sandbox, file_path) {
@@ -720,11 +731,16 @@ impl FilesView {
             ui.label(egui::RichText::new("Files").size(18.0).strong());
             ui.separator();
 
-            // Root breadcrumb
+            // Root breadcrumb — show mounted folder name
+            let root_label = std::path::Path::new(&self.sandbox_dir)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("sandbox");
             if ui
                 .add(
-                    egui::Button::new(egui::RichText::new("sandbox").size(13.0)).frame(false),
+                    egui::Button::new(egui::RichText::new(root_label).size(13.0)).frame(false),
                 )
+                .on_hover_text(&self.sandbox_dir)
                 .clicked()
             {
                 self.navigate_to("");
@@ -784,6 +800,29 @@ impl FilesView {
                     self.show_new_dir = !self.show_new_dir;
                     self.show_new_file = false;
                     self.new_dir_name.clear();
+                }
+
+                // Mount Folder button
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("\u{1F4C2} Mount Folder")
+                                .color(egui::Color32::WHITE),
+                        )
+                        .fill(egui::Color32::from_rgb(234, 179, 8)),
+                    )
+                    .clicked()
+                {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Select folder to mount")
+                        .pick_folder()
+                    {
+                        self.sandbox_dir = path.to_string_lossy().to_string();
+                        self.current_path.clear();
+                        self.selected_file = None;
+                        self.file_content.clear();
+                        self.needs_refresh = true;
+                    }
                 }
 
                 // New File button
@@ -1339,6 +1378,7 @@ impl FilesView {
 
                     // ── File content area with rich preview ──
                     egui::ScrollArea::both()
+                        .id_salt("file_content_preview")
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             if self.editing && is_text_like(&file_type) {

@@ -5,6 +5,26 @@ use std::time::Duration;
 use crate::server::data::{self, ScheduledTask};
 
 // ---------------------------------------------------------------------------
+// Shared state for active chat sessions (set by ChatView, read by TasksView)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct ActiveChatSession {
+    pub session_id: String,
+    pub title: String,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub agent_count: usize,
+    pub tool_calls: usize,
+}
+
+static ACTIVE_CHATS: std::sync::OnceLock<Arc<Mutex<Vec<ActiveChatSession>>>> =
+    std::sync::OnceLock::new();
+
+pub fn active_chats() -> &'static Arc<Mutex<Vec<ActiveChatSession>>> {
+    ACTIVE_CHATS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+// ---------------------------------------------------------------------------
 // Data structures for active and finished tasks
 // ---------------------------------------------------------------------------
 
@@ -109,7 +129,7 @@ impl TasksView {
             edit_command: String::new(),
             edit_preset: 0,
             confirm_delete_id: None,
-            current_tab: TaskTab::Scheduled,
+            current_tab: TaskTab::Active,
             active_tasks: Arc::new(Mutex::new(Vec::new())),
             finished_tasks: Vec::new(),
             finished_needs_load: true,
@@ -249,14 +269,6 @@ impl TasksView {
                 guard.len()
             };
 
-            if ui
-                .selectable_label(self.current_tab == TaskTab::Scheduled, "Scheduled")
-                .clicked()
-            {
-                self.current_tab = TaskTab::Scheduled;
-                self.needs_refresh = true;
-            }
-
             let active_label = if active_count > 0 {
                 format!("Active ({})", active_count)
             } else {
@@ -267,6 +279,14 @@ impl TasksView {
                 .clicked()
             {
                 self.current_tab = TaskTab::Active;
+            }
+
+            if ui
+                .selectable_label(self.current_tab == TaskTab::Scheduled, "Scheduled")
+                .clicked()
+            {
+                self.current_tab = TaskTab::Scheduled;
+                self.needs_refresh = true;
             }
 
             if ui
@@ -727,7 +747,7 @@ impl TasksView {
     // ===================================================================
     // ACTIVE TAB
     // ===================================================================
-    fn show_active_tab(&mut self, ui: &mut egui::Ui, _runtime: &tokio::runtime::Handle) {
+    fn show_active_tab(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         // Auto-refresh every 2 seconds
         ui.ctx()
             .request_repaint_after(Duration::from_secs(2));
@@ -755,9 +775,11 @@ impl TasksView {
                 .collect()
         };
 
+        let chat_count = active_chats().lock().unwrap().len();
+        let total_active = active_snapshot.len() + chat_count;
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new(format!("{} active tasks", active_snapshot.len()))
+                egui::RichText::new(format!("{} active tasks", total_active))
                     .weak()
                     .small(),
             );
@@ -765,10 +787,122 @@ impl TasksView {
 
         ui.add_space(4.0);
 
-        if active_snapshot.is_empty() {
+        // Also show active chat sessions
+        let chat_sessions: Vec<ActiveChatSession> = {
+            active_chats().lock().unwrap().clone()
+        };
+
+        if active_snapshot.is_empty() && chat_sessions.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label("No tasks currently running.");
             });
+            return;
+        }
+
+        // Show active chat sessions first
+        if !chat_sessions.is_empty() {
+            ui.label(
+                egui::RichText::new("Active Chat Sessions")
+                    .size(12.0)
+                    .strong()
+                    .color(egui::Color32::from_rgb(56, 139, 253)),
+            );
+            ui.add_space(4.0);
+            let mut kill_chat_id: Option<String> = None;
+            for chat in &chat_sessions {
+                let elapsed = (now - chat.started_at).num_seconds();
+                let elapsed_str = if elapsed < 60 {
+                    format!("{}s", elapsed)
+                } else {
+                    format!("{}m {}s", elapsed / 60, elapsed % 60)
+                };
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgba_premultiplied(250, 204, 21, 15))
+                    .inner_margin(egui::Margin::same(10))
+                    .corner_radius(6.0)
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(250, 204, 21)))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // Pulsing yellow dot
+                            let pulse = (ui.input(|i| i.time) * 3.0).sin() as f32 * 0.3 + 0.7;
+                            let yellow = egui::Color32::from_rgba_premultiplied(
+                                (250.0 * pulse) as u8,
+                                (204.0 * pulse) as u8,
+                                (21.0 * pulse) as u8,
+                                255,
+                            );
+                            let (dot_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(10.0, 10.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().circle_filled(dot_rect.center(), 5.0, yellow);
+
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.strong(&chat.title);
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.add(
+                                            egui::Button::new(
+                                                egui::RichText::new("Kill")
+                                                    .color(egui::Color32::WHITE)
+                                                    .small(),
+                                            )
+                                            .fill(egui::Color32::from_rgb(239, 68, 68))
+                                            .corner_radius(4.0),
+                                        ).clicked() {
+                                            kill_chat_id = Some(chat.session_id.clone());
+                                        }
+                                    });
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("AI Streaming")
+                                            .small()
+                                            .color(egui::Color32::from_rgb(250, 204, 21)),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("Elapsed: {}", elapsed_str))
+                                            .small()
+                                            .weak(),
+                                    );
+                                    if chat.agent_count > 0 {
+                                        ui.label(
+                                            egui::RichText::new(format!("Agents: {}", chat.agent_count))
+                                                .small()
+                                                .color(egui::Color32::from_rgb(34, 197, 94)),
+                                        );
+                                    }
+                                    if chat.tool_calls > 0 {
+                                        ui.label(
+                                            egui::RichText::new(format!("Tools: {}", chat.tool_calls))
+                                                .small()
+                                                .color(egui::Color32::from_rgb(88, 166, 255)),
+                                        );
+                                    }
+                                });
+                                ui.label(
+                                    egui::RichText::new(format!("Session: {}", &chat.session_id[..8.min(chat.session_id.len())]))
+                                        .small()
+                                        .weak(),
+                                );
+                            });
+                        });
+                    });
+                ui.add_space(4.0);
+            }
+            // Handle kill chat session
+            if let Some(ref kid) = kill_chat_id {
+                active_chats().lock().unwrap().retain(|c| c.session_id != *kid);
+                // Shutdown any realtime session for this chat
+                let kid_clone = kid.clone();
+                runtime.spawn(async move {
+                    crate::server::services::toolbox::shutdown_realtime_session(&kid_clone).await;
+                });
+            }
+            ui.add_space(8.0);
+        }
+
+        if active_snapshot.is_empty() {
             return;
         }
 
@@ -891,7 +1025,7 @@ impl TasksView {
                         self.finished_tasks.push(finished.clone());
                         // Persist
                         let history = self.finished_tasks.clone();
-                        _runtime.spawn(async move {
+                        runtime.spawn(async move {
                             data::write_json("finished_tasks.json", &history).await;
                         });
                     }

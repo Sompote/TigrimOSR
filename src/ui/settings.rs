@@ -164,9 +164,17 @@ pub struct SettingsView {
     new_mount_path: String,
     new_mount_permissions: String,
 
+    // --- Security / Tool Approval ---
+    approval_shell: bool,
+    approval_python: bool,
+    approval_file_write: bool,
+    approval_file_delete: bool,
+    approval_agent_spawn: bool,
+
     // --- Skill Auto-Update ---
     skill_auto_update_enabled: bool,
     skill_auto_update_interval_minutes: u64,
+    skill_auto_update_max_candidates: u64,
     skill_auto_update_require_approval: bool,
     skill_auto_update_human_feedback_enabled: bool,
 }
@@ -224,8 +232,15 @@ impl Default for SettingsView {
             new_mount_path: String::new(),
             new_mount_permissions: "read-only".to_string(),
 
+            approval_shell: true,
+            approval_python: true,
+            approval_file_write: false,
+            approval_file_delete: true,
+            approval_agent_spawn: false,
+
             skill_auto_update_enabled: true,
             skill_auto_update_interval_minutes: 5,
+            skill_auto_update_max_candidates: 10,
             skill_auto_update_require_approval: true,
             skill_auto_update_human_feedback_enabled: true,
         }
@@ -314,7 +329,7 @@ impl SettingsView {
                             }
                             SettingsSection::FileMounts => self.section_file_mounts(ui, runtime),
                             SettingsSection::SkillUpdate => self.section_skill_update(ui, runtime),
-                            SettingsSection::Security => Self::section_security(ui),
+                            SettingsSection::Security => self.section_security(ui, runtime),
                             SettingsSection::About => Self::section_about(ui),
                         }
                     });
@@ -392,10 +407,19 @@ impl SettingsView {
         // File Mounts
         self.local_file_mounts = settings.local_file_mounts.unwrap_or_default();
 
+        // Security / Tool Approval
+        self.approval_shell = settings.approval_required_for_shell.unwrap_or(true);
+        self.approval_python = settings.approval_required_for_python.unwrap_or(true);
+        self.approval_file_write = settings.approval_required_for_file_write.unwrap_or(false);
+        self.approval_file_delete = settings.approval_required_for_file_delete.unwrap_or(true);
+        self.approval_agent_spawn = settings.approval_required_for_agent_spawn.unwrap_or(false);
+
         // Skill Auto-Update
         self.skill_auto_update_enabled = settings.skill_auto_update_enabled.unwrap_or(true);
         self.skill_auto_update_interval_minutes =
             settings.skill_auto_update_interval_minutes.unwrap_or(5);
+        self.skill_auto_update_max_candidates =
+            settings.skill_auto_update_max_candidates.unwrap_or(10);
         self.skill_auto_update_require_approval =
             settings.skill_auto_update_require_approval.unwrap_or(true);
         self.skill_auto_update_human_feedback_enabled = settings
@@ -463,10 +487,19 @@ impl SettingsView {
             Some(self.local_file_mounts.clone())
         };
 
+        // Security / Tool Approval
+        settings.approval_required_for_shell = Some(self.approval_shell);
+        settings.approval_required_for_python = Some(self.approval_python);
+        settings.approval_required_for_file_write = Some(self.approval_file_write);
+        settings.approval_required_for_file_delete = Some(self.approval_file_delete);
+        settings.approval_required_for_agent_spawn = Some(self.approval_agent_spawn);
+
         // Skill Auto-Update
         settings.skill_auto_update_enabled = Some(self.skill_auto_update_enabled);
         settings.skill_auto_update_interval_minutes =
             Some(self.skill_auto_update_interval_minutes);
+        settings.skill_auto_update_max_candidates =
+            Some(self.skill_auto_update_max_candidates);
         settings.skill_auto_update_require_approval =
             Some(self.skill_auto_update_require_approval);
         settings.skill_auto_update_human_feedback_enabled =
@@ -1580,6 +1613,15 @@ impl SettingsView {
                             );
                             self.skill_auto_update_interval_minutes = interval_i32.max(1) as u64;
                             ui.end_row();
+
+                            ui.label("Max Candidates per Run:");
+                            let mut max_cand_i32 = self.skill_auto_update_max_candidates as i32;
+                            ui.add(
+                                egui::Slider::new(&mut max_cand_i32, 1..=50)
+                                    .clamp_to_range(true),
+                            );
+                            self.skill_auto_update_max_candidates = max_cand_i32.max(1) as u64;
+                            ui.end_row();
                         });
 
                     ui.add_space(4.0);
@@ -1864,7 +1906,62 @@ impl SettingsView {
     //  9. Security (unchanged)
     // ==================================================================
 
-    fn section_security(ui: &mut egui::Ui) {
+    fn section_security(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        ui.add_space(8.0);
+        ui.heading("Tool Approval");
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "When enabled, the AI must ask for your approval before executing each tool type.",
+            )
+            .size(12.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(8.0);
+
+        let mut changed = false;
+
+        egui::Grid::new("tool_approval_grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Shell commands (run_shell):");
+                if ui.checkbox(&mut self.approval_shell, "Require approval").changed() {
+                    changed = true;
+                }
+                ui.end_row();
+
+                ui.label("Python / React (run_python, run_react):");
+                if ui.checkbox(&mut self.approval_python, "Require approval").changed() {
+                    changed = true;
+                }
+                ui.end_row();
+
+                ui.label("Write files (write_file):");
+                if ui.checkbox(&mut self.approval_file_write, "Require approval").changed() {
+                    changed = true;
+                }
+                ui.end_row();
+
+                ui.label("Delete files (delete_file):");
+                if ui.checkbox(&mut self.approval_file_delete, "Require approval").changed() {
+                    changed = true;
+                }
+                ui.end_row();
+
+                ui.label("Spawn sub-agent (claude_code_agent):");
+                if ui.checkbox(&mut self.approval_agent_spawn, "Require approval").changed() {
+                    changed = true;
+                }
+                ui.end_row();
+            });
+
+        if changed {
+            self.save_all_settings(runtime);
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
         ui.add_space(8.0);
         ui.heading("Sandbox Security");
         ui.add_space(8.0);

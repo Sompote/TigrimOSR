@@ -417,33 +417,56 @@ impl SkillsView {
             self.show_install_dialog(ui, runtime);
         }
 
-        // ---------- layout: skill list on top, detail below ----------
+        // ---------- layout: skill list left, detail right ----------
         let has_selection = self.selected_skill_id.is_some();
+        let full_width = ui.available_width();
+        let list_width = if has_selection {
+            (250.0_f32).max(full_width * 0.2).min(full_width * 0.3)
+        } else {
+            full_width
+        };
 
-        // Skill list (compact horizontal cards when detail is open)
-        let list_height = if has_selection { 120.0 } else { ui.available_height().max(300.0) };
-        egui::ScrollArea::horizontal()
-            .id_salt("skills_list_scroll")
-            .max_height(list_height)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    self.show_skill_list(ui, runtime);
-                });
-            });
+        ui.horizontal_top(|ui| {
+            // Skill list
+            ui.allocate_ui_with_layout(
+                egui::vec2(list_width, ui.available_height()),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| {
+                    ui.strong("Installed Skills");
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("skills_list_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            self.show_skill_list(ui, runtime);
+                        });
+                },
+            );
 
-        // Detail panel below
-        if has_selection {
-            ui.separator();
-            let detail_height = ui.available_height().max(300.0);
-            egui::ScrollArea::vertical()
-                .id_salt("skills_detail_scroll")
-                .max_height(detail_height)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    self.show_detail_panel(ui, runtime);
-                });
-        }
+            // Detail panel on right
+            if has_selection {
+                ui.separator();
+                let detail_width = ui.available_width();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(detail_width, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("skills_detail_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(detail_width - 16.0, ui.available_height()),
+                                    egui::Layout::top_down(egui::Align::LEFT),
+                                    |ui| {
+                                        self.show_detail_panel(ui, runtime);
+                                    },
+                                );
+                            });
+                    },
+                );
+            }
+        });
     }
 
     // ------------------------------------------------------------------
@@ -1089,9 +1112,6 @@ impl SkillsView {
             ui.label("No skills installed yet.");
             return;
         }
-
-        ui.strong("Installed Skills");
-        ui.add_space(4.0);
 
         let query_lower = self.search_query.to_lowercase();
         let mut clicked_id: Option<String> = None;

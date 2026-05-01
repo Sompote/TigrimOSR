@@ -321,6 +321,7 @@ async fn process_remote_task(
                 depth: 0,
                 session_id: session_id.clone(),
                 agent_id: "main".to_string(),
+                mode: "auto".to_string(),
             }
         } else {
             SubAgentConfig {

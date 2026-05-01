@@ -176,6 +176,19 @@ pub struct Settings {
     pub skill_auto_update_require_approval: Option<bool>,
     #[serde(rename = "skillAutoUpdateHumanFeedbackEnabled", skip_serializing_if = "Option::is_none")]
     pub skill_auto_update_human_feedback_enabled: Option<bool>,
+    #[serde(rename = "skillAutoUpdateMaxCandidates", skip_serializing_if = "Option::is_none")]
+    pub skill_auto_update_max_candidates: Option<u64>,
+    // Tool approval security settings
+    #[serde(rename = "approvalRequiredForShell", skip_serializing_if = "Option::is_none")]
+    pub approval_required_for_shell: Option<bool>,
+    #[serde(rename = "approvalRequiredForPython", skip_serializing_if = "Option::is_none")]
+    pub approval_required_for_python: Option<bool>,
+    #[serde(rename = "approvalRequiredForFileWrite", skip_serializing_if = "Option::is_none")]
+    pub approval_required_for_file_write: Option<bool>,
+    #[serde(rename = "approvalRequiredForFileDelete", skip_serializing_if = "Option::is_none")]
+    pub approval_required_for_file_delete: Option<bool>,
+    #[serde(rename = "approvalRequiredForAgentSpawn", skip_serializing_if = "Option::is_none")]
+    pub approval_required_for_agent_spawn: Option<bool>,
     // Catch-all for unknown fields
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -194,6 +207,24 @@ pub async fn get_settings() -> Settings {
     }
     if settings.skill_auto_update_human_feedback_enabled.is_none() {
         settings.skill_auto_update_human_feedback_enabled = Some(true);
+    }
+    if settings.skill_auto_update_max_candidates.is_none() {
+        settings.skill_auto_update_max_candidates = Some(10);
+    }
+    if settings.approval_required_for_shell.is_none() {
+        settings.approval_required_for_shell = Some(true);
+    }
+    if settings.approval_required_for_python.is_none() {
+        settings.approval_required_for_python = Some(true);
+    }
+    if settings.approval_required_for_file_write.is_none() {
+        settings.approval_required_for_file_write = Some(false);
+    }
+    if settings.approval_required_for_file_delete.is_none() {
+        settings.approval_required_for_file_delete = Some(true);
+    }
+    if settings.approval_required_for_agent_spawn.is_none() {
+        settings.approval_required_for_agent_spawn = Some(false);
     }
     settings
 }

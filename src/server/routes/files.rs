@@ -373,6 +373,100 @@ async fn preview_handler(
                     .into_response(),
             }
         }
+        "js" | "jsx" | "tsx" => {
+            // Check if it's a React component (has __REACT_META__ or JSX patterns)
+            match fs::read_to_string(&resolved).await {
+                Ok(content) => {
+                    if content.contains("__REACT_META__") || content.contains("React") {
+                        // Extract renderTarget and title from __REACT_META__
+                        let (title, render_target) = {
+                            let mut t = "React Preview".to_string();
+                            let mut rt = "App()".to_string();
+                            if let Some(meta_start) = content.find("__REACT_META__=") {
+                                let json_start = content[meta_start..].find('{').map(|i| meta_start + i);
+                                let json_end = json_start.and_then(|s| content[s..].find('}').map(|i| s + i + 1));
+                                if let (Some(s), Some(e)) = (json_start, json_end) {
+                                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content[s..e]) {
+                                        if let Some(s) = v.get("title").and_then(|v| v.as_str()) { t = s.to_string(); }
+                                        if let Some(s) = v.get("renderTarget").and_then(|v| v.as_str()) { rt = s.to_string(); }
+                                    }
+                                }
+                            }
+                            (t, rt)
+                        };
+
+                        // Strip boilerplate lines and trailing return statement
+                        let clean_jsx: String = content
+                            .lines()
+                            .filter(|l| {
+                                let trimmed = l.trim();
+                                !l.contains("__REACT_META__")
+                                && !l.contains("} = React")
+                                && !l.contains("typeof Recharts")
+                                && !l.contains("} = _Recharts")
+                                && !(trimmed.starts_with("return ") && trimmed.ends_with("();"))
+                            })
+                            .collect::<Vec<&str>>()
+                            .join("\n");
+
+                        let html = format!(
+                            r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/recharts@2/umd/Recharts.min.js" crossorigin></script>
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+<style>
+  body {{ margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f9fa; }}
+  #root {{ max-width: 1200px; margin: 0 auto; }}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const React = window.React;
+  const {{ useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext, createContext, Fragment, memo, forwardRef, lazy, Suspense }} = React;
+  const _Recharts = typeof Recharts !== 'undefined' ? Recharts : {{}};
+  const {{ LineChart, Line, BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ScatterChart, Scatter, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ComposedChart, Treemap }} = _Recharts;
+
+  {clean_jsx}
+
+  try {{
+    const element = {render_target};
+    ReactDOM.createRoot(document.getElementById('root')).render(element);
+  }} catch(e) {{
+    document.getElementById('root').innerHTML = '<pre style="color:red">' + e.message + '\\n' + e.stack + '</pre>';
+  }}
+</script>
+</body>
+</html>"#,
+                            title = title,
+                            clean_jsx = clean_jsx,
+                            render_target = render_target,
+                        );
+
+                        Response::builder()
+                            .status(200)
+                            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                            .body(Body::from(html))
+                            .unwrap()
+                    } else {
+                        // Plain JS file — return as text
+                        Json(json!({"type": "text", "content": content})).into_response()
+                    }
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": e.to_string()})),
+                )
+                    .into_response(),
+            }
+        }
         _ => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "Unsupported file type for preview"})),

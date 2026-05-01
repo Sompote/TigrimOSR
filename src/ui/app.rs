@@ -43,6 +43,7 @@ pub struct TigrimOSApp {
     skills_view: SkillsView,
     agents_view: AgentsView,
     terminal_view: TerminalView,
+    logo_texture: Option<egui::TextureHandle>,
 }
 
 struct VmSnapshot {
@@ -207,7 +208,27 @@ impl TigrimOSApp {
             skills_view: SkillsView::new(),
             agents_view: AgentsView::default(),
             terminal_view: TerminalView::new(),
+            logo_texture: None,
         }
+    }
+
+    fn get_logo_texture(&mut self, ctx: &egui::Context) -> Option<&egui::TextureHandle> {
+        if self.logo_texture.is_none() {
+            if let Ok(bytes) = std::fs::read("assets/icon.png") {
+                if let Ok(image) = image::load_from_memory(&bytes) {
+                    let rgba = image.to_rgba8();
+                    let size = [rgba.width() as usize, rgba.height() as usize];
+                    let pixels = rgba.into_raw();
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                    self.logo_texture = Some(ctx.load_texture(
+                        "app_logo",
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
+            }
+        }
+        self.logo_texture.as_ref()
     }
 
     fn status_color(state: VmState, service_ready: bool) -> egui::Color32 {
@@ -254,6 +275,7 @@ impl TigrimOSApp {
 impl eframe::App for TigrimOSApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let snap = self.snapshot();
+        self.get_logo_texture(ctx);
 
         if snap.state != VmState::Stopped && snap.state != VmState::Running && snap.state != VmState::Error {
             ctx.request_repaint();
@@ -272,8 +294,13 @@ impl eframe::App for TigrimOSApp {
                 .stroke(egui::Stroke::new(1.0, border_color)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    // Brand
-                    ui.label(egui::RichText::new("\u{1F42F}").size(20.0));
+                    // Brand logo
+                    if let Some(tex) = &self.logo_texture {
+                        let img = egui::Image::new(tex)
+                            .max_size(egui::vec2(24.0, 24.0))
+                            .rounding(4.0);
+                        ui.add(img);
+                    }
                     ui.label(
                         egui::RichText::new("TigrimOS")
                             .size(17.0)
@@ -439,6 +466,14 @@ impl eframe::App for TigrimOSApp {
                 .fill(egui::Color32::WHITE)
                 .inner_margin(egui::Margin::same(0)))
             .show(ctx, |ui| {
+            // Handle navigation from Projects -> Chat
+            if let Some((project_id, session_id)) = self.projects_view.navigate_to_chat_session.take() {
+                self.chat_view.selected_project_id = Some(project_id);
+                self.chat_view.selected_session_id = Some(session_id);
+                self.chat_view.needs_refresh = true;
+                self.selected_tab = Tab::Chat;
+            }
+
             match self.selected_tab {
                 Tab::Chat => self.chat_view.show(ui, &self.runtime),
                 Tab::Projects => self.projects_view.show(ui, &self.runtime),

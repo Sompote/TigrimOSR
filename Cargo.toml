@@ -35,3 +35,5 @@ url = "2"
 tokio-cron-scheduler = "0.13"
 regex = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+egui_plot = "0.31"
+egui_extras = { version = "0.31", features = ["all_loaders"] }

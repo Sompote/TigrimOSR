@@ -568,7 +568,7 @@ Rules:
 - NEVER overwrite a skill whose source is custom, clawhub, claude, or openclaw — only propose updates to skills with source "auto".
 - Skip casual chats / one-off Q&A that don't generalise. Quality > quantity.
 - If nothing is worth capturing, return {{"proposals":[]}}.
-- content MUST be a complete SKILL.md including YAML frontmatter (name + description) followed by markdown body. Body <= 100,000 chars.
+- content is REQUIRED and MUST NOT be empty. It MUST be a complete SKILL.md including YAML frontmatter (name + description) followed by markdown body. The content field must start with "---\nname:". Body <= 100,000 chars. A proposal without content is INVALID.
 - Treat human_feedback as authoritative: LIKED responses indicate workflows worth capturing or reinforcing; DISLIKED responses indicate the procedure failed or misled the user — DO NOT distil a skill from those, and if an existing auto-skill produced the disliked behaviour, propose an update that addresses the comment.
 - If subagent_workflow is non-empty, the session ran a multi-agent topology. The final_assistant_excerpt is the orchestrator's merged summary and HIDES which sub-agent did what. Use the workflow block as ground truth for the actual procedure: capture the agent labels, the order they ran, the skills_loaded each used, and any errors. A skill body for a multi-agent workflow should prescribe the topology (which roles to spawn, in what order, with which skills loaded), not just the outcome. If skills_loaded names an existing auto-skill that produced a great result, prefer "update" to refine it over creating a near-duplicate "create".
 
@@ -685,18 +685,15 @@ fn strip_reasoning(text: &str) -> String {
     t.trim().to_string()
 }
 
-fn extract_json(text: &str) -> Result<Value, String> {
-    let t = strip_reasoning(text);
-    let t = t.trim();
-
+fn find_balanced_json(text: &str) -> Result<Value, String> {
     // Strip markdown fences
     let t = if let Some(cap) = Regex::new(r"(?s)```(?:json)?\s*([\s\S]+?)\s*```")
         .ok()
-        .and_then(|re| re.captures(t))
+        .and_then(|re| re.captures(text))
     {
         cap[1].trim().to_string()
     } else {
-        t.to_string()
+        text.to_string()
     };
 
     let start = t.find('{').ok_or("no JSON object found")?;
@@ -737,6 +734,35 @@ fn extract_json(text: &str) -> Result<Value, String> {
     }
 
     Err("no balanced JSON object found".to_string())
+}
+
+fn extract_json(text: &str) -> Result<Value, String> {
+    // Try 1: strip reasoning tags, then find JSON
+    let stripped = strip_reasoning(text);
+    let stripped = stripped.trim();
+    info!("[SkillSynth] extract_json: input len={}, stripped len={}, stripped has '{{': {}",
+        text.len(), stripped.len(), stripped.contains('{'));
+    match find_balanced_json(stripped) {
+        Ok(v) => return Ok(v),
+        Err(e) => info!("[SkillSynth] extract_json: try1 (stripped) failed: {}", e),
+    }
+
+    // Try 2: search in the raw text (JSON might be inside <think> tags)
+    match find_balanced_json(text) {
+        Ok(v) => {
+            info!("[SkillSynth] Found JSON in raw text (was inside reasoning tags)");
+            return Ok(v);
+        }
+        Err(e) => info!("[SkillSynth] extract_json: try2 (raw) failed: {}", e),
+    }
+
+    // Try 3: just try serde_json directly on the stripped text
+    if let Ok(v) = serde_json::from_str::<Value>(stripped) {
+        info!("[SkillSynth] extract_json: direct serde_json parse worked");
+        return Ok(v);
+    }
+
+    Err("no JSON object found".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1050,6 +1076,8 @@ async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value
     let body = json!({
         "model": model,
         "messages": messages,
+        "max_tokens": 16384,
+        "temperature": 0.3,
     });
 
     let resp = client
@@ -1070,19 +1098,63 @@ async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value
         return Err(format!("API error: {}", err));
     }
 
-    // Parse OpenAI-compatible response
+    // Parse response — support OpenAI, Anthropic, OpenRouter, and other formats
     let content = resp_json["choices"]
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|c| c["message"]["content"].as_str())
+        .and_then(|c| {
+            // Standard OpenAI: content is a string
+            c["message"]["content"].as_str().map(|s| s.to_string())
+                .or_else(|| {
+                    // Some providers: content is array of blocks inside choices
+                    c["message"]["content"].as_array().map(|blocks| {
+                        blocks.iter()
+                            .filter_map(|b| {
+                                if b["type"] == "text" { b["text"].as_str().map(|s| s.to_string()) }
+                                else { None }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                })
+        })
         .or_else(|| {
+            // Anthropic native format: content is array of blocks at root
             resp_json["content"]
                 .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|b| b["text"].as_str())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|b| {
+                            if b["type"] == "text" {
+                                b["text"].as_str().map(|s| s.to_string())
+                            } else if b["type"] == "thinking" {
+                                b["thinking"].as_str().map(|s| format!("<think>{}</think>", s))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
         })
-        .unwrap_or("")
-        .to_string();
+        .or_else(|| {
+            // Fallback: try "output" or "result" keys
+            resp_json["output"].as_str().map(|s| s.to_string())
+                .or_else(|| resp_json["result"].as_str().map(|s| s.to_string()))
+        })
+        .unwrap_or_default();
+
+    let raw_str = resp_json.to_string();
+    let preview_len = raw_str.len().min(1000);
+    info!("[SkillSynth] Raw LLM response (first 1000): {}", &raw_str[..preview_len]);
+
+    if content.is_empty() {
+        error!("[SkillSynth] LLM returned empty content! Full raw response (first 2000): {}",
+            &raw_str[..raw_str.len().min(2000)]);
+    } else {
+        info!("[SkillSynth] Extracted content length={}, first 300: {}",
+            content.len(), &content[..content.len().min(300)]);
+    }
 
     Ok(content)
 }
@@ -1273,7 +1345,7 @@ async fn run_remediations(
             api_url,
             model,
             vec![
-                json!({"role": "system", "content": "You are a careful skill remediator. Output strict JSON only."}),
+                json!({"role": "system", "content": "You are a careful skill remediator. You MUST output ONLY a JSON object. No markdown, no explanation, no prose. Output starts with { and ends with }."}),
                 json!({"role": "user", "content": prompt}),
             ],
         )
@@ -1440,10 +1512,8 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     };
 
     let max_candidates = settings
-        .extra
-        .get("skillAutoUpdateMaxCandidates")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(30) as usize;
+        .skill_auto_update_max_candidates
+        .unwrap_or(10) as usize;
 
     // Load chat sessions sorted ascending by updatedAt
     let mut sessions = get_chat_history().await;
@@ -1528,7 +1598,7 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
         &api_url,
         &model,
         vec![
-            json!({"role": "system", "content": "You are a careful skill synthesiser. Output strict JSON only."}),
+            json!({"role": "system", "content": "You are a careful skill synthesiser. You MUST output ONLY a JSON object with a \"proposals\" array. No markdown, no explanation, no prose. Output starts with { and ends with }. Example: {\"proposals\":[]}"}),
             json!({"role": "user", "content": prompt}),
         ],
     )
@@ -1557,7 +1627,13 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
         return Err(summary_msg);
     }
 
-    // Parse proposals
+    // Parse proposals — dump full reply for debugging
+    info!("[SkillSynth] LLM reply length={}, has </think>: {}", reply.len(), reply.contains("</think>"));
+    let stripped_preview = strip_reasoning(&reply);
+    info!("[SkillSynth] after strip length={}", stripped_preview.len());
+    // Write full reply to debug file
+    let _ = std::fs::write("data/debug_skill_llm_reply.txt", &reply);
+    let _ = std::fs::write("data/debug_skill_llm_stripped.txt", &stripped_preview);
     let parsed = match extract_json(&reply) {
         Ok(v) => v,
         Err(e) => {
@@ -1574,8 +1650,8 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
             if looks_empty {
                 json!({"proposals": []})
             } else {
-                let reply_preview: String = reply.chars().take(300).collect();
-                error!("[SkillSynth] JSON parse failed. LLM reply (first 300 chars): {}", reply_preview);
+                let reply_preview: String = reply.chars().take(500).collect();
+                error!("[SkillSynth] JSON parse failed. LLM reply (first 500 chars): {}", reply_preview);
                 let summary_msg = format!("LLM JSON parse failed: {}", e);
                 let new_cursor = &candidates.last().unwrap().updated_at;
                 let mut reasons = remediation.reasons.clone();
@@ -1587,10 +1663,22 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
         }
     };
 
-    let proposals = parsed["proposals"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    // Try "proposals" key, fall back to root array
+    let proposals: Vec<Value> = if let Some(arr) = parsed["proposals"].as_array() {
+        arr.clone()
+    } else if let Some(arr) = parsed.as_array() {
+        arr.clone()
+    } else {
+        // Maybe the entire parsed object IS a single proposal
+        if parsed["kind"].is_string() && parsed["name"].is_string() {
+            vec![parsed.clone()]
+        } else {
+            vec![]
+        }
+    };
+    info!("[SkillSynth] parsed JSON keys: {:?}, proposals count: {}",
+        parsed.as_object().map(|o| o.keys().collect::<Vec<_>>()),
+        proposals.len());
 
     let mut created = 0usize;
     let mut updated = remediation.updated;
@@ -1603,7 +1691,9 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
         .map(|s| (s.name.clone(), s.source.clone()))
         .collect();
 
-    for raw in &proposals {
+    for (idx, raw) in proposals.iter().enumerate() {
+        info!("[SkillSynth] proposal[{}] kind={:?} name={:?}",
+            idx, raw["kind"].as_str(), raw["name"].as_str());
         match validate_proposal(raw, &existing_for_collision) {
             Ok(proposal) => {
                 if proposal.kind == "create" {
@@ -1623,6 +1713,7 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
                 }
             }
             Err(reason) => {
+                info!("[SkillSynth] proposal[{}] REJECTED: {}", idx, reason);
                 skipped += 1;
                 reasons.push(reason);
             }
