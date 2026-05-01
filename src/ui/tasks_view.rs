@@ -25,6 +25,44 @@ pub fn active_chats() -> &'static Arc<Mutex<Vec<ActiveChatSession>>> {
 }
 
 // ---------------------------------------------------------------------------
+// Finished chat session tracking
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct FinishedChatSession {
+    pub session_id: String,
+    pub title: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub duration_secs: f64,
+    pub agent_count: usize,
+    pub tool_calls: usize,
+}
+
+static FINISHED_CHATS: std::sync::OnceLock<Arc<Mutex<Vec<FinishedChatSession>>>> =
+    std::sync::OnceLock::new();
+
+pub fn finished_chats() -> &'static Arc<Mutex<Vec<FinishedChatSession>>> {
+    FINISHED_CHATS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
+/// Call this when a chat session completes to record it in the finished list.
+pub fn mark_chat_finished(session: &ActiveChatSession) {
+    let now = chrono::Utc::now();
+    let duration = (now - session.started_at).num_milliseconds() as f64 / 1000.0;
+    let finished = FinishedChatSession {
+        session_id: session.session_id.clone(),
+        title: session.title.clone(),
+        started_at: session.started_at.to_rfc3339(),
+        finished_at: now.to_rfc3339(),
+        duration_secs: duration,
+        agent_count: session.agent_count,
+        tool_calls: session.tool_calls,
+    };
+    finished_chats().lock().unwrap().push(finished);
+}
+
+// ---------------------------------------------------------------------------
 // Data structures for active and finished tasks
 // ---------------------------------------------------------------------------
 
@@ -111,6 +149,9 @@ pub struct TasksView {
     finished_tasks: Vec<FinishedTask>,
     finished_needs_load: bool,
     expanded_finished_id: Option<String>,
+
+    // navigation to chat
+    pub navigate_to_chat: Option<String>, // session_id to jump to
 }
 
 impl TasksView {
@@ -134,6 +175,7 @@ impl TasksView {
             finished_tasks: Vec::new(),
             finished_needs_load: true,
             expanded_finished_id: None,
+            navigate_to_chat: None,
         }
     }
 
@@ -809,6 +851,7 @@ impl TasksView {
             );
             ui.add_space(4.0);
             let mut kill_chat_id: Option<String> = None;
+            let mut goto_chat_id: Option<String> = None;
             for chat in &chat_sessions {
                 let elapsed = (now - chat.started_at).num_seconds();
                 let elapsed_str = if elapsed < 60 {
@@ -852,6 +895,17 @@ impl TasksView {
                                         ).clicked() {
                                             kill_chat_id = Some(chat.session_id.clone());
                                         }
+                                        if ui.add(
+                                            egui::Button::new(
+                                                egui::RichText::new("Go to Chat")
+                                                    .color(egui::Color32::WHITE)
+                                                    .small(),
+                                            )
+                                            .fill(egui::Color32::from_rgb(59, 130, 246))
+                                            .corner_radius(4.0),
+                                        ).clicked() {
+                                            goto_chat_id = Some(chat.session_id.clone());
+                                        }
                                     });
                                 });
                                 ui.horizontal(|ui| {
@@ -890,8 +944,19 @@ impl TasksView {
                     });
                 ui.add_space(4.0);
             }
+            // Handle go to chat
+            if let Some(sid) = goto_chat_id {
+                self.navigate_to_chat = Some(sid);
+            }
             // Handle kill chat session
             if let Some(ref kid) = kill_chat_id {
+                // Move to finished before removing
+                {
+                    let chats = active_chats().lock().unwrap();
+                    if let Some(chat) = chats.iter().find(|c| c.session_id == *kid) {
+                        mark_chat_finished(chat);
+                    }
+                }
                 active_chats().lock().unwrap().retain(|c| c.session_id != *kid);
                 // Shutdown any realtime session for this chat
                 let kid_clone = kid.clone();
@@ -1037,11 +1102,16 @@ impl TasksView {
     // FINISHED TAB
     // ===================================================================
     fn show_finished_tab(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        let finished_chat_sessions: Vec<FinishedChatSession> = {
+            finished_chats().lock().unwrap().clone()
+        };
+        let total_finished = self.finished_tasks.len() + finished_chat_sessions.len();
+
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(format!(
                     "{} finished tasks",
-                    self.finished_tasks.len()
+                    total_finished
                 ))
                 .weak()
                 .small(),
@@ -1049,6 +1119,7 @@ impl TasksView {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Clear History").clicked() {
                     self.finished_tasks.clear();
+                    finished_chats().lock().unwrap().clear();
                     runtime.spawn(async move {
                         let empty: Vec<FinishedTask> = Vec::new();
                         data::write_json("finished_tasks.json", &empty).await;
@@ -1062,10 +1133,91 @@ impl TasksView {
 
         ui.add_space(4.0);
 
-        if self.finished_tasks.is_empty() {
+        if self.finished_tasks.is_empty() && finished_chat_sessions.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label("No finished tasks yet.");
             });
+            return;
+        }
+
+        // Show finished chat sessions first
+        if !finished_chat_sessions.is_empty() {
+            ui.label(
+                egui::RichText::new("Completed Chat Sessions")
+                    .size(12.0)
+                    .strong()
+                    .color(egui::Color32::from_rgb(34, 197, 94)),
+            );
+            ui.add_space(4.0);
+
+            for chat in finished_chat_sessions.iter().rev() {
+                egui::Frame::new()
+                    .fill(ui.visuals().faint_bg_color)
+                    .inner_margin(egui::Margin::same(10))
+                    .corner_radius(4.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("[OK]")
+                                    .color(egui::Color32::from_rgb(34, 197, 94))
+                                    .monospace()
+                                    .small(),
+                            );
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.strong(&chat.title);
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.add(
+                                            egui::Button::new(
+                                                egui::RichText::new("Go to Chat")
+                                                    .color(egui::Color32::WHITE)
+                                                    .small(),
+                                            )
+                                            .fill(egui::Color32::from_rgb(59, 130, 246))
+                                            .corner_radius(4.0),
+                                        ).clicked() {
+                                            self.navigate_to_chat = Some(chat.session_id.clone());
+                                        }
+                                    });
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("Duration: {:.1}s", chat.duration_secs))
+                                            .small()
+                                            .weak(),
+                                    );
+                                    if chat.agent_count > 0 {
+                                        ui.label(
+                                            egui::RichText::new(format!("Agents: {}", chat.agent_count))
+                                                .small()
+                                                .color(egui::Color32::from_rgb(34, 197, 94)),
+                                        );
+                                    }
+                                    if chat.tool_calls > 0 {
+                                        ui.label(
+                                            egui::RichText::new(format!("Tools: {}", chat.tool_calls))
+                                                .small()
+                                                .color(egui::Color32::from_rgb(88, 166, 255)),
+                                        );
+                                    }
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Finished: {}",
+                                            &chat.finished_at.get(..19).unwrap_or(&chat.finished_at)
+                                        ))
+                                        .small()
+                                        .weak(),
+                                    );
+                                });
+                            });
+                        });
+                    });
+                ui.add_space(4.0);
+            }
+            ui.add_space(8.0);
+        }
+
+        if self.finished_tasks.is_empty() {
             return;
         }
 

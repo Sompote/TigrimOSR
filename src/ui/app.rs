@@ -474,6 +474,13 @@ impl eframe::App for TigrimOSApp {
                 self.selected_tab = Tab::Chat;
             }
 
+            // Handle navigation from Tasks -> Chat
+            if let Some(session_id) = self.tasks_view.navigate_to_chat.take() {
+                self.chat_view.selected_session_id = Some(session_id);
+                self.chat_view.needs_refresh = true;
+                self.selected_tab = Tab::Chat;
+            }
+
             match self.selected_tab {
                 Tab::Chat => self.chat_view.show(ui, &self.runtime),
                 Tab::Projects => self.projects_view.show(ui, &self.runtime),

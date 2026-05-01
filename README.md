@@ -46,7 +46,42 @@ pip install duckduckgo-search matplotlib numpy pandas requests
 
 ## Installation
 
-### Step 1 — Install Rust
+### Quick Install (recommended)
+
+One-command installer that clones, builds, and sets up the app for you.
+
+**macOS:**
+```bash
+curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.sh | bash
+```
+
+**Linux:**
+```bash
+curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.ps1 | iex
+```
+
+**Windows (Command Prompt):**
+Download and run [`install.bat`](https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.bat).
+
+The installer will:
+1. Check prerequisites (git, Rust)
+2. Let you choose an install location
+3. Clone and build in release mode
+4. Create a native app (macOS `.app` / Linux `.desktop` / Windows shortcut)
+5. Optionally launch the app
+
+---
+
+### Manual Install
+
+If you prefer to install manually, follow the steps below.
+
+#### Step 1 — Install Rust
 
 Rust is required to build the app. Install it via `rustup` (the official Rust installer):
 
@@ -67,7 +102,7 @@ cargo --version
 
 ---
 
-### Step 2 — Install Python
+#### Step 2 — Install Python
 
 Python is used for code execution, web search, and data analysis tools inside the app.
 
@@ -79,6 +114,18 @@ brew install python
 **Linux (Ubuntu/Debian):**
 ```bash
 sudo apt update && sudo apt install python3 python3-pip
+```
+
+**Linux (extra dev libraries for GUI):**
+```bash
+# Debian/Ubuntu
+sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev
+
+# Fedora
+sudo dnf install libxcb-devel libxkbcommon-devel gtk3-devel
+
+# Arch
+sudo pacman -S libxcb libxkbcommon gtk3
 ```
 
 **Windows:**
@@ -97,14 +144,14 @@ pip3 install -r requirements.txt
 
 ---
 
-### Step 3 — Clone the repository
+#### Step 3 — Clone the repository
 
 ```bash
 git clone https://github.com/Sompote/TigrimOSR.git
 cd TigrimOSR
 ```
 
-### Step 4 — Build
+#### Step 4 — Build
 
 ```bash
 cargo build --release
@@ -112,7 +159,7 @@ cargo build --release
 
 > First build downloads all Rust dependencies and may take 2-5 minutes.
 
-### Step 5 — Run
+#### Step 5 — Run
 
 ```bash
 cargo run --release

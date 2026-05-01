@@ -358,9 +358,8 @@ pub struct ChatView {
     scroll_to_bottom: bool,
     confirm_delete_id: Option<String>,
 
-    // --- Streaming AI response ---
-    streaming: Option<StreamingState>,
-    streaming_session_id: Option<String>,
+    // --- Streaming AI responses (multiple sessions can stream in parallel) ---
+    active_streams: std::collections::HashMap<String, StreamingState>,
 
     // --- File attachments ---
     attached_files: Vec<AttachedFile>,
@@ -421,8 +420,7 @@ impl ChatView {
             needs_refresh: true,
             scroll_to_bottom: false,
             confirm_delete_id: None,
-            streaming: None,
-            streaming_session_id: None,
+            active_streams: std::collections::HashMap::new(),
             attached_files: Vec::new(),
             projects: Vec::new(),
             selected_project_id: None,
@@ -664,10 +662,44 @@ impl ChatView {
             format!("{}/chat/completions", raw_url.trim_end_matches('/'))
         };
 
-        let sandbox_dir = if settings.sandbox_dir.is_empty() {
-            "sandbox".to_string()
-        } else {
-            settings.sandbox_dir.clone()
+        // Use project's working folder if available, otherwise global sandbox
+        let sandbox_dir = {
+            // The project filter dropdown is the primary source of truth.
+            // Also backfill the session's project_id if missing.
+            let active_project_id = self.selected_project_id.clone()
+                .or_else(|| self.selected_session.as_ref().and_then(|s| s.project_id.clone()));
+
+            // Backfill: if we have a project_id but the session doesn't, save it
+            if let Some(ref pid) = active_project_id {
+                let sid = session_id.to_string();
+                let pid2 = pid.clone();
+                runtime.block_on(async {
+                    let mut sessions = get_chat_history().await;
+                    if let Some(s) = sessions.iter_mut().find(|s| s.id == sid) {
+                        if s.project_id.is_none() {
+                            s.project_id = Some(pid2);
+                            save_chat_history(&sessions).await;
+                        }
+                    }
+                });
+            }
+
+            let project_folder = active_project_id.as_ref().and_then(|pid| {
+                let projects = runtime.block_on(get_projects());
+                projects.iter()
+                    .find(|p| &p.id == pid)
+                    .map(|p| p.working_folder.clone())
+            }).filter(|f| !f.is_empty());
+
+            if let Some(folder) = project_folder {
+                // Ensure project folder exists
+                let _ = std::fs::create_dir_all(&folder);
+                folder
+            } else if settings.sandbox_dir.is_empty() {
+                "sandbox".to_string()
+            } else {
+                settings.sandbox_dir.clone()
+            }
         };
 
         if api_key.is_empty() {
@@ -854,10 +886,13 @@ Only use your own tools (web_search, run_python, etc.) for quick lookups or task
             "You are TigrimOS, an AI assistant with tool-calling capabilities. \
 You have access to these tools: {}. \
 {} \
+IMPORTANT: Your working directory is the sandbox folder '{}'. All file operations (read_file, write_file, list_files, run_python, run_shell) use this directory as the root. \
+When a user asks about files, ALWAYS use list_files first to see what's available in the sandbox. Files uploaded by the user are placed here. \
+Use relative paths (e.g. 'score_midterm.xlsx') — they resolve to the sandbox automatically. \
 Use run_python for data analysis, charts, and calculations. \
 Use run_shell for system commands. \
 Provide helpful, detailed responses based on tool results.{}",
-            tool_list, research_instruction, sub_agent_prompt
+            tool_list, research_instruction, sandbox_dir, sub_agent_prompt
         );
         let system_prompt = match self.build_project_system_prompt(runtime) {
             Some(project_prompt) => Some(format!("{}\n\n{}", base_system, project_prompt)),
@@ -865,8 +900,7 @@ Provide helpful, detailed responses based on tool results.{}",
         };
 
         let state = StreamingState::new();
-        self.streaming = Some(state.clone());
-        self.streaming_session_id = Some(sid.clone());
+        self.active_streams.insert(sid.clone(), state.clone());
 
         // Register active chat session in the shared tasks list
         {
@@ -1120,98 +1154,102 @@ Provide helpful, detailed responses based on tool results.{}",
         Some(prompt_parts.join("\n\n"))
     }
 
-    /// Check streaming state and finalize when done.
+    /// Check streaming state and finalize when done — supports parallel streams.
     fn poll_streaming(&mut self, runtime: &tokio::runtime::Handle) {
-        let Some(ref state) = self.streaming else {
+        if self.active_streams.is_empty() {
             return;
-        };
+        }
 
-        if !state.is_done() {
-            // Update tool call count in active chats while streaming
-            if let Some(ref sid) = self.streaming_session_id {
+        // Update tool call counts for still-running streams
+        for (sid, state) in &self.active_streams {
+            if !state.is_done() {
                 let tc = state.get_tool_calls().len();
                 let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
                 if let Some(chat) = chats.iter_mut().find(|c| c.session_id == *sid) {
                     chat.tool_calls = tc;
                 }
             }
+        }
+
+        // Collect finished streams
+        let finished_sids: Vec<String> = self.active_streams.iter()
+            .filter(|(_, state)| state.is_done())
+            .map(|(sid, _)| sid.clone())
+            .collect();
+
+        if finished_sids.is_empty() {
             return;
         }
 
-        let response_text = state.get_text();
-        let error = state.get_error();
-        let tool_calls = state.get_tool_calls();
-        let output_files = state.get_files();
-        let sid = self.streaming_session_id.clone().unwrap_or_default();
+        for sid in &finished_sids {
+            let state = self.active_streams.remove(sid).unwrap();
+            let response_text = state.get_text();
+            let error = state.get_error();
+            let tool_calls = state.get_tool_calls();
+            let output_files = state.get_files();
 
-        let base_content = if let Some(err) = error {
-            if response_text.is_empty() {
-                format!("[Error: {}]", err)
+            let base_content = if let Some(err) = error {
+                if response_text.is_empty() {
+                    format!("[Error: {}]", err)
+                } else {
+                    format!("{}\n\n[Stream interrupted: {}]", response_text, err)
+                }
+            } else if response_text.is_empty() {
+                "[No response received from API]".to_string()
             } else {
-                format!("{}\n\n[Stream interrupted: {}]", response_text, err)
-            }
-        } else if response_text.is_empty() {
-            "[No response received from API]".to_string()
-        } else {
-            response_text
-        };
+                response_text
+            };
 
-        // Prepend tool call summary if any tools were used
-        let final_content = if tool_calls.is_empty() {
-            base_content
-        } else {
-            let tool_labels: Vec<String> = tool_calls.iter().map(|tc| Self::tool_label(&tc.name).to_string()).collect();
-            // Deduplicate tool labels while preserving order
-            let mut seen = std::collections::HashSet::new();
-            let unique_labels: Vec<&str> = tool_labels
-                .iter()
-                .filter(|n| seen.insert(n.as_str()))
-                .map(|n| n.as_str())
-                .collect();
-            format!("[Used tools: {}]\n\n{}", unique_labels.join(", "), base_content)
-        };
+            // Prepend tool call summary if any tools were used
+            let final_content = if tool_calls.is_empty() {
+                base_content
+            } else {
+                let tool_labels: Vec<String> = tool_calls.iter().map(|tc| Self::tool_label(&tc.name).to_string()).collect();
+                let mut seen = std::collections::HashSet::new();
+                let unique_labels: Vec<&str> = tool_labels
+                    .iter()
+                    .filter(|n| seen.insert(n.as_str()))
+                    .map(|n| n.as_str())
+                    .collect();
+                format!("[Used tools: {}]\n\n{}", unique_labels.join(", "), base_content)
+            };
 
-        // Save assistant message
-        runtime.block_on(async {
-            let mut sessions = get_chat_history().await;
-            if let Some(s) = sessions.iter_mut().find(|s| s.id == sid) {
-                s.messages.push(ChatMessage {
-                    role: "assistant".to_string(),
-                    content: final_content,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                    files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
-                    feedback: None,
-                });
-                s.updated_at = chrono::Utc::now().to_rfc3339();
+            // Save assistant message
+            let sid_clone = sid.clone();
+            runtime.block_on(async {
+                let mut sessions = get_chat_history().await;
+                if let Some(s) = sessions.iter_mut().find(|s| s.id == sid_clone) {
+                    s.messages.push(ChatMessage {
+                        role: "assistant".to_string(),
+                        content: final_content,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                        files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
+                        feedback: None,
+                    });
+                    s.updated_at = chrono::Utc::now().to_rfc3339();
 
-                // Auto-title: if title is still "New Chat" and we have a user message
-                if s.title == "New Chat" {
-                    if let Some(first_user) = s.messages.iter().find(|m| m.role == "user") {
-                        // Extract just the text part (before any file attachment markers)
-                        let raw = &first_user.content;
-                        let title_source = raw
-                            .split("\n\n--- Attached file:")
-                            .next()
-                            .unwrap_or(raw);
-                        let auto_title = truncate_str(
-                            title_source.lines().next().unwrap_or("Chat"),
-                            50,
-                        );
-                        s.title = auto_title;
+                    // Auto-title
+                    if s.title == "New Chat" {
+                        if let Some(first_user) = s.messages.iter().find(|m| m.role == "user") {
+                            let raw = &first_user.content;
+                            let title_source = raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
+                            s.title = truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
+                        }
                     }
                 }
-            }
-            save_chat_history(&sessions).await;
-        });
+                save_chat_history(&sessions).await;
+            });
 
-        // Unregister from active chat sessions
-        if let Some(ref sid) = self.streaming_session_id {
-            let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
-            chats.retain(|c| c.session_id != *sid);
+            // Move from active to finished chat sessions
+            {
+                let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
+                if let Some(chat) = chats.iter().find(|c| c.session_id == *sid) {
+                    crate::ui::tasks_view::mark_chat_finished(chat);
+                }
+                chats.retain(|c| c.session_id != *sid);
+            }
         }
 
-        self.streaming = None;
-        self.streaming_session_id = None;
         self.scroll_to_bottom = true;
         self.needs_refresh = true;
     }
@@ -1290,7 +1328,8 @@ Provide helpful, detailed responses based on tool results.{}",
 
         // Collect all output files from current session messages
         // Also include files from streaming state
-        let streaming_files: Vec<String> = self.streaming.as_ref()
+        let current_sid = self.selected_session_id.clone().unwrap_or_default();
+        let streaming_files: Vec<String> = self.active_streams.get(&current_sid)
             .map(|s| s.get_files())
             .unwrap_or_default();
 
@@ -1432,7 +1471,7 @@ Provide helpful, detailed responses based on tool results.{}",
         ui.allocate_rect(full_rect, egui::Sense::hover());
 
         // ── Tool approval dialog ──
-        if let Some(ref state) = self.streaming {
+        if let Some(ref state) = self.active_streams.get(&current_sid) {
             let approval = state.pending_approval.lock().unwrap().clone();
             if let Some((tool_name, args_preview)) = approval {
                 let mut response: Option<bool> = None;
@@ -1513,7 +1552,7 @@ Provide helpful, detailed responses based on tool results.{}",
         }
 
         // Keep repainting during streaming
-        if self.streaming.is_some() {
+        if !self.active_streams.is_empty() {
             ui.ctx().request_repaint();
         }
     }
@@ -1623,7 +1662,7 @@ Provide helpful, detailed responses based on tool results.{}",
                     // Format relative timestamp
                     let time_label = format_relative_time(&summary.updated_at);
 
-                    let is_streaming = self.streaming_session_id.as_deref() == Some(&summary.id);
+                    let is_streaming = self.active_streams.contains_key(&summary.id);
 
                     let frame_resp = egui::Frame::new()
                         .fill(card_bg)
@@ -1989,10 +2028,8 @@ Provide helpful, detailed responses based on tool results.{}",
         if self.show_log_panel {
             if let Some(ref log_sid) = self.log_session_id.clone() {
                 // During streaming, pull live log
-                if self.streaming.is_some() {
-                    if let Some(ref s) = self.streaming {
-                        self.log_content = s.get_log();
-                    }
+                if let Some(ref s) = self.active_streams.get(log_sid) {
+                    self.log_content = s.get_log();
                 }
                 let mut open = self.show_log_panel;
                 egui::Window::new("\u{1F4CB} Agent Log")
@@ -2070,7 +2107,7 @@ Provide helpful, detailed responses based on tool results.{}",
 
                         if self.log_tab == 2 {
                             // Auto-reload graphic data while streaming (every 2 seconds)
-                            if self.streaming.is_some() {
+                            if self.active_streams.contains_key(log_sid) {
                                 let now = ui.input(|i| i.time);
                                 if now - self.graphic_last_reload > 2.0 {
                                     self.graphic_last_reload = now;
@@ -2217,7 +2254,7 @@ Provide helpful, detailed responses based on tool results.{}",
             .stick_to_bottom(self.scroll_to_bottom)
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .show(ui, |ui| {
-                if session.messages.is_empty() && self.streaming.is_none() {
+                if session.messages.is_empty() && !self.active_streams.contains_key(&session.id) {
                     ui.add_space(40.0);
                     ui.vertical_centered(|ui| {
                         ui.label(
@@ -2236,7 +2273,7 @@ Provide helpful, detailed responses based on tool results.{}",
                     }
 
                     // Show streaming response in progress
-                    if let Some(ref state) = self.streaming {
+                    if let Some(ref state) = self.active_streams.get(&session.id) {
                         let streaming_text = state.get_text();
                         let streaming_tool_calls = state.get_tool_calls();
                         self.render_streaming_message(ui, &streaming_text, &streaming_tool_calls);
@@ -2290,7 +2327,7 @@ Provide helpful, detailed responses based on tool results.{}",
         }
 
         // Input bar — styled card
-        let is_streaming = self.streaming.is_some();
+        let is_streaming = self.active_streams.contains_key(&session.id);
         egui::Frame::new()
             .fill(egui::Color32::from_rgb(248, 249, 250))
             .corner_radius(12.0)
