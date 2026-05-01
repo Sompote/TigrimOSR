@@ -1510,11 +1510,26 @@ fn truncate(s: &str, max: usize) -> String {
 /// Resolve a path relative to the sandbox directory. If the path is absolute
 /// it is used as-is; otherwise it is joined with `sandbox_dir`.
 fn resolve_path(sandbox_dir: &str, path: &str) -> PathBuf {
-    let p = PathBuf::from(path);
-    if p.is_absolute() {
-        p
+    let sandbox = std::fs::canonicalize(sandbox_dir)
+        .unwrap_or_else(|_| PathBuf::from(sandbox_dir).canonicalize().unwrap_or_else(|_| PathBuf::from(sandbox_dir)));
+
+    let candidate = if PathBuf::from(path).is_absolute() {
+        PathBuf::from(path)
     } else {
-        PathBuf::from(sandbox_dir).join(p)
+        sandbox.join(path)
+    };
+
+    // Resolve symlinks and ../ to get the real path, then check it's inside sandbox
+    let resolved = candidate.canonicalize().unwrap_or(candidate.clone());
+    if resolved.starts_with(&sandbox) {
+        resolved
+    } else {
+        // Path escapes sandbox — force it inside sandbox as a relative name
+        let filename = PathBuf::from(path)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| "blocked".to_string());
+        sandbox.join(filename)
     }
 }
 
