@@ -7,8 +7,18 @@ Cargo.lock
 
 # Data directories (user-specific, not part of source)
 data/chat_logs/
+data/chat_history.json
 data/agent_history/
 data/sessions/
+data/settings.json
+data/projects.json
+data/projects/
+data/tasks.json
+data/skills.json
+data/skills/
+data/file_tokens.json
+data/transcripts/
+data/debug_*.txt
 output_file/
 sandbox/
 
