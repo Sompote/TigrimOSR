@@ -792,8 +792,8 @@ impl ChatView {
                 .or_else(|| settings.sub_agent_config_file.clone())
                 .unwrap_or_default();
 
-            // auto_create and auto_swarm don't need a config file upfront
-            let needs_config = !matches!(sub_agent_mode.as_str(), "auto_create" | "auto_swarm");
+            // fully_auto and auto_swarm don't need a config file upfront
+            let needs_config = !matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm");
 
             if enabled && (!config_file.is_empty() || !needs_config) {
                 let agent_ids = if !config_file.is_empty() {
@@ -837,7 +837,7 @@ impl ChatView {
         // Build system prompt: base + project context + sub-agent info
         let (sub_agent_prompt, research_instruction) = if sub_agent_config.enabled
             && (!sub_agent_config.agent_ids.is_empty()
-                || matches!(sub_agent_mode.as_str(), "auto_create" | "auto_swarm"))
+                || matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm"))
         {
             let agents = sub_agent_config.agent_ids.join(", ");
             match sub_agent_mode.as_str() {
@@ -852,17 +852,17 @@ Always delegate, even for simple tasks. If an orchestrator exists, send tasks ON
                     );
                     (prompt, "Use send_task/wait_result to delegate ALL tasks to realtime agents.")
                 }
-                "auto_create" => {
+                "fully_auto" => {
                     // Architecture is created proactively before LLM is called.
                     // By the time the LLM sees this prompt, agents should already be LIVE.
                     let prompt = if agents.is_empty() {
-                        "\n\nAUTO-CREATE MODE: An agent team is being created for this task. \
+                        "\n\nFULLY AUTO MODE: An agent team is being created for this task. \
 Use send_task/wait_result to delegate work once agents are ready. \
 If no agents are available yet, call create_architecture to design and boot a team. \
 Do NOT attempt to do work yourself — delegate everything to agents.".to_string()
                     } else {
                         format!(
-                            "\n\nAUTO-CREATE MODE: An agent team has been created and all agents are LIVE. \
+                            "\n\nFULLY AUTO MODE: An agent team has been created and all agents are LIVE. \
 Available agents: [{}]. \
 You MUST delegate ALL work to agents via send_task/wait_result. \
 Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
@@ -925,7 +925,7 @@ Only use your own tools (web_search, run_python, etc.) for quick lookups or task
 
         let tool_list = match sub_agent_mode.as_str() {
             "realtime" => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, send_task, wait_result, check_agents",
-            "auto_create" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
+            "fully_auto" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
             "auto_swarm" => "select_swarm, send_task, wait_result, check_agents, run_python, write_file",
             _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
         };
@@ -1109,21 +1109,21 @@ Provide helpful, detailed responses based on tool results.{}",
                 }
             });
 
-            // AUTO_CREATE: force create_architecture on first message if no architecture exists yet
+            // FULLY_AUTO: force create_architecture on first message if no architecture exists yet
             let mut sub_agent_config = sub_agent_config;
             let mut system_prompt = system_prompt;
-            if sub_agent_config.enabled && sub_agent_config.mode == "auto_create" {
+            if sub_agent_config.enabled && sub_agent_config.mode == "fully_auto" {
                 match get_session_architecture(&sid).await {
                     Some(existing_file) => {
                         // Architecture already exists — load agent IDs and update config
                         autocreate_log_lines.lock().unwrap().push(
-                            format!("[{}] AUTO_CREATE: Using existing architecture: {}", chrono::Utc::now().format("%H:%M:%S"), existing_file)
+                            format!("[{}] FULLY_AUTO: Using existing architecture: {}", chrono::Utc::now().format("%H:%M:%S"), existing_file)
                         );
                         sub_agent_config.config_file = existing_file.clone();
                         if let Some((_, ids)) = crate::server::services::toolbox::load_agent_yaml(&existing_file) {
                             let agents_str = ids.join(", ");
                             let arch_prompt = format!(
-                                "\n\nAUTO-CREATE MODE: An agent team is LIVE. Available agents: [{}]. \
+                                "\n\nFULLY AUTO MODE: An agent team is LIVE. Available agents: [{}]. \
 You MUST delegate ALL work via send_task/wait_result. \
 If an orchestrator exists, send tasks ONLY to the orchestrator.",
                                 agents_str
@@ -1140,7 +1140,7 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
                             .and_then(|m| m["content"].as_str())
                             .unwrap_or("");
                         let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
-                        autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE: Creating agent architecture...", ts));
+                        autocreate_log_lines.lock().unwrap().push(format!("[{}] FULLY_AUTO: Creating agent architecture...", ts));
                         autocreate_ctx.request_repaint();
 
                         let (ok, config_file, msg) = force_create_architecture(
@@ -1149,13 +1149,13 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
 
                         let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
                         if ok {
-                            autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE: {}", ts, msg));
+                            autocreate_log_lines.lock().unwrap().push(format!("[{}] FULLY_AUTO: {}", ts, msg));
                             if let Some(ref cf) = config_file {
                                 sub_agent_config.config_file = cf.clone();
                                 if let Some((_, ids)) = crate::server::services::toolbox::load_agent_yaml(cf) {
                                     let agents_str = ids.join(", ");
                                     let arch_prompt = format!(
-                                        "\n\nAUTO-CREATE MODE: An agent team has been created and all agents are LIVE. \
+                                        "\n\nFULLY AUTO MODE: An agent team has been created and all agents are LIVE. \
 Available agents: [{}]. \
 You MUST delegate ALL work to agents via send_task/wait_result. \
 Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
@@ -1173,7 +1173,7 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
                                 }
                             }
                         } else {
-                            autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE FAILED: {}", ts, msg));
+                            autocreate_log_lines.lock().unwrap().push(format!("[{}] FULLY_AUTO FAILED: {}", ts, msg));
                         }
                         autocreate_ctx.request_repaint();
                         // Brief wait for realtime session to boot
@@ -2083,9 +2083,11 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
                 "Single Agent"
             } else {
                 match mode.as_str() {
+                    "fully_auto" => "Fully Auto",
                     "realtime" => "Realtime Swarm",
-                    "auto" => "Auto Swarm",
-                    "manual" => "Manual Swarm",
+                    "auto" => "Auto",
+                    "auto_swarm" => "Auto Swarm",
+                    "manual" => "Manual",
                     _ => "Swarm",
                 }
             };
@@ -2094,9 +2096,11 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
                 egui::Color32::from_rgb(107, 114, 128) // gray
             } else {
                 match mode.as_str() {
-                    "realtime" => egui::Color32::from_rgb(239, 68, 68),   // red
-                    "auto" => egui::Color32::from_rgb(34, 197, 94),       // green
-                    "manual" => egui::Color32::from_rgb(245, 158, 11),    // orange
+                    "fully_auto" => egui::Color32::from_rgb(59, 130, 246),  // blue
+                    "realtime" => egui::Color32::from_rgb(239, 68, 68),     // red
+                    "auto" => egui::Color32::from_rgb(34, 197, 94),         // green
+                    "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),  // purple
+                    "manual" => egui::Color32::from_rgb(245, 158, 11),      // orange
                     _ => egui::Color32::from_rgb(59, 130, 246),           // blue
                 }
             };

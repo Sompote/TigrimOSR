@@ -937,7 +937,7 @@ impl SettingsView {
                     .show_ui(ui, |ui| {
                         for mode in &[
                             "auto",
-                            "auto_create",
+                            "fully_auto",
                             "auto_swarm",
                             "realtime",
                             "manual",

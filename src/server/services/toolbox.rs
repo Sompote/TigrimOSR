@@ -260,7 +260,7 @@ pub struct SubAgentConfig {
     pub depth: usize,                 // recursion depth (prevent infinite loops)
     pub session_id: String,           // for JSONL history logging
     pub agent_id: String,             // current agent's own ID (for protocol tools)
-    pub mode: String,                 // "auto", "auto_create", "auto_swarm", "realtime", "manual"
+    pub mode: String,                 // "auto", "fully_auto", "auto_swarm", "realtime", "manual"
 }
 
 impl Default for SubAgentConfig {
@@ -1600,7 +1600,7 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
             // Pure realtime: send_task / wait_result / check_agents
             tools.extend(realtime_tools(&agent_list));
         }
-        "auto_create" => {
+        "fully_auto" => {
             if session_activated {
                 // Architecture created, agents running — use realtime tools
                 tools.extend(realtime_tools(&agent_list));

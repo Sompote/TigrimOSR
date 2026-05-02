@@ -17,7 +17,7 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 
 ### v0.2.0
 
-- **Agent modes** — Auto, Auto Create, Auto Swarm, Realtime, and Manual modes for flexible agent orchestration
+- **Agent modes** — Auto, Fully Auto, Auto Swarm, Realtime, and Manual modes for flexible agent orchestration
 - **Connection editor** — Click agent connection lines to change protocol type (TCP, Queue, Bus, Blackboard)
 - **Chat info card** — Shows active architecture name, swarm mode, and model in the chat view
 - **Security settings** — Per-tool approval toggles for shell, Python, file write, file delete, and agent spawn
@@ -196,7 +196,7 @@ On first launch, go to **Settings** to configure:
 | Model | Model name (e.g. `gpt-4o`, `claude-3-5-sonnet`) |
 | Sub-agent system | Enable multi-agent mode |
 | Agent config file | Select a YAML file from `data/agents/` |
-| Agent mode | Auto, Auto Create, Auto Swarm, Realtime, or Manual |
+| Agent mode | Auto, Fully Auto, Auto Swarm, Realtime, or Manual |
 
 ## Multi-Agent System
 
@@ -216,7 +216,7 @@ Enable sub-agents in Settings and select an agent config file. Included configs 
 | Mode | Description |
 |------|-------------|
 | **Auto** | Standard tool-calling loop with optional sub-agent delegation |
-| **Auto Create** | Starts with `create_architecture` tool, then switches to realtime agent team |
+| **Fully Auto** | Starts with `create_architecture` tool, then switches to realtime agent team |
 | **Auto Swarm** | Starts with `select_swarm` to pick an existing YAML config, then boots agent team |
 | **Realtime** | Boots the full agent team immediately from the selected YAML config |
 | **Manual** | No automatic tool calling; agents respond with instructions only |
