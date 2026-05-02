@@ -958,11 +958,11 @@ ethernets:
 
                 // Exit conditions.
                 {
-                    let g = inner.lock().await;
+                    let mut g = inner.lock().await;
                     if !g.health_check_running
                         || (g.state != VmState::Running && g.state != VmState::Provisioning)
                     {
-                        inner.lock().await.health_check_running = false;
+                        g.health_check_running = false;
                         break;
                     }
                 }
