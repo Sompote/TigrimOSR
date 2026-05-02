@@ -843,8 +843,7 @@ ethernets:
             "virtio-net-pci,netdev=net0".into(),
         ]);
 
-        // Serial console on stdio (for IP detection via TIGRIMOS_IP marker).
-        args.extend(["-serial".into(), "stdio".into()]);
+        // Note: -nographic already redirects serial to stdio, so no explicit -serial needed.
 
         // Shared folders via 9p (VirtioFS requires virtiofsd on macOS).
         {
