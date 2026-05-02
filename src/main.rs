@@ -9,13 +9,34 @@ use vm::manager::VmManager;
 fn main() {
     tracing_subscriber::fmt::init();
 
+    // Ensure PATH includes common tool locations (critical for .app bundles)
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    if !current_path.contains("/opt/homebrew/bin") || !current_path.contains("/usr/local/bin") {
+        std::env::set_var(
+            "PATH",
+            format!("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{}", current_path),
+        );
+    }
+
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     let handle = runtime.handle().clone();
 
     let vm_manager = Arc::new(VmManager::new());
 
     // Start the Axum server in background
-    let sandbox_dir = std::env::var("SANDBOX_DIR").unwrap_or_else(|_| "sandbox".to_string());
+    // Resolve sandbox dir — use absolute path so .app bundles work (cwd may be /)
+    let sandbox_dir = std::env::var("SANDBOX_DIR").unwrap_or_else(|_| {
+        let raw = "sandbox".to_string();
+        if std::path::Path::new(&raw).is_absolute() {
+            raw
+        } else {
+            let abs = server::data::data_dir()
+                .parent()
+                .unwrap_or(&std::path::PathBuf::from("."))
+                .join(&raw);
+            abs.to_string_lossy().to_string()
+        }
+    });
     let _ = std::fs::create_dir_all(&sandbox_dir);
     let access_token = std::env::var("ACCESS_TOKEN").unwrap_or_default();
     handle.spawn(server::start_server(sandbox_dir, access_token));

@@ -707,16 +707,19 @@ impl ChatView {
                 // Ensure project folder exists
                 let _ = std::fs::create_dir_all(&folder);
                 folder
-            } else if settings.sandbox_dir.is_empty() {
-                // Use absolute path so it works from .app bundles too
-                let default_sandbox = crate::server::data::data_dir()
-                    .parent()
-                    .unwrap_or(&std::path::PathBuf::from("."))
-                    .join("sandbox");
-                let _ = std::fs::create_dir_all(&default_sandbox);
-                default_sandbox.to_string_lossy().to_string()
             } else {
-                settings.sandbox_dir.clone()
+                // Resolve sandbox dir — convert relative paths to absolute under app data
+                let raw = settings.sandbox_dir.clone();
+                let sandbox_path = if raw.is_empty() || !std::path::Path::new(&raw).is_absolute() {
+                    crate::server::data::data_dir()
+                        .parent()
+                        .unwrap_or(&std::path::PathBuf::from("."))
+                        .join(if raw.is_empty() { "sandbox" } else { &raw })
+                } else {
+                    std::path::PathBuf::from(&raw)
+                };
+                let _ = std::fs::create_dir_all(&sandbox_path);
+                sandbox_path.to_string_lossy().to_string()
             }
         };
 
