@@ -249,7 +249,7 @@ fn is_error_reply(content: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 async fn read_chat_log_tail(session_id: &str) -> String {
-    let file = PathBuf::from("data")
+    let file = crate::server::data::data_dir()
         .join("chat_logs")
         .join(format!("{}.log", session_id));
     match tokio::fs::metadata(&file).await {

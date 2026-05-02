@@ -2516,11 +2516,36 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
     let final_output = format!("// __REACT_META__={}\n{}", meta, wrapped);
 
     // Try compile via npx esbuild
+    ensure_full_path();
     let jsx_tmp = std::env::temp_dir().join(format!("react_{}.jsx", chrono::Utc::now().timestamp_millis()));
     if tokio::fs::write(&jsx_tmp, &wrapped).await.is_ok() {
+        // Find npx: check PATH, then common locations
+        let npx_bin = {
+            #[cfg(target_os = "windows")]
+            let which_cmd = "where";
+            #[cfg(not(target_os = "windows"))]
+            let which_cmd = "/usr/bin/which";
+            let found = std::process::Command::new(which_cmd).arg("npx").output().ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next().map(|s| s.trim().to_string()));
+            if let Some(p) = found {
+                p
+            } else {
+                #[cfg(target_os = "macos")]
+                {
+                    ["/opt/homebrew/bin/npx", "/usr/local/bin/npx"]
+                        .iter()
+                        .find(|c| std::path::Path::new(c).exists())
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "npx".to_string())
+                }
+                #[cfg(not(target_os = "macos"))]
+                { "npx".to_string() }
+            }
+        };
         let compiled = timeout(
             Duration::from_secs(30),
-            Command::new("npx")
+            Command::new(&npx_bin)
                 .args(["--yes", "esbuild", jsx_tmp.to_str().unwrap_or(""), "--bundle=false", "--loader=jsx"])
                 .output(),
         ).await;

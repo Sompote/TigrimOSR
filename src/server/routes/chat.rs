@@ -18,11 +18,11 @@ use crate::server::AppState;
 // ---------------------------------------------------------------------------
 
 fn activity_log_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from("data").join("activity_logs")
+    crate::server::data::data_dir().join("activity_logs")
 }
 
 fn chat_log_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from("data").join("chat_logs")
+    crate::server::data::data_dir().join("chat_logs")
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ async fn get_session(Path(id): Path<String>) -> impl IntoResponse {
             let auto_arch_filename = get_auto_created_architecture(&id);
             if let Some(filename) = auto_arch_filename {
                 let file_path =
-                    std::path::PathBuf::from("data").join("agents").join(&filename);
+                    crate::server::data::data_dir().join("agents").join(&filename);
                 let system_name = if let Ok(content) =
                     tokio::fs::read_to_string(&file_path).await
                 {

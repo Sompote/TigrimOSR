@@ -2114,7 +2114,7 @@ Provide helpful, detailed responses based on tool results.{}",
                             ).frame(self.log_tab == 1)).clicked() {
                                 self.log_tab = 1;
                                 // Load agent history when switching to this tab
-                                let hist_path = std::path::Path::new("data")
+                                let hist_path = crate::server::data::data_dir()
                                     .join("agent_history")
                                     .join(log_sid)
                                     .join("spawn.jsonl");
@@ -2786,7 +2786,7 @@ Provide helpful, detailed responses based on tool results.{}",
         self.graphic_loaded_config = session_id.to_string();
 
         // Read agent history JSONL
-        let hist_path = std::path::Path::new("data")
+        let hist_path = crate::server::data::data_dir()
             .join("agent_history")
             .join(session_id)
             .join("spawn.jsonl");
