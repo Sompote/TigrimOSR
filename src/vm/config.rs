@@ -152,7 +152,8 @@ impl VmConfig {
     pub const VM_PORT: u16 = 3001;
 
     /// Port forwarded to the host via QEMU user-mode networking.
-    pub const HOST_FORWARD_PORT: u16 = 3001;
+    /// Must differ from the app's own server port (3001) to avoid false health checks.
+    pub const HOST_FORWARD_PORT: u16 = 3002;
 
     /// SSH port forwarded from host to guest port 22.
     pub const SSH_HOST_PORT: u16 = 2222;
