@@ -15,53 +15,138 @@ use crate::server::services::compact;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Find python3 binary — checks PATH first, then common macOS/Linux locations.
-fn find_python3() -> String {
-    if let Ok(output) = std::process::Command::new("/usr/bin/which").arg("python3").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return path;
+/// Find python binary — checks PATH first, then common platform-specific locations.
+fn find_python() -> String {
+    // On Windows, try "python" first (standard), then "python3"
+    // On Unix, try "python3" first, then "python"
+    #[cfg(target_os = "windows")]
+    let (primary, secondary) = ("python", "python3");
+    #[cfg(not(target_os = "windows"))]
+    let (primary, secondary) = ("python3", "python");
+
+    // Try `which` (Unix) or `where` (Windows) to find in PATH
+    #[cfg(target_os = "windows")]
+    let which_cmd = "where";
+    #[cfg(not(target_os = "windows"))]
+    let which_cmd = "/usr/bin/which";
+
+    for name in &[primary, secondary] {
+        if let Ok(output) = std::process::Command::new(which_cmd).arg(name).output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout)
+                    .lines().next().unwrap_or("").trim().to_string();
+                if !path.is_empty() {
+                    return path;
+                }
             }
         }
     }
-    // Common locations when launched from .app bundle (PATH is stripped)
-    for candidate in &[
-        "/usr/bin/python3",
-        "/usr/local/bin/python3",
-        "/opt/homebrew/bin/python3",
-        "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
-    ] {
-        if std::path::Path::new(candidate).exists() {
-            return candidate.to_string();
+
+    // Platform-specific fallback locations
+    #[cfg(target_os = "macos")]
+    {
+        for candidate in &[
+            "/usr/bin/python3",
+            "/usr/local/bin/python3",
+            "/opt/homebrew/bin/python3",
+            "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+        ] {
+            if std::path::Path::new(candidate).exists() {
+                return candidate.to_string();
+            }
         }
     }
-    "python3".to_string()
+
+    #[cfg(target_os = "linux")]
+    {
+        for candidate in &["/usr/bin/python3", "/usr/local/bin/python3", "/usr/bin/python"] {
+            if std::path::Path::new(candidate).exists() {
+                return candidate.to_string();
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Check common Windows Python install locations
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let programs = std::path::PathBuf::from(&local).join("Programs").join("Python");
+            if let Ok(entries) = std::fs::read_dir(&programs) {
+                for entry in entries.flatten() {
+                    let py = entry.path().join("python.exe");
+                    if py.exists() {
+                        return py.to_string_lossy().to_string();
+                    }
+                }
+            }
+        }
+        for candidate in &[
+            r"C:\Python312\python.exe",
+            r"C:\Python311\python.exe",
+            r"C:\Python310\python.exe",
+            r"C:\Python39\python.exe",
+        ] {
+            if std::path::Path::new(candidate).exists() {
+                return candidate.to_string();
+            }
+        }
+    }
+
+    primary.to_string()
 }
 
-/// Ensure PATH includes common tool locations (for .app bundles where PATH is stripped).
+/// Ensure PATH includes common tool locations (for .app bundles / Windows shortcuts).
 fn ensure_full_path() {
     let current = std::env::var("PATH").unwrap_or_default();
-    if !current.contains("/opt/homebrew/bin") || !current.contains("/usr/local/bin") {
-        let full = format!(
-            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{}",
-            current
-        );
-        std::env::set_var("PATH", full);
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if !current.contains("/opt/homebrew/bin") || !current.contains("/usr/local/bin") {
+            let full = format!(
+                "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{}",
+                current
+            );
+            std::env::set_var("PATH", full);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Ensure common Windows Python/tool paths are on PATH
+        let mut extra = Vec::new();
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let programs = std::path::PathBuf::from(&local).join("Programs").join("Python");
+            if let Ok(entries) = std::fs::read_dir(&programs) {
+                for entry in entries.flatten() {
+                    let dir = entry.path();
+                    if dir.is_dir() {
+                        extra.push(dir.to_string_lossy().to_string());
+                        extra.push(dir.join("Scripts").to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+        if !extra.is_empty() {
+            let full = format!("{};{}", extra.join(";"), current);
+            std::env::set_var("PATH", full);
+        }
     }
 }
 
-/// Build a Command with PATH that includes common tool locations (for .app bundles).
+/// Build a Command for Python execution.
 fn python_command() -> Command {
     ensure_full_path();
-    let python = find_python3();
+    let python = find_python();
     Command::new(&python)
 }
 
-/// Build a shell Command using absolute path to sh.
+/// Build a shell Command.
 fn shell_command() -> Command {
     ensure_full_path();
-    Command::new("/bin/sh")
+    #[cfg(target_os = "windows")]
+    { Command::new("cmd.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { Command::new("/bin/sh") }
 }
 
 // ---------------------------------------------------------------------------
@@ -1844,28 +1929,31 @@ except ImportError:
         .canonicalize()
         .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
 
-    // Primary: Apple container CLI (macOS containerization)
-    let result = timeout(
-        Duration::from_secs(60),
-        Command::new("/usr/bin/container")
-            .args([
-                "run", "--rm",
-                "-v", &format!("{}:/sandbox", abs_sandbox.display()),
-                "-w", "/sandbox",
-                "python:3.11-slim",
-                "python3", "-c", code,
-            ])
-            .output(),
-    )
-    .await;
+    // On macOS, try sandboxed execution first; on other platforms, execute directly.
+    #[cfg(target_os = "macos")]
+    let result = {
+        // Primary: Apple container CLI (macOS containerization)
+        let r = timeout(
+            Duration::from_secs(60),
+            Command::new("/usr/bin/container")
+                .args([
+                    "run", "--rm",
+                    "-v", &format!("{}:/sandbox", abs_sandbox.display()),
+                    "-w", "/sandbox",
+                    "python:3.11-slim",
+                    "python3", "-c", code,
+                ])
+                .output(),
+        )
+        .await;
 
-    // Fallback 1: sandbox-exec (macOS legacy)
-    let result = match &result {
-        Ok(Ok(o)) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty() => result,
-        _ => {
-            warn!("[sandbox] container CLI not available, trying sandbox-exec");
-            let sandbox_profile = format!(
-                r#"(version 1)
+        // Fallback 1: sandbox-exec (macOS legacy)
+        let r = match &r {
+            Ok(Ok(o)) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty() => r,
+            _ => {
+                warn!("[sandbox] container CLI not available, trying sandbox-exec");
+                let sandbox_profile = format!(
+                    r#"(version 1)
 (deny default)
 (allow process-exec)
 (allow process-fork)
@@ -1880,39 +1968,51 @@ except ImportError:
 (allow network-outbound)
 (allow network-inbound)
 (allow signal)"#,
-                abs_sandbox.display()
-            );
-            timeout(
-                Duration::from_secs(60),
-                Command::new("/usr/bin/sandbox-exec")
-                    .arg("-p")
-                    .arg(&sandbox_profile)
-                    .arg(find_python3())
-                    .arg("-c")
-                    .arg(code)
-                    .current_dir(sandbox_dir)
-                    .output(),
-            )
-            .await
+                    abs_sandbox.display()
+                );
+                timeout(
+                    Duration::from_secs(60),
+                    Command::new("/usr/bin/sandbox-exec")
+                        .arg("-p")
+                        .arg(&sandbox_profile)
+                        .arg(&find_python())
+                        .arg("-c")
+                        .arg(code)
+                        .current_dir(sandbox_dir)
+                        .output(),
+                )
+                .await
+            }
+        };
+
+        // Fallback 2: direct execution
+        match &r {
+            Ok(Ok(_)) => r,
+            _ => {
+                warn!("[sandbox] sandbox-exec failed, falling back to direct execution");
+                timeout(
+                    Duration::from_secs(60),
+                    python_command()
+                        .arg("-c")
+                        .arg(code)
+                        .current_dir(sandbox_dir)
+                        .output(),
+                )
+                .await
+            }
         }
     };
 
-    // Fallback 2: direct execution
-    let result = match &result {
-        Ok(Ok(_)) => result,
-        _ => {
-            warn!("[sandbox] sandbox-exec failed, falling back to direct execution");
-            timeout(
-                Duration::from_secs(60),
-                python_command()
-                    .arg("-c")
-                    .arg(code)
-                    .current_dir(sandbox_dir)
-                    .output(),
-            )
-            .await
-        }
-    };
+    #[cfg(not(target_os = "macos"))]
+    let result = timeout(
+        Duration::from_secs(60),
+        python_command()
+            .arg("-c")
+            .arg(code)
+            .current_dir(sandbox_dir)
+            .output(),
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {
@@ -1977,28 +2077,31 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
         .canonicalize()
         .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
 
-    // Primary: Apple container CLI
-    let result = timeout(
-        Duration::from_secs(30),
-        Command::new("/usr/bin/container")
-            .args([
-                "run", "--rm",
-                "-v", &format!("{}:/sandbox", abs_sandbox.display()),
-                "-w", "/sandbox",
-                "alpine:latest",
-                "sh", "-c", command,
-            ])
-            .output(),
-    )
-    .await;
+    // On macOS, try sandboxed execution first; on other platforms, execute directly.
+    #[cfg(target_os = "macos")]
+    let result = {
+        // Primary: Apple container CLI
+        let r = timeout(
+            Duration::from_secs(30),
+            Command::new("/usr/bin/container")
+                .args([
+                    "run", "--rm",
+                    "-v", &format!("{}:/sandbox", abs_sandbox.display()),
+                    "-w", "/sandbox",
+                    "alpine:latest",
+                    "sh", "-c", command,
+                ])
+                .output(),
+        )
+        .await;
 
-    // Fallback 1: sandbox-exec (macOS legacy)
-    let result = match &result {
-        Ok(Ok(o)) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty() => result,
-        _ => {
-            warn!("[sandbox] container CLI not available, trying sandbox-exec");
-            let sandbox_profile = format!(
-                r#"(version 1)
+        // Fallback 1: sandbox-exec (macOS legacy)
+        let r = match &r {
+            Ok(Ok(o)) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty() => r,
+            _ => {
+                warn!("[sandbox] container CLI not available, trying sandbox-exec");
+                let sandbox_profile = format!(
+                    r#"(version 1)
 (deny default)
 (allow process-exec)
 (allow process-fork)
@@ -2011,38 +2114,49 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
 (allow mach-lookup)
 (allow network-outbound)
 (allow signal)"#,
-                abs_sandbox.display()
-            );
-            timeout(
-                Duration::from_secs(30),
-                Command::new("/usr/bin/sandbox-exec")
-                    .arg("-p")
-                    .arg(&sandbox_profile)
-                    .arg("sh")
-                    .arg("-c")
-                    .arg(command)
-                    .current_dir(&cwd)
-                    .output(),
-            )
-            .await
+                    abs_sandbox.display()
+                );
+                timeout(
+                    Duration::from_secs(30),
+                    Command::new("/usr/bin/sandbox-exec")
+                        .arg("-p")
+                        .arg(&sandbox_profile)
+                        .arg("/bin/sh")
+                        .arg("-c")
+                        .arg(command)
+                        .current_dir(&cwd)
+                        .output(),
+                )
+                .await
+            }
+        };
+
+        // Fallback 2: direct execution
+        match &r {
+            Ok(Ok(_)) => r,
+            _ => {
+                warn!("[sandbox] sandbox-exec failed, falling back to direct execution");
+                timeout(
+                    Duration::from_secs(30),
+                    shell_command()
+                        .arg("-c")
+                        .arg(command)
+                        .current_dir(&cwd)
+                        .output(),
+                )
+                .await
+            }
         }
     };
 
-    // Fallback 2: direct execution
-    let result = match &result {
-        Ok(Ok(_)) => result,
-        _ => {
-            warn!("[sandbox] sandbox-exec failed, falling back to direct execution");
-            timeout(
-                Duration::from_secs(30),
-                shell_command()
-                    .arg("-c")
-                    .arg(command)
-                    .current_dir(&cwd)
-                    .output(),
-            )
-            .await
-        }
+    #[cfg(not(target_os = "macos"))]
+    let result = {
+        let mut cmd = shell_command();
+        #[cfg(target_os = "windows")]
+        cmd.arg("/c").arg(command);
+        #[cfg(not(target_os = "windows"))]
+        cmd.arg("-c").arg(command);
+        timeout(Duration::from_secs(30), cmd.current_dir(&cwd).output()).await
     };
 
     match result {
