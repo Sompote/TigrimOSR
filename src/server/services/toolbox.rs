@@ -374,6 +374,46 @@ fn boot_realtime_session_deferred(
     });
 }
 
+/// Force create_architecture on first message in auto_create mode.
+/// Called proactively by the UI — does NOT wait for LLM to choose the tool.
+/// Returns (ok, config_filename, summary_message).
+pub async fn force_create_architecture(
+    user_message: &str,
+    sub_agent: &SubAgentConfig,
+    sandbox_dir: &str,
+) -> (bool, Option<String>, String) {
+    let args = serde_json::json!({
+        "description": user_message,
+        "architectureType": "hierarchical",
+        "agentCount": "auto",
+    });
+    let result = exec_create_architecture(&args, sub_agent).await;
+    let ok = result["ok"].as_bool().unwrap_or(false);
+    if ok {
+        let filename = result["filename"].as_str().unwrap_or("").to_string();
+        let message = result["message"].as_str().unwrap_or("Architecture created.").to_string();
+        // Boot realtime session with proper sandbox dir
+        let sid = sub_agent.session_id.clone();
+        let cf = filename.clone();
+        let ak = sub_agent.api_key.clone();
+        let au = sub_agent.api_url.clone();
+        let m = sub_agent.model.clone();
+        let sd = sandbox_dir.to_string();
+        tokio::spawn(async move {
+            start_realtime_session(&sid, &cf, &ak, &au, &m, &sd).await;
+        });
+        (true, Some(filename), message)
+    } else {
+        let err = result["error"].as_str().unwrap_or("Unknown error").to_string();
+        (false, None, format!("Failed to create architecture: {}", err))
+    }
+}
+
+/// Check if this session already has an auto-created architecture.
+pub async fn get_session_architecture(session_id: &str) -> Option<String> {
+    auto_created_architectures().lock().await.get(session_id).cloned()
+}
+
 pub async fn start_realtime_session(
     session_id: &str,
     config_file: &str,
@@ -4097,8 +4137,11 @@ async fn call_with_tools_inner(
     // Track whether a swarm/architecture has been activated this session
     let mut session_activated = realtime; // realtime mode is pre-activated
     let mut tools = if sub_agent.enabled {
-        tool_definitions_for_mode(&sub_agent, realtime, session_activated)
+        let t = tool_definitions_for_mode(&sub_agent, realtime, session_activated);
+        info!("[call_with_tools] mode={}, enabled={}, agents={:?}, tools={}", sub_agent.mode, sub_agent.enabled, sub_agent.agent_ids, t.iter().filter_map(|td| td["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+        t
     } else {
+        info!("[call_with_tools] sub_agent disabled, using default tools");
         tool_definitions()
     };
 
