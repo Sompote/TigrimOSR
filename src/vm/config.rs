@@ -154,6 +154,9 @@ impl VmConfig {
     /// Port forwarded to the host via QEMU user-mode networking.
     pub const HOST_FORWARD_PORT: u16 = 3001;
 
+    /// SSH port forwarded from host to guest port 22.
+    pub const SSH_HOST_PORT: u16 = 2222;
+
     // -----------------------------------------------------------------------
     // Utilities
     // -----------------------------------------------------------------------

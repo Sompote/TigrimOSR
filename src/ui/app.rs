@@ -489,7 +489,7 @@ impl eframe::App for TigrimOSApp {
                 Tab::Files => self.files_view.show(ui, &self.runtime),
                 Tab::Tasks => self.tasks_view.show(ui, &self.runtime),
                 Tab::Skills => self.skills_view.show(ui, &self.runtime),
-                Tab::Terminal => self.terminal_view.show(ui, &self.runtime),
+                Tab::Terminal => self.terminal_view.show(ui, &self.runtime, snap.state),
                 Tab::Console => console_view(ui, &snap.console_output, &self.vm_manager, &self.runtime),
                 Tab::Folders => shared_folders_view(ui, &snap.shared_folders, &self.vm_manager, &self.runtime),
             }

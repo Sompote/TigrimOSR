@@ -834,9 +834,10 @@ ethernets:
         args.extend([
             "-netdev".into(),
             format!(
-                "user,id=net0,hostfwd=tcp::{}-:{}",
+                "user,id=net0,hostfwd=tcp::{}-:{},hostfwd=tcp::{}-:22",
                 VmConfig::HOST_FORWARD_PORT,
-                VmConfig::VM_PORT
+                VmConfig::VM_PORT,
+                VmConfig::SSH_HOST_PORT
             ),
             "-device".into(),
             "virtio-net-pci,netdev=net0".into(),
