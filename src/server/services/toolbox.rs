@@ -481,6 +481,17 @@ pub async fn start_realtime_session(
             task_tx,
         });
 
+        // Write SUBAGENT_SPAWN to agent history so the graphic view can show this agent
+        if role != "human" {
+            let name = agent_def.get("name").and_then(|v| v.as_str()).unwrap_or(&agent_id);
+            write_agent_history(session_id, "SUBAGENT_SPAWN", json!({
+                "agent_name": agent_id,
+                "display_name": name,
+                "role": role,
+                "parent": "main",
+            })).await;
+        }
+
         info!("[Realtime] Agent {} ({}) booted and listening", agent_id, role);
     }
 
