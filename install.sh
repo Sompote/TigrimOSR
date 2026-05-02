@@ -6,6 +6,9 @@ APP_NAME="TigrimOS"
 REPO_URL="https://github.com/Sompote/TigrimOSR.git"
 BINARY_NAME="tigrimos"
 
+# Ensure we're in a readable directory (curl | bash may inherit a restricted cwd)
+cd "$HOME" 2>/dev/null || cd /tmp 2>/dev/null || true
+
 # ── Colors ──
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
