@@ -708,7 +708,13 @@ impl ChatView {
                 let _ = std::fs::create_dir_all(&folder);
                 folder
             } else if settings.sandbox_dir.is_empty() {
-                "sandbox".to_string()
+                // Use absolute path so it works from .app bundles too
+                let default_sandbox = crate::server::data::data_dir()
+                    .parent()
+                    .unwrap_or(&std::path::PathBuf::from("."))
+                    .join("sandbox");
+                let _ = std::fs::create_dir_all(&default_sandbox);
+                default_sandbox.to_string_lossy().to_string()
             } else {
                 settings.sandbox_dir.clone()
             }

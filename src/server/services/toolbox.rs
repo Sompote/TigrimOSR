@@ -12,6 +12,47 @@ use crate::server::services::protocols;
 use crate::server::services::compact;
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Find python3 binary — checks PATH first, then common macOS/Linux locations.
+fn find_python3() -> String {
+    if let Ok(output) = std::process::Command::new("which").arg("python3").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return path;
+            }
+        }
+    }
+    // Common locations when launched from .app bundle (PATH is stripped)
+    for candidate in &[
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3",
+        "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+    ] {
+        if std::path::Path::new(candidate).exists() {
+            return candidate.to_string();
+        }
+    }
+    "python3".to_string()
+}
+
+/// Build a Command with PATH that includes common tool locations (for .app bundles).
+fn python_command() -> Command {
+    let python = find_python3();
+    let mut cmd = Command::new(&python);
+    // Ensure PATH includes common locations for subprocess spawns too
+    let extra_paths = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin";
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    if !current_path.contains("/opt/homebrew/bin") {
+        cmd.env("PATH", format!("{extra_paths}:{current_path}"));
+    }
+    cmd
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -1563,7 +1604,7 @@ except ImportError:
 
     let py_result = timeout(
         Duration::from_secs(30),
-        Command::new("python3")
+        python_command()
             .arg("-c")
             .arg(&py_script)
             .output(),
@@ -1834,7 +1875,7 @@ except ImportError:
                 Command::new("sandbox-exec")
                     .arg("-p")
                     .arg(&sandbox_profile)
-                    .arg("python3")
+                    .arg(find_python3())
                     .arg("-c")
                     .arg(code)
                     .current_dir(sandbox_dir)
@@ -1851,7 +1892,7 @@ except ImportError:
             warn!("[sandbox] sandbox-exec failed, falling back to direct execution");
             timeout(
                 Duration::from_secs(60),
-                Command::new("python3")
+                python_command()
                     .arg("-c")
                     .arg(code)
                     .current_dir(sandbox_dir)
@@ -2066,6 +2107,9 @@ async fn exec_write_file(args: &Value, sandbox_dir: &str) -> Value {
 }
 
 async fn exec_list_files(args: &Value, sandbox_dir: &str) -> Value {
+    // Ensure sandbox directory exists
+    let _ = fs::create_dir_all(sandbox_dir).await;
+
     let path = args["path"]
         .as_str()
         .map(|s| s.to_string())
