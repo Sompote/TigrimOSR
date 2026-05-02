@@ -981,6 +981,7 @@ Provide helpful, detailed responses based on tool results.{}",
             let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
             { state_log_lines.lock().unwrap().push(format!("[{}] === Session: {} ===", ts, sid)); }
             { state_log_lines.lock().unwrap().push(format!("[{}] USER: {}", ts, messages.last().and_then(|m| m["content"].as_str()).unwrap_or(""))); }
+            { state_log_lines.lock().unwrap().push(format!("[{}] MODE: enabled={}, mode={}, agents={:?}", ts, sub_agent_config.enabled, sub_agent_config.mode, sub_agent_config.agent_ids)); }
 
             // Clone for subagent listener and auto_create (before on_update_cb moves the originals)
             let subagent_log_lines = state_log_lines.clone();
@@ -1112,53 +1113,72 @@ Provide helpful, detailed responses based on tool results.{}",
             let mut sub_agent_config = sub_agent_config;
             let mut system_prompt = system_prompt;
             if sub_agent_config.enabled && sub_agent_config.mode == "auto_create" {
-                let existing = get_session_architecture(&sid).await;
-                if existing.is_none() {
-                    let user_msg = messages.last()
-                        .and_then(|m| m["content"].as_str())
-                        .unwrap_or("");
-                    let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
-                    autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE: Creating agent architecture...", ts));
-                    autocreate_ctx.request_repaint();
+                match get_session_architecture(&sid).await {
+                    Some(existing_file) => {
+                        // Architecture already exists — load agent IDs and update config
+                        autocreate_log_lines.lock().unwrap().push(
+                            format!("[{}] AUTO_CREATE: Using existing architecture: {}", chrono::Utc::now().format("%H:%M:%S"), existing_file)
+                        );
+                        sub_agent_config.config_file = existing_file.clone();
+                        if let Some((_, ids)) = crate::server::services::toolbox::load_agent_yaml(&existing_file) {
+                            let agents_str = ids.join(", ");
+                            let arch_prompt = format!(
+                                "\n\nAUTO-CREATE MODE: An agent team is LIVE. Available agents: [{}]. \
+You MUST delegate ALL work via send_task/wait_result. \
+If an orchestrator exists, send tasks ONLY to the orchestrator.",
+                                agents_str
+                            );
+                            if let Some(ref mut sp) = system_prompt {
+                                sp.push_str(&arch_prompt);
+                            }
+                            sub_agent_config.agent_ids = ids;
+                        }
+                    }
+                    None => {
+                        // First message — force create architecture
+                        let user_msg = messages.last()
+                            .and_then(|m| m["content"].as_str())
+                            .unwrap_or("");
+                        let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                        autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE: Creating agent architecture...", ts));
+                        autocreate_ctx.request_repaint();
 
-                    let (ok, config_file, msg) = force_create_architecture(
-                        user_msg, &sub_agent_config, &sandbox_dir,
-                    ).await;
+                        let (ok, config_file, msg) = force_create_architecture(
+                            user_msg, &sub_agent_config, &sandbox_dir,
+                        ).await;
 
-                    let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
-                    if ok {
-                        autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE: {}", ts, msg));
-                        // Update sub_agent_config with the new config file and agent IDs
-                        if let Some(ref cf) = config_file {
-                            sub_agent_config.config_file = cf.clone();
-                            if let Some((_, ids)) = crate::server::services::toolbox::load_agent_yaml(cf) {
-                                // Rebuild system prompt with agent list
-                                let agents_str = ids.join(", ");
-                                let arch_prompt = format!(
-                                    "\n\nAUTO-CREATE MODE: An agent team has been created and all agents are LIVE. \
+                        let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                        if ok {
+                            autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE: {}", ts, msg));
+                            if let Some(ref cf) = config_file {
+                                sub_agent_config.config_file = cf.clone();
+                                if let Some((_, ids)) = crate::server::services::toolbox::load_agent_yaml(cf) {
+                                    let agents_str = ids.join(", ");
+                                    let arch_prompt = format!(
+                                        "\n\nAUTO-CREATE MODE: An agent team has been created and all agents are LIVE. \
 Available agents: [{}]. \
 You MUST delegate ALL work to agents via send_task/wait_result. \
 Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
 Only use run_python/write_file for formatting the final output. \
 Do NOT do research or analysis yourself — agents handle that. \
 If an orchestrator exists, send tasks ONLY to the orchestrator.",
-                                    agents_str
-                                );
-                                // Append architecture info to existing system prompt
-                                if let Some(ref mut sp) = system_prompt {
-                                    sp.push_str(&arch_prompt);
-                                } else {
-                                    system_prompt = Some(arch_prompt);
+                                        agents_str
+                                    );
+                                    if let Some(ref mut sp) = system_prompt {
+                                        sp.push_str(&arch_prompt);
+                                    } else {
+                                        system_prompt = Some(arch_prompt);
+                                    }
+                                    sub_agent_config.agent_ids = ids;
                                 }
-                                sub_agent_config.agent_ids = ids;
                             }
+                        } else {
+                            autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE FAILED: {}", ts, msg));
                         }
-                    } else {
-                        autocreate_log_lines.lock().unwrap().push(format!("[{}] AUTO_CREATE FAILED: {}", ts, msg));
+                        autocreate_ctx.request_repaint();
+                        // Brief wait for realtime session to boot
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     }
-                    autocreate_ctx.request_repaint();
-                    // Brief wait for realtime session to boot
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                 }
             }
 
