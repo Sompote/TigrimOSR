@@ -17,7 +17,7 @@ use crate::server::services::compact;
 
 /// Find python3 binary — checks PATH first, then common macOS/Linux locations.
 fn find_python3() -> String {
-    if let Ok(output) = std::process::Command::new("which").arg("python3").output() {
+    if let Ok(output) = std::process::Command::new("/usr/bin/which").arg("python3").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
@@ -39,17 +39,29 @@ fn find_python3() -> String {
     "python3".to_string()
 }
 
+/// Ensure PATH includes common tool locations (for .app bundles where PATH is stripped).
+fn ensure_full_path() {
+    let current = std::env::var("PATH").unwrap_or_default();
+    if !current.contains("/opt/homebrew/bin") || !current.contains("/usr/local/bin") {
+        let full = format!(
+            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{}",
+            current
+        );
+        std::env::set_var("PATH", full);
+    }
+}
+
 /// Build a Command with PATH that includes common tool locations (for .app bundles).
 fn python_command() -> Command {
+    ensure_full_path();
     let python = find_python3();
-    let mut cmd = Command::new(&python);
-    // Ensure PATH includes common locations for subprocess spawns too
-    let extra_paths = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin";
-    let current_path = std::env::var("PATH").unwrap_or_default();
-    if !current_path.contains("/opt/homebrew/bin") {
-        cmd.env("PATH", format!("{extra_paths}:{current_path}"));
-    }
-    cmd
+    Command::new(&python)
+}
+
+/// Build a shell Command using absolute path to sh.
+fn shell_command() -> Command {
+    ensure_full_path();
+    Command::new("/bin/sh")
 }
 
 // ---------------------------------------------------------------------------
@@ -1835,7 +1847,7 @@ except ImportError:
     // Primary: Apple container CLI (macOS containerization)
     let result = timeout(
         Duration::from_secs(60),
-        Command::new("container")
+        Command::new("/usr/bin/container")
             .args([
                 "run", "--rm",
                 "-v", &format!("{}:/sandbox", abs_sandbox.display()),
@@ -1872,7 +1884,7 @@ except ImportError:
             );
             timeout(
                 Duration::from_secs(60),
-                Command::new("sandbox-exec")
+                Command::new("/usr/bin/sandbox-exec")
                     .arg("-p")
                     .arg(&sandbox_profile)
                     .arg(find_python3())
@@ -1968,7 +1980,7 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
     // Primary: Apple container CLI
     let result = timeout(
         Duration::from_secs(30),
-        Command::new("container")
+        Command::new("/usr/bin/container")
             .args([
                 "run", "--rm",
                 "-v", &format!("{}:/sandbox", abs_sandbox.display()),
@@ -2003,7 +2015,7 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
             );
             timeout(
                 Duration::from_secs(30),
-                Command::new("sandbox-exec")
+                Command::new("/usr/bin/sandbox-exec")
                     .arg("-p")
                     .arg(&sandbox_profile)
                     .arg("sh")
@@ -2023,7 +2035,7 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
             warn!("[sandbox] sandbox-exec failed, falling back to direct execution");
             timeout(
                 Duration::from_secs(30),
-                Command::new("sh")
+                shell_command()
                     .arg("-c")
                     .arg(command)
                     .current_dir(&cwd)
