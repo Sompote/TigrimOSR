@@ -164,9 +164,9 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key>
     <string>com.tigrimos.app</string>
     <key>CFBundleVersion</key>
-    <string>1.4.0</string>
+    <string>0.2.1</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.4.0</string>
+    <string>0.2.1</string>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
     <key>CFBundleIconFile</key>

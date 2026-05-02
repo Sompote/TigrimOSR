@@ -1,4 +1,4 @@
-# TigrimOSR v0.2.0
+# TigrimOSR v0.2.1
 
 **TigrimOSR** is the Rust version of [TigrimOS](https://github.com/Sompote/TigerCowork) — a high-performance native desktop rewrite of the original Python/Node.js AI assistant. Built entirely in Rust using egui for the UI, TigrimOSR delivers faster startup, lower memory usage, and a single self-contained binary with no Node.js or Python runtime required to run the app itself.
 
@@ -6,7 +6,16 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 
 ![TigrimOSR Screenshot](assets/screenshot.png)
 
-## What's New in v0.2.0
+## What's New in v0.2.1
+
+- **Cross-platform support** — Windows and Linux compatibility for sandbox execution, Python/shell discovery, and subprocess spawning
+- **.app bundle fixes** — Resolved issues with data directories, sandbox paths, Python/shell not found when launched from macOS `.app` bundle
+- **Persistent chat logs** — Agent activity logs now persist after chat completes instead of disappearing
+- **Parallel chat streaming** — Multiple chat sessions can stream responses simultaneously via HashMap-based state
+- **Installer improvements** — Robust `curl | bash` support with proper cwd handling, terminal prompt fallbacks
+- **Zero compiler warnings** — All 162 warnings resolved (deprecated egui APIs, unused imports, dead code)
+
+### v0.2.0
 
 - **Agent modes** — Auto, Auto Create, Auto Swarm, Realtime, and Manual modes for flexible agent orchestration
 - **Connection editor** — Click agent connection lines to change protocol type (TCP, Queue, Bus, Blackboard)
