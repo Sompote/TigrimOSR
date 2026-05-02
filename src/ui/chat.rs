@@ -1119,7 +1119,7 @@ Provide helpful, detailed responses based on tool results.{}",
                 { state_log_lines2.lock().unwrap().push(format!("[{}] === Response complete ===", ts)); }
                 let log_text = state_log_lines2.lock().unwrap().join("
 ");
-                let log_dir = std::path::Path::new("data").join("chat_logs");
+                let log_dir = crate::server::data::data_dir().join("chat_logs");
                 let _ = tokio::fs::create_dir_all(&log_dir).await;
                 let log_path = log_dir.join(format!("{}.log", sid));
                 // Append to existing log (don't overwrite previous sessions)
@@ -1268,6 +1268,15 @@ Provide helpful, detailed responses based on tool results.{}",
                     crate::ui::tasks_view::mark_chat_finished(chat);
                 }
                 chats.retain(|c| c.session_id != *sid);
+            }
+
+            // Auto-reload log from file so it persists after StreamingState is removed
+            if self.show_log_panel && self.log_session_id.as_deref() == Some(sid.as_str()) {
+                let log_path = crate::server::data::data_dir()
+                    .join("chat_logs")
+                    .join(format!("{}.log", sid));
+                self.log_content = std::fs::read_to_string(&log_path)
+                    .unwrap_or_else(|_| "(Log file not found)".to_string());
             }
         }
 
@@ -1904,7 +1913,7 @@ Provide helpful, detailed responses based on tool results.{}",
                         self.show_log_panel = !self.show_log_panel;
                         self.log_tab = 0;
                         self.log_session_id = Some(session.id.clone());
-                        let log_path = std::path::Path::new("data")
+                        let log_path = crate::server::data::data_dir()
                             .join("chat_logs")
                             .join(format!("{}.log", session.id));
                         self.log_content = std::fs::read_to_string(&log_path)
@@ -2068,12 +2077,12 @@ Provide helpful, detailed responses based on tool results.{}",
                             );
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.small_button("\u{1F504} Refresh").clicked() {
-                                    let log_path = std::path::Path::new("data")
+                                    let log_path = crate::server::data::data_dir()
                                         .join("chat_logs")
                                         .join(format!("{}.log", log_sid));
                                     self.log_content = std::fs::read_to_string(&log_path)
                                         .unwrap_or_else(|_| "(No log yet)".to_string());
-                                    let hist_path = std::path::Path::new("data")
+                                    let hist_path = crate::server::data::data_dir()
                                         .join("agent_history")
                                         .join(log_sid)
                                         .join("spawn.jsonl");
