@@ -260,7 +260,7 @@ pub struct SubAgentConfig {
     pub depth: usize,                 // recursion depth (prevent infinite loops)
     pub session_id: String,           // for JSONL history logging
     pub agent_id: String,             // current agent's own ID (for protocol tools)
-    pub mode: String,                 // "auto", "fully_auto", "auto_swarm", "realtime", "manual"
+    pub mode: String,                 // "fully_auto", "auto", "auto_swarm", "manual"
 }
 
 impl Default for SubAgentConfig {
@@ -1607,10 +1607,6 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
     let mode = sub_agent.mode.as_str();
 
     match mode {
-        "realtime" => {
-            // Pure realtime: send_task / wait_result / check_agents
-            tools.extend(realtime_tools(&agent_list));
-        }
         "fully_auto" => {
             if session_activated {
                 // Architecture created, agents running — use realtime tools
@@ -1632,11 +1628,8 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
             }
         }
         "manual" => {
-            // Manual: spawn_subagent + optional realtime if session booted
-            tools.push(spawn_subagent_tool(&agent_list));
-            if realtime || session_activated {
-                tools.extend(realtime_tools(&agent_list));
-            }
+            // Manual: user pre-selected YAML, agents boot immediately
+            tools.extend(realtime_tools(&agent_list));
         }
         _ => {
             // "auto" mode: spawn_subagent (depth-limited)

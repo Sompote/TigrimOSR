@@ -768,7 +768,7 @@ impl ChatView {
 
         // Build sub-agent config from settings + active project
         let sub_agent_mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string());
-        let is_realtime = sub_agent_mode == "realtime";
+        let is_realtime = sub_agent_mode == "manual";
 
         let sub_agent_config = {
             let enabled = settings.sub_agent_enabled.unwrap_or(false);
@@ -841,17 +841,6 @@ impl ChatView {
         {
             let agents = sub_agent_config.agent_ids.join(", ");
             match sub_agent_mode.as_str() {
-                "realtime" => {
-                    let prompt = format!(
-                        "\n\nREALTIME AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
-Available agents: [{}]. \
-Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
-Only use run_python/write_file for formatting the final output. \
-Always delegate, even for simple tasks. If an orchestrator exists, send tasks ONLY to the orchestrator.",
-                        agents
-                    );
-                    (prompt, "Use send_task/wait_result to delegate ALL tasks to realtime agents.")
-                }
                 "fully_auto" => {
                     // Architecture is created proactively before LLM is called.
                     // By the time the LLM sees this prompt, agents should already be LIVE.
@@ -901,11 +890,14 @@ Do NOT attempt to do work yourself until a swarm is selected.",
                 }
                 "manual" => {
                     let prompt = format!(
-                        "\n\nMANUAL AGENT MODE: You have specialist sub-agents available: [{}]. \
-Use spawn_subagent to delegate tasks to specific agents. Each agent runs independently and returns results.",
+                        "\n\nMANUAL AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
+Available agents: [{}]. \
+Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
+Only use run_python/write_file for formatting the final output. \
+Always delegate, even for simple tasks. If an orchestrator exists, send tasks ONLY to the orchestrator.",
                         agents
                     );
-                    (prompt, "Use spawn_subagent to delegate tasks to specialist agents.")
+                    (prompt, "Use send_task/wait_result to delegate ALL tasks to agents.")
                 }
                 _ => {
                     // "auto" mode
@@ -924,9 +916,9 @@ Only use your own tools (web_search, run_python, etc.) for quick lookups or task
         };
 
         let tool_list = match sub_agent_mode.as_str() {
-            "realtime" => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, send_task, wait_result, check_agents",
             "fully_auto" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
             "auto_swarm" => "select_swarm, send_task, wait_result, check_agents, run_python, write_file",
+            "manual" => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, send_task, wait_result, check_agents",
             _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
         };
 
@@ -2084,7 +2076,6 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
             } else {
                 match mode.as_str() {
                     "fully_auto" => "Fully Auto",
-                    "realtime" => "Realtime Swarm",
                     "auto" => "Auto",
                     "auto_swarm" => "Auto Swarm",
                     "manual" => "Manual",
@@ -2097,11 +2088,10 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
             } else {
                 match mode.as_str() {
                     "fully_auto" => egui::Color32::from_rgb(59, 130, 246),  // blue
-                    "realtime" => egui::Color32::from_rgb(239, 68, 68),     // red
                     "auto" => egui::Color32::from_rgb(34, 197, 94),         // green
                     "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),  // purple
-                    "manual" => egui::Color32::from_rgb(245, 158, 11),      // orange
-                    _ => egui::Color32::from_rgb(59, 130, 246),           // blue
+                    "manual" => egui::Color32::from_rgb(239, 68, 68),       // red
+                    _ => egui::Color32::from_rgb(59, 130, 246),             // blue
                 }
             };
 

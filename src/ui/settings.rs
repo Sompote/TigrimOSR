@@ -936,10 +936,9 @@ impl SettingsView {
                     .width(200.0)
                     .show_ui(ui, |ui| {
                         for mode in &[
-                            "auto",
                             "fully_auto",
+                            "auto",
                             "auto_swarm",
-                            "realtime",
                             "manual",
                         ] {
                             ui.selectable_value(
