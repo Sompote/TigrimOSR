@@ -109,17 +109,19 @@ impl TerminalView {
             let shared = self.shared_output.clone();
             let ssh_port = VmConfig::SSH_HOST_PORT;
             runtime.spawn(async move {
-                let output = tokio::process::Command::new("ssh")
+                let port_str = ssh_port.to_string();
+                let output = tokio::process::Command::new("sshpass")
                     .args([
+                        "-p", "tigris",
+                        "ssh",
                         "-o", "StrictHostKeyChecking=no",
                         "-o", "UserKnownHostsFile=/dev/null",
                         "-o", "ConnectTimeout=5",
                         "-o", "LogLevel=ERROR",
-                        "-p", &ssh_port.to_string(),
+                        "-p", &port_str,
                         "tigris@localhost",
                         &command,
                     ])
-                    .env("SSHPASS", "tigris")
                     .output()
                     .await;
 
