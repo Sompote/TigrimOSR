@@ -791,13 +791,20 @@ impl ChatView {
                 .or_else(|| settings.sub_agent_config_file.clone())
                 .unwrap_or_default();
 
-            if enabled && !config_file.is_empty() {
-                let agent_ids = load_agent_yaml(&config_file)
-                    .map(|(_, ids)| ids)
-                    .unwrap_or_default();
+            // auto_create and auto_swarm don't need a config file upfront
+            let needs_config = !matches!(sub_agent_mode.as_str(), "auto_create" | "auto_swarm");
+
+            if enabled && (!config_file.is_empty() || !needs_config) {
+                let agent_ids = if !config_file.is_empty() {
+                    load_agent_yaml(&config_file)
+                        .map(|(_, ids)| ids)
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
 
                 // Boot realtime session if mode is "realtime"
-                if is_realtime {
+                if is_realtime && !config_file.is_empty() {
                     let sid2 = sid.clone();
                     let cf2 = config_file.clone();
                     let ak2 = api_key.clone();
@@ -827,7 +834,10 @@ impl ChatView {
         };
 
         // Build system prompt: base + project context + sub-agent info
-        let (sub_agent_prompt, research_instruction) = if sub_agent_config.enabled && !sub_agent_config.agent_ids.is_empty() {
+        let (sub_agent_prompt, research_instruction) = if sub_agent_config.enabled
+            && (!sub_agent_config.agent_ids.is_empty()
+                || matches!(sub_agent_mode.as_str(), "auto_create" | "auto_swarm"))
+        {
             let agents = sub_agent_config.agent_ids.join(", ");
             match sub_agent_mode.as_str() {
                 "realtime" => {
@@ -2483,25 +2493,32 @@ Provide helpful, detailed responses based on tool results.{}",
                             }),
                     );
 
-                    // Show attached file names if any
+                    // Show attached files as vertical cards
                     if let Some(ref files) = msg.files {
                         if !files.is_empty() {
-                            ui.horizontal_wrapped(|ui| {
-                                for fname in files {
-                                    egui::Frame::new()
-                                        .fill(egui::Color32::from_rgb(240, 242, 245))
-                                        .corner_radius(4.0)
-                                        .inner_margin(egui::Margin::symmetric(4, 2))
-                                        .show(ui, |ui| {
+                            for fname in files {
+                                let short_name = std::path::Path::new(fname.as_str())
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| fname.clone());
+                                egui::Frame::new()
+                                    .fill(egui::Color32::from_rgb(240, 242, 245))
+                                    .corner_radius(4.0)
+                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
                                             ui.label(
-                                                egui::RichText::new(format!("\u{1F4C4} {}", fname))
+                                                egui::RichText::new(format!("\u{1F4C4} {}", short_name))
                                                     .size(11.0)
-                                                    .color(egui::Color32::from_rgb(101, 109, 118)),
+                                                    .color(egui::Color32::from_rgb(59, 130, 246)),
                                             );
+                                            if ui.small_button("\u{1F4CB}").on_hover_text("Copy path").clicked() {
+                                                ui.ctx().copy_text(fname.clone());
+                                            }
                                         });
-                                }
-                            });
-                            ui.add_space(2.0);
+                                    }).response.on_hover_text(fname);
+                                ui.add_space(2.0);
+                            }
                         }
                     }
 
