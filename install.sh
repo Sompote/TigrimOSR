@@ -73,8 +73,7 @@ echo -e "${BLUE}Install location:${NC} $INSTALL_DIR"
 echo ""
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo -e "${YELLOW}Existing installation found. Updating...${NC}"
-    cd "$INSTALL_DIR" || die "Cannot cd to $INSTALL_DIR"
-    git pull --ff-only || echo -e "${YELLOW}Pull failed, continuing with existing code...${NC}"
+    git -C "$INSTALL_DIR" pull --ff-only || echo -e "${YELLOW}Pull failed, continuing with existing code...${NC}"
 else
     # Remove existing non-git directory if present
     if [ -d "$INSTALL_DIR" ]; then
@@ -83,7 +82,8 @@ else
     fi
     echo -e "${BLUE}Cloning TigrimOS...${NC}"
     mkdir -p "$(dirname "$INSTALL_DIR")"
-    git clone "$REPO_URL" "$INSTALL_DIR" || die "git clone failed"
+    # Run git from $HOME to avoid "Unable to read current working directory" when piped via curl
+    (cd "$HOME" && git clone "$REPO_URL" "$INSTALL_DIR") || die "git clone failed"
 fi
 
 cd "$INSTALL_DIR" || die "Cannot cd to $INSTALL_DIR"
