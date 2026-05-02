@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use axum::{
     extract::Path,
@@ -11,11 +11,11 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{error, info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::server::services::toolbox::{
-    self, call_with_tools, load_agent_yaml, shutdown_realtime_session,
+    call_with_tools, load_agent_yaml, shutdown_realtime_session,
     start_realtime_session, SubAgentConfig, ToolUpdate,
 };
 use crate::server::data::{get_settings};

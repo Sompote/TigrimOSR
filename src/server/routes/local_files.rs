@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
-    extract::{Multipart, Query, State},
+    extract::{Multipart, Query},
     http::StatusCode,
     response::{IntoResponse, Json},
     routing::{delete, get, post},
     Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::fs;
 use tokio_util::io::ReaderStream;

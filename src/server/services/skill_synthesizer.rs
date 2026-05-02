@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 use tokio::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::server::data::{
@@ -124,6 +124,7 @@ struct SessionSummary {
     subagent_workflow: Vec<SubagentTrace>,
 }
 
+#[allow(dead_code)]
 struct RunSummary {
     ok: bool,
     created: usize,
@@ -1035,6 +1036,7 @@ pub async fn reject_proposal(proposal_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn get_proposed_diff(
     skill_id: &str,
 ) -> Result<(String, String), String> {

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use rand::Rng;
@@ -10,7 +10,19 @@ use tokio::fs;
 // ---------------------------------------------------------------------------
 
 pub fn data_dir() -> PathBuf {
-    PathBuf::from("data")
+    // When running as a .app bundle or from any directory, use a stable location.
+    // If a local "data" folder exists (dev mode), use it. Otherwise use ~/Library/Application Support/TigrimOS/data (macOS)
+    // or ~/.local/share/TigrimOS/data (Linux) or %APPDATA%/TigrimOS/data (Windows).
+    let local = PathBuf::from("data");
+    if local.exists() {
+        return local;
+    }
+    let app_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("TigrimOS")
+        .join("data");
+    let _ = std::fs::create_dir_all(&app_dir);
+    app_dir
 }
 
 pub async fn read_json<T: serde::de::DeserializeOwned + Default>(file: &str) -> T {
@@ -372,12 +384,14 @@ pub async fn save_skills(skills: &[Skill]) {
 // Agent History (JSONL)
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub async fn ensure_agent_history_dir(session_id: &str) -> PathBuf {
     let dir = data_dir().join("agent_history").join(session_id);
     let _ = fs::create_dir_all(&dir).await;
     dir
 }
 
+#[allow(dead_code)]
 pub async fn append_agent_history(session_id: &str, file: &str, entry: &serde_json::Value) {
     let dir = ensure_agent_history_dir(session_id).await;
     let fp = dir.join(file);
@@ -393,6 +407,7 @@ pub async fn append_agent_history(session_id: &str, file: &str, entry: &serde_js
     }
 }
 
+#[allow(dead_code)]
 pub async fn read_agent_history(session_id: &str, file: &str) -> Vec<serde_json::Value> {
     let fp = data_dir()
         .join("agent_history")

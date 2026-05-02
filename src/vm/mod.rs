@@ -8,4 +8,5 @@ pub mod manager;
 
 // Re-export key types for convenient access from other modules.
 pub use config::VmConfig;
+#[allow(unused_imports)]
 pub use manager::{ProcessResult, SharedFolderEntry, TigrimOSError, VmManager, VmState};

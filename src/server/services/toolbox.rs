@@ -147,6 +147,7 @@ impl Default for SubAgentConfig {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AgentResult {
     pub result: String,
     pub output_files: Vec<String>,
@@ -155,18 +156,21 @@ pub struct AgentResult {
 }
 
 #[derive(Debug, Clone)]
-struct AgentTask {
+#[allow(dead_code)]
+pub(crate) struct AgentTask {
     pub from: String,
     pub task: String,
     pub context: Option<String>,
 }
 
+#[allow(dead_code)]
 pub struct RealtimeAgentHandle {
     pub agent_def: Value,
     pub status: Arc<TokioMutex<String>>,          // "idle" | "working"
     pub task_tx: tokio::sync::mpsc::Sender<AgentTask>,
 }
 
+#[allow(dead_code)]
 pub struct RealtimeSession {
     pub session_id: String,
     pub agents: HashMap<String, RealtimeAgentHandle>,
@@ -444,7 +448,7 @@ async fn realtime_agent_loop(
 
         let result_arc = results.clone();
         let notify_arc = result_notify.clone();
-        let aid = agent_id.clone();
+        let _aid = agent_id.clone();
         let status_arc = status.clone();
 
         let log_tx = subagent_log_tx().clone();
@@ -641,7 +645,7 @@ pub async fn exec_check_agents(session_id: &str) -> Value {
 
 /// Load agent system YAML and return parsed Value + list of agent IDs
 pub fn load_agent_yaml(filename: &str) -> Option<(Value, Vec<String>)> {
-    let dir = PathBuf::from("data/agents");
+    let dir = crate::server::data::data_dir().join("agents");
     let fp = dir.join(filename);
     let content = std::fs::read_to_string(&fp).ok()?;
     let parsed: Value = serde_yaml::from_str(&content).ok()?;
@@ -1289,6 +1293,7 @@ pub fn tool_definitions() -> Vec<Value> {
 /// Tool definitions with sub-agent tools added when enabled
 /// Build tool definitions for a given sub-agent config and mode.
 /// `session_activated` is true if a swarm/architecture has been created/selected this session.
+#[allow(dead_code)]
 pub fn tool_definitions_with_subagent(sub_agent: &SubAgentConfig, realtime: bool) -> Vec<Value> {
     tool_definitions_for_mode(sub_agent, realtime, false)
 }
@@ -3064,7 +3069,7 @@ RULES:
     let safe_name = safe_name.trim_matches('_');
     let filename = format!("{}_auto.yaml", safe_name);
 
-    let agents_dir = PathBuf::from("data/agents");
+    let agents_dir = crate::server::data::data_dir().join("agents");
     let _ = tokio::fs::create_dir_all(&agents_dir).await;
     if let Err(e) = tokio::fs::write(agents_dir.join(&filename), &yaml_content).await {
         return json!({ "ok": false, "error": format!("Failed to save YAML: {e}") });
@@ -3378,6 +3383,7 @@ fn exec_spawn_subagent(
     }) // end Box::pin(async move)
 }
 
+#[allow(dead_code)]
 async fn execute_tool(name: &str, args: &Value, sandbox_dir: &str) -> Value {
     execute_tool_with_context(name, args, sandbox_dir, "default", "main").await
 }
@@ -3912,6 +3918,7 @@ async fn call_with_tools_inner(
     let mut tool_records: Vec<ToolCallRecord> = Vec::new();
     let mut collected_files: Vec<String> = Vec::new();
     let mut total_tool_calls: usize = 0;
+    #[allow(unused_assignments)]
     let mut consecutive_errors: usize = 0;
     let mut error_recovery_attempts: usize = 0;
     let mut no_choices_retries: usize = 0;
@@ -4488,7 +4495,8 @@ async fn call_with_tools_inner(
                             pending_info
                         )
                     }));
-                    consecutive_errors = 0;
+                    #[allow(unused_assignments)]
+                    { consecutive_errors = 0; }
                     continue;
                 }
             }

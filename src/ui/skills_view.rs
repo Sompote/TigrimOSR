@@ -1117,7 +1117,7 @@ impl SkillsView {
         let mut clicked_id: Option<String> = None;
         let mut toggled = false;
 
-        for (i, skill) in self.skills.iter_mut().enumerate() {
+        for (_i, skill) in self.skills.iter_mut().enumerate() {
             // Filter by search query
             if !query_lower.is_empty() && !skill.name.to_lowercase().contains(&query_lower) {
                 continue;

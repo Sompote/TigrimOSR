@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 /// Errors that can occur during VM operations.
 #[derive(Debug, Error)]
+#[allow(dead_code)]
 pub enum TigrimOSError {
     #[error("Download failed: {0}")]
     DownloadFailed(String),
@@ -136,6 +137,7 @@ mod path_serde {
 
 /// Captured output of an external command.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ProcessResult {
     pub exit_code: i32,
     pub stdout: String,
@@ -147,6 +149,7 @@ pub struct ProcessResult {
 // ---------------------------------------------------------------------------
 
 /// All mutable VM state, protected by `Arc<Mutex<…>>`.
+#[allow(dead_code)]
 struct VmManagerInner {
     state: VmState,
     error_message: Option<String>,
@@ -1061,6 +1064,7 @@ ethernets:
     }
 
     /// Public accessor: parse `TIGRIMOS_IP=<ip>` from console output.
+    #[allow(dead_code)]
     pub async fn detect_vm_ip(&self) -> Option<String> {
         let g = self.inner.lock().await;
         detect_vm_ip(&g.console_output)
@@ -1128,6 +1132,7 @@ ethernets:
     }
 
     /// Load shared folder list from JSON.
+    #[allow(dead_code)]
     pub async fn load_shared_folder_config(&self) {
         let path = VmConfig::app_support_dir().join("shared_folders.json");
         if let Ok(data) = tokio::fs::read_to_string(&path).await {

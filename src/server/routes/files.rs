@@ -7,11 +7,11 @@ use axum::{
     extract::{Multipart, State},
     http::{header, StatusCode},
     response::{IntoResponse, Json, Response},
-    routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use tokio::fs;
 use tokio_util::io::ReaderStream;
 

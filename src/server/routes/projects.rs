@@ -5,10 +5,10 @@ use axum::{
     extract::{Multipart, Path as AxumPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{delete, get, patch, post, put},
+    routing::{get, post},
     Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -174,7 +174,7 @@ async fn get_project(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 async fn create_project(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> Json<Value> {
     let mut projects = get_projects().await;

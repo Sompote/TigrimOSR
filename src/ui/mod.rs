@@ -12,4 +12,5 @@ pub mod skills_view;
 pub mod tasks_view;
 pub mod terminal_view;
 
+#[allow(unused_imports)]
 pub use app::TigrimOSApp;

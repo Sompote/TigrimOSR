@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, RichText, Rounding, Stroke, StrokeKind, Vec2};
+use eframe::egui::{self, Color32, FontId, Pos2, Rect, RichText, CornerRadius, Stroke, StrokeKind, Vec2};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AgentNode {
     id: String,
     name: String,
@@ -21,6 +22,7 @@ struct AgentNode {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct Connection {
     from: String,
     to: String,
@@ -30,6 +32,7 @@ struct Connection {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AgentSystemFile {
     filename: String,
     name: String,
@@ -40,6 +43,7 @@ struct AgentSystemFile {
 // AgentsView
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub struct AgentsView {
     // File list
     agent_files: Vec<AgentSystemFile>,
@@ -395,7 +399,7 @@ impl AgentsView {
                 // Background
                 painter.rect_filled(
                     canvas_rect,
-                    Rounding::same(4),
+                    CornerRadius::same(4),
                     Color32::from_rgb(30, 30, 40),
                 );
 
@@ -523,7 +527,7 @@ impl AgentsView {
                     // Node background
                     painter.rect_filled(
                         node_rect,
-                        Rounding::same(8),
+                        CornerRadius::same(8),
                         role_color,
                     );
 
@@ -531,7 +535,7 @@ impl AgentsView {
                     if is_selected {
                         painter.rect_stroke(
                             node_rect.expand(2.0),
-                            Rounding::same(10),
+                            CornerRadius::same(10),
                             Stroke::new(3.0, Color32::WHITE),
                             StrokeKind::Outside,
                         );
@@ -737,7 +741,7 @@ impl AgentsView {
         let color = role_color(&node.role);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(220.0, 6.0), egui::Sense::hover());
         ui.painter()
-            .rect_filled(rect, Rounding::same(3), color);
+            .rect_filled(rect, CornerRadius::same(3), color);
 
         ui.add_space(4.0);
         ui.label("Persona:");
@@ -999,7 +1003,7 @@ impl AgentsView {
             });
     }
 
-    fn show_yaml_editor_dialog(&mut self, ui: &mut egui::Ui, rt: &tokio::runtime::Handle) {
+    fn show_yaml_editor_dialog(&mut self, ui: &mut egui::Ui, _rt: &tokio::runtime::Handle) {
         egui::Window::new("YAML Editor")
             .default_width(600.0)
             .default_height(500.0)
@@ -1034,8 +1038,8 @@ impl AgentsView {
     // Data operations
     // -------------------------------------------------------------------
 
-    fn load_agent_file(&mut self, filename: &str, rt: &tokio::runtime::Handle) {
-        let dir = std::path::PathBuf::from("data/agents");
+    fn load_agent_file(&mut self, filename: &str, _rt: &tokio::runtime::Handle) {
+        let dir = crate::server::data::data_dir().join("agents");
         let fp = dir.join(filename);
         if let Ok(content) = std::fs::read_to_string(&fp) {
             if let Ok(parsed) = serde_yaml::from_str::<Value>(&content) {
@@ -1234,7 +1238,7 @@ impl AgentsView {
         }
     }
 
-    fn save_current_system(&mut self, rt: &tokio::runtime::Handle) {
+    fn save_current_system(&mut self, _rt: &tokio::runtime::Handle) {
         let yaml = self.generate_yaml();
         let filename = self
             .selected_file
@@ -1250,7 +1254,7 @@ impl AgentsView {
                 format!("{}.yaml", safe)
             });
 
-        let dir = std::path::PathBuf::from("data/agents");
+        let dir = crate::server::data::data_dir().join("agents");
         let _ = std::fs::create_dir_all(&dir);
         let fp = dir.join(&filename);
 
@@ -1417,7 +1421,7 @@ fn role_color(role: &str) -> Color32 {
 }
 
 async fn load_agent_files() -> Result<Vec<AgentSystemFile>, String> {
-    let dir = std::path::PathBuf::from("data/agents");
+    let dir = crate::server::data::data_dir().join("agents");
     let _ = tokio::fs::create_dir_all(&dir).await;
 
     let mut result = Vec::new();

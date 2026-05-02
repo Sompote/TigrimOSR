@@ -4,7 +4,7 @@ use axum::{
     extract::Path,
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{delete, get, patch, post},
+    routing::{get, patch, post},
     Router,
 };
 use serde::Deserialize;
@@ -68,7 +68,7 @@ async fn list_finished() -> Json<Vec<Value>> {
 }
 
 /// POST /active/:id/kill - kill a running task (stub)
-async fn kill_active(Path(id): Path<String>) -> impl IntoResponse {
+async fn kill_active(Path(_id): Path<String>) -> impl IntoResponse {
     (
         StatusCode::NOT_FOUND,
         Json(json!({"error": "Task not found or already completed"})),

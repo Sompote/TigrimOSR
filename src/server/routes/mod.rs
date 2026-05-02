@@ -17,7 +17,7 @@ use std::sync::Arc;
 use axum::Router;
 use crate::server::AppState;
 
-pub fn build_api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
+pub fn build_api_routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .nest("/chat", chat::router())
         .nest("/files", files::router())

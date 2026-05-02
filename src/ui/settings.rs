@@ -64,6 +64,7 @@ impl SettingsSection {
 #[derive(Debug, Clone, PartialEq)]
 enum ConnectionStatus {
     Idle,
+    #[allow(dead_code)]
     Testing,
     Success(String),
     Error(String),
@@ -808,7 +809,6 @@ impl SettingsView {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             if ui.button("Test Connection").clicked() && !self.api_key.is_empty() {
-                self.connection_status = ConnectionStatus::Testing;
                 let api_key = self.api_key.clone();
                 let raw_url = if self.api_url.is_empty() {
                     "https://api.deepseek.com/v1".to_string()
@@ -1312,7 +1312,7 @@ impl SettingsView {
     fn section_file_tokens(
         &mut self,
         ui: &mut egui::Ui,
-        ctx: &egui::Context,
+        _ctx: &egui::Context,
         runtime: &tokio::runtime::Handle,
     ) {
         self.load_settings_if_needed(runtime);
@@ -1379,7 +1379,7 @@ impl SettingsView {
 
         // Handle actions
         if let Some(token_text) = to_copy {
-            ui.ctx().output_mut(|o| o.copied_text = token_text);
+            ui.ctx().copy_text(token_text);
             self.token_status_msg = Some("Token copied to clipboard!".to_string());
         }
         if let Some(idx) = to_regenerate {
@@ -1609,7 +1609,7 @@ impl SettingsView {
                             ui.add(
                                 egui::Slider::new(&mut interval_i32, 1..=60)
                                     .text("minutes")
-                                    .clamp_to_range(true),
+                                    .clamping(egui::SliderClamping::Always),
                             );
                             self.skill_auto_update_interval_minutes = interval_i32.max(1) as u64;
                             ui.end_row();
@@ -1618,7 +1618,7 @@ impl SettingsView {
                             let mut max_cand_i32 = self.skill_auto_update_max_candidates as i32;
                             ui.add(
                                 egui::Slider::new(&mut max_cand_i32, 1..=50)
-                                    .clamp_to_range(true),
+                                    .clamping(egui::SliderClamping::Always),
                             );
                             self.skill_auto_update_max_candidates = max_cand_i32.max(1) as u64;
                             ui.end_row();
@@ -1734,7 +1734,7 @@ impl SettingsView {
 
             for proposal in &pending {
                 let proposal_id = proposal.id.clone();
-                let proposal_name = proposal.name.clone();
+                let _proposal_name = proposal.name.clone();
 
                 egui::Frame::new()
                     .fill(egui::Color32::from_rgba_premultiplied(88, 166, 255, 12))

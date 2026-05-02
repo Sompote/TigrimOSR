@@ -57,6 +57,7 @@ impl VmConfig {
     }
 
     /// Persist (or clear) a custom storage path.
+    #[allow(dead_code)]
     pub fn set_storage_path(path: Option<&str>) {
         let settings = Settings {
             vm_storage_path: path.map(|s| s.to_string()),
@@ -126,6 +127,7 @@ impl VmConfig {
     // -----------------------------------------------------------------------
     // Constants
     // -----------------------------------------------------------------------
+    #[allow(dead_code)]
 
     /// Number of virtual CPUs: min(4, host_logical_cores).
     pub fn cpu_count() -> usize {
@@ -136,12 +138,14 @@ impl VmConfig {
     pub const MEMORY_GB: u64 = 4;
 
     /// Guest RAM in bytes.
+    #[allow(dead_code)]
     pub const MEMORY_SIZE_BYTES: u64 = Self::MEMORY_GB * 1024 * 1024 * 1024;
 
     /// Virtual disk size in GiB.
     pub const DISK_SIZE_GB: u64 = 5;
 
     /// Virtual disk size in bytes.
+    #[allow(dead_code)]
     pub const DISK_SIZE_BYTES: u64 = Self::DISK_SIZE_GB * 1024 * 1024 * 1024;
 
     /// Port the TigrimOS service listens on inside the guest.

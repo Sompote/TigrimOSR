@@ -6,7 +6,6 @@ use axum::{
     Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
 
 use crate::server::services::clawhub;
 

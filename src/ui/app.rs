@@ -46,6 +46,7 @@ pub struct TigrimOSApp {
     logo_texture: Option<egui::TextureHandle>,
 }
 
+#[allow(dead_code)]
 struct VmSnapshot {
     state: VmState,
     service_ready: bool,
@@ -298,7 +299,7 @@ impl eframe::App for TigrimOSApp {
                     if let Some(tex) = &self.logo_texture {
                         let img = egui::Image::new(tex)
                             .max_size(egui::vec2(24.0, 24.0))
-                            .rounding(4.0);
+                            .corner_radius(4.0);
                         ui.add(img);
                     }
                     ui.label(

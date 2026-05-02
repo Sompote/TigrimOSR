@@ -104,6 +104,15 @@ cargo build --release || die "Build failed"
 echo ""
 echo -e "${GREEN}[OK]${NC} Build complete"
 
+# ── Seed app data directory ──
+APP_DATA_DIR="$HOME/Library/Application Support/TigrimOS/data"
+if [ ! -d "$APP_DATA_DIR/agents" ] && [ -d "$INSTALL_DIR/data/agents" ]; then
+    echo -e "${BLUE}Copying agent configs to app data...${NC}"
+    mkdir -p "$APP_DATA_DIR"
+    cp -R "$INSTALL_DIR/data/agents" "$APP_DATA_DIR/agents"
+    echo -e "${GREEN}[OK]${NC} Agent configs installed to $APP_DATA_DIR/agents"
+fi
+
 # ── Create macOS .app bundle ──
 APP_DIR="$INSTALL_DIR/target/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"

@@ -22,6 +22,7 @@ use data::{generate_token, get_file_tokens, get_settings, is_valid_file_token, s
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct AppState {
     pub sandbox_dir: String,
     pub data_dir: String,
@@ -101,7 +102,7 @@ async fn auth_middleware(
 // ---------------------------------------------------------------------------
 
 pub async fn start_server(sandbox_dir: String, access_token: String) {
-    let data_dir = "data".to_string();
+    let data_dir = data::data_dir().to_string_lossy().to_string();
 
     // Ensure directories
     let dirs = [

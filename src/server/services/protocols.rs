@@ -131,7 +131,7 @@ async fn handle_tcp_connection(
     let mut rx = tx.subscribe();
 
     // Forward incoming broadcast messages to this client
-    let mut writer_task = tokio::spawn(async move {
+    let writer_task = tokio::spawn(async move {
         while let Ok(line) = rx.recv().await {
             let _ = writer.write_all(format!("{line}\n").as_bytes()).await;
         }
@@ -361,7 +361,7 @@ pub async fn bus_wait_for_message(
     }
 
     // Subscribe to live messages
-    let (mut rx, notify) = {
+    let (mut rx, _notify) = {
         let buses = bus_instances().lock().await;
         let bus = match buses.get(session_id) {
             Some(b) => b,
@@ -630,9 +630,8 @@ impl Blackboard {
                     return (existing.clone(), true);
                 }
                 "bidding" | "open" => {
-                    // Allow re-broadcast — clone before dropping the borrow
+                    // Allow re-broadcast — clone before the borrow ends
                     let existing_clone = existing.clone();
-                    drop(existing);
                     self.append_log(BlackboardEntry {
                         id: format!("e_{}", chrono::Utc::now().timestamp_millis()),
                         entry_type: "proposal".to_string(),

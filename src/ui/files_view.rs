@@ -1413,7 +1413,7 @@ impl FilesView {
                                             let image = egui::Image::new(&uri)
                                                 .max_width(ui.available_width() - 20.0)
                                                 .max_height(ui.available_height() - 20.0)
-                                                .rounding(4.0);
+                                                .corner_radius(4.0);
                                             let resp = ui.add(image);
                                             if resp.hovered() {
                                                 resp.on_hover_text(&file_name);

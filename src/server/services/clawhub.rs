@@ -1,7 +1,6 @@
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use tokio::process::Command;
-use tracing::{info, warn};
 
 /// Find the clawhub CLI binary — checks node_modules first, then PATH
 async fn find_clawhub_bin() -> Option<String> {

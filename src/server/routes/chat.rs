@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::Path,
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{delete, get, patch, post},
+    routing::{get, post},
     Router,
 };
 use serde_json::{json, Value};
@@ -380,7 +380,7 @@ async fn get_chat_log(Path(id): Path<String>) -> impl IntoResponse {
 
 fn get_auto_created_architecture(session_id: &str) -> Option<String> {
     // Look for a YAML file in data/agents that matches the session ID
-    let agents_dir = std::path::PathBuf::from("data").join("agents");
+    let agents_dir = crate::server::data::data_dir().join("agents");
     let pattern = format!("{}.yml", session_id);
     let pattern_yaml = format!("{}.yaml", session_id);
 

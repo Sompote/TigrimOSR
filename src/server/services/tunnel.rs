@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::sync::OnceLock;
 use tokio::process::Command;
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
 struct TunnelState {

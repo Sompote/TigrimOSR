@@ -9,6 +9,7 @@ use eframe::egui;
 
 /// Parsed chart data from a React/Recharts JSX file
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct ParsedChart {
     title: String,
     datasets: Vec<ChartDataset>,
@@ -16,6 +17,7 @@ struct ParsedChart {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct ChartDataset {
     label: String,
     points: Vec<(String, f64)>, // (x_label, y_value)
@@ -31,10 +33,12 @@ enum ChartType {
 }
 
 /// Cached parsed chart data
+#[allow(dead_code)]
 struct ChartCache {
     charts: Vec<ParsedChart>,
 }
 
+#[allow(dead_code)]
 pub struct OutputPanel {
     pub open: bool,
     pub width: f32,
@@ -1006,7 +1010,7 @@ impl OutputPanel {
                             let color = if num_datasets == 1 { chart_color(pi) } else { ds.color };
 
                             // Rounded top corners
-                            painter.rect_filled(bar_rect, egui::Rounding { nw: 4, ne: 4, sw: 0, se: 0 }, color);
+                            painter.rect_filled(bar_rect, egui::CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 }, color);
 
                             // Value on top of bar
                             if bar_h > 20.0 {
@@ -1036,7 +1040,7 @@ impl OutputPanel {
                     }
                 } else {
                     // Line / Area chart
-                    for (di, ds) in chart.datasets.iter().enumerate() {
+                    for (_di, ds) in chart.datasets.iter().enumerate() {
                         let screen_points: Vec<egui::Pos2> = ds.points.iter().enumerate()
                             .map(|(i, (_, v))| {
                                 let x = chart_rect.left() + chart_w * (i as f32 / (n_points - 1).max(1) as f32);

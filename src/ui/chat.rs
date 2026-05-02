@@ -16,6 +16,7 @@ use crate::ui::output_panel::OutputPanel;
 // Lightweight sidebar summary (avoids cloning all messages for the list)
 // -------------------------------------------------------------------------
 
+#[allow(dead_code)]
 struct ChatSessionSummary {
     id: String,
     title: String,
@@ -31,6 +32,7 @@ struct ChatSessionSummary {
 // -------------------------------------------------------------------------
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ToolCallDisplay {
     name: String,
     status: String, // "calling...", "done", "error"
@@ -39,6 +41,7 @@ struct ToolCallDisplay {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct StreamingState {
     /// The text accumulated so far from the streaming response.
     text: Arc<Mutex<String>>,
@@ -93,6 +96,7 @@ impl StreamingState {
         self.log_lines.lock().unwrap().join("\n")
     }
 
+    #[allow(dead_code)]
     fn push_log(&self, line: String) {
         self.log_lines.lock().unwrap().push(line);
     }
@@ -102,6 +106,7 @@ impl StreamingState {
 // Parsed markdown segment for rich rendering
 // -------------------------------------------------------------------------
 
+#[allow(dead_code)]
 enum MdSegment {
     Text(String),
     Bold(String),
@@ -115,6 +120,7 @@ enum MdSegment {
     NumberedListItem(String, String), // (number, text)
 }
 
+#[allow(dead_code)]
 fn parse_markdown(input: &str) -> Vec<MdSegment> {
     let mut segments: Vec<MdSegment> = Vec::new();
     let mut lines = input.lines().peekable();
@@ -190,6 +196,7 @@ fn parse_markdown(input: &str) -> Vec<MdSegment> {
     segments
 }
 
+#[allow(dead_code)]
 fn try_strip_numbered_list_with_num(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim_start();
     let dot_pos = trimmed.find(". ")?;
@@ -201,6 +208,7 @@ fn try_strip_numbered_list_with_num(line: &str) -> Option<(String, String)> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_inline_segments(text: &str, segments: &mut Vec<MdSegment>) {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
@@ -276,6 +284,7 @@ fn parse_inline_segments(text: &str, segments: &mut Vec<MdSegment>) {
 // -------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct GraphicAgent {
     id: String,
     name: String,
@@ -288,6 +297,7 @@ struct GraphicAgent {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct GraphicEdge {
     from: String,
     to: String,
@@ -297,6 +307,7 @@ struct GraphicEdge {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct GraphicSignal {
     from: String,
     to: String,
@@ -347,6 +358,7 @@ fn tool_to_link_kind(tool: &str) -> &'static str {
 // ChatView
 // -------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub struct ChatView {
     sessions: Vec<ChatSessionSummary>,
     pub selected_session_id: Option<String>,
@@ -829,7 +841,7 @@ Do NOT attempt to do work yourself until agents are created.".to_string();
                 "auto_swarm" => {
                     // List available YAML files for the LLM to pick from
                     let mut swarm_list = String::new();
-                    if let Ok(entries) = std::fs::read_dir("data/agents") {
+                    if let Ok(entries) = std::fs::read_dir(crate::server::data::data_dir().join("agents")) {
                         for entry in entries.flatten() {
                             let name = entry.file_name().to_string_lossy().to_string();
                             if name.ends_with(".yaml") || name.ends_with(".yml") {
@@ -1046,7 +1058,7 @@ Provide helpful, detailed responses based on tool results.{}",
                         break;
                     }
                     match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
-                        Ok(Ok((session_id, agent_id, line))) => {
+                        Ok(Ok((session_id, _agent_id, line))) => {
                             if session_id == subagent_sid {
                                 subagent_log_lines.lock().unwrap().push(line);
                                 subagent_ctx.request_repaint();
@@ -1493,7 +1505,7 @@ Provide helpful, detailed responses based on tool results.{}",
                         ui.add_space(8.0);
                         egui::Frame::default()
                             .inner_margin(egui::Margin::same(8))
-                            .rounding(egui::Rounding::same(4))
+                            .corner_radius(egui::CornerRadius::same(4))
                             .fill(egui::Color32::from_gray(240))
                             .show(ui, |ui| {
                                 egui::ScrollArea::vertical()
@@ -2241,7 +2253,7 @@ Provide helpful, detailed responses based on tool results.{}",
         let messages_height = ui.available_height() - input_bar_height;
 
         // Clone data needed for feedback actions
-        let session_messages_len = session.messages.len();
+        let _session_messages_len = session.messages.len();
 
         // Collect feedback actions to apply after borrow ends
         let mut feedback_actions: Vec<(usize, String)> = Vec::new();

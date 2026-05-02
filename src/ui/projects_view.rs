@@ -389,7 +389,7 @@ impl ProjectsView {
 
             let frame = egui::Frame::default()
                 .inner_margin(egui::Margin::same(10))
-                .rounding(egui::Rounding::same(6))
+                .corner_radius(egui::CornerRadius::same(6))
                 .fill(if is_selected {
                     egui::Color32::from_rgb(37, 99, 235).gamma_multiply(0.18)
                 } else {
@@ -508,11 +508,11 @@ impl ProjectsView {
                 let btn = if is_active {
                     egui::Button::new(text)
                         .fill(egui::Color32::from_rgb(59, 130, 246))
-                        .rounding(egui::Rounding::same(4))
+                        .corner_radius(egui::CornerRadius::same(4))
                 } else {
                     egui::Button::new(text)
                         .fill(egui::Color32::TRANSPARENT)
-                        .rounding(egui::Rounding::same(4))
+                        .corner_radius(egui::CornerRadius::same(4))
                 };
                 if ui.add(btn).clicked() {
                     *current = tab;
@@ -782,7 +782,7 @@ impl ProjectsView {
             ui.add_space(12.0);
             egui::Frame::default()
                 .inner_margin(egui::Margin::same(10))
-                .rounding(egui::Rounding::same(6))
+                .corner_radius(egui::CornerRadius::same(6))
                 .fill(egui::Color32::from_rgb(50, 20, 20))
                 .stroke(egui::Stroke::new(
                     1.0,
@@ -1445,7 +1445,7 @@ impl ProjectsView {
 
                 egui::Frame::default()
                     .inner_margin(egui::Margin::same(10))
-                    .rounding(egui::Rounding::same(6))
+                    .corner_radius(egui::CornerRadius::same(6))
                     .fill(egui::Color32::from_rgb(220, 238, 255))
                     .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(59, 130, 246)))
                     .show(ui, |ui| {
@@ -1534,7 +1534,7 @@ impl ProjectsView {
             for skill in &unassigned {
                 egui::Frame::default()
                     .inner_margin(egui::Margin::same(10))
-                    .rounding(egui::Rounding::same(6))
+                    .corner_radius(egui::CornerRadius::same(6))
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(160)))
                     .show(ui, |ui| {
                         ui.label(
@@ -1661,7 +1661,7 @@ impl ProjectsView {
         for session in &linked {
             egui::Frame::default()
                 .inner_margin(egui::Margin::same(10))
-                .rounding(egui::Rounding::same(6))
+                .corner_radius(egui::CornerRadius::same(6))
                 .fill(egui::Color32::from_rgb(220, 238, 255))
                 .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(59, 130, 246)))
                 .show(ui, |ui| {
@@ -1711,7 +1711,7 @@ impl ProjectsView {
             for session in &unlinked {
                 egui::Frame::default()
                     .inner_margin(egui::Margin::same(8))
-                    .rounding(egui::Rounding::same(4))
+                    .corner_radius(egui::CornerRadius::same(4))
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(160)))
                     .show(ui, |ui| {
                         ui.label(egui::RichText::new(&session.title).size(12.0));

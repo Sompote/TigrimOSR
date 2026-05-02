@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::Path,
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
     Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::server::data::*;

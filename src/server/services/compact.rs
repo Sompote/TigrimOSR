@@ -233,7 +233,7 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
     }
 
     // run_python / run_shell: keep first+last lines of stdout
-    if (tool_name == "run_python" || tool_name == "run_shell") {
+    if tool_name == "run_python" || tool_name == "run_shell" {
         if let Some(stdout) = result["stdout"].as_str() {
             let lines: Vec<&str> = stdout.lines().collect();
             let mut compact = json!({"exitCode": result["exitCode"].as_i64().unwrap_or(0)});

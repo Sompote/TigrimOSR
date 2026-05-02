@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use tokio::process::Command;
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// MCP server connection state
 #[derive(Debug, Clone)]
