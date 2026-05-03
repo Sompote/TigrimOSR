@@ -3940,13 +3940,22 @@ async fn llm_call_claude_code(
     let mut tool_desc = String::new();
     if let Some(t) = tools {
         if !t.is_empty() {
-            tool_desc.push_str("\n\nYou have these tools available. To call a tool, respond with a JSON tool_call block:\n");
+            tool_desc.push_str("\n\n[TOOL CALLING INSTRUCTIONS]\nYou have these tools. You MUST call a tool when the task requires action.\nTo call a tool, output EXACTLY this JSON on its own line (no markdown, no backticks):\n");
+            tool_desc.push_str("{\"tool_call\":{\"name\":\"TOOL_NAME\",\"arguments\":{...}}}\n\n");
+            tool_desc.push_str("Available tools:\n");
             for tool in t {
                 let name = tool["function"]["name"].as_str().unwrap_or("");
                 let desc = tool["function"]["description"].as_str().unwrap_or("");
-                tool_desc.push_str(&format!("- {}: {}\n", name, desc));
+                let params = &tool["function"]["parameters"]["properties"];
+                tool_desc.push_str(&format!("- {} : {} ", name, desc));
+                if let Some(props) = params.as_object() {
+                    let param_names: Vec<&str> = props.keys().map(|k| k.as_str()).collect();
+                    tool_desc.push_str(&format!("(params: {})", param_names.join(", ")));
+                }
+                tool_desc.push('\n');
             }
-            tool_desc.push_str("\nTo call a tool, respond with:\n```json\n{\"tool_call\": {\"name\": \"tool_name\", \"arguments\": {...}}}\n```\nOr respond normally with text if no tool is needed.");
+            tool_desc.push_str("\nIMPORTANT: If the task requires using a tool, you MUST output the JSON tool_call. Do NOT describe what you would do — actually call the tool.\n");
+            tool_desc.push_str("Example: {\"tool_call\":{\"name\":\"web_search\",\"arguments\":{\"query\":\"TigrimOS market analysis\"}}}\n");
         }
     }
 
@@ -3986,12 +3995,57 @@ async fn llm_call_claude_code(
                 return Err(format!("Claude Code CLI failed: {}", &stderr[..stderr.len().min(500)]));
             }
 
-            // Check if response contains a tool call
+            // Try to extract tool calls from the response
+            // Look for {"tool_call": ...} pattern anywhere in the text
+            for line in stdout.lines() {
+                let trimmed = line.trim().trim_start_matches("```json").trim_start_matches("```").trim();
+                if trimmed.contains("\"tool_call\"") {
+                    // Try to parse as JSON
+                    if let Ok(tc_val) = serde_json::from_str::<Value>(trimmed) {
+                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                            info!("[ClaudeCode] Extracted tool call: {}", name);
+                            return Ok(json!({
+                                "choices": [{
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": null,
+                                        "tool_calls": [{
+                                            "id": format!("call_{}", chrono::Utc::now().timestamp_millis()),
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": serde_json::to_string(args).unwrap_or_default(),
+                                            }
+                                        }]
+                                    },
+                                    "finish_reason": "tool_calls"
+                                }]
+                            }));
+                        }
+                    }
+                }
+            }
+            // Also try to find tool_call JSON embedded in text (with surrounding content)
             if let Some(tc_start) = stdout.find("{\"tool_call\"") {
-                if let Some(tc_end) = stdout[tc_start..].find("```").or(Some(stdout.len() - tc_start)) {
-                    let tc_json = &stdout[tc_start..tc_start + tc_end].trim();
+                let remaining = &stdout[tc_start..];
+                // Find matching closing brace
+                let mut depth = 0;
+                let mut end_idx = 0;
+                for (i, ch) in remaining.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 { end_idx = i + 1; break; }
+                        }
+                        _ => {}
+                    }
+                }
+                if end_idx > 0 {
+                    let tc_json = &remaining[..end_idx];
                     if let Ok(tc_val) = serde_json::from_str::<Value>(tc_json) {
                         if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                            info!("[ClaudeCode] Extracted embedded tool call: {}", name);
                             return Ok(json!({
                                 "choices": [{
                                     "message": {
