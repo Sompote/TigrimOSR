@@ -133,6 +133,45 @@ fn ensure_full_path() {
     }
 }
 
+/// Check if the VM is running by probing the SSH port.
+async fn is_vm_running() -> bool {
+    tokio::net::TcpStream::connect(format!("127.0.0.1:{}", crate::vm::VmConfig::SSH_HOST_PORT))
+        .await
+        .is_ok()
+}
+
+/// Run a command inside the VM via SSH. Returns Ok((stdout, stderr, success)) or Err.
+async fn run_in_vm(cmd: &str, timeout_secs: u64) -> Result<(String, String, bool), String> {
+    let port = crate::vm::VmConfig::SSH_HOST_PORT.to_string();
+    let result = timeout(
+        Duration::from_secs(timeout_secs),
+        Command::new("sshpass")
+            .args([
+                "-p", "tigris",
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "ConnectTimeout=5",
+                "-o", "LogLevel=ERROR",
+                "-p", &port,
+                "tigris@localhost",
+                cmd,
+            ])
+            .output(),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Ok((stdout, stderr, output.status.success()))
+        }
+        Ok(Err(e)) => Err(format!("Failed to run in VM: {e}")),
+        Err(_) => Err(format!("VM execution timed out ({timeout_secs}s)")),
+    }
+}
+
 /// Build a Command for Python execution.
 fn python_command() -> Command {
     ensure_full_path();
@@ -1969,6 +2008,28 @@ except ImportError:
     let output_dir = std::path::Path::new(sandbox_dir).join("output_file");
     let _ = tokio::fs::create_dir_all(&output_dir).await;
 
+    // Try VM execution first if VM is running
+    if is_vm_running().await {
+        info!("[VM] Routing run_python to VM via SSH");
+        // Escape single quotes in code for shell
+        let escaped = code.replace('\'', "'\\''");
+        let vm_cmd = format!("cd /app && python3 -c '{}'", escaped);
+        match run_in_vm(&vm_cmd, 60).await {
+            Ok((stdout, stderr, success)) => {
+                return json!({
+                    "ok": success,
+                    "stdout": truncate(&stdout, MAX_CONTENT_LEN),
+                    "stderr": truncate(&stderr, MAX_CONTENT_LEN),
+                    "output_files": [],
+                    "vm": true,
+                });
+            }
+            Err(e) => {
+                warn!("[VM] SSH execution failed, falling back to local: {}", e);
+            }
+        }
+    }
+
     let abs_sandbox = std::path::Path::new(sandbox_dir)
         .canonicalize()
         .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
@@ -2110,6 +2171,25 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
     if let Some(reason) = check_dangerous(command) {
         warn!("[SECURITY] Shell command blocked: {}", reason);
         return json!({ "ok": false, "error": format!("Security: {reason}") });
+    }
+
+    // Try VM execution first if VM is running
+    if is_vm_running().await {
+        info!("[VM] Routing run_shell to VM via SSH");
+        let vm_cmd = format!("cd /app && {}", command);
+        match run_in_vm(&vm_cmd, 30).await {
+            Ok((stdout, stderr, success)) => {
+                return json!({
+                    "ok": success,
+                    "stdout": truncate(&stdout, MAX_CONTENT_LEN),
+                    "stderr": truncate(&stderr, MAX_CONTENT_LEN),
+                    "vm": true,
+                });
+            }
+            Err(e) => {
+                warn!("[VM] SSH execution failed, falling back to local: {}", e);
+            }
+        }
     }
 
     let cwd = args["cwd"]
