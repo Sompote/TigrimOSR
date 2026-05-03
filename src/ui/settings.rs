@@ -705,30 +705,34 @@ impl SettingsView {
                 });
                 ui.end_row();
 
-                // API Key
-                ui.label("API Key:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.api_key)
-                        .password(true)
-                        .desired_width(300.0),
-                );
-                ui.end_row();
+                let is_claude_code = self.api_url == "claude-code";
 
-                // API URL (auto-filled by provider, but editable)
-                ui.label("API URL:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.api_url)
-                        .desired_width(300.0)
-                        .hint_text("https://api.deepseek.com/v1"),
-                );
-                ui.end_row();
+                if !is_claude_code {
+                    // API Key
+                    ui.label("API Key:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.api_key)
+                            .password(true)
+                            .desired_width(300.0),
+                    );
+                    ui.end_row();
+
+                    // API URL (auto-filled by provider, but editable)
+                    ui.label("API URL:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.api_url)
+                            .desired_width(300.0)
+                            .hint_text("https://api.deepseek.com/v1"),
+                    );
+                    ui.end_row();
+                }
 
                 // Model (auto-filled by provider, but editable)
                 ui.label("Model:");
                 ui.add(
                     egui::TextEdit::singleline(&mut self.api_model)
                         .desired_width(300.0)
-                        .hint_text("e.g. deepseek-chat"),
+                        .hint_text(if is_claude_code { "e.g. claude-sonnet-4-20250514" } else { "e.g. deepseek-chat" }),
                 );
                 ui.end_row();
             });
@@ -809,17 +813,13 @@ impl SettingsView {
         // Test Connection button
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Test Connection").clicked() && !self.api_key.is_empty() {
+            let is_cc = self.api_url == "claude-code";
+            if ui.button("Test Connection").clicked() && (is_cc || !self.api_key.is_empty()) {
                 let api_key = self.api_key.clone();
                 let raw_url = if self.api_url.is_empty() {
                     "https://api.deepseek.com/v1".to_string()
                 } else {
                     self.api_url.clone()
-                };
-                let api_url = if raw_url.ends_with("/chat/completions") {
-                    raw_url
-                } else {
-                    format!("{}/chat/completions", raw_url.trim_end_matches('/'))
                 };
                 let model = if self.api_model.is_empty() {
                     "deepseek-chat".to_string()
@@ -828,32 +828,57 @@ impl SettingsView {
                 };
                 let ctx_clone = ctx.clone();
 
-                let result = runtime.block_on(async {
-                    let client = reqwest::Client::new();
-                    let resp = client
-                        .post(&api_url)
-                        .header("Authorization", format!("Bearer {}", api_key))
-                        .header("content-type", "application/json")
-                        .json(&serde_json::json!({
-                            "model": model,
-                            "max_tokens": 1,
-                            "messages": [{"role": "user", "content": "hi"}]
-                        }))
-                        .send()
-                        .await;
-                    match resp {
-                        Ok(r) => {
-                            let status = r.status();
-                            if status.is_success() {
-                                Ok(format!("Connected (HTTP {})", status.as_u16()))
-                            } else {
-                                let body = r.text().await.unwrap_or_default();
-                                Err(format!("HTTP {} - {}", status.as_u16(), body.chars().take(200).collect::<String>()))
+                let result = if is_cc {
+                    // Test Claude Code CLI
+                    runtime.block_on(async {
+                        let claude_bin = crate::server::services::toolbox::find_claude_cli();
+                        let output = tokio::process::Command::new(&claude_bin)
+                            .args(["--version"])
+                            .output()
+                            .await;
+                        match output {
+                            Ok(o) if o.status.success() => {
+                                let ver = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                                Ok(format!("Claude Code CLI found: {}", ver))
                             }
+                            Ok(o) => Err(format!("CLI error: {}", String::from_utf8_lossy(&o.stderr).trim())),
+                            Err(e) => Err(format!("Claude Code CLI not found: {}. Install with: npm i -g @anthropic-ai/claude-code", e)),
                         }
-                        Err(e) => Err(format!("Request failed: {}", e)),
-                    }
-                });
+                    })
+                } else {
+                    // Test HTTP API
+                    let api_url = if raw_url.ends_with("/chat/completions") {
+                        raw_url
+                    } else {
+                        format!("{}/chat/completions", raw_url.trim_end_matches('/'))
+                    };
+                    runtime.block_on(async {
+                        let client = reqwest::Client::new();
+                        let resp = client
+                            .post(&api_url)
+                            .header("Authorization", format!("Bearer {}", api_key))
+                            .header("content-type", "application/json")
+                            .json(&serde_json::json!({
+                                "model": model,
+                                "max_tokens": 1,
+                                "messages": [{"role": "user", "content": "hi"}]
+                            }))
+                            .send()
+                            .await;
+                        match resp {
+                            Ok(r) => {
+                                let status = r.status();
+                                if status.is_success() {
+                                    Ok(format!("Connected (HTTP {})", status.as_u16()))
+                                } else {
+                                    let body = r.text().await.unwrap_or_default();
+                                    Err(format!("HTTP {} - {}", status.as_u16(), body.chars().take(200).collect::<String>()))
+                                }
+                            }
+                            Err(e) => Err(format!("Request failed: {}", e)),
+                        }
+                    })
+                };
 
                 self.connection_status = match result {
                     Ok(msg) => ConnectionStatus::Success(msg),

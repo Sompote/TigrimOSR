@@ -3910,7 +3910,7 @@ fn to_anthropic_tools(tools: &[Value]) -> Vec<Value> {
 
 /// Unified LLM call supporting both Anthropic and OpenAI formats
 /// Find the `claude` CLI binary.
-fn find_claude_cli() -> String {
+pub fn find_claude_cli() -> String {
     let candidates = [
         format!("{}/.bun/bin/claude", std::env::var("HOME").unwrap_or_default()),
         format!("{}/.npm/bin/claude", std::env::var("HOME").unwrap_or_default()),
