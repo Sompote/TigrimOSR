@@ -3909,6 +3909,147 @@ fn to_anthropic_tools(tools: &[Value]) -> Vec<Value> {
 }
 
 /// Unified LLM call supporting both Anthropic and OpenAI formats
+/// Find the `claude` CLI binary.
+fn find_claude_cli() -> String {
+    let candidates = [
+        format!("{}/.bun/bin/claude", std::env::var("HOME").unwrap_or_default()),
+        format!("{}/.npm/bin/claude", std::env::var("HOME").unwrap_or_default()),
+        "/usr/local/bin/claude".to_string(),
+        "/opt/homebrew/bin/claude".to_string(),
+    ];
+    for c in &candidates {
+        if std::path::Path::new(c).exists() {
+            return c.to_string();
+        }
+    }
+    "claude".to_string() // fall back to PATH
+}
+
+/// Call Claude Code CLI instead of HTTP API.
+async fn llm_call_claude_code(
+    model: &str,
+    messages: &[Value],
+    tools: Option<&[Value]>,
+    max_tokens: u64,
+) -> Result<Value, String> {
+    // Build the prompt from messages
+    let mut prompt_parts: Vec<String> = Vec::new();
+    let mut system_text = String::new();
+    for msg in messages {
+        let role = msg["role"].as_str().unwrap_or("user");
+        let content = msg["content"].as_str().unwrap_or("");
+        if role == "system" {
+            system_text.push_str(content);
+            system_text.push('\n');
+        } else if role == "user" {
+            prompt_parts.push(content.to_string());
+        } else if role == "assistant" {
+            // Include assistant context
+            if !content.is_empty() {
+                prompt_parts.push(format!("[Previous assistant response: {}]", &content[..content.len().min(500)]));
+            }
+        }
+    }
+
+    let prompt = prompt_parts.join("\n\n");
+    if prompt.is_empty() {
+        return Err("No user message found".to_string());
+    }
+
+    // Build tool descriptions for Claude Code
+    let mut tool_desc = String::new();
+    if let Some(t) = tools {
+        if !t.is_empty() {
+            tool_desc.push_str("\n\nYou have these tools available. To call a tool, respond with a JSON tool_call block:\n");
+            for tool in t {
+                let name = tool["function"]["name"].as_str().unwrap_or("");
+                let desc = tool["function"]["description"].as_str().unwrap_or("");
+                tool_desc.push_str(&format!("- {}: {}\n", name, desc));
+            }
+            tool_desc.push_str("\nTo call a tool, respond with:\n```json\n{\"tool_call\": {\"name\": \"tool_name\", \"arguments\": {...}}}\n```\nOr respond normally with text if no tool is needed.");
+        }
+    }
+
+    let full_prompt = if system_text.is_empty() {
+        format!("{}{}", prompt, tool_desc)
+    } else {
+        format!("{}\n\n{}{}", system_text, prompt, tool_desc)
+    };
+
+    let claude_bin = find_claude_cli();
+    info!("[ClaudeCode] LLM call via CLI (model: {}, prompt: {}chars)", model, full_prompt.len());
+
+    let mut cli_args = vec![
+        "-p".to_string(), full_prompt,
+        "--output-format".to_string(), "text".to_string(),
+        "--max-turns".to_string(), "1".to_string(), // single turn, we handle tool loop ourselves
+    ];
+    if !model.is_empty() {
+        cli_args.push("--model".to_string());
+        cli_args.push(model.to_string());
+    }
+
+    let result = timeout(
+        Duration::from_secs(120),
+        Command::new(&claude_bin)
+            .args(&cli_args)
+            .env("CLAUDE_MAX_OUTPUT_TOKENS", max_tokens.to_string())
+            .output(),
+    ).await;
+
+    match result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+            if !output.status.success() && stdout.is_empty() {
+                return Err(format!("Claude Code CLI failed: {}", &stderr[..stderr.len().min(500)]));
+            }
+
+            // Check if response contains a tool call
+            if let Some(tc_start) = stdout.find("{\"tool_call\"") {
+                if let Some(tc_end) = stdout[tc_start..].find("```").or(Some(stdout.len() - tc_start)) {
+                    let tc_json = &stdout[tc_start..tc_start + tc_end].trim();
+                    if let Ok(tc_val) = serde_json::from_str::<Value>(tc_json) {
+                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                            return Ok(json!({
+                                "choices": [{
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": null,
+                                        "tool_calls": [{
+                                            "id": format!("call_{}", chrono::Utc::now().timestamp_millis()),
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": serde_json::to_string(args).unwrap_or_default(),
+                                            }
+                                        }]
+                                    },
+                                    "finish_reason": "tool_calls"
+                                }]
+                            }));
+                        }
+                    }
+                }
+            }
+
+            // Regular text response
+            Ok(json!({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": stdout.trim(),
+                    },
+                    "finish_reason": "stop"
+                }]
+            }))
+        }
+        Ok(Err(e)) => Err(format!("Failed to spawn claude CLI: {e}. Is 'claude' installed?")),
+        Err(_) => Err("Claude Code CLI timed out (120s)".to_string()),
+    }
+}
+
 async fn llm_call(
     client: &Client,
     api_key: &str,
@@ -3919,6 +4060,11 @@ async fn llm_call(
     temperature: f64,
     max_tokens: u64,
 ) -> Result<Value, String> {
+    // Route to Claude Code CLI if provider is "claude-code"
+    if api_url == "claude-code" {
+        return llm_call_claude_code(model, messages, tools, max_tokens).await;
+    }
+
     let is_anthropic = is_anthropic_api(api_url);
 
     let (body, url, headers) = if is_anthropic {

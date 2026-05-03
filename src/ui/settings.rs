@@ -93,6 +93,7 @@ impl AiProvider {
 
 fn builtin_providers() -> Vec<AiProvider> {
     vec![
+        AiProvider::new("Claude Code (Local)", "claude-code", "claude-sonnet-4-20250514"),
         AiProvider::new("OpenRouter", "https://openrouter.ai/api/v1", "openrouter/auto"),
         AiProvider::new("xAI (Grok)", "https://api.x.ai/v1", "grok-3"),
         AiProvider::new("Anthropic (Claude)", "https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
