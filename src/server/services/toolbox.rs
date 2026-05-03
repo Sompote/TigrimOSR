@@ -3311,45 +3311,25 @@ RULES:
 - Generate 3-8 agents including human"#
     );
 
-    // Call the API to generate the architecture (OpenAI-compatible format, same as call_with_tools)
+    // Call the LLM to generate the architecture (routes through claude-code if needed)
     let client = reqwest::Client::new();
-    let api_body = json!({
-        "model": sub_agent.model,
-        "max_tokens": 4096,
-        "messages": [
-            { "role": "system", "content": "You are an expert multi-agent system architect. Generate complete, well-structured agent system configurations as JSON. Return ONLY valid JSON, nothing else." },
-            { "role": "user", "content": prompt }
-        ],
-    });
+    let messages = vec![
+        json!({ "role": "system", "content": "You are an expert multi-agent system architect. Generate complete, well-structured agent system configurations as JSON. Return ONLY valid JSON, nothing else." }),
+        json!({ "role": "user", "content": prompt }),
+    ];
 
-    let resp = match client
-        .post(&sub_agent.api_url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", sub_agent.api_key))
-        .json(&api_body)
-        .send()
-        .await
-    {
-        Ok(r) => r,
+    let resp_body = match llm_call(
+        &client, &sub_agent.api_key, &sub_agent.api_url, &sub_agent.model,
+        &messages, None, 0.7, 4096,
+    ).await {
+        Ok(v) => v,
         Err(e) => return json!({ "ok": false, "error": format!("API request failed: {e}") }),
     };
 
-    let resp_body: Value = match resp.json().await {
-        Ok(v) => v,
-        Err(e) => return json!({ "ok": false, "error": format!("Failed to parse API response: {e}") }),
-    };
-
-    // Support both OpenAI format (choices[0].message.content) and Anthropic format (content[0].text)
     let content_text = resp_body["choices"]
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|c| c["message"]["content"].as_str())
-        .or_else(|| {
-            resp_body["content"]
-                .as_array()
-                .and_then(|arr| arr.iter().find(|b| b["type"].as_str() == Some("text")))
-                .and_then(|b| b["text"].as_str())
-        })
         .unwrap_or("");
 
     if content_text.is_empty() {
