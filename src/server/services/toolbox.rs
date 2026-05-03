@@ -3889,20 +3889,129 @@ fn to_anthropic_tools(tools: &[Value]) -> Vec<Value> {
 }
 
 /// Unified LLM call supporting both Anthropic and OpenAI formats
-/// Find the `claude` CLI binary.
-pub fn find_claude_cli() -> String {
+/// Find the `codex` CLI binary.
+/// Build a PATH string that includes common node/bun/homebrew bin dirs.
+/// Needed because .app bundles launch with minimal PATH (/usr/bin:/bin).
+pub fn cli_env_path() -> String {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USER").map(|u| format!("/Users/{}", u)))
+        .unwrap_or_else(|_| "/Users/sompoteyouwai".to_string());
+    let extra_dirs = [
+        format!("{}/.nvm/versions/node/v22.16.0/bin", home),
+        format!("{}/.bun/bin", home),
+        format!("{}/.npm/bin", home),
+        format!("{}/.local/bin", home),
+        format!("{}/.cargo/bin", home),
+        "/opt/homebrew/bin".to_string(),
+        "/usr/local/bin".to_string(),
+    ];
+    let system_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+    let mut parts: Vec<String> = Vec::new();
+    for d in &extra_dirs {
+        if std::path::Path::new(d).is_dir() && !system_path.contains(d.as_str()) {
+            parts.push(d.clone());
+        }
+    }
+    parts.push(system_path);
+    parts.join(":")
+}
+
+/// Resolve the home directory (works even when launched from .app bundle).
+pub fn resolve_home() -> String {
+    if let Ok(h) = std::env::var("HOME") {
+        if !h.is_empty() { return h; }
+    }
+    if let Ok(u) = std::env::var("USER") {
+        if !u.is_empty() { return format!("/Users/{}", u); }
+    }
+    // Last resort: ask the OS for the current username
+    if let Ok(o) = std::process::Command::new("/usr/bin/id").args(["-un"]).output() {
+        if o.status.success() {
+            let user = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !user.is_empty() {
+                return format!("/Users/{}", user);
+            }
+        }
+    }
+    "/Users/sompoteyouwai".to_string()
+}
+
+/// Find a node binary.
+fn find_node() -> String {
+    let home = resolve_home();
     let candidates = [
-        format!("{}/.bun/bin/claude", std::env::var("HOME").unwrap_or_default()),
-        format!("{}/.npm/bin/claude", std::env::var("HOME").unwrap_or_default()),
-        "/usr/local/bin/claude".to_string(),
-        "/opt/homebrew/bin/claude".to_string(),
+        format!("{}/.nvm/versions/node/v22.16.0/bin/node", home),
+        "/usr/local/bin/node".to_string(),
+        "/opt/homebrew/bin/node".to_string(),
     ];
     for c in &candidates {
         if std::path::Path::new(c).exists() {
             return c.to_string();
         }
     }
-    "claude".to_string() // fall back to PATH
+    "node".to_string()
+}
+
+/// Resolve a symlink to its real JS script path.
+fn resolve_script(symlink: &str) -> Option<String> {
+    let p = std::path::Path::new(symlink);
+    if !p.exists() { return None; }
+    // Try to canonicalize (follows symlinks AND resolves ..)
+    if let Ok(canon) = p.canonicalize() {
+        return Some(canon.to_string_lossy().to_string());
+    }
+    // Fallback: manual symlink resolve
+    if let Ok(target) = std::fs::read_link(p) {
+        let resolved = if target.is_relative() {
+            p.parent().unwrap_or(std::path::Path::new("/")).join(&target)
+        } else {
+            target
+        };
+        if resolved.exists() {
+            return Some(resolved.to_string_lossy().to_string());
+        }
+    }
+    Some(symlink.to_string())
+}
+
+/// Find codex CLI. Returns (node_path, script_path) for direct node invocation.
+/// Falls back to ("codex", "") if not found (uses shebang).
+pub fn find_codex_cli() -> (String, String) {
+    let home = resolve_home();
+    let candidates = [
+        format!("{}/.nvm/versions/node/v22.16.0/bin/codex", home),
+        format!("{}/.npm/bin/codex", home),
+        format!("{}/.local/bin/codex", home),
+        "/usr/local/bin/codex".to_string(),
+        "/opt/homebrew/bin/codex".to_string(),
+    ];
+    let node = find_node();
+    for c in &candidates {
+        if let Some(script) = resolve_script(c) {
+            return (node.clone(), script);
+        }
+    }
+    ("codex".to_string(), String::new())
+}
+
+/// Find claude CLI. Returns (node_path, script_path) for direct node invocation.
+pub fn find_claude_cli() -> (String, String) {
+    let home = resolve_home();
+    let candidates = [
+        format!("{}/.bun/bin/claude", home),
+        format!("{}/.npm/bin/claude", home),
+        format!("{}/.nvm/versions/node/v22.16.0/bin/claude", home),
+        format!("{}/.local/bin/claude", home),
+        "/usr/local/bin/claude".to_string(),
+        "/opt/homebrew/bin/claude".to_string(),
+    ];
+    let node = find_node();
+    for c in &candidates {
+        if let Some(script) = resolve_script(c) {
+            return (node.clone(), script);
+        }
+    }
+    ("claude".to_string(), String::new())
 }
 
 /// Call Claude Code CLI instead of HTTP API.
@@ -3965,23 +4074,31 @@ async fn llm_call_claude_code(
         format!("{}\n\n{}{}", system_text, prompt, tool_desc)
     };
 
-    let claude_bin = find_claude_cli();
-    info!("[ClaudeCode] LLM call via CLI (model: {}, prompt: {}chars)", model, full_prompt.len());
+    let (node_bin, script_path) = find_claude_cli();
+    info!("[ClaudeCode] LLM call via CLI (node: {}, script: {}, model: {}, prompt: {}chars)", node_bin, script_path, model, full_prompt.len());
 
-    let mut cli_args = vec![
+    // Build args: if we have a script path, run `node script.js <args>`, else run `claude <args>`
+    let mut cli_args: Vec<String> = Vec::new();
+    if !script_path.is_empty() {
+        cli_args.push(script_path);
+    }
+    cli_args.extend_from_slice(&[
         "-p".to_string(), full_prompt,
         "--output-format".to_string(), "text".to_string(),
-        "--max-turns".to_string(), "1".to_string(), // single turn, we handle tool loop ourselves
-    ];
+        "--max-turns".to_string(), "1".to_string(),
+    ]);
     if !model.is_empty() {
         cli_args.push("--model".to_string());
         cli_args.push(model.to_string());
     }
 
+    let home = resolve_home();
     let result = timeout(
         Duration::from_secs(120),
-        Command::new(&claude_bin)
+        Command::new(&node_bin)
             .args(&cli_args)
+            .env("PATH", cli_env_path())
+            .env("HOME", &home)
             .env("CLAUDE_MAX_OUTPUT_TOKENS", max_tokens.to_string())
             .output(),
     ).await;
@@ -4084,6 +4201,230 @@ async fn llm_call_claude_code(
     }
 }
 
+/// Call Codex CLI instead of HTTP API.
+async fn llm_call_codex_cli(
+    model: &str,
+    messages: &[Value],
+    tools: Option<&[Value]>,
+    _max_tokens: u64,
+) -> Result<Value, String> {
+    // Build prompt from messages (system + user combined)
+    let mut prompt_parts: Vec<String> = Vec::new();
+    let mut system_text = String::new();
+    for msg in messages {
+        let role = msg["role"].as_str().unwrap_or("user");
+        let content = msg["content"].as_str().unwrap_or("");
+        if role == "system" {
+            system_text.push_str(content);
+            system_text.push('\n');
+        } else if role == "user" {
+            prompt_parts.push(content.to_string());
+        }
+    }
+
+    let task = prompt_parts.join("\n\n");
+    if task.is_empty() {
+        return Err("No user message found".to_string());
+    }
+
+    // Build tool descriptions for the prompt
+    let mut tool_desc = String::new();
+    if let Some(t) = tools {
+        if !t.is_empty() {
+            tool_desc.push_str("\n\n[TOOL CALLING INSTRUCTIONS]\nYou have these tools. You MUST call a tool when the task requires action.\nTo call a tool, output EXACTLY this JSON on its own line:\n");
+            tool_desc.push_str("{\"tool_call\":{\"name\":\"TOOL_NAME\",\"arguments\":{...}}}\n\n");
+            tool_desc.push_str("Available tools:\n");
+            for tool in t {
+                let name = tool["function"]["name"].as_str().unwrap_or("");
+                let desc = tool["function"]["description"].as_str().unwrap_or("");
+                tool_desc.push_str(&format!("- {}: {}\n", name, desc));
+            }
+            tool_desc.push_str("\nIMPORTANT: Output the JSON tool_call to use a tool. Do NOT just describe — actually call it.\n");
+        }
+    }
+
+    // Combine: system prompt + task + tool instructions
+    let full_prompt = if system_text.is_empty() {
+        format!("{}{}", task, tool_desc)
+    } else {
+        format!("{}\n\n---\n\nTASK:\n{}{}", system_text.trim(), task, tool_desc)
+    };
+
+    let (node_bin, script_path) = find_codex_cli();
+    let sandbox_dir = {
+        let s = load_agent_settings();
+        let sd = s["sandboxDir"].as_str().unwrap_or("./sandbox");
+        let raw = if sd.is_empty() { "./sandbox" } else { sd };
+        // Make absolute relative to data dir
+        let p = std::path::Path::new(raw);
+        if p.is_relative() {
+            crate::server::data::data_dir().join(raw).to_string_lossy().to_string()
+        } else {
+            raw.to_string()
+        }
+    };
+    // Ensure sandbox dir exists
+    let _ = std::fs::create_dir_all(&sandbox_dir);
+    let home = resolve_home();
+    info!("[Codex] LLM call via CLI (node: {}, script: {}, model: {}, prompt: {}chars, cwd: {})", node_bin, script_path, model, full_prompt.len(), sandbox_dir);
+
+    // Build args: `node codex.js exec "<prompt>" --json --full-auto [-m <model>]`
+    let mut cli_args: Vec<String> = Vec::new();
+    if !script_path.is_empty() {
+        cli_args.push(script_path.clone());
+    }
+    cli_args.extend_from_slice(&[
+        "exec".to_string(),
+        full_prompt.clone(),
+        "--json".to_string(),
+        "--full-auto".to_string(),
+    ]);
+    if !model.is_empty() {
+        cli_args.push("-m".to_string());
+        cli_args.push(model.to_string());
+    }
+
+    let result = timeout(
+        Duration::from_secs(180),
+        Command::new(&node_bin)
+            .args(&cli_args)
+            .current_dir(&sandbox_dir)
+            .env("PATH", cli_env_path())
+            .env("HOME", &home)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output(),
+    ).await;
+
+    match result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+            if !output.status.success() && stdout.trim().is_empty() {
+                return Err(format!("Codex CLI failed: {}", &stderr[..stderr.len().min(500)]));
+            }
+
+            // Parse JSONL events from codex --json output
+            let mut result_text = String::new();
+            for line in stdout.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() { continue; }
+
+                // First check for our tool_call format in the text
+                if trimmed.contains("\"tool_call\"") {
+                    let clean = trimmed.trim_start_matches("```json").trim_start_matches("```").trim();
+                    if let Ok(tc_val) = serde_json::from_str::<Value>(clean) {
+                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                            info!("[Codex] Extracted tool call: {}", name);
+                            return Ok(json!({
+                                "choices": [{
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": null,
+                                        "tool_calls": [{
+                                            "id": format!("call_{}", chrono::Utc::now().timestamp_millis()),
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": serde_json::to_string(args).unwrap_or_default(),
+                                            }
+                                        }]
+                                    },
+                                    "finish_reason": "tool_calls"
+                                }]
+                            }));
+                        }
+                    }
+                }
+
+                // Parse codex JSONL events
+                if let Ok(event) = serde_json::from_str::<Value>(trimmed) {
+                    let event_type = event["type"].as_str().unwrap_or("");
+
+                    if event_type == "item.completed" {
+                        let item = &event["item"];
+                        let item_type = item["type"].as_str().unwrap_or("");
+
+                        if item_type == "agent_message" {
+                            if let Some(text) = item["text"].as_str() {
+                                result_text.push_str(text);
+                            }
+                        } else if item_type == "command_execution" {
+                            if let Some(out) = item["aggregated_output"].as_str() {
+                                result_text.push_str(out);
+                            }
+                        } else if item_type == "message" {
+                            // Handle content array or string
+                            if let Some(content) = item["content"].as_array() {
+                                for block in content {
+                                    if let Some(text) = block["text"].as_str().or(block["output"].as_str()) {
+                                        result_text.push_str(text);
+                                    } else if let Some(s) = block.as_str() {
+                                        result_text.push_str(s);
+                                    }
+                                }
+                            }
+                        }
+                    } else if event_type == "message" {
+                        if let Some(c) = event["content"].as_str() {
+                            result_text.push_str(c);
+                        }
+                    }
+                } else if !trimmed.starts_with('{') {
+                    // Plain text line (not JSON)
+                    result_text.push_str(trimmed);
+                    result_text.push('\n');
+                }
+            }
+
+            // Also check result_text for embedded tool calls
+            for line in result_text.lines() {
+                let clean = line.trim().trim_start_matches("```json").trim_start_matches("```").trim();
+                if clean.contains("\"tool_call\"") {
+                    if let Ok(tc_val) = serde_json::from_str::<Value>(clean) {
+                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                            info!("[Codex] Extracted tool call from result text: {}", name);
+                            return Ok(json!({
+                                "choices": [{
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": null,
+                                        "tool_calls": [{
+                                            "id": format!("call_{}", chrono::Utc::now().timestamp_millis()),
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": serde_json::to_string(args).unwrap_or_default(),
+                                            }
+                                        }]
+                                    },
+                                    "finish_reason": "tool_calls"
+                                }]
+                            }));
+                        }
+                    }
+                }
+            }
+
+            let final_text = result_text.trim();
+            let content = if final_text.is_empty() { stdout.trim() } else { final_text };
+
+            Ok(json!({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                    },
+                    "finish_reason": "stop"
+                }]
+            }))
+        }
+        Ok(Err(e)) => Err(format!("Failed to spawn codex CLI (node={}, script={}, cwd={}): {e}", node_bin, script_path, sandbox_dir)),
+        Err(_) => Err("Codex CLI timed out (180s)".to_string()),
+    }
+}
+
 async fn llm_call(
     client: &Client,
     api_key: &str,
@@ -4094,9 +4435,12 @@ async fn llm_call(
     temperature: f64,
     max_tokens: u64,
 ) -> Result<Value, String> {
-    // Route to Claude Code CLI if provider is "claude-code"
+    // Route to local CLI providers
     if api_url.starts_with("claude-code") {
         return llm_call_claude_code(model, messages, tools, max_tokens).await;
+    }
+    if api_url.starts_with("codex-cli") {
+        return llm_call_codex_cli(model, messages, tools, max_tokens).await;
     }
 
     let is_anthropic = is_anthropic_api(api_url);

@@ -94,6 +94,7 @@ impl AiProvider {
 fn builtin_providers() -> Vec<AiProvider> {
     vec![
         AiProvider::new("Claude Code (Local)", "claude-code", "claude-sonnet-4-20250514"),
+        AiProvider::new("Codex (Local)", "codex-cli", "o4-mini"),
         AiProvider::new("OpenRouter", "https://openrouter.ai/api/v1", "openrouter/auto"),
         AiProvider::new("xAI (Grok)", "https://api.x.ai/v1", "grok-3"),
         AiProvider::new("Anthropic (Claude)", "https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
@@ -173,6 +174,17 @@ pub struct SettingsView {
     approval_file_delete: bool,
     approval_agent_spawn: bool,
 
+    // --- Agent Harness ---
+    agent_max_turns: u64,
+    agent_max_tool_calls: u64,
+    agent_max_tokens: u64,
+    agent_temperature: f64,
+    agent_max_context_tokens: u64,
+    agent_max_consecutive_errors: u64,
+    agent_compression_interval: u64,
+    agent_reflection_enabled: bool,
+    agent_tool_result_max_len: u64,
+
     // --- Skill Auto-Update ---
     skill_auto_update_enabled: bool,
     skill_auto_update_interval_minutes: u64,
@@ -239,6 +251,16 @@ impl Default for SettingsView {
             approval_file_write: false,
             approval_file_delete: true,
             approval_agent_spawn: false,
+
+            agent_max_turns: 15,
+            agent_max_tool_calls: 25,
+            agent_max_tokens: 81920,
+            agent_temperature: 0.7,
+            agent_max_context_tokens: 100_000,
+            agent_max_consecutive_errors: 3,
+            agent_compression_interval: 5,
+            agent_reflection_enabled: false,
+            agent_tool_result_max_len: 6000,
 
             skill_auto_update_enabled: true,
             skill_auto_update_interval_minutes: 5,
@@ -416,6 +438,26 @@ impl SettingsView {
         self.approval_file_delete = settings.approval_required_for_file_delete.unwrap_or(true);
         self.approval_agent_spawn = settings.approval_required_for_agent_spawn.unwrap_or(false);
 
+        // Agent Harness (stored in extra map)
+        self.agent_max_turns = settings.extra.get("agentMaxToolRounds")
+            .and_then(|v| v.as_u64()).unwrap_or(15);
+        self.agent_max_tool_calls = settings.extra.get("agentMaxToolCalls")
+            .and_then(|v| v.as_u64()).unwrap_or(25);
+        self.agent_max_tokens = settings.extra.get("agentMaxTokens")
+            .and_then(|v| v.as_u64()).unwrap_or(81920);
+        self.agent_temperature = settings.extra.get("agentTemperature")
+            .and_then(|v| v.as_f64()).unwrap_or(0.7);
+        self.agent_max_context_tokens = settings.extra.get("agentMaxContextTokens")
+            .and_then(|v| v.as_u64()).unwrap_or(100_000);
+        self.agent_max_consecutive_errors = settings.extra.get("agentMaxConsecutiveErrors")
+            .and_then(|v| v.as_u64()).unwrap_or(3);
+        self.agent_compression_interval = settings.extra.get("agentCompressionInterval")
+            .and_then(|v| v.as_u64()).unwrap_or(5);
+        self.agent_reflection_enabled = settings.extra.get("agentReflectionEnabled")
+            .and_then(|v| v.as_bool()).unwrap_or(false);
+        self.agent_tool_result_max_len = settings.extra.get("agentToolResultMaxLen")
+            .and_then(|v| v.as_u64()).unwrap_or(6000);
+
         // Skill Auto-Update
         self.skill_auto_update_enabled = settings.skill_auto_update_enabled.unwrap_or(true);
         self.skill_auto_update_interval_minutes =
@@ -495,6 +537,17 @@ impl SettingsView {
         settings.approval_required_for_file_write = Some(self.approval_file_write);
         settings.approval_required_for_file_delete = Some(self.approval_file_delete);
         settings.approval_required_for_agent_spawn = Some(self.approval_agent_spawn);
+
+        // Agent Harness (stored in extra map)
+        settings.extra.insert("agentMaxToolRounds".into(), serde_json::json!(self.agent_max_turns));
+        settings.extra.insert("agentMaxToolCalls".into(), serde_json::json!(self.agent_max_tool_calls));
+        settings.extra.insert("agentMaxTokens".into(), serde_json::json!(self.agent_max_tokens));
+        settings.extra.insert("agentTemperature".into(), serde_json::json!(self.agent_temperature));
+        settings.extra.insert("agentMaxContextTokens".into(), serde_json::json!(self.agent_max_context_tokens));
+        settings.extra.insert("agentMaxConsecutiveErrors".into(), serde_json::json!(self.agent_max_consecutive_errors));
+        settings.extra.insert("agentCompressionInterval".into(), serde_json::json!(self.agent_compression_interval));
+        settings.extra.insert("agentReflectionEnabled".into(), serde_json::json!(self.agent_reflection_enabled));
+        settings.extra.insert("agentToolResultMaxLen".into(), serde_json::json!(self.agent_tool_result_max_len));
 
         // Skill Auto-Update
         settings.skill_auto_update_enabled = Some(self.skill_auto_update_enabled);
@@ -705,9 +758,9 @@ impl SettingsView {
                 });
                 ui.end_row();
 
-                let is_claude_code = self.api_url == "claude-code";
+                let is_local_cli = self.api_url == "claude-code" || self.api_url == "codex-cli";
 
-                if !is_claude_code {
+                if !is_local_cli {
                     // API Key
                     ui.label("API Key:");
                     ui.add(
@@ -732,7 +785,7 @@ impl SettingsView {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.api_model)
                         .desired_width(300.0)
-                        .hint_text(if is_claude_code { "e.g. claude-sonnet-4-20250514" } else { "e.g. deepseek-chat" }),
+                        .hint_text(if is_local_cli { "e.g. claude-sonnet-4-20250514 or o4-mini" } else { "e.g. deepseek-chat" }),
                 );
                 ui.end_row();
             });
@@ -814,7 +867,8 @@ impl SettingsView {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let is_cc = self.api_url == "claude-code";
-            if ui.button("Test Connection").clicked() && (is_cc || !self.api_key.is_empty()) {
+            let is_codex = self.api_url == "codex-cli";
+            if ui.button("Test Connection").clicked() && (is_cc || is_codex || !self.api_key.is_empty()) {
                 let api_key = self.api_key.clone();
                 let raw_url = if self.api_url.is_empty() {
                     "https://api.deepseek.com/v1".to_string()
@@ -828,21 +882,34 @@ impl SettingsView {
                 };
                 let ctx_clone = ctx.clone();
 
-                let result = if is_cc {
-                    // Test Claude Code CLI
+                let result = if is_cc || is_codex {
+                    // Test local CLI
+                    let (node_bin, script_path) = if is_cc {
+                        crate::server::services::toolbox::find_claude_cli()
+                    } else {
+                        crate::server::services::toolbox::find_codex_cli()
+                    };
+                    let label = if is_cc { "Claude Code" } else { "Codex" };
+                    let env_path = crate::server::services::toolbox::cli_env_path();
                     runtime.block_on(async {
-                        let claude_bin = crate::server::services::toolbox::find_claude_cli();
-                        let output = tokio::process::Command::new(&claude_bin)
-                            .args(["--version"])
+                        let mut args: Vec<String> = Vec::new();
+                        if !script_path.is_empty() {
+                            args.push(script_path);
+                        }
+                        args.push("--version".to_string());
+                        let output = tokio::process::Command::new(&node_bin)
+                            .args(&args)
+                            .env("PATH", &env_path)
+                            .env("HOME", crate::server::services::toolbox::resolve_home())
                             .output()
                             .await;
                         match output {
                             Ok(o) if o.status.success() => {
                                 let ver = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                                Ok(format!("Claude Code CLI found: {}", ver))
+                                Ok(format!("{} CLI found: {}", label, ver))
                             }
                             Ok(o) => Err(format!("CLI error: {}", String::from_utf8_lossy(&o.stderr).trim())),
-                            Err(e) => Err(format!("Claude Code CLI not found: {}. Install with: npm i -g @anthropic-ai/claude-code", e)),
+                            Err(e) => Err(format!("{} CLI not found: {}", label, e)),
                         }
                     })
                 } else {
@@ -926,6 +993,57 @@ impl SettingsView {
                 );
             });
         }
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.heading("Agent Harness");
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Controls for the autonomous tool loop (fully_auto / auto modes)")
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+        ui.add_space(4.0);
+
+        egui::Grid::new("agent_harness_grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Max Turns:");
+                ui.add(egui::Slider::new(&mut self.agent_max_turns, 1..=100).text("rounds"));
+                ui.end_row();
+
+                ui.label("Max Tool Calls:");
+                ui.add(egui::Slider::new(&mut self.agent_max_tool_calls, 1..=200).text("calls"));
+                ui.end_row();
+
+                ui.label("Max Output Tokens:");
+                ui.add(egui::DragValue::new(&mut self.agent_max_tokens).range(1024..=131072).speed(1024));
+                ui.end_row();
+
+                ui.label("Temperature:");
+                ui.add(egui::Slider::new(&mut self.agent_temperature, 0.0..=2.0).step_by(0.05));
+                ui.end_row();
+
+                ui.label("Max Context Tokens:");
+                ui.add(egui::DragValue::new(&mut self.agent_max_context_tokens).range(4096..=1_000_000).speed(1000));
+                ui.end_row();
+
+                ui.label("Max Consecutive Errors:");
+                ui.add(egui::Slider::new(&mut self.agent_max_consecutive_errors, 1..=10));
+                ui.end_row();
+
+                ui.label("Compression Interval:");
+                ui.add(egui::Slider::new(&mut self.agent_compression_interval, 1..=20).text("rounds"));
+                ui.end_row();
+
+                ui.label("Tool Result Max Length:");
+                ui.add(egui::DragValue::new(&mut self.agent_tool_result_max_len).range(1000..=100_000).speed(500));
+                ui.end_row();
+            });
+
+        ui.add_space(4.0);
+        ui.checkbox(&mut self.agent_reflection_enabled, "Enable self-reflection / evaluation");
 
         ui.add_space(16.0);
         ui.horizontal(|ui| {

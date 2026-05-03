@@ -1,4 +1,4 @@
-# TigrimOSR v0.2.1
+# TigrimOSR v0.2.3
 
 **TigrimOSR** is the Rust version of [TigrimOS](https://github.com/Sompote/TigerCowork) — a high-performance native desktop rewrite of the original Python/Node.js AI assistant. Built entirely in Rust using egui for the UI, TigrimOSR delivers faster startup, lower memory usage, and a single self-contained binary with no Node.js or Python runtime required to run the app itself.
 
@@ -6,7 +6,17 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 
 ![TigrimOSR Screenshot](assets/screenshot.png)
 
-## What's New in v0.2.1
+## What's New in v0.2.3
+
+- **Local CLI providers** — Use Claude Code or OpenAI Codex CLI installed on your machine as AI backends, no API key needed
+- **Agent harness settings** — Configurable max turns, max tool calls, temperature, max tokens, context limit, compression interval, and reflection toggle in Settings
+- **VM Terminal via SSH** — Terminal tab connects to Ubuntu VM via SSH (`sshpass`) instead of local bash
+- **VM tool routing** — `run_python` and `run_shell` execute inside the VM via SSH when VM is running
+- **Mode rename** — "Realtime" mode renamed to "Manual"; mode order starts with Fully Auto
+- **Robust CLI spawning** — Node.js-based CLIs (claude, codex) launched via `node script.js` directly, bypassing shebang issues in .app bundles
+- **Environment fixes** — Proper PATH/HOME injection for .app bundle launches where env vars are minimal
+
+### v0.2.1
 
 - **Cross-platform support** — Windows and Linux compatibility for sandbox execution, Python/shell discovery, and subprocess spawning
 - **.app bundle fixes** — Resolved issues with data directories, sandbox paths, Python/shell not found when launched from macOS `.app` bundle
@@ -17,7 +27,7 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 
 ### v0.2.0
 
-- **Agent modes** — Auto, Fully Auto, Auto Swarm, Realtime, and Manual modes for flexible agent orchestration
+- **Agent modes** — Auto, Fully Auto, Auto Swarm, and Manual modes for flexible agent orchestration
 - **Connection editor** — Click agent connection lines to change protocol type (TCP, Queue, Bus, Blackboard)
 - **Chat info card** — Shows active architecture name, swarm mode, and model in the chat view
 - **Security settings** — Per-tool approval toggles for shell, Python, file write, file delete, and agent spawn
@@ -33,7 +43,9 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 ## Features
 
 - **Multi-agent system** — hierarchical, mesh, and hybrid orchestration modes via YAML config
+- **Local CLI agents** — Use Claude Code or OpenAI Codex as agent backends without API keys
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading
+- **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
 - **Output panel** — inline preview for images (PNG/JPG), markdown reports, CSV tables, JSON, PDF, HTML
 - **Agent history log** — JSONL logs per session in `data/agent_history/`
 - **Skills system** — loadable skill modules from `skills/` directory
@@ -46,6 +58,11 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 - Rust 1.75+ (`rustup` recommended)
 - Python 3.8+ with pip (for tool execution)
 - macOS 12+ (primary target; Linux supported without sandbox-exec)
+
+### Optional local CLI agents
+
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `npm install -g @anthropic-ai/claude-code`
+- [OpenAI Codex](https://github.com/openai/codex) — `npm install -g @openai/codex`
 
 ### Python packages (optional but recommended)
 
@@ -191,12 +208,13 @@ On first launch, go to **Settings** to configure:
 
 | Setting | Description |
 |---------|-------------|
-| API Key | Your OpenAI-compatible API key |
-| API URL | Endpoint (e.g. `https://api.openai.com/v1/chat/completions`) |
-| Model | Model name (e.g. `gpt-4o`, `claude-3-5-sonnet`) |
+| AI Provider | Select from Claude Code (Local), Codex (Local), OpenRouter, Anthropic, DeepSeek, etc. |
+| API Key | Your API key (not needed for local CLI providers) |
+| Model | Model name (e.g. `o4-mini`, `claude-sonnet-4-20250514`) |
+| Agent Harness | Max turns, temperature, max tokens, context limit, reflection |
 | Sub-agent system | Enable multi-agent mode |
 | Agent config file | Select a YAML file from `data/agents/` |
-| Agent mode | Auto, Fully Auto, Auto Swarm, Realtime, or Manual |
+| Agent mode | Fully Auto, Auto, Auto Swarm, or Manual |
 
 ## Multi-Agent System
 
@@ -215,10 +233,9 @@ Enable sub-agents in Settings and select an agent config file. Included configs 
 
 | Mode | Description |
 |------|-------------|
+| **Fully Auto** | Starts with `create_architecture` tool, then switches to agent team |
 | **Auto** | Standard tool-calling loop with optional sub-agent delegation |
-| **Fully Auto** | Starts with `create_architecture` tool, then switches to realtime agent team |
 | **Auto Swarm** | Starts with `select_swarm` to pick an existing YAML config, then boots agent team |
-| **Realtime** | Boots the full agent team immediately from the selected YAML config |
 | **Manual** | No automatic tool calling; agents respond with instructions only |
 
 ### Inter-Agent Protocols
@@ -282,19 +299,23 @@ TigrimOSR/
 │   │   ├── agents_view.rs   # Agent architecture canvas, connection editor
 │   │   ├── files_view.rs    # Sandbox file browser with image preview
 │   │   ├── tasks_view.rs    # Active/Scheduled/Finished task management
-│   │   ├── settings.rs      # Settings UI with security tab
+│   │   ├── settings.rs      # Settings UI with harness parameters
+│   │   ├── terminal_view.rs # VM Terminal via SSH
 │   │   ├── output_panel.rs  # File output panel (images, MD, CSV, etc.)
 │   │   └── skills_view.rs   # Skills browser and ClawHub marketplace
-│   └── server/
-│       ├── services/
-│       │   ├── toolbox.rs    # Tool execution + multi-agent loop
-│       │   ├── protocols.rs  # TCP, Bus, Queue, Blackboard protocols
-│       │   ├── clawhub.rs    # ClawHub skill marketplace
-│       │   ├── mcp.rs        # MCP client (stdio/SSE/HTTP)
-│       │   └── tunnel.rs     # Cloudflare tunnel management
-│       ├── routes/
-│       │   └── remote.rs     # Remote task API endpoints
-│       └── data.rs           # Data models and persistence
+│   ├── server/
+│   │   ├── services/
+│   │   │   ├── toolbox.rs    # Tool execution + multi-agent loop + CLI providers
+│   │   │   ├── protocols.rs  # TCP, Bus, Queue, Blackboard protocols
+│   │   │   ├── clawhub.rs    # ClawHub skill marketplace
+│   │   │   ├── mcp.rs        # MCP client (stdio/SSE/HTTP)
+│   │   │   └── tunnel.rs     # Cloudflare tunnel management
+│   │   ├── routes/
+│   │   │   └── remote.rs     # Remote task API endpoints
+│   │   └── data.rs           # Data models and persistence
+│   └── vm/
+│       ├── manager.rs        # QEMU VM lifecycle management
+│       └── config.rs         # VM configuration constants
 ├── data/
 │   └── agents/              # YAML agent config files
 ├── assets/
