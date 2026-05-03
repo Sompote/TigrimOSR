@@ -669,7 +669,10 @@ impl ChatView {
             .filter(|u| !u.is_empty())
             .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
         // Ensure URL ends with /chat/completions (OpenAI-compatible format)
-        let api_url = if raw_url.ends_with("/chat/completions") {
+        // Skip for claude-code provider which uses CLI, not HTTP
+        let api_url = if raw_url == "claude-code" {
+            raw_url
+        } else if raw_url.ends_with("/chat/completions") {
             raw_url
         } else {
             format!("{}/chat/completions", raw_url.trim_end_matches('/'))

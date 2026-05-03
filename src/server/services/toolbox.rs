@@ -4041,7 +4041,7 @@ async fn llm_call(
     max_tokens: u64,
 ) -> Result<Value, String> {
     // Route to Claude Code CLI if provider is "claude-code"
-    if api_url == "claude-code" {
+    if api_url.starts_with("claude-code") {
         return llm_call_claude_code(model, messages, tools, max_tokens).await;
     }
 
