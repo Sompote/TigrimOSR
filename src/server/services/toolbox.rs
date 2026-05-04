@@ -4622,7 +4622,7 @@ async fn llm_call_gemini_cli(
     let mut cli_args = vec![
         "-p".to_string(), full_prompt,
         "-o".to_string(), "text".to_string(),
-        "--yolo".to_string(),
+        "--approval-mode".to_string(), "plan".to_string(), // read-only, no tool execution
     ];
     if !model.is_empty() {
         cli_args.push("-m".to_string());
@@ -4631,7 +4631,7 @@ async fn llm_call_gemini_cli(
 
     let home = resolve_home();
     let result = timeout(
-        Duration::from_secs(120),
+        Duration::from_secs(180),
         Command::new("gemini")
             .args(&cli_args)
             .env("PATH", cli_env_path())
