@@ -87,6 +87,10 @@ pub struct AgentsView {
 
     // Async result from auto architecture
     auto_arch_result: Arc<Mutex<Option<Result<Value, String>>>>,
+
+    // Live agent statuses from realtime session (agent_id -> status)
+    agent_statuses: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    status_poll_timer: std::time::Instant,
 }
 
 impl Default for AgentsView {
@@ -117,6 +121,8 @@ impl Default for AgentsView {
             new_node_role: "worker".to_string(),
             save_status: None,
             auto_arch_result: Arc::new(Mutex::new(None)),
+            agent_statuses: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            status_poll_timer: std::time::Instant::now(),
         }
     }
 }
@@ -137,6 +143,26 @@ fn point_to_segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 
 impl AgentsView {
     pub fn show(&mut self, ui: &mut egui::Ui, rt: &tokio::runtime::Handle) {
+        // Check if fully_auto created an architecture — auto-load it
+        if let Some(filename) = crate::server::services::toolbox::take_pending_arch_file() {
+            self.load_agent_file(&filename, rt);
+            self.needs_refresh = true;
+        }
+
+        // Poll live agent statuses every 500ms
+        if self.status_poll_timer.elapsed() > std::time::Duration::from_millis(500) {
+            self.status_poll_timer = std::time::Instant::now();
+            let statuses_arc = self.agent_statuses.clone();
+            let ctx = ui.ctx().clone();
+            rt.spawn(async move {
+                let statuses = crate::server::services::toolbox::get_all_agent_statuses().await;
+                if !statuses.is_empty() {
+                    *statuses_arc.lock().unwrap() = statuses;
+                    ctx.request_repaint();
+                }
+            });
+        }
+
         // Poll async auto-architecture result
         if self.auto_arch_loading {
             let result = self.auto_arch_result.lock().unwrap().take();
@@ -338,6 +364,35 @@ impl AgentsView {
                         Color32::from_rgb(50, 180, 50)
                     };
                     ui.colored_label(color, msg);
+                }
+
+                // "Apply to System" button — only enabled in manual mode
+                ui.add_space(8.0);
+                let settings = rt.block_on(crate::server::data::get_settings());
+                let current_mode = settings.sub_agent_mode.clone().unwrap_or_default();
+                let is_manual = current_mode == "manual";
+                let apply_btn = egui::Button::new(
+                    RichText::new("Apply to Chat").color(Color32::WHITE).size(12.0),
+                )
+                .fill(if is_manual {
+                    Color32::from_rgb(59, 130, 246) // blue
+                } else {
+                    Color32::from_rgb(120, 130, 140) // gray
+                });
+                let apply_resp = ui.add_enabled(is_manual, apply_btn);
+                if !is_manual {
+                    apply_resp.clone().on_disabled_hover_text("Only available in Manual mode");
+                }
+                if apply_resp.clicked() {
+                    if let Some(ref filename) = self.selected_file {
+                        let mut s = settings.clone();
+                        s.sub_agent_enabled = Some(true);
+                        s.sub_agent_config_file = Some(filename.clone());
+                        rt.block_on(crate::server::data::save_settings(&s));
+                        self.save_status = Some((format!("Applied: {}", filename), false));
+                    } else {
+                        self.save_status = Some(("Save the system first".to_string(), true));
+                    }
                 }
             });
 
@@ -558,6 +613,34 @@ impl AgentsView {
                         FontId::proportional(10.0),
                         Color32::from_rgb(220, 220, 240),
                     );
+
+                    // Live status indicator (working = pulsing green, idle = gray dot)
+                    {
+                        let statuses = self.agent_statuses.lock().unwrap();
+                        if let Some(status) = statuses.get(&node.id) {
+                            let dot_center = Pos2::new(node_rect.left() + 8.0, node_rect.top() + 8.0);
+                            let (dot_color, label) = match status.as_str() {
+                                "working" => (Color32::from_rgb(34, 197, 94), "working"),
+                                _ => (Color32::from_rgb(120, 120, 120), "idle"),
+                            };
+                            painter.circle_filled(dot_center, 4.0, dot_color);
+                            if status == "working" {
+                                // Pulsing ring for working agents
+                                painter.circle_stroke(
+                                    dot_center, 7.0,
+                                    Stroke::new(1.5, Color32::from_rgba_premultiplied(34, 197, 94, 120)),
+                                    // StrokeKind not needed for circle_stroke
+                                );
+                            }
+                            painter.text(
+                                Pos2::new(node_rect.left() + 16.0, node_rect.top() + 3.0),
+                                egui::Align2::LEFT_TOP,
+                                label,
+                                FontId::proportional(8.0),
+                                dot_color,
+                            );
+                        }
+                    }
 
                     // Bus/Mesh indicators
                     if node.bus_enabled {

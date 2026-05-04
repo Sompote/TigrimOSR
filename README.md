@@ -1,4 +1,4 @@
-# TigrimOSR v0.2.3
+# TigrimOSR v0.2.4
 
 **TigrimOSR** is the Rust version of [TigrimOS](https://github.com/Sompote/TigerCowork) — a high-performance native desktop rewrite of the original Python/Node.js AI assistant. Built entirely in Rust using egui for the UI, TigrimOSR delivers faster startup, lower memory usage, and a single self-contained binary with no Node.js or Python runtime required to run the app itself.
 
@@ -6,7 +6,29 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 
 ![TigrimOSR Screenshot](assets/screenshot.png)
 
-## What's New in v0.2.3
+### AI Provider Settings
+
+10 built-in providers including 3 local CLI agents (Claude Code, Gemini CLI, Codex) — no API keys needed for local providers.
+
+![AI Provider Settings](assets/screenshot_providers.png)
+
+### Live Agent Monitoring
+
+Real-time graphic view showing agent orchestration, delegation edges, and per-agent status during multi-agent execution.
+
+![Live Agent Monitoring](assets/screenshot_agents.png)
+
+## What's New in v0.2.4
+
+- **Gemini CLI (Local)** — Use Google's Gemini CLI as an AI backend, no API key needed (same as Claude Code and Codex)
+- **Live agent progress in chat** — Fully Auto mode now shows step-by-step progress (architecture → boot → delegate → wait) with live agent activity updates instead of just "thinking..."
+- **Live agent graphic monitor** — Agent Log graphic tab shows real-time agent nodes, delegation edges, and working status during execution
+- **6 orchestration modes** — Hierarchical, hybrid, mesh, pipeline, P2P, and P2P orchestrator modes cloned from tiger_cowork with exact behavioral parity
+- **Apply to Chat button** — Agents tab now has "Apply to Chat" button to use the selected architecture in Manual mode
+- **Smarter loop detection** — Monitoring tools (check_agents, bb_read) exempt from loop detection; realtime agents get higher limits (30 rounds, 60 tool calls)
+- **Agent history fix** — spawn.jsonl now writes to the correct data directory so the graphic view works from .app bundles
+
+### v0.2.3
 
 - **Local CLI providers** — Use Claude Code or OpenAI Codex CLI installed on your machine as AI backends, no API key needed
 - **Agent harness settings** — Configurable max turns, max tool calls, temperature, max tokens, context limit, compression interval, and reflection toggle in Settings
@@ -42,8 +64,8 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 
 ## Features
 
-- **Multi-agent system** — hierarchical, mesh, and hybrid orchestration modes via YAML config
-- **Local CLI agents** — Use Claude Code or OpenAI Codex as agent backends without API keys
+- **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
+- **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading
 - **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
 - **Output panel** — inline preview for images (PNG/JPG), markdown reports, CSV tables, JSON, PDF, HTML
@@ -62,6 +84,7 @@ TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool 
 ### Optional local CLI agents
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `npm install -g @anthropic-ai/claude-code`
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli) — `npm install -g @anthropic-ai/gemini-cli`
 - [OpenAI Codex](https://github.com/openai/codex) — `npm install -g @openai/codex`
 
 ### Python packages (optional but recommended)
@@ -208,7 +231,7 @@ On first launch, go to **Settings** to configure:
 
 | Setting | Description |
 |---------|-------------|
-| AI Provider | Select from Claude Code (Local), Codex (Local), OpenRouter, Anthropic, DeepSeek, etc. |
+| AI Provider | Select from Claude Code (Local), Gemini CLI (Local), Codex (Local), OpenRouter, Anthropic, DeepSeek, etc. |
 | API Key | Your API key (not needed for local CLI providers) |
 | Model | Model name (e.g. `o4-mini`, `claude-sonnet-4-20250514`) |
 | Agent Harness | Max turns, temperature, max tokens, context limit, reflection |
@@ -252,7 +275,7 @@ Enable sub-agents in Settings and select an agent config file. Included configs 
 ```yaml
 system:
   name: My Agent System
-  orchestration_mode: hierarchical  # hierarchical | mesh | hybrid | pipeline
+  orchestration_mode: hierarchical  # hierarchical | mesh | hybrid | pipeline | p2p | p2p_orchestrator
 
 agents:
   - id: orchestrator

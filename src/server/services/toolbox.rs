@@ -221,6 +221,7 @@ async fn tool_requires_approval(tool_name: &str) -> bool {
         "write_file" => settings.approval_required_for_file_write.unwrap_or(false),
         "delete_file" => settings.approval_required_for_file_delete.unwrap_or(true),
         "claude_code_agent" => settings.approval_required_for_agent_spawn.unwrap_or(false),
+        "gemini_cli_agent" => settings.approval_required_for_agent_spawn.unwrap_or(false),
         _ => false,
     }
 }
@@ -400,6 +401,37 @@ pub fn subscribe_subagent_log() -> tokio::sync::broadcast::Receiver<(String, Str
     subagent_log_tx().subscribe()
 }
 
+// Global signal: when fully_auto creates an architecture, set this so the Agents tab can auto-load it.
+static PENDING_ARCH_FILE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+/// Set the pending architecture file for the Agents tab to auto-load.
+pub fn set_pending_arch_file(filename: &str) {
+    let m = PENDING_ARCH_FILE.get_or_init(|| std::sync::Mutex::new(None));
+    *m.lock().unwrap() = Some(filename.to_string());
+}
+
+/// Take the pending architecture file (clears it after reading).
+pub fn take_pending_arch_file() -> Option<String> {
+    let m = PENDING_ARCH_FILE.get_or_init(|| std::sync::Mutex::new(None));
+    m.lock().unwrap().take()
+}
+
+/// Query live agent statuses from the active realtime session.
+/// Returns a map of agent_id -> status ("idle", "working").
+pub async fn get_all_agent_statuses() -> HashMap<String, String> {
+    let map = realtime_sessions().lock().await;
+    let mut result = HashMap::new();
+    for (_sid, session_arc) in map.iter() {
+        let session = session_arc.lock().await;
+        for (id, handle) in &session.agents {
+            let status = handle.status.lock().await.clone();
+            result.insert(id.clone(), status);
+        }
+    }
+    result
+}
+
 /// Boot all agents in the YAML config as persistent tokio tasks.
 /// Returns immediately; agents wait for tasks on their mpsc channels.
 /// Fire-and-forget helper to boot a realtime session without blocking the caller.
@@ -431,16 +463,7 @@ pub async fn force_create_architecture(
     if ok {
         let filename = result["filename"].as_str().unwrap_or("").to_string();
         let message = result["message"].as_str().unwrap_or("Architecture created.").to_string();
-        // Boot realtime session with proper sandbox dir
-        let sid = sub_agent.session_id.clone();
-        let cf = filename.clone();
-        let ak = sub_agent.api_key.clone();
-        let au = sub_agent.api_url.clone();
-        let m = sub_agent.model.clone();
-        let sd = sandbox_dir.to_string();
-        tokio::spawn(async move {
-            start_realtime_session(&sid, &cf, &ak, &au, &m, &sd).await;
-        });
+        // NOTE: realtime session boot is handled by the caller (chat.rs)
         (true, Some(filename), message)
     } else {
         let err = result["error"].as_str().unwrap_or("Unknown error").to_string();
@@ -558,24 +581,18 @@ pub async fn shutdown_realtime_session(session_id: &str) {
     }
 }
 
-/// Build the system prompt for a realtime agent (mirroring tiger_cowork realtimeAgentLoop).
-fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> String {
-    let agent_id = agent_def["id"].as_str().unwrap_or("agent");
-    let name = agent_def["name"].as_str().unwrap_or("Agent");
-    let persona = agent_def.get("persona").and_then(|v| v.as_str()).unwrap_or("");
-    let responsibilities = agent_def
-        .get("responsibilities")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| format!("  - {s}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default();
+/// Get all non-human agent IDs from the system config.
+fn all_non_human_ids(system_config: &Value) -> Vec<String> {
+    system_config["agents"].as_array()
+        .map(|arr| arr.iter()
+            .filter_map(|a| a["id"].as_str().map(|s| s.to_string()))
+            .filter(|id| id != "human")
+            .collect())
+        .unwrap_or_default()
+}
 
-    // Downstream agents this one can delegate to
+/// Get downstream targets for an agent from workflow + connections.
+fn get_downstream(agent_id: &str, system_config: &Value) -> Vec<String> {
     let workflow_outputs: Vec<String> = system_config
         .get("workflow").and_then(|w| w.get("sequence")).and_then(|s| s.as_array())
         .and_then(|arr| arr.iter().find(|s| s.get("agent").and_then(|v| v.as_str()) == Some(agent_id)))
@@ -591,27 +608,178 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
             .collect())
         .unwrap_or_default();
 
-    let downstream: Vec<String> = {
-        let mut d = workflow_outputs;
-        for t in conn_targets { if !d.contains(&t) { d.push(t); } }
-        d.retain(|id| id != "human");
-        d
-    };
+    let mut d = workflow_outputs;
+    for t in conn_targets { if !d.contains(&t) { d.push(t); } }
+    d.retain(|id| id != "human");
+    d
+}
 
+/// Check if an agent has mesh.enabled in its YAML definition.
+fn agent_has_mesh(agent_def: &Value) -> bool {
+    agent_def.get("mesh")
+        .and_then(|m| m.get("enabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Get mesh-enabled agent IDs from system config.
+fn mesh_agent_ids(system_config: &Value) -> Vec<String> {
+    system_config["agents"].as_array()
+        .map(|arr| arr.iter()
+            .filter(|a| agent_has_mesh(a) && a["role"].as_str() != Some("human"))
+            .filter_map(|a| a["id"].as_str().map(|s| s.to_string()))
+            .collect())
+        .unwrap_or_default()
+}
+
+/// Build the system prompt for a realtime agent — mode-aware (tiger_cowork clone).
+fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> String {
+    let agent_id = agent_def["id"].as_str().unwrap_or("agent");
+    let name = agent_def["name"].as_str().unwrap_or("Agent");
+    let role = agent_def["role"].as_str().unwrap_or("worker");
+    let persona = agent_def.get("persona").and_then(|v| v.as_str()).unwrap_or("");
+    let responsibilities = agent_def
+        .get("responsibilities")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter()
+            .filter_map(|v| v.as_str())
+            .map(|s| format!("  - {s}"))
+            .collect::<Vec<_>>()
+            .join("\n"))
+        .unwrap_or_default();
+
+    let orch_mode = system_config["system"]["orchestration_mode"]
+        .as_str().unwrap_or("hierarchical");
+
+    let all_agents = all_non_human_ids(system_config);
+    let others: Vec<&str> = all_agents.iter()
+        .filter(|id| id.as_str() != agent_id)
+        .map(|s| s.as_str()).collect();
+    let downstream = get_downstream(agent_id, system_config);
+
+    // Base prompt
     let mut prompt = format!(
         "You are {name} (ID: {agent_id}) in a REALTIME multi-agent system.\n\
         {persona}\n\
-        Your responsibilities:\n{responsibilities}\n\n\
-        You receive tasks from the orchestrator or other agents. \
-        Complete each task using your available tools, then provide your result as a clear text response.\n\
-        IMPORTANT: Do NOT use spawn_subagent. If you need to delegate, use send_task/wait_result."
+        Your responsibilities:\n{responsibilities}\n"
     );
 
-    if !downstream.is_empty() {
-        prompt += &format!(
-            "\n\nYou can delegate sub-tasks to these agents using send_task/wait_result: {}",
-            downstream.join(", ")
-        );
+    // Mode-specific instructions
+    match orch_mode {
+        "hierarchical" => {
+            if role == "orchestrator" {
+                prompt += &format!(
+                    "\n\nHIERARCHICAL MODE (ORCHESTRATOR): You control the team and coordinate all work.\n\
+                    Your downstream agents: [{}]\n\
+                    DELEGATION: Use send_task({{to: \"<agentId>\", task: \"...\"}}) then wait_result({{from: \"<agentId>\"}}).\n\
+                    Send tasks to MULTIPLE agents in a SINGLE response for parallel execution.\n\
+                    Do NOT do research or analysis yourself — delegate everything to your workers.\n\
+                    Synthesize agent results into a comprehensive final response.",
+                    downstream.join(", ")
+                );
+            } else {
+                prompt += "\n\nHIERARCHICAL MODE (WORKER): You receive tasks from the orchestrator.\n\
+                    Complete each task using your available tools, then provide your result as a clear text response.\n\
+                    Do NOT delegate — execute the task yourself.";
+                if !downstream.is_empty() {
+                    prompt += &format!(
+                        "\nException: You can delegate sub-tasks to: [{}]",
+                        downstream.join(", ")
+                    );
+                }
+            }
+        }
+        "hybrid" => {
+            let mesh_ids = mesh_agent_ids(system_config);
+            if role == "orchestrator" {
+                prompt += &format!(
+                    "\n\nHYBRID MODE (ORCHESTRATOR): You control the team and coordinate all work.\n\
+                    Your connected agents: [{}]\n\
+                    Mesh-enabled agents (can collaborate freely): [{}]\n\
+                    You are responsible for:\n\
+                      1. Delegating tasks to your connected agents via send_task\n\
+                      2. Monitoring mesh agents' progress via check_agents\n\
+                      3. Collecting results via wait_result and synthesizing the final output\n\
+                      4. Ensuring work completes — if mesh agents loop or stall, reassign the task",
+                    downstream.join(", "),
+                    mesh_ids.join(", ")
+                );
+            } else if agent_has_mesh(agent_def) {
+                prompt += &format!(
+                    "\n\nHYBRID MODE (MESH WORKER): You can collaborate freely with other mesh agents.\n\
+                    Mesh peers: [{}]\n\
+                    Use send_task/wait_result to delegate sub-tasks to any mesh peer.\n\
+                    Complete your assigned tasks using available tools.",
+                    mesh_ids.iter().filter(|id| id.as_str() != agent_id).cloned().collect::<Vec<_>>().join(", ")
+                );
+            } else {
+                prompt += "\n\nHYBRID MODE (WORKER): You receive tasks from the orchestrator.\n\
+                    Complete each task using your available tools.";
+            }
+        }
+        "mesh" => {
+            prompt += &format!(
+                "\n\nMESH MODE: All agents are peer collaborators — no hierarchy.\n\
+                You can send tasks to ANY agent: [{}]\n\
+                Use send_task({{to: \"<agentId>\", task: \"...\"}}) then wait_result({{from: \"<agentId>\"}}).\n\
+                Send tasks to MULTIPLE agents in a SINGLE response for parallel execution.\n\
+                Collaborate dynamically. Do NOT use proto_tcp_send or proto_bus_publish for tasks — use send_task.",
+                others.join(", ")
+            );
+        }
+        "pipeline" => {
+            if downstream.is_empty() {
+                prompt += "\n\nPIPELINE MODE (FINAL STAGE): You are the last agent in the pipeline.\n\
+                    Process the input you receive and provide your final result.\n\
+                    Synthesize all upstream work into a comprehensive response.";
+            } else {
+                prompt += &format!(
+                    "\n\nPIPELINE MODE: You are one stage in a sequential pipeline.\n\
+                    After completing your work, you MUST forward your result to the next agent: [{}]\n\
+                    Use send_task({{to: \"{}\", task: \"<your result + instructions>\"}}) then wait_result.\n\
+                    Pass along ALL relevant context and data to the next stage.",
+                    downstream.join(", "),
+                    downstream.first().unwrap_or(&String::new())
+                );
+            }
+        }
+        "p2p" | "p2p_orchestrator" => {
+            if role == "orchestrator" {
+                prompt += &format!(
+                    "\n\nP2P ORCHESTRATOR MODE: You can delegate tasks in two ways:\n\
+                    1. DIRECT: send_task to connected agents: [{}]\n\
+                    2. BIDDING: bb_propose → bb_read (check bids) → bb_award → send_task to winner\n\
+                    After bb_award, you MUST send_task to the winner — award alone does NOT send.\n\
+                    Use check_agents to monitor progress.",
+                    downstream.join(", ")
+                );
+            } else {
+                prompt += &format!(
+                    "\n\nPEER-TO-PEER SWARM MODE: You are an autonomous peer agent in a flat P2P swarm.\n\
+                    No agent holds persistent authority. Peer agents: [{}]\n\
+                    COORDINATION PROTOCOL (Contract Net):\n\
+                      1. PROPOSE: Use bb_propose to post work on the blackboard\n\
+                      2. BID: When you see open tasks via bb_read, use bb_bid with your confidence score (0-1)\n\
+                      3. AWARD: The proposer calls bb_award — highest-confidence bidder wins\n\
+                      4. SEND: After awarding, proposer MUST send_task to winner\n\
+                      5. EXECUTE: The winning agent executes the task\n\
+                      6. COMPLETE: Report results via bb_complete\n\
+                    RULES: Only bid on tasks matching your expertise. Yield to higher-confidence peers.\n\
+                    Avoid livelock — if negotiating too long, accept current best bid.",
+                    others.join(", ")
+                );
+            }
+        }
+        _ => {
+            // Fallback: generic realtime agent
+            prompt += "\n\nComplete tasks using your available tools. Provide clear text responses.";
+            if !downstream.is_empty() {
+                prompt += &format!(
+                    "\nYou can delegate sub-tasks to: [{}]",
+                    downstream.join(", ")
+                );
+            }
+        }
     }
 
     prompt += "\n\nERROR RECOVERY: If a tool fails, analyze the error, fix it, and retry. Try a different approach after two failures.";
@@ -666,9 +834,48 @@ async fn realtime_agent_loop(
 
         let messages = vec![json!({"role": "user", "content": user_content})];
 
-        // Sub-agent config for this worker (no further sub-agents by default — depth guard)
+        // Sub-agent config: who gets send_task/wait_result depends on orchestration mode
+        let role = agent_def["role"].as_str().unwrap_or("worker");
+        let orch_mode = system_config["system"]["orchestration_mode"]
+            .as_str().unwrap_or("hierarchical");
+        let is_orchestrator = role == "orchestrator";
+        let has_mesh = agent_has_mesh(&agent_def);
+        let downstream = get_downstream(&agent_id, &system_config);
+
+        // Determine if this agent can delegate (gets send_task/wait_result)
+        let can_delegate = match orch_mode {
+            "hierarchical" => is_orchestrator || !downstream.is_empty(),
+            "hybrid" => is_orchestrator || has_mesh || !downstream.is_empty(),
+            "mesh" => true,           // all agents can send to any other
+            "pipeline" => !downstream.is_empty(), // only if has next stage
+            "p2p" | "p2p_orchestrator" => true, // all peers can delegate
+            _ => is_orchestrator || !downstream.is_empty(),
+        };
+
+        // Determine which agents this agent can reach
+        let reachable_ids: Vec<String> = match orch_mode {
+            "mesh" | "p2p" | "p2p_orchestrator" => {
+                // Can reach ANY non-human agent
+                all_non_human_ids(&system_config).into_iter()
+                    .filter(|id| id != &agent_id)
+                    .collect()
+            }
+            "hybrid" if has_mesh => {
+                // Mesh agents can reach any other agent
+                all_non_human_ids(&system_config).into_iter()
+                    .filter(|id| id != &agent_id)
+                    .collect()
+            }
+            _ => {
+                // Hierarchical/pipeline/hybrid non-mesh: only downstream
+                downstream.clone()
+            }
+        };
+
         let sub_agent = SubAgentConfig {
-            enabled: false,
+            enabled: can_delegate,
+            mode: if can_delegate { "manual".to_string() } else { String::new() },
+            agent_ids: reachable_ids,
             session_id: session_id.clone(),
             agent_id: agent_id.clone(),
             ..SubAgentConfig::default()
@@ -682,44 +889,46 @@ async fn realtime_agent_loop(
         let log_tx = subagent_log_tx().clone();
         let log_sid = session_id.clone();
         let log_aid = agent_id.clone();
-        let loop_result = call_with_tools(
-            &api_key,
-            &api_url,
-            &model,
-            messages,
-            Some(system_prompt.clone()),
-            &sandbox_dir,
-            move |update| {
-                let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
-                let line = match &update {
-                    ToolUpdate::ToolCall { name, args } => {
-                        let args_str = serde_json::to_string(args).unwrap_or_default();
-                        let args_short = if args_str.len() > 300 { format!("{}...", &args_str[..300]) } else { args_str };
-                        format!("[{}] [{}] TOOL CALL: {}\n  args: {}", ts, log_aid, name, args_short)
+        let on_update_cb = move |update: ToolUpdate| {
+            let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+            let line = match &update {
+                ToolUpdate::ToolCall { name, args } => {
+                    let args_str = serde_json::to_string(args).unwrap_or_default();
+                    let args_short = if args_str.len() > 300 { format!("{}...", &args_str[..300]) } else { args_str };
+                    format!("[{}] [{}] TOOL CALL: {}\n  args: {}", ts, log_aid, name, args_short)
+                }
+                ToolUpdate::ToolResult { name, result } => {
+                    let r_str = serde_json::to_string(result).unwrap_or_default();
+                    let r_short = if r_str.len() > 500 { format!("{}...", &r_str[..500]) } else { r_str };
+                    format!("[{}] [{}] TOOL RESULT: {}\n  {}", ts, log_aid, name, r_short)
+                }
+                ToolUpdate::TextChunk(t) => {
+                    if t.len() > 100 {
+                        format!("[{}] [{}] TEXT: {}...", ts, log_aid, &t[..100])
+                    } else {
+                        format!("[{}] [{}] TEXT: {}", ts, log_aid, t)
                     }
-                    ToolUpdate::ToolResult { name, result } => {
-                        let r_str = serde_json::to_string(result).unwrap_or_default();
-                        let r_short = if r_str.len() > 500 { format!("{}...", &r_str[..500]) } else { r_str };
-                        format!("[{}] [{}] TOOL RESULT: {}\n  {}", ts, log_aid, name, r_short)
-                    }
-                    ToolUpdate::TextChunk(t) => {
-                        if t.len() > 100 {
-                            format!("[{}] [{}] TEXT: {}...", ts, log_aid, &t[..100])
-                        } else {
-                            format!("[{}] [{}] TEXT: {}", ts, log_aid, t)
-                        }
-                    }
-                    ToolUpdate::Error(e) => {
-                        format!("[{}] [{}] ERROR: {}", ts, log_aid, e)
-                    }
-                    ToolUpdate::ApprovalRequired { name, .. } => {
-                        format!("[{}] [{}] APPROVAL REQUIRED: {}", ts, log_aid, name)
-                    }
-                };
-                let _ = log_tx.send((log_sid.clone(), log_aid.clone(), line));
-            },
-            sub_agent,
-        ).await;
+                }
+                ToolUpdate::Error(e) => {
+                    format!("[{}] [{}] ERROR: {}", ts, log_aid, e)
+                }
+                ToolUpdate::ApprovalRequired { name, .. } => {
+                    format!("[{}] [{}] APPROVAL REQUIRED: {}", ts, log_aid, name)
+                }
+            };
+            let _ = log_tx.send((log_sid.clone(), log_aid.clone(), line));
+        };
+        let loop_result = if can_delegate {
+            call_with_tools_realtime(
+                &api_key, &api_url, &model, messages,
+                Some(system_prompt.clone()), &sandbox_dir, on_update_cb, sub_agent,
+            ).await
+        } else {
+            call_with_tools(
+                &api_key, &api_url, &model, messages,
+                Some(system_prompt.clone()), &sandbox_dir, on_update_cb, sub_agent,
+            ).await
+        };
 
         let agent_result = AgentResult {
             result: if loop_result.content.is_empty() {
@@ -745,8 +954,13 @@ async fn realtime_agent_loop(
     }
 }
 
-/// Tool: send_task — sends a task to a realtime agent
+/// Tool: send_task — sends a task to a realtime agent with mode-aware access control
 pub async fn exec_send_task(args: &Value, session_id: &str) -> Value {
+    exec_send_task_from(args, session_id, "main").await
+}
+
+/// send_task with caller ID for access control
+pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str) -> Value {
     let to = match args.get("to").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
         None => return json!({"ok": false, "error": "Missing 'to' parameter"}),
@@ -764,6 +978,10 @@ pub async fn exec_send_task(args: &Value, session_id: &str) -> Value {
     };
     let session = session_arc.lock().await;
 
+    // Access control based on orchestration mode
+    let orch_mode = session.system_config["system"]["orchestration_mode"]
+        .as_str().unwrap_or("hierarchical");
+
     let handle = match session.agents.get(&to) {
         Some(h) => h,
         None => {
@@ -772,7 +990,38 @@ pub async fn exec_send_task(args: &Value, session_id: &str) -> Value {
         }
     };
 
-    let agent_task = AgentTask { from: "orchestrator".to_string(), task: task.clone(), context };
+    // Hierarchical/pipeline: enforce connection-based access control
+    if matches!(orch_mode, "hierarchical" | "pipeline") && caller_id != "main" {
+        let caller_def = session.system_config["agents"].as_array()
+            .and_then(|arr| arr.iter().find(|a| a["id"].as_str() == Some(caller_id)));
+
+        // Block non-orchestrators from sending to orchestrator (circular delegation)
+        let target_role = handle.agent_def["role"].as_str().unwrap_or("");
+        if target_role == "orchestrator" && caller_def.map(|d| d["role"].as_str() != Some("orchestrator")).unwrap_or(true) {
+            return json!({"ok": false, "error": format!("Agent '{}' cannot send tasks to orchestrator (circular delegation)", caller_id)});
+        }
+
+        // Check connections
+        let downstream = get_downstream(caller_id, &session.system_config);
+        if !downstream.is_empty() && !downstream.contains(&to) {
+            return json!({"ok": false, "error": format!("Agent '{}' is not connected to '{}'. Connected to: {}", caller_id, to, downstream.join(", "))});
+        }
+    }
+    // hybrid: mesh agents bypass, others check connections
+    else if orch_mode == "hybrid" && caller_id != "main" {
+        let caller_def = session.system_config["agents"].as_array()
+            .and_then(|arr| arr.iter().find(|a| a["id"].as_str() == Some(caller_id)));
+        let caller_has_mesh = caller_def.map(|d| agent_has_mesh(d)).unwrap_or(false);
+        if !caller_has_mesh {
+            let downstream = get_downstream(caller_id, &session.system_config);
+            if !downstream.is_empty() && !downstream.contains(&to) {
+                return json!({"ok": false, "error": format!("Agent '{}' is not connected to '{}'", caller_id, to)});
+            }
+        }
+    }
+    // mesh, p2p, p2p_orchestrator: no access control — any agent can send to any
+
+    let agent_task = AgentTask { from: caller_id.to_string(), task: task.clone(), context };
     match handle.task_tx.send(agent_task).await {
         Ok(_) => json!({
             "ok": true,
@@ -1269,6 +1518,23 @@ pub fn tool_definitions() -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "gemini_cli_agent",
+                "description": "Run a task using Gemini CLI (autonomous agent with code execution and tool use). Requires 'gemini' in PATH.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": { "type": "string", "description": "Task for Gemini CLI to complete" },
+                        "system_prompt": { "type": "string", "description": "Optional system context" },
+                        "timeout": { "type": "number", "description": "Timeout seconds (default 300)" },
+                        "model": { "type": "string", "description": "Model e.g. 'gemini-2.5-pro'" }
+                    },
+                    "required": ["task"]
+                }
+            }
+        }),
         // Protocol: TCP
         json!({
             "type": "function",
@@ -1639,7 +1905,14 @@ fn spawn_subagent_tool(agent_list: &str) -> Value {
 /// Build tool list dynamically based on mode and whether a session has been activated.
 pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, session_activated: bool) -> Vec<Value> {
     let mut tools = tool_definitions();
-    if !sub_agent.enabled || sub_agent.agent_ids.is_empty() || sub_agent.depth >= 3 {
+    if !sub_agent.enabled || sub_agent.depth >= 3 {
+        return tools;
+    }
+    // For fully_auto/auto_swarm, agent_ids might be empty before architecture is created
+    // — that's OK, the mode logic handles it
+    if sub_agent.agent_ids.is_empty()
+        && !matches!(sub_agent.mode.as_str(), "fully_auto" | "auto_swarm")
+    {
         return tools;
     }
     let agent_list = sub_agent.agent_ids.join(", ");
@@ -1648,9 +1921,19 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
     match mode {
         "fully_auto" => {
             if session_activated {
-                // Architecture created, agents running — use realtime tools
-                tools.extend(realtime_tools(&agent_list));
-                tools.push(create_architecture_tool()); // allow recreation
+                // Architecture created, agents running — ONLY realtime tools
+                // No base tools (web_search, read_file, etc.) — agents handle those.
+                // Only keep write_file + run_python for formatting final output.
+                let mut rt_tools = realtime_tools(&agent_list);
+                rt_tools.push(create_architecture_tool()); // allow recreation
+                // Add write_file and run_python for output formatting only
+                for t in &tools {
+                    let name = t["function"]["name"].as_str().unwrap_or("");
+                    if matches!(name, "write_file" | "run_python") {
+                        rt_tools.push(t.clone());
+                    }
+                }
+                return rt_tools;
             } else {
                 // No architecture yet — ONLY create_architecture (forces LLM to create first)
                 return vec![create_architecture_tool()];
@@ -1692,11 +1975,11 @@ async fn write_agent_history(session_id: &str, event: &str, data: serde_json::Va
     if session_id.is_empty() {
         return;
     }
-    let dir = format!("data/agent_history/{}", session_id);
+    let dir = crate::server::data::data_dir().join("agent_history").join(session_id);
     if tokio::fs::create_dir_all(&dir).await.is_err() {
         return;
     }
-    let path = format!("{}/spawn.jsonl", dir);
+    let path = dir.join("spawn.jsonl");
     let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     let entry = match serde_json::to_string(&json!({
         "timestamp": ts,
@@ -2862,6 +3145,86 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
     }
 }
 
+/// Gemini CLI agent — spawn `gemini -p` and parse stream-json output
+async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
+    let task = args["task"].as_str().unwrap_or("");
+    let system_prompt = args["system_prompt"].as_str().unwrap_or("");
+    let timeout_secs = args["timeout"].as_u64().unwrap_or(300);
+    let model = args["model"].as_str().unwrap_or("");
+
+    if task.is_empty() {
+        return json!({ "ok": false, "error": "task is required" });
+    }
+
+    let full_prompt = if system_prompt.is_empty() {
+        task.to_string()
+    } else {
+        format!("{}\n\n---\n\nTASK:\n{}", system_prompt, task)
+    };
+
+    let mut cli_args = vec![
+        "-p".to_string(), full_prompt,
+        "-o".to_string(), "stream-json".to_string(),
+        "--yolo".to_string(),
+    ];
+    if !model.is_empty() {
+        cli_args.push("-m".to_string());
+        cli_args.push(model.to_string());
+    }
+
+    let home = resolve_home();
+    info!("[GeminiCLI] Spawning agent in {} (timeout: {}s)", sandbox_dir, timeout_secs);
+
+    match timeout(Duration::from_secs(timeout_secs),
+        Command::new("gemini")
+            .args(&cli_args)
+            .current_dir(sandbox_dir)
+            .env("PATH", cli_env_path())
+            .env("HOME", &home)
+            .output()
+    ).await {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut result_text = String::new();
+            let mut tool_calls: Vec<String> = Vec::new();
+            for line in stdout.lines() {
+                if let Ok(event) = serde_json::from_str::<Value>(line) {
+                    // Gemini CLI stream-json events
+                    let etype = event["type"].as_str().unwrap_or("");
+                    if etype == "message" || etype == "assistant" {
+                        if let Some(content) = event["message"]["content"].as_array()
+                            .or_else(|| event["content"].as_array()) {
+                            for block in content {
+                                if block["type"] == "text" {
+                                    result_text.push_str(block["text"].as_str().unwrap_or(""));
+                                }
+                                if block["type"] == "tool_use" || block["type"] == "functionCall" {
+                                    if let Some(n) = block["name"].as_str() { tool_calls.push(n.to_string()); }
+                                }
+                            }
+                        }
+                    } else if etype == "result" {
+                        if let Some(r) = event["result"].as_str() { result_text = r.to_string(); }
+                    } else if etype == "text" {
+                        if let Some(t) = event["text"].as_str() { result_text.push_str(t); }
+                    }
+                }
+            }
+            // Fallback: if stream-json didn't parse, use raw stdout
+            if result_text.is_empty() {
+                result_text = stdout.trim().to_string();
+            }
+            if result_text.is_empty() && !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return json!({ "ok": false, "error": format!("gemini exited {:?}: {}", output.status.code(), &stderr[..stderr.len().min(1000)]) });
+            }
+            json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls })
+        }
+        Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn gemini: {e}. Is 'gemini' in PATH?") }),
+        Err(_) => json!({ "ok": false, "error": format!("Gemini CLI timed out after {}s", timeout_secs) }),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Protocol tool exec functions (TCP / Bus / Queue / Blackboard)
 // ---------------------------------------------------------------------------
@@ -3378,12 +3741,8 @@ RULES:
     auto_created_architectures().lock().await.insert(session_id.clone(), filename.clone());
     auto_swarm_selections().lock().await.insert(session_id.clone(), filename.clone());
 
-    // Boot the realtime session (fire-and-forget to avoid recursive type cycle)
-    boot_realtime_session_deferred(
-        session_id.clone(), filename.clone(),
-        sub_agent.api_key.clone(), sub_agent.api_url.clone(),
-        sub_agent.model.clone(),
-    );
+    // NOTE: realtime session boot is handled by the caller (chat.rs)
+    // to avoid double-booting and race conditions.
 
     let all_agents: Vec<Value> = parsed["agents"]
         .as_array()
@@ -3709,6 +4068,7 @@ async fn execute_tool_with_context(
         "load_skill" => exec_load_skill(args, sandbox_dir).await,
         "remote_task" => exec_remote_task(args).await,
         "claude_code_agent" => exec_claude_code_agent(args, sandbox_dir).await,
+        "gemini_cli_agent" => exec_gemini_cli_agent(args, sandbox_dir).await,
         "proto_tcp_send" => exec_proto_tcp_send(args, session_id, agent_id).await,
         "proto_tcp_read" => exec_proto_tcp_read(args, agent_id).await,
         "proto_bus_publish" => exec_proto_bus_publish(args, session_id, agent_id).await,
@@ -4085,7 +4445,6 @@ async fn llm_call_claude_code(
     cli_args.extend_from_slice(&[
         "-p".to_string(), full_prompt,
         "--output-format".to_string(), "text".to_string(),
-        "--max-turns".to_string(), "1".to_string(),
     ]);
     if !model.is_empty() {
         cli_args.push("--model".to_string());
@@ -4198,6 +4557,177 @@ async fn llm_call_claude_code(
         }
         Ok(Err(e)) => Err(format!("Failed to spawn claude CLI: {e}. Is 'claude' installed?")),
         Err(_) => Err("Claude Code CLI timed out (120s)".to_string()),
+    }
+}
+
+/// Gemini CLI (Local) — spawn `gemini -p` and parse output
+async fn llm_call_gemini_cli(
+    model: &str,
+    messages: &[Value],
+    tools: Option<&[Value]>,
+    max_tokens: u64,
+) -> Result<Value, String> {
+    // Build prompt from messages
+    let mut prompt_parts: Vec<String> = Vec::new();
+    let mut system_text = String::new();
+    for msg in messages {
+        let role = msg["role"].as_str().unwrap_or("user");
+        let content = msg["content"].as_str().unwrap_or("");
+        if role == "system" {
+            system_text.push_str(content);
+            system_text.push('\n');
+        } else if role == "user" {
+            prompt_parts.push(content.to_string());
+        } else if role == "assistant" && !content.is_empty() {
+            prompt_parts.push(format!("[Previous assistant response: {}]", &content[..content.len().min(500)]));
+        }
+    }
+
+    let prompt = prompt_parts.join("\n\n");
+    if prompt.is_empty() {
+        return Err("No user message found".to_string());
+    }
+
+    // Build tool descriptions for prompt-based tool calling
+    let mut tool_desc = String::new();
+    if let Some(t) = tools {
+        if !t.is_empty() {
+            tool_desc.push_str("\n\n[TOOL CALLING INSTRUCTIONS]\nYou have these tools. You MUST call a tool when the task requires action.\nTo call a tool, output EXACTLY this JSON on its own line (no markdown, no backticks):\n");
+            tool_desc.push_str("{\"tool_call\":{\"name\":\"TOOL_NAME\",\"arguments\":{...}}}\n\n");
+            tool_desc.push_str("Available tools:\n");
+            for tool in t {
+                let name = tool["function"]["name"].as_str().unwrap_or("");
+                let desc = tool["function"]["description"].as_str().unwrap_or("");
+                let params = &tool["function"]["parameters"]["properties"];
+                tool_desc.push_str(&format!("- {} : {} ", name, desc));
+                if let Some(props) = params.as_object() {
+                    let param_names: Vec<&str> = props.keys().map(|k| k.as_str()).collect();
+                    tool_desc.push_str(&format!("(params: {})", param_names.join(", ")));
+                }
+                tool_desc.push('\n');
+            }
+            tool_desc.push_str("\nIMPORTANT: If the task requires using a tool, you MUST output the JSON tool_call. Do NOT describe what you would do — actually call the tool.\n");
+            tool_desc.push_str("Example: {\"tool_call\":{\"name\":\"web_search\",\"arguments\":{\"query\":\"TigrimOS market analysis\"}}}\n");
+        }
+    }
+
+    let full_prompt = if system_text.is_empty() {
+        format!("{}{}", prompt, tool_desc)
+    } else {
+        format!("{}\n\n{}{}", system_text, prompt, tool_desc)
+    };
+
+    info!("[GeminiCLI] LLM call via CLI (model: {}, prompt: {}chars)", model, full_prompt.len());
+
+    let mut cli_args = vec![
+        "-p".to_string(), full_prompt,
+        "-o".to_string(), "text".to_string(),
+        "--yolo".to_string(),
+    ];
+    if !model.is_empty() {
+        cli_args.push("-m".to_string());
+        cli_args.push(model.to_string());
+    }
+
+    let home = resolve_home();
+    let result = timeout(
+        Duration::from_secs(120),
+        Command::new("gemini")
+            .args(&cli_args)
+            .env("PATH", cli_env_path())
+            .env("HOME", &home)
+            .stderr(std::process::Stdio::piped())
+            .output(),
+    ).await;
+
+    match result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+            if !output.status.success() && stdout.is_empty() {
+                return Err(format!("Gemini CLI failed: {}", &stderr[..stderr.len().min(500)]));
+            }
+
+            // Try to extract tool calls from the response
+            for line in stdout.lines() {
+                let trimmed = line.trim().trim_start_matches("```json").trim_start_matches("```").trim();
+                if trimmed.contains("\"tool_call\"") {
+                    if let Ok(tc_val) = serde_json::from_str::<Value>(trimmed) {
+                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                            info!("[GeminiCLI] Extracted tool call: {}", name);
+                            return Ok(json!({
+                                "choices": [{
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": null,
+                                        "tool_calls": [{
+                                            "id": format!("call_{}", chrono::Utc::now().timestamp_millis()),
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": serde_json::to_string(args).unwrap_or_default(),
+                                            }
+                                        }]
+                                    },
+                                    "finish_reason": "tool_calls"
+                                }]
+                            }));
+                        }
+                    }
+                }
+            }
+            // Also try embedded tool_call JSON
+            if let Some(tc_start) = stdout.find("{\"tool_call\"") {
+                let remaining = &stdout[tc_start..];
+                let mut depth = 0;
+                let mut end_idx = 0;
+                for (i, ch) in remaining.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => { depth -= 1; if depth == 0 { end_idx = i + 1; break; } }
+                        _ => {}
+                    }
+                }
+                if end_idx > 0 {
+                    if let Ok(tc_val) = serde_json::from_str::<Value>(&remaining[..end_idx]) {
+                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                            info!("[GeminiCLI] Extracted embedded tool call: {}", name);
+                            return Ok(json!({
+                                "choices": [{
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": null,
+                                        "tool_calls": [{
+                                            "id": format!("call_{}", chrono::Utc::now().timestamp_millis()),
+                                            "type": "function",
+                                            "function": {
+                                                "name": name,
+                                                "arguments": serde_json::to_string(args).unwrap_or_default(),
+                                            }
+                                        }]
+                                    },
+                                    "finish_reason": "tool_calls"
+                                }]
+                            }));
+                        }
+                    }
+                }
+            }
+
+            // Regular text response
+            Ok(json!({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": stdout.trim(),
+                    },
+                    "finish_reason": "stop"
+                }]
+            }))
+        }
+        Ok(Err(e)) => Err(format!("Failed to spawn gemini CLI: {e}. Is 'gemini' in PATH?")),
+        Err(_) => Err("Gemini CLI timed out (120s)".to_string()),
     }
 }
 
@@ -4438,6 +4968,9 @@ async fn llm_call(
     // Route to local CLI providers
     if api_url.starts_with("claude-code") {
         return llm_call_claude_code(model, messages, tools, max_tokens).await;
+    }
+    if api_url.starts_with("gemini-cli") {
+        return llm_call_gemini_cli(model, messages, tools, max_tokens).await;
     }
     if api_url.starts_with("codex-cli") {
         return llm_call_codex_cli(model, messages, tools, max_tokens).await;
@@ -4776,10 +5309,12 @@ async fn call_with_tools_inner(
     // For tracking tool call history (loop detection)
     let mut tool_call_history: Vec<String> = Vec::new();
 
-    // Load settings
+    // Load settings — realtime agents get higher limits since orchestrators need many rounds
     let settings = load_agent_settings();
-    let max_rounds = settings["agentMaxToolRounds"].as_u64().unwrap_or(DEFAULT_MAX_ROUNDS as u64) as usize;
-    let max_tool_calls = settings["agentMaxToolCalls"].as_u64().unwrap_or(DEFAULT_MAX_TOOL_CALLS as u64) as usize;
+    let base_max_rounds = settings["agentMaxToolRounds"].as_u64().unwrap_or(DEFAULT_MAX_ROUNDS as u64) as usize;
+    let base_max_tool_calls = settings["agentMaxToolCalls"].as_u64().unwrap_or(DEFAULT_MAX_TOOL_CALLS as u64) as usize;
+    let max_rounds = if realtime { base_max_rounds.max(30) } else { base_max_rounds };
+    let max_tool_calls = if realtime { base_max_tool_calls.max(60) } else { base_max_tool_calls };
     let max_consecutive_errors = settings["agentMaxConsecutiveErrors"].as_u64().unwrap_or(DEFAULT_MAX_CONSECUTIVE_ERRORS as u64) as usize;
     let max_error_recoveries = settings["agentMaxErrorRecoveries"].as_u64().unwrap_or(DEFAULT_MAX_ERROR_RECOVERIES as u64) as usize;
     let compression_interval = settings["agentCompressionInterval"].as_u64().unwrap_or(DEFAULT_COMPRESSION_INTERVAL as u64) as usize;
@@ -5084,9 +5619,14 @@ async fn call_with_tools_inner(
 
                 if tool_name == "load_skill" { _uses_skill = true; }
 
-                // Loop detection
+                // Loop detection — skip for monitoring tools that are legitimately called repeatedly
+                let is_monitoring_tool = matches!(tool_name.as_str(),
+                    "check_agents" | "bb_read" | "proto_bb_read" | "proto_bus_history" | "proto_queue_peek"
+                );
                 let signature = format!("{}:{}", tool_name, tool_args);
-                recent_signatures.push(signature.clone());
+                if !is_monitoring_tool {
+                    recent_signatures.push(signature.clone());
+                }
                 tool_call_history.push(format!("{}:{}", tool_name, tool_args.to_string().chars().take(100).collect::<String>()));
                 if recent_signatures.len() >= MAX_LOOP_REPEATS {
                     let tail = &recent_signatures[recent_signatures.len() - MAX_LOOP_REPEATS..];
@@ -5439,7 +5979,7 @@ async fn execute_tool_dispatch(
     if tool_name == "spawn_subagent" {
         exec_spawn_subagent(tool_args, sub_agent, sandbox_dir, on_update).await
     } else if tool_name == "send_task" {
-        exec_send_task(tool_args, &sub_agent.session_id).await
+        exec_send_task_from(tool_args, &sub_agent.session_id, &sub_agent.agent_id).await
     } else if tool_name == "wait_result" {
         exec_wait_result(tool_args, &sub_agent.session_id).await
     } else if tool_name == "check_agents" {

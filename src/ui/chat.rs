@@ -58,6 +58,8 @@ struct StreamingState {
     log_lines: Arc<Mutex<Vec<String>>>,
     /// Pending tool approval: (tool_name, args_preview)
     pending_approval: Arc<Mutex<Option<(String, String)>>>,
+    /// Cancellation flag — set to true to abort the task
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl StreamingState {
@@ -70,6 +72,16 @@ impl StreamingState {
             files: Arc::new(Mutex::new(Vec::new())),
             log_lines: Arc::new(Mutex::new(Vec::new())),
             pending_approval: Arc::new(Mutex::new(None)),
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+        *self.done.lock().unwrap() = true;
+        let mut err = self.error.lock().unwrap();
+        if err.is_none() {
+            *err = Some("Stopped by user".to_string());
         }
     }
 
@@ -970,6 +982,7 @@ Provide helpful, detailed responses based on tool results.{}",
             let state_approval = state.pending_approval.clone();
             let state_log_lines = state.log_lines.clone();
             let state_log_lines2 = state_log_lines.clone();
+            let cancelled = state.cancelled.clone();
             let ctx_cb = ctx_clone.clone();
 
             // Init log with session + user message
@@ -978,12 +991,14 @@ Provide helpful, detailed responses based on tool results.{}",
             { state_log_lines.lock().unwrap().push(format!("[{}] USER: {}", ts, messages.last().and_then(|m| m["content"].as_str()).unwrap_or(""))); }
             { state_log_lines.lock().unwrap().push(format!("[{}] MODE: enabled={}, mode={}, agents={:?}", ts, sub_agent_config.enabled, sub_agent_config.mode, sub_agent_config.agent_ids)); }
 
-            // Clone for subagent listener and auto_create (before on_update_cb moves the originals)
+            // Clone for subagent listener, auto_create, and fully_auto (before on_update_cb moves the originals)
             let subagent_log_lines = state_log_lines.clone();
             let subagent_sid = sid.clone();
             let subagent_ctx = ctx_cb.clone();
             let autocreate_log_lines = state_log_lines.clone();
             let autocreate_ctx = ctx_cb.clone();
+            let fa_text_pre = state_text.clone();
+            let fa_calls_pre = state.tool_calls.clone();
 
             // Build the on_update closure (same logic for both realtime and manual modes)
             let on_update_cb = move |update: ToolUpdate| {
@@ -1104,38 +1119,53 @@ Provide helpful, detailed responses based on tool results.{}",
                 }
             });
 
-            // FULLY_AUTO: force create_architecture on first message if no architecture exists yet
+            // FULLY_AUTO: create architecture → boot agents → directly delegate
             let mut sub_agent_config = sub_agent_config;
-            let mut system_prompt = system_prompt;
+            let system_prompt = system_prompt;
+            let mut fully_auto_handled = false;
+            let fa_text = fa_text_pre;
+            let fa_calls = fa_calls_pre;
+
             if sub_agent_config.enabled && sub_agent_config.mode == "fully_auto" {
-                match get_session_architecture(&sid).await {
+                // Helper: update streaming text so user sees progress
+                let fa_update_text = |msg: &str, fa_text: &Arc<Mutex<String>>| {
+                    let mut t = fa_text.lock().unwrap();
+                    if !t.is_empty() { t.push('\n'); }
+                    t.push_str(msg);
+                };
+                let fa_add_tool = |name: &str, status: &str, preview: &str, fa_calls: &Arc<Mutex<Vec<ToolCallDisplay>>>| {
+                    let mut calls = fa_calls.lock().unwrap();
+                    // Update existing or add new
+                    if let Some(existing) = calls.iter_mut().find(|c| c.name == name) {
+                        existing.status = status.to_string();
+                        if !preview.is_empty() { existing.result_preview = preview.to_string(); }
+                    } else {
+                        calls.push(ToolCallDisplay {
+                            name: name.to_string(),
+                            status: status.to_string(),
+                            args_preview: preview.to_string(),
+                            result_preview: String::new(),
+                        });
+                    }
+                };
+
+                // Step 1: Get or create architecture
+                let config_file = match get_session_architecture(&sid).await {
                     Some(existing_file) => {
-                        // Architecture already exists — load agent IDs and update config
                         autocreate_log_lines.lock().unwrap().push(
                             format!("[{}] FULLY_AUTO: Using existing architecture: {}", chrono::Utc::now().format("%H:%M:%S"), existing_file)
                         );
-                        sub_agent_config.config_file = existing_file.clone();
-                        if let Some((_, ids)) = crate::server::services::toolbox::load_agent_yaml(&existing_file) {
-                            let agents_str = ids.join(", ");
-                            let arch_prompt = format!(
-                                "\n\nFULLY AUTO MODE: An agent team is LIVE. Available agents: [{}]. \
-You MUST delegate ALL work via send_task/wait_result. \
-If an orchestrator exists, send tasks ONLY to the orchestrator.",
-                                agents_str
-                            );
-                            if let Some(ref mut sp) = system_prompt {
-                                sp.push_str(&arch_prompt);
-                            }
-                            sub_agent_config.agent_ids = ids;
-                        }
+                        fa_add_tool("create_architecture", "done", &format!("Reusing {}", existing_file), &fa_calls);
+                        Some(existing_file)
                     }
                     None => {
-                        // First message — force create architecture
                         let user_msg = messages.last()
                             .and_then(|m| m["content"].as_str())
                             .unwrap_or("");
                         let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
-                        autocreate_log_lines.lock().unwrap().push(format!("[{}] FULLY_AUTO: Creating agent architecture...", ts));
+                        autocreate_log_lines.lock().unwrap().push(format!("[{}] FULLY_AUTO: Step 1 — Creating agent architecture...", ts));
+                        fa_add_tool("create_architecture", "calling...", "Designing agent team...", &fa_calls);
+                        fa_update_text("**Step 1:** Creating agent architecture...", &fa_text);
                         autocreate_ctx.request_repaint();
 
                         let (ok, config_file, msg) = force_create_architecture(
@@ -1145,48 +1175,308 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
                         let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
                         if ok {
                             autocreate_log_lines.lock().unwrap().push(format!("[{}] FULLY_AUTO: {}", ts, msg));
-                            if let Some(ref cf) = config_file {
-                                sub_agent_config.config_file = cf.clone();
-                                if let Some((_, ids)) = crate::server::services::toolbox::load_agent_yaml(cf) {
-                                    let agents_str = ids.join(", ");
-                                    let arch_prompt = format!(
-                                        "\n\nFULLY AUTO MODE: An agent team has been created and all agents are LIVE. \
-Available agents: [{}]. \
-You MUST delegate ALL work to agents via send_task/wait_result. \
-Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
-Only use run_python/write_file for formatting the final output. \
-Do NOT do research or analysis yourself — agents handle that. \
-If an orchestrator exists, send tasks ONLY to the orchestrator.",
-                                        agents_str
-                                    );
-                                    if let Some(ref mut sp) = system_prompt {
-                                        sp.push_str(&arch_prompt);
-                                    } else {
-                                        system_prompt = Some(arch_prompt);
-                                    }
-                                    sub_agent_config.agent_ids = ids;
-                                }
-                            }
+                            fa_add_tool("create_architecture", "done", &msg, &fa_calls);
+                            config_file
                         } else {
                             autocreate_log_lines.lock().unwrap().push(format!("[{}] FULLY_AUTO FAILED: {}", ts, msg));
+                            fa_add_tool("create_architecture", "error", &msg, &fa_calls);
+                            fa_update_text(&format!("Architecture creation failed: {}", msg), &fa_text);
+                            autocreate_ctx.request_repaint();
+                            None
                         }
-                        autocreate_ctx.request_repaint();
-                        // Brief wait for realtime session to boot
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     }
+                };
+
+                if let Some(ref cf) = config_file {
+                    sub_agent_config.config_file = cf.clone();
+
+                    // Load agent IDs from YAML
+                    let (yaml_val, agent_ids) = crate::server::services::toolbox::load_agent_yaml(cf)
+                        .unwrap_or_else(|| (serde_json::json!({}), vec![]));
+                    sub_agent_config.agent_ids = agent_ids.clone();
+
+                    // Find orchestrator
+                    let orchestrator_id = yaml_val.get("agents")
+                        .and_then(|a| a.as_array())
+                        .and_then(|arr| arr.iter().find(|a| a["role"].as_str() == Some("orchestrator")))
+                        .and_then(|a| a["id"].as_str())
+                        .map(|s| s.to_string());
+
+                    // Signal the Agents tab to show this architecture
+                    crate::server::services::toolbox::set_pending_arch_file(cf);
+
+                    let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                    autocreate_log_lines.lock().unwrap().push(
+                        format!("[{}] FULLY_AUTO: Step 2 — Booting {} agents from {}...", ts, agent_ids.len(), cf)
+                    );
+                    fa_add_tool("boot_agents", "calling...", &format!("Starting {} agents...", agent_ids.len()), &fa_calls);
+                    fa_update_text(&format!("**Step 2:** Booting {} agents...", agent_ids.len()), &fa_text);
+                    autocreate_ctx.request_repaint();
+
+                    // Step 2: Boot realtime session
+                    let boot_ok = start_realtime_session(
+                        &sub_agent_config.session_id,
+                        &sub_agent_config.config_file,
+                        &sub_agent_config.api_key,
+                        &sub_agent_config.api_url,
+                        &sub_agent_config.model,
+                        &sandbox_dir,
+                    ).await;
+
+                    if boot_ok {
+                        let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                        autocreate_log_lines.lock().unwrap().push(
+                            format!("[{}] FULLY_AUTO: Agents LIVE. Step 3 — Delegating task...", ts)
+                        );
+                        fa_add_tool("boot_agents", "done", &format!("{} agents online", agent_ids.len()), &fa_calls);
+                        autocreate_ctx.request_repaint();
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                        // Step 3: Directly send task to orchestrator (or all agents)
+                        let user_msg = messages.last()
+                            .and_then(|m| m["content"].as_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        let target = orchestrator_id.as_deref()
+                            .unwrap_or_else(|| agent_ids.first().map(|s| s.as_str()).unwrap_or(""));
+
+                        if !target.is_empty() {
+                            let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                            autocreate_log_lines.lock().unwrap().push(
+                                format!("[{}] FULLY_AUTO: send_task → {} : {}", ts, target, &user_msg[..user_msg.len().min(100)])
+                            );
+                            let task_preview = if user_msg.len() > 80 { format!("{}...", &user_msg[..80]) } else { user_msg.clone() };
+                            fa_add_tool("send_task", "calling...", &format!("→ {} | {}", target, task_preview), &fa_calls);
+                            fa_update_text(&format!("**Step 3:** Delegating to **{}**...", target), &fa_text);
+                            autocreate_ctx.request_repaint();
+
+                            // Send task
+                            let send_args = serde_json::json!({"to": target, "task": &user_msg});
+                            let send_result = crate::server::services::toolbox::exec_send_task(
+                                &send_args,
+                                &sub_agent_config.session_id,
+                            ).await;
+
+                            let send_ok = send_result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                            if send_ok {
+                                let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                                autocreate_log_lines.lock().unwrap().push(
+                                    format!("[{}] FULLY_AUTO: Task sent to {}. Waiting for result...", ts, target)
+                                );
+                                fa_add_tool("send_task", "done", &format!("Task sent to {}", target), &fa_calls);
+                                fa_add_tool("wait_result", "calling...", &format!("⏳ waiting for {}", target), &fa_calls);
+                                fa_update_text(&format!("**Step 4:** Waiting for **{}** to complete...", target), &fa_text);
+                                autocreate_ctx.request_repaint();
+
+                                // Wait for result with cancel support + live streaming of agent activity
+                                let cancel_flag = cancelled.clone();
+                                let wait_args = serde_json::json!({"from": target, "timeout": 600});
+                                let wait_sid = sub_agent_config.session_id.clone();
+                                let wait_future = crate::server::services::toolbox::exec_wait_result(
+                                    &wait_args,
+                                    &wait_sid,
+                                );
+
+                                // Spawn a live activity streamer that updates the chat bubble
+                                let stream_text = fa_text.clone();
+                                let stream_calls = fa_calls.clone();
+                                let stream_ctx = autocreate_ctx.clone();
+                                let stream_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                                let stream_stop2 = stream_stop.clone();
+                                let stream_sid = sub_agent_config.session_id.clone();
+                                let activity_streamer = tokio::spawn(async move {
+                                    let mut rx = crate::server::services::toolbox::subscribe_subagent_log();
+                                    let mut agent_lines: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                                    loop {
+                                        if stream_stop2.load(std::sync::atomic::Ordering::Relaxed) { break; }
+                                        match tokio::time::timeout(std::time::Duration::from_millis(300), rx.recv()).await {
+                                            Ok(Ok((sid, agent_id, line))) => {
+                                                if sid == stream_sid {
+                                                    // Track latest activity per agent
+                                                    let short_line = if line.len() > 120 { format!("{}...", &line[..120]) } else { line.clone() };
+                                                    agent_lines.insert(agent_id.clone(), short_line);
+
+                                                    // Build activity summary
+                                                    let mut summary = String::from("**Agents working:**\n");
+                                                    for (aid, last_line) in &agent_lines {
+                                                        summary.push_str(&format!("- **{}**: {}\n", aid, last_line));
+                                                    }
+                                                    {
+                                                        let mut t = stream_text.lock().unwrap();
+                                                        // Keep step headers, replace activity section
+                                                        let header_end = t.find("\n**Agents working:**").unwrap_or(t.len());
+                                                        t.truncate(header_end);
+                                                        t.push('\n');
+                                                        t.push_str(&summary);
+                                                    }
+                                                    // Update tool call with agent count
+                                                    {
+                                                        let mut calls = stream_calls.lock().unwrap();
+                                                        if let Some(wc) = calls.iter_mut().find(|c| c.name == "wait_result") {
+                                                            wc.args_preview = format!("⏳ {} agents active", agent_lines.len());
+                                                        }
+                                                    }
+                                                    stream_ctx.request_repaint();
+                                                }
+                                            }
+                                            Ok(Err(_)) => break,
+                                            Err(_) => {} // timeout
+                                        }
+                                    }
+                                });
+
+                                let cancel_watcher = async {
+                                    loop {
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                                        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                            break;
+                                        }
+                                    }
+                                };
+
+                                let wait_result = tokio::select! {
+                                    r = wait_future => r,
+                                    _ = cancel_watcher => {
+                                        serde_json::json!({"ok": false, "error": "Stopped by user"})
+                                    }
+                                };
+
+                                // Stop the activity streamer
+                                stream_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                                let _ = activity_streamer.await;
+
+                                let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                                let result_ok = wait_result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                                if result_ok {
+                                    let agent_result = wait_result["result"].as_str().unwrap_or("").to_string();
+                                    autocreate_log_lines.lock().unwrap().push(
+                                        format!("[{}] FULLY_AUTO: Got result from {} ({} chars)", ts, target, agent_result.len())
+                                    );
+                                    fa_add_tool("wait_result", "done", &format!("Result from {} ({} chars)", target, agent_result.len()), &fa_calls);
+
+                                    // Collect output files
+                                    if let Some(files) = wait_result["output_files"].as_array() {
+                                        let mut state_files = state.files.lock().unwrap();
+                                        for f in files {
+                                            if let Some(s) = f.as_str() {
+                                                if !state_files.contains(&s.to_string()) {
+                                                    state_files.push(s.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Set the response text (replace progress with final result)
+                                    {
+                                        let mut text = state.text.lock().unwrap();
+                                        *text = agent_result;
+                                    }
+                                    fully_auto_handled = true;
+                                } else {
+                                    let err = wait_result["error"].as_str().unwrap_or("Unknown error");
+                                    autocreate_log_lines.lock().unwrap().push(
+                                        format!("[{}] FULLY_AUTO: wait_result failed: {}", ts, err)
+                                    );
+                                    fa_add_tool("wait_result", "error", err, &fa_calls);
+
+                                    // On timeout/error, still mark as handled — don't fall into broken tool loop
+                                    // Instead, show what agents produced so far
+                                    let current_text = fa_text.lock().unwrap().clone();
+                                    {
+                                        let mut text = state.text.lock().unwrap();
+                                        *text = format!("**Agents finished with:** {}\n\n{}", err, current_text);
+                                    }
+                                    fully_auto_handled = true;
+                                }
+                            } else {
+                                let err = send_result["error"].as_str().unwrap_or("Unknown error");
+                                let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                                autocreate_log_lines.lock().unwrap().push(
+                                    format!("[{}] FULLY_AUTO: send_task failed: {}", ts, err)
+                                );
+                                fa_add_tool("send_task", "error", err, &fa_calls);
+                                fa_update_text(&format!("**Error sending task:** {}", err), &fa_text);
+                                {
+                                    let mut text = state.text.lock().unwrap();
+                                    *text = format!("**Error sending task to {}:** {}", target, err);
+                                }
+                                fully_auto_handled = true;
+                            }
+                        }
+                    } else {
+                        let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                        autocreate_log_lines.lock().unwrap().push(
+                            format!("[{}] FULLY_AUTO: WARNING — Failed to boot realtime session from {}", ts, cf)
+                        );
+                        fa_add_tool("boot_agents", "error", "Failed to start agents", &fa_calls);
+                        fa_update_text("**Error:** Failed to boot realtime session", &fa_text);
+                        {
+                            let mut text = state.text.lock().unwrap();
+                            *text = format!("**Error:** Failed to boot realtime session from {}", cf);
+                        }
+                        fully_auto_handled = true;
+                    }
+                    autocreate_ctx.request_repaint();
                 }
             }
 
-            let result = if is_realtime {
-                call_with_tools_realtime(
-                    &api_key, &api_url, &model, messages, system_prompt, &sandbox_dir,
-                    on_update_cb, sub_agent_config,
-                ).await
+            // If fully_auto handled everything, skip the tool loop
+            let result = if fully_auto_handled {
+                // Shutdown realtime session after completion
+                crate::server::services::toolbox::shutdown_realtime_session(&sid).await;
+                crate::server::services::toolbox::ToolLoopResult {
+                    content: state.text.lock().unwrap().clone(),
+                    tool_results: Vec::new(),
+                    files: state.files.lock().unwrap().clone(),
+                }
             } else {
-                call_with_tools(
-                    &api_key, &api_url, &model, messages, system_prompt, &sandbox_dir,
-                    on_update_cb, sub_agent_config,
-                ).await
+                // Normal mode: run tool loop with cancel support
+                let use_realtime = is_realtime;
+
+                let cancel_flag = cancelled.clone();
+                let cancel_watcher = async {
+                    loop {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                };
+
+                let tool_future = async {
+                    if use_realtime {
+                        call_with_tools_realtime(
+                            &api_key, &api_url, &model, messages, system_prompt, &sandbox_dir,
+                            on_update_cb, sub_agent_config,
+                        ).await
+                    } else {
+                        call_with_tools(
+                            &api_key, &api_url, &model, messages, system_prompt, &sandbox_dir,
+                            on_update_cb, sub_agent_config,
+                        ).await
+                    }
+                };
+
+                let r = tokio::select! {
+                    r = tool_future => r,
+                    _ = cancel_watcher => {
+                        let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                        state_log_lines2.lock().unwrap().push(format!("[{}] === Stopped by user ===", ts));
+                        crate::server::services::toolbox::ToolLoopResult {
+                            content: "Stopped by user.".to_string(),
+                            tool_results: Vec::new(),
+                            files: Vec::new(),
+                        }
+                    }
+                };
+
+                // Shutdown realtime session if cancelled
+                if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                    crate::server::services::toolbox::shutdown_realtime_session(&sid).await;
+                }
+
+                r
             };
 
             // Stop the subagent log listener
@@ -2257,19 +2547,21 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
                                     // Chat log view
                                     for line in self.log_content.lines() {
                                         let color = if line.contains("] TOOL CALL:") {
-                                            egui::Color32::from_rgb(59, 130, 246)
+                                            egui::Color32::from_rgb(37, 99, 195)
                                         } else if line.contains("] TOOL RESULT:") {
-                                            egui::Color32::from_rgb(34, 197, 94)
-                                        } else if line.contains("] ERROR:") {
-                                            egui::Color32::from_rgb(239, 68, 68)
+                                            egui::Color32::from_rgb(22, 163, 74)
+                                        } else if line.contains("] ERROR:") || line.contains("FAILED:") {
+                                            egui::Color32::from_rgb(220, 38, 38)
                                         } else if line.contains("] USER:") {
-                                            egui::Color32::from_rgb(88, 166, 255)
+                                            egui::Color32::from_rgb(37, 99, 195)
                                         } else if line.contains("] ===") {
-                                            egui::Color32::from_rgb(156, 163, 175)
+                                            egui::Color32::from_rgb(100, 110, 120)
+                                        } else if line.contains("FULLY_AUTO:") || line.contains("AUTO_SWARM:") {
+                                            egui::Color32::from_rgb(124, 58, 237)
                                         } else if line.starts_with("  ") {
-                                            egui::Color32::from_rgb(100, 116, 139)
+                                            egui::Color32::from_rgb(71, 85, 105)
                                         } else {
-                                            egui::Color32::LIGHT_GRAY
+                                            egui::Color32::from_rgb(55, 65, 81)
                                         };
                                         ui.add(egui::Label::new(
                                             egui::RichText::new(line)
@@ -2499,23 +2791,40 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
                         (!self.input_text.trim().is_empty() || !self.attached_files.is_empty())
                             && !is_streaming;
 
-                    let send_btn = egui::Button::new(
-                        egui::RichText::new("\u{27A4}").size(16.0).color(egui::Color32::WHITE),
-                    )
-                    .fill(if can_send {
-                        egui::Color32::from_rgb(88, 166, 255)
-                    } else {
-                        egui::Color32::from_rgb(210, 215, 220)
-                    })
-                    .corner_radius(8.0)
-                    .min_size(egui::vec2(36.0, 36.0));
+                    if is_streaming {
+                        // Stop button — red, always enabled during streaming
+                        let stop_btn = egui::Button::new(
+                            egui::RichText::new("\u{25A0} Stop").size(13.0).strong().color(egui::Color32::WHITE),
+                        )
+                        .fill(egui::Color32::from_rgb(220, 38, 38))
+                        .corner_radius(8.0)
+                        .min_size(egui::vec2(60.0, 36.0));
 
-                    if ui.add_enabled(can_send, send_btn).clicked()
-                        || (enter_pressed && can_send)
-                    {
-                        let ctx = ui.ctx().clone();
-                        self.send_message(runtime, &ctx);
-                        response.request_focus();
+                        if ui.add(stop_btn).clicked() {
+                            if let Some(state) = self.active_streams.get(&session.id) {
+                                state.cancel();
+                            }
+                        }
+                    } else {
+                        // Send button
+                        let send_btn = egui::Button::new(
+                            egui::RichText::new("\u{27A4} Send").size(13.0).strong().color(egui::Color32::WHITE),
+                        )
+                        .fill(if can_send {
+                            egui::Color32::from_rgb(88, 166, 255)
+                        } else {
+                            egui::Color32::from_rgb(210, 215, 220)
+                        })
+                        .corner_radius(8.0)
+                        .min_size(egui::vec2(60.0, 36.0));
+
+                        if ui.add_enabled(can_send, send_btn).clicked()
+                            || (enter_pressed && can_send)
+                        {
+                            let ctx = ui.ctx().clone();
+                            self.send_message(runtime, &ctx);
+                            response.request_focus();
+                        }
                     }
                 });
             });

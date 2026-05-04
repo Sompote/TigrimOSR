@@ -1036,9 +1036,9 @@ pub async fn get_protocol_status() -> Value {
 // ─── Agent history persistence helper ────────────────────────────────────────
 
 async fn append_agent_history(session_id: &str, filename: &str, line: &str) -> std::io::Result<()> {
-    let dir = format!("data/agent_history/{}", session_id);
+    let dir = crate::server::data::data_dir().join("agent_history").join(session_id);
     tokio::fs::create_dir_all(&dir).await?;
-    let path = format!("{}/{}", dir, filename);
+    let path = dir.join(filename);
     let mut f = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)

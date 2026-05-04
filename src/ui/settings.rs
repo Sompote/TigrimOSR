@@ -94,7 +94,8 @@ impl AiProvider {
 fn builtin_providers() -> Vec<AiProvider> {
     vec![
         AiProvider::new("Claude Code (Local)", "claude-code", "claude-sonnet-4-20250514"),
-        AiProvider::new("Codex (Local)", "codex-cli", "o4-mini"),
+        AiProvider::new("Gemini CLI (Local)", "gemini-cli", "gemini-2.5-pro"),
+        AiProvider::new("Codex (Local)", "codex-cli", "gpt-5.4"),
         AiProvider::new("OpenRouter", "https://openrouter.ai/api/v1", "openrouter/auto"),
         AiProvider::new("xAI (Grok)", "https://api.x.ai/v1", "grok-3"),
         AiProvider::new("Anthropic (Claude)", "https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
@@ -758,7 +759,7 @@ impl SettingsView {
                 });
                 ui.end_row();
 
-                let is_local_cli = self.api_url == "claude-code" || self.api_url == "codex-cli";
+                let is_local_cli = self.api_url == "claude-code" || self.api_url == "codex-cli" || self.api_url == "gemini-cli";
 
                 if !is_local_cli {
                     // API Key
@@ -868,7 +869,9 @@ impl SettingsView {
         ui.horizontal(|ui| {
             let is_cc = self.api_url == "claude-code";
             let is_codex = self.api_url == "codex-cli";
-            if ui.button("Test Connection").clicked() && (is_cc || is_codex || !self.api_key.is_empty()) {
+            let is_gemini = self.api_url == "gemini-cli";
+            let is_local_cli = is_cc || is_codex || is_gemini;
+            if ui.button("Test Connection").clicked() && (is_local_cli || !self.api_key.is_empty()) {
                 let api_key = self.api_key.clone();
                 let raw_url = if self.api_url.is_empty() {
                     "https://api.deepseek.com/v1".to_string()
@@ -882,36 +885,57 @@ impl SettingsView {
                 };
                 let ctx_clone = ctx.clone();
 
-                let result = if is_cc || is_codex {
+                let result = if is_local_cli {
                     // Test local CLI
-                    let (node_bin, script_path) = if is_cc {
-                        crate::server::services::toolbox::find_claude_cli()
-                    } else {
-                        crate::server::services::toolbox::find_codex_cli()
-                    };
-                    let label = if is_cc { "Claude Code" } else { "Codex" };
                     let env_path = crate::server::services::toolbox::cli_env_path();
-                    runtime.block_on(async {
-                        let mut args: Vec<String> = Vec::new();
-                        if !script_path.is_empty() {
-                            args.push(script_path);
-                        }
-                        args.push("--version".to_string());
-                        let output = tokio::process::Command::new(&node_bin)
-                            .args(&args)
-                            .env("PATH", &env_path)
-                            .env("HOME", crate::server::services::toolbox::resolve_home())
-                            .output()
-                            .await;
-                        match output {
-                            Ok(o) if o.status.success() => {
-                                let ver = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                                Ok(format!("{} CLI found: {}", label, ver))
+                    let home = crate::server::services::toolbox::resolve_home();
+                    if is_gemini {
+                        // Gemini CLI: just run `gemini --version`
+                        runtime.block_on(async {
+                            let output = tokio::process::Command::new("gemini")
+                                .arg("--version")
+                                .env("PATH", &env_path)
+                                .env("HOME", &home)
+                                .output()
+                                .await;
+                            match output {
+                                Ok(o) if o.status.success() => {
+                                    let ver = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                                    Ok(format!("Gemini CLI found: {}", ver))
+                                }
+                                Ok(o) => Err(format!("CLI error: {}", String::from_utf8_lossy(&o.stderr).trim())),
+                                Err(e) => Err(format!("Gemini CLI not found: {}. Install with: npm i -g @anthropic-ai/gemini-cli", e)),
                             }
-                            Ok(o) => Err(format!("CLI error: {}", String::from_utf8_lossy(&o.stderr).trim())),
-                            Err(e) => Err(format!("{} CLI not found: {}", label, e)),
-                        }
-                    })
+                        })
+                    } else {
+                        let (node_bin, script_path) = if is_cc {
+                            crate::server::services::toolbox::find_claude_cli()
+                        } else {
+                            crate::server::services::toolbox::find_codex_cli()
+                        };
+                        let label = if is_cc { "Claude Code" } else { "Codex" };
+                        runtime.block_on(async {
+                            let mut args: Vec<String> = Vec::new();
+                            if !script_path.is_empty() {
+                                args.push(script_path);
+                            }
+                            args.push("--version".to_string());
+                            let output = tokio::process::Command::new(&node_bin)
+                                .args(&args)
+                                .env("PATH", &env_path)
+                                .env("HOME", &home)
+                                .output()
+                                .await;
+                            match output {
+                                Ok(o) if o.status.success() => {
+                                    let ver = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                                    Ok(format!("{} CLI found: {}", label, ver))
+                                }
+                                Ok(o) => Err(format!("CLI error: {}", String::from_utf8_lossy(&o.stderr).trim())),
+                                Err(e) => Err(format!("{} CLI not found: {}", label, e)),
+                            }
+                        })
+                    }
                 } else {
                     // Test HTTP API
                     let api_url = if raw_url.ends_with("/chat/completions") {
