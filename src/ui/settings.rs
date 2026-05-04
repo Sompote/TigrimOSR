@@ -101,7 +101,7 @@ fn builtin_providers() -> Vec<AiProvider> {
         AiProvider::new("Anthropic (Claude)", "https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
         AiProvider::new("MiniMax", "https://api.minimax.io/v1", "MiniMax-M2.7"),
         AiProvider::new("Google AI Studio", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash"),
-        AiProvider::new("Kimi (Moonshot)", "https://api.moonshot.cn/v1", "moonshot-v1-128k"),
+        AiProvider::new("Kimi (Moonshot)", "https://api.kimi.com/coding/v1", "kimi-k2-0905-preview"),
         AiProvider::new("DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"),
     ]
 }
@@ -944,11 +944,16 @@ impl SettingsView {
                         format!("{}/chat/completions", raw_url.trim_end_matches('/'))
                     };
                     runtime.block_on(async {
-                        let client = reqwest::Client::new();
-                        let resp = client
+                        let mut builder = reqwest::Client::new()
                             .post(&api_url)
                             .header("Authorization", format!("Bearer {}", api_key))
-                            .header("content-type", "application/json")
+                            .header("content-type", "application/json");
+                        if api_url.contains("api.kimi.com") {
+                            builder = builder
+                                .header("User-Agent", "claude-code/1.0")
+                                .header("X-Client-Name", "claude-code");
+                        }
+                        let resp = builder
                             .json(&serde_json::json!({
                                 "model": model,
                                 "max_tokens": 1,

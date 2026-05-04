@@ -4644,12 +4644,35 @@ async fn llm_call_gemini_cli(
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let combined = format!("{}\n{}", stdout, stderr);
 
-            if !output.status.success() && stdout.is_empty() {
+            // Check for quota/API errors in output
+            if combined.contains("QuotaError") || combined.contains("QUOTA_EXHAUSTED") || combined.contains("exhausted your capacity") {
+                let msg = if let Some(pos) = combined.find("You have exhausted") {
+                    let end = combined[pos..].find('\n').unwrap_or(combined.len() - pos);
+                    &combined[pos..pos+end]
+                } else { "Gemini API quota exhausted" };
+                return Err(format!("Gemini: {}", msg));
+            }
+            if combined.contains("Error when talking to Gemini API") && stdout.trim().is_empty() {
+                let err_line = combined.lines()
+                    .find(|l| l.contains("Error") || l.contains("message:"))
+                    .unwrap_or("Unknown Gemini API error");
+                return Err(format!("Gemini API error: {}", &err_line[..err_line.len().min(300)]));
+            }
+
+            if !output.status.success() && stdout.trim().is_empty() {
                 return Err(format!("Gemini CLI failed: {}", &stderr[..stderr.len().min(500)]));
             }
 
+            // Filter out skill conflict warnings from stdout
+            let clean_stdout: String = stdout.lines()
+                .filter(|l| !l.contains("Skill conflict detected") && !l.contains("Loaded cached credentials"))
+                .collect::<Vec<_>>()
+                .join("\n");
+
             // Try to extract tool calls from the response
+            let stdout = clean_stdout;
             for line in stdout.lines() {
                 let trimmed = line.trim().trim_start_matches("```json").trim_start_matches("```").trim();
                 if trimmed.contains("\"tool_call\"") {
@@ -5016,10 +5039,15 @@ async fn llm_call(
                 body["tool_choice"] = json!("auto");
             }
         }
-        let hdrs = vec![
+        let mut hdrs = vec![
             ("Content-Type".to_string(), "application/json".to_string()),
             ("Authorization".to_string(), format!("Bearer {}", api_key)),
         ];
+        // Kimi Code API requires Claude Code identity headers
+        if api_url.contains("api.kimi.com") {
+            hdrs.push(("User-Agent".to_string(), "claude-code/1.0".to_string()));
+            hdrs.push(("X-Client-Name".to_string(), "claude-code".to_string()));
+        }
         (body, api_url.to_string(), hdrs)
     };
 
