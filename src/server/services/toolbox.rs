@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::{Mutex as TokioMutex, Notify};
@@ -301,6 +302,8 @@ pub struct SubAgentConfig {
     pub session_id: String,           // for JSONL history logging
     pub agent_id: String,             // current agent's own ID (for protocol tools)
     pub mode: String,                 // "fully_auto", "auto", "auto_swarm", "manual"
+    pub agent_role: String,            // "orchestrator", "worker", etc. — used for tool filtering
+    pub cancel_flag: Arc<AtomicBool>,  // set to true to abort the tool loop (saves checkpoint)
 }
 
 impl Default for SubAgentConfig {
@@ -316,6 +319,8 @@ impl Default for SubAgentConfig {
             session_id: String::new(),
             agent_id: "main".to_string(),
             mode: "auto".to_string(),
+            agent_role: String::new(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -401,6 +406,39 @@ pub fn subscribe_subagent_log() -> tokio::sync::broadcast::Receiver<(String, Str
     subagent_log_tx().subscribe()
 }
 
+/// Append a line to the session's activity log file (mirrors TS appendSessionProgress).
+/// Used by orchestrator tool call logging so the Activity panel shows orchestrator actions.
+pub fn append_session_progress(session_id: &str, text: &str) {
+    let log_dir = crate::server::data::data_dir().join("activity_logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join(format!("{}.log", session_id));
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()));
+}
+
+/// Log orchestrator tool call to the Activity panel (mirrors TS socket.ts onToolCall).
+fn log_orchestrator_tool_call(session_id: &str, name: &str, args: &Value) {
+    if name.starts_with("proto_") {
+        let proto_name = name.replace("proto_", "").split('_').next().unwrap_or("").to_uppercase();
+        append_session_progress(session_id,
+            &format!("> **{}** **Orchestrator** → `{}`\n", proto_name, name));
+    } else if name == "send_task" {
+        let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("agent");
+        append_session_progress(session_id,
+            &format!("> **Orchestrator** delegating task to {}\n", to));
+    } else if name == "wait_result" {
+        let from = args.get("from").and_then(|v| v.as_str()).unwrap_or("agent");
+        append_session_progress(session_id,
+            &format!("> **Orchestrator** waiting for {}\n", from));
+    } else {
+        append_session_progress(session_id,
+            &format!("> **Orchestrator** → `{}`\n", name));
+    }
+}
+
 // Global signal: when fully_auto creates an architecture, set this so the Agents tab can auto-load it.
 static PENDING_ARCH_FILE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
     std::sync::OnceLock::new();
@@ -451,7 +489,7 @@ fn boot_realtime_session_deferred(
 pub async fn force_create_architecture(
     user_message: &str,
     sub_agent: &SubAgentConfig,
-    sandbox_dir: &str,
+    _sandbox_dir: &str,
 ) -> (bool, Option<String>, String) {
     let args = serde_json::json!({
         "description": user_message,
@@ -632,6 +670,87 @@ fn mesh_agent_ids(system_config: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// ---------------------------------------------------------------------------
+// Skills advertising — mirrors tiger_cowork buildEnabledSkillsBlock()
+// ---------------------------------------------------------------------------
+
+const SUBAGENT_SKILLS_PERSONA: &str =
+    "BEFORE you start the assigned task, scan this skill list. If a skill's description \
+     matches the task, you MUST call load_skill(\"<skill-name>\") FIRST and follow its \
+     SKILL.md instructions instead of writing your own code from scratch. These skills are \
+     shared with the orchestrator and other agents — using them keeps the team consistent.";
+
+/// Build the `=== INSTALLED SKILLS ===` block that is injected into sub-agent
+/// and realtime-agent prompts so they can discover available skills without
+/// having to call `list_skills` first.  Mirrors TS `buildEnabledSkillsBlock`.
+async fn build_enabled_skills_block(persona: Option<&str>) -> String {
+    let skills_path = std::path::Path::new("data/skills.json");
+    let registry: Vec<Value> = match tokio::fs::read_to_string(skills_path).await {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => vec![],
+    };
+
+    let enabled: Vec<&Value> = registry
+        .iter()
+        .filter(|s| s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true))
+        .collect();
+
+    // Also scan skills/ directory for custom skills with SKILL.md
+    let mut custom_skills: Vec<String> = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir("skills").await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+                let skill_md = entry.path().join("SKILL.md");
+                if tokio::fs::metadata(&skill_md).await.is_ok() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    // Don't double-list skills already in registry
+                    let already = enabled.iter().any(|s| {
+                        s.get("name").and_then(|n| n.as_str()) == Some(&name)
+                    });
+                    if !already {
+                        custom_skills.push(name);
+                    }
+                }
+            }
+        }
+    }
+
+    if enabled.is_empty() && custom_skills.is_empty() {
+        return String::new();
+    }
+
+    let lead = persona.unwrap_or(
+        "IMPORTANT: BEFORE answering any user request, scan the skill list below. \
+         If a skill's description matches the user's task, you MUST load and use that \
+         skill FIRST by calling load_skill(\"<skill-name>\"), then follow its SKILL.md \
+         instructions. Do NOT write your own code from scratch when a matching skill exists."
+    );
+
+    let mut block = format!("\n\n=== INSTALLED SKILLS ===\n{}", lead);
+
+    if !custom_skills.is_empty() {
+        block.push_str("\n\nCustom skills (priority — always prefer these):");
+        for name in &custom_skills {
+            block.push_str(&format!("\n  - {}", name));
+        }
+    }
+
+    if !enabled.is_empty() {
+        block.push_str("\n\nRegistered skills:");
+        for s in &enabled {
+            let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+            let source = s.get("source").and_then(|n| n.as_str()).unwrap_or("unknown");
+            block.push_str(&format!("\n  - {} ({})", name, source));
+        }
+    }
+
+    block.push_str("\n\nSkill usage workflow: 1) call load_skill(\"<name>\") to read SKILL.md \
+        and see supporting files, 2) if the skill has supporting .py files, use read_file to \
+        load them, 3) use run_python or run_shell to execute following the skill instructions.");
+
+    block
+}
+
 /// Build the system prompt for a realtime agent — mode-aware (tiger_cowork clone).
 fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> String {
     let agent_id = agent_def["id"].as_str().unwrap_or("agent");
@@ -802,7 +921,14 @@ async fn realtime_agent_loop(
     mut abort_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
     let agent_id = agent_def["id"].as_str().unwrap_or("agent").to_string();
-    let system_prompt = build_realtime_agent_prompt(&agent_def, &system_config);
+    let mut system_prompt = build_realtime_agent_prompt(&agent_def, &system_config);
+
+    // Advertise enabled skills (incl. auto-generated) — same block the
+    // orchestrator sees, so realtime agents can discover newly approved skills.
+    match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA)).await {
+        block if !block.is_empty() => system_prompt.push_str(&block),
+        _ => {}
+    }
 
     info!("[Realtime] Agent {} loop started", agent_id);
 
@@ -824,6 +950,61 @@ async fn realtime_agent_loop(
 
         *status.lock().await = "working".to_string();
         info!("[Realtime] Agent {} received task from {}: {:.80}", agent_id, task.from, task.task);
+
+        // ── P2P bid request handling ──────────────────────────────────────
+        // If this is a bid request (from bb_propose in P2P mode), evaluate
+        // with a constrained tool set (bb_read + bb_bid only) and continue.
+        if task.from.starts_with("bid_request:") {
+            info!("[Realtime] Agent {} evaluating bid request: {:.80}", agent_id, task.task);
+            let bid_messages = vec![json!({"role": "user", "content": task.task})];
+            let bid_system = format!(
+                "{}\n\nYou are evaluating a bid request. Read the task details, \
+                 then decide whether to bid using bb_bid (with your confidence 0-1 and reasoning) \
+                 or simply respond with text if you choose not to bid.",
+                system_prompt
+            );
+            let bid_sub = SubAgentConfig {
+                enabled: false,
+                session_id: session_id.clone(),
+                agent_id: agent_id.clone(),
+                ..SubAgentConfig::default()
+            };
+            let bid_log_tx = subagent_log_tx().clone();
+            let bid_log_sid = session_id.clone();
+            let bid_log_aid = agent_id.clone();
+            let bid_progress_sid = session_id.clone();
+            let bid_on_update = move |update: ToolUpdate| {
+                let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
+                let line = match &update {
+                    ToolUpdate::ToolCall { name, args } => {
+                        log_orchestrator_tool_call(&bid_progress_sid, name, args);
+                        let a = serde_json::to_string(args).unwrap_or_default();
+                        let a_short = if a.len() > 300 { format!("{}...", &a[..300]) } else { a };
+                        format!("[{}] [{}] BID TOOL CALL: {}\n  args: {}", ts, bid_log_aid, name, a_short)
+                    }
+                    ToolUpdate::ToolResult { name, result } => {
+                        let r = serde_json::to_string(result).unwrap_or_default();
+                        let r_short = if r.len() > 500 { format!("{}...", &r[..500]) } else { r };
+                        format!("[{}] [{}] BID TOOL RESULT: {}\n  {}", ts, bid_log_aid, name, r_short)
+                    }
+                    ToolUpdate::TextChunk(t) => {
+                        format!("[{}] [{}] BID TEXT: {}", ts, bid_log_aid, if t.len() > 100 { &t[..100] } else { t })
+                    }
+                    ToolUpdate::Error(e) => format!("[{}] [{}] BID ERROR: {}", ts, bid_log_aid, e),
+                    ToolUpdate::ApprovalRequired { name, .. } => format!("[{}] [{}] BID APPROVAL: {}", ts, bid_log_aid, name),
+                };
+                let _ = bid_log_tx.send((bid_log_sid.clone(), bid_log_aid.clone(), line));
+            };
+            // Use the standard call_with_tools (non-realtime, no delegation) —
+            // the dispatcher already routes bb_bid / bb_read to the correct handlers.
+            let _ = call_with_tools(
+                &api_key, &api_url, &model, bid_messages,
+                Some(bid_system), &sandbox_dir, bid_on_update, bid_sub,
+            ).await;
+            *status.lock().await = "idle".to_string();
+            continue;
+        }
+        // ── End bid request handling ──────────────────────────────────────
 
         // Build messages for this agent's LLM call
         let user_content = if let Some(ctx) = &task.context {
@@ -878,6 +1059,7 @@ async fn realtime_agent_loop(
             agent_ids: reachable_ids,
             session_id: session_id.clone(),
             agent_id: agent_id.clone(),
+            agent_role: role.to_string(),
             ..SubAgentConfig::default()
         };
 
@@ -889,10 +1071,15 @@ async fn realtime_agent_loop(
         let log_tx = subagent_log_tx().clone();
         let log_sid = session_id.clone();
         let log_aid = agent_id.clone();
+        let progress_sid = session_id.clone(); // for activity log
         let on_update_cb = move |update: ToolUpdate| {
             let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
             let line = match &update {
                 ToolUpdate::ToolCall { name, args } => {
+                    // Mirror orchestrator tool calls into the Activity panel
+                    // (matches TS appendSessionProgress in socket.ts onToolCall)
+                    log_orchestrator_tool_call(&progress_sid, name, args);
+
                     let args_str = serde_json::to_string(args).unwrap_or_default();
                     let args_short = if args_str.len() > 300 { format!("{}...", &args_str[..300]) } else { args_str };
                     format!("[{}] [{}] TOOL CALL: {}\n  args: {}", ts, log_aid, name, args_short)
@@ -918,16 +1105,84 @@ async fn realtime_agent_loop(
             };
             let _ = log_tx.send((log_sid.clone(), log_aid.clone(), line));
         };
-        let loop_result = if can_delegate {
-            call_with_tools_realtime(
-                &api_key, &api_url, &model, messages,
-                Some(system_prompt.clone()), &sandbox_dir, on_update_cb, sub_agent,
-            ).await
-        } else {
-            call_with_tools(
-                &api_key, &api_url, &model, messages,
-                Some(system_prompt.clone()), &sandbox_dir, on_update_cb, sub_agent,
-            ).await
+        // Check agent type: "remote", "cli", or default "llm"
+        let agent_type = agent_def.get("type").and_then(|v| v.as_str()).unwrap_or("llm");
+
+        let loop_result = match agent_type {
+            "remote" => {
+                // Delegate to a remote TigrimOS instance
+                let remote_url = agent_def.get("remote_url")
+                    .or_else(|| agent_def.get("url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let remote_token = agent_def.get("remote_token")
+                    .or_else(|| agent_def.get("token"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                if remote_url.is_empty() {
+                    ToolLoopResult {
+                        content: format!("Remote agent '{}' has no URL configured", agent_id),
+                        tool_results: vec![],
+                        files: vec![],
+                    }
+                } else {
+                    info!("[Realtime] Agent {} delegating to remote: {}", agent_id, remote_url);
+                    let result = exec_remote_task(&json!({
+                        "instance": json!({"url": remote_url, "token": remote_token}).to_string(),
+                        "task": user_content,
+                    })).await;
+                    ToolLoopResult {
+                        content: result["result"].as_str().unwrap_or(
+                            result["error"].as_str().unwrap_or("Remote task completed")
+                        ).to_string(),
+                        tool_results: vec![],
+                        files: vec![],
+                    }
+                }
+            }
+            "cli" => {
+                // Route to a CLI agent (claude_code or codex)
+                let cli_provider = agent_def.get("provider")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("claude_code");
+
+                info!("[Realtime] Agent {} running via CLI provider: {}", agent_id, cli_provider);
+                let cli_result = match cli_provider {
+                    "codex" => {
+                        exec_run_shell(&json!({
+                            "command": format!("echo '{}' | codex --quiet", user_content.replace('\'', "'\\''")),
+                        }), &sandbox_dir).await
+                    }
+                    _ => {
+                        // Default to claude_code CLI
+                        exec_run_shell(&json!({
+                            "command": format!("echo '{}' | claude --print", user_content.replace('\'', "'\\''")),
+                        }), &sandbox_dir).await
+                    }
+                };
+                ToolLoopResult {
+                    content: cli_result["stdout"].as_str()
+                        .or(cli_result["output"].as_str())
+                        .unwrap_or("CLI agent completed").to_string(),
+                    tool_results: vec![],
+                    files: vec![],
+                }
+            }
+            _ => {
+                // Default LLM agent (existing code)
+                if can_delegate {
+                    call_with_tools_realtime(
+                        &api_key, &api_url, &model, messages,
+                        Some(system_prompt.clone()), &sandbox_dir, on_update_cb, sub_agent,
+                    ).await
+                } else {
+                    call_with_tools(
+                        &api_key, &api_url, &model, messages,
+                        Some(system_prompt.clone()), &sandbox_dir, on_update_cb, sub_agent,
+                    ).await
+                }
+            }
         };
 
         let agent_result = AgentResult {
@@ -990,6 +1245,29 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
         }
     };
 
+    // When "main" sends tasks in hierarchical/hybrid mode, enforce orchestrator-first routing.
+    // The main LLM must delegate through the orchestrator, not directly to workers.
+    if caller_id == "main" && matches!(orch_mode, "hierarchical" | "hybrid") {
+        // Find if there's an orchestrator agent in the session
+        let has_orchestrator = session.agents.iter().any(|(_, h)| {
+            h.agent_def.get("role").and_then(|r| r.as_str()) == Some("orchestrator")
+        });
+        if has_orchestrator {
+            let target_role = handle.agent_def["role"].as_str().unwrap_or("");
+            if target_role != "orchestrator" {
+                // Find the orchestrator's ID for the error message
+                let orch_id = session.agents.iter()
+                    .find(|(_, h)| h.agent_def.get("role").and_then(|r| r.as_str()) == Some("orchestrator"))
+                    .map(|(id, _)| id.as_str())
+                    .unwrap_or("orchestrator");
+                return json!({
+                    "ok": false,
+                    "error": format!("In {} mode, tasks must go through the orchestrator '{}' first. Send your task to the orchestrator, who will delegate to workers.", orch_mode, orch_id)
+                });
+            }
+        }
+    }
+
     // Hierarchical/pipeline: enforce connection-based access control
     if matches!(orch_mode, "hierarchical" | "pipeline") && caller_id != "main" {
         let caller_def = session.system_config["agents"].as_array()
@@ -1011,6 +1289,15 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
     else if orch_mode == "hybrid" && caller_id != "main" {
         let caller_def = session.system_config["agents"].as_array()
             .and_then(|arr| arr.iter().find(|a| a["id"].as_str() == Some(caller_id)));
+
+        // Block non-orchestrators from sending to orchestrator (circular delegation)
+        let target_role = handle.agent_def["role"].as_str().unwrap_or("");
+        if target_role == "orchestrator" {
+            if caller_def.map(|d| d["role"].as_str() != Some("orchestrator")).unwrap_or(true) {
+                return json!({"ok": false, "error": format!("Agent '{}' cannot send tasks to orchestrator (circular delegation)", caller_id)});
+            }
+        }
+
         let caller_has_mesh = caller_def.map(|d| agent_has_mesh(d)).unwrap_or(false);
         if !caller_has_mesh {
             let downstream = get_downstream(caller_id, &session.system_config);
@@ -1019,7 +1306,36 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
             }
         }
     }
-    // mesh, p2p, p2p_orchestrator: no access control — any agent can send to any
+    // p2p_orchestrator: bidder-only agents must be awarded on blackboard first
+    else if orch_mode == "p2p_orchestrator" && caller_id != "main" {
+        let caller_def = session.system_config["agents"].as_array()
+            .and_then(|arr| arr.iter().find(|a| a["id"].as_str() == Some(caller_id)));
+        let is_caller_orchestrator = caller_def
+            .map(|d| d["role"].as_str() == Some("orchestrator"))
+            .unwrap_or(false);
+
+        if is_caller_orchestrator {
+            // Orchestrator can send to direct agents (in connections/workflow) freely.
+            // But bidder-only agents (not in connections) require blackboard award first.
+            let downstream = get_downstream(caller_id, &session.system_config);
+            if !downstream.contains(&to) {
+                // Check if target was awarded on blackboard
+                let was_awarded = protocols::blackboard_check_awarded(session_id, &to).await;
+                if !was_awarded {
+                    return json!({
+                        "ok": false,
+                        "error": format!(
+                            "Agent '{}' is a bidder-only agent — not in your direct connections [{}]. \
+                             You must use blackboard bidding first: bb_propose → wait for bids → bb_award, \
+                             then send_task to the awarded winner.",
+                            to, downstream.join(", ")
+                        )
+                    });
+                }
+            }
+        }
+    }
+    // mesh, p2p: no access control — any agent can send to any
 
     let agent_task = AgentTask { from: caller_id.to_string(), task: task.clone(), context };
     match handle.task_tx.send(agent_task).await {
@@ -2718,19 +3034,89 @@ async fn walk_dir_recursive(
     Ok(())
 }
 
-async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
-    // Read skills from data/skills.json
-    let skills_path = std::path::Path::new("data/skills.json");
-    let skills: Vec<Value> = if let Ok(content) = tokio::fs::read_to_string(skills_path).await {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        vec![]
-    };
+// ---------------------------------------------------------------------------
+// Skill resolution helpers — mirrors TS slugifySkillName / skillCandidates / resolveSkillDir
+// ---------------------------------------------------------------------------
 
-    let skill_names: Vec<String> = skills
+fn slugify_skill_name(name: &str) -> String {
+    let mut slug = String::new();
+    for ch in name.to_lowercase().trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+fn skill_candidates(skill_name: &str, registry_entry: Option<&Value>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let mut push = |v: &str| {
+        if !v.is_empty() && seen.insert(v.to_string()) {
+            out.push(v.to_string());
+        }
+    };
+    push(skill_name);
+    if let Some(entry) = registry_entry {
+        if let Some(script) = entry.get("script").and_then(|s| s.as_str()) {
+            push(script);
+        }
+    }
+    push(&slugify_skill_name(skill_name));
+    out
+}
+
+const SKILLS_SEARCH_DIRS: &[(&str, &str)] = &[
+    ("Tiger_bot/skills", "clawhub"),
+    ("skills", "custom"),
+];
+
+fn read_skills_registry() -> Vec<Value> {
+    let path = std::path::Path::new("data/skills.json");
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => vec![],
+    }
+}
+
+fn resolve_skill_dir(skill_name: &str, registry_entry: Option<&Value>) -> Option<(std::path::PathBuf, String)> {
+    for cand in skill_candidates(skill_name, registry_entry) {
+        for &(dir, label) in SKILLS_SEARCH_DIRS {
+            let base = std::path::Path::new(dir).join(&cand);
+            if base.join("SKILL.md").exists() {
+                return Some((base, label.to_string()));
+            }
+        }
+    }
+    None
+}
+
+async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
+    let registry = read_skills_registry();
+
+    // Registered skills with hasFiles check
+    let registered_skills: Vec<Value> = registry
         .iter()
-        .filter(|s| s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true))
-        .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+        .map(|s| {
+            let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let source = s.get("source").and_then(|n| n.as_str()).unwrap_or("unknown");
+            let enabled = s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+            let resolved = resolve_skill_dir(name, Some(s));
+            json!({
+                "name": name,
+                "source": source,
+                "enabled": enabled,
+                "hasFiles": resolved.is_some(),
+            })
+        })
+        .collect();
+
+    let skill_names: Vec<String> = registered_skills
+        .iter()
+        .filter(|s| s["enabled"].as_bool().unwrap_or(true))
+        .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
         .collect();
 
     // Also check skills/ directory for SKILL.md files
@@ -2751,7 +3137,12 @@ async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
         }
     }
 
-    json!({ "skills": skill_names, "dir_skills": dir_skills })
+    json!({
+        "skills": skill_names,
+        "dir_skills": dir_skills,
+        "registered_skills": registered_skills,
+        "hint": "Use load_skill with a skill name to see its SKILL.md and supporting files. Skills where hasFiles=false are registered but have no SKILL.md on disk and cannot be loaded."
+    })
 }
 
 async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
@@ -2760,21 +3151,80 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
         return json!({"ok": false, "error": "Missing skill name"});
     }
 
-    let skill_path = std::path::Path::new("skills")
-        .join(skill_name)
-        .join("SKILL.md");
-    match tokio::fs::read_to_string(&skill_path).await {
-        Ok(content) => {
-            let truncated = content.len() > 15000;
-            let content = if truncated {
-                content[..15000].to_string()
-            } else {
-                content
-            };
-            json!({"ok": true, "skill": skill_name, "content": content, "truncated": truncated})
+    let registry = read_skills_registry();
+    let registry_entry = registry.iter()
+        .find(|s| s.get("name").and_then(|n| n.as_str()) == Some(skill_name))
+        .or_else(|| registry.iter().find(|s| {
+            s.get("name").and_then(|n| n.as_str())
+                .map(|n| slugify_skill_name(n) == slugify_skill_name(skill_name))
+                .unwrap_or(false)
+        }));
+
+    if let Some((skill_base_dir, source)) = resolve_skill_dir(skill_name, registry_entry) {
+        let skill_file = skill_base_dir.join("SKILL.md");
+        let base_dir_str = skill_base_dir.display().to_string();
+        match tokio::fs::read_to_string(&skill_file).await {
+            Ok(raw_content) => {
+                let content = raw_content.replace("{baseDir}", &base_dir_str);
+                let truncated = content.len() > 15000;
+                let content = if truncated { content[..15000].to_string() } else { content };
+
+                // Read _meta.json if present
+                let meta = match tokio::fs::read_to_string(skill_base_dir.join("_meta.json")).await {
+                    Ok(m) => serde_json::from_str::<Value>(&m).unwrap_or(json!({})),
+                    Err(_) => json!({}),
+                };
+
+                // List supporting files
+                let mut supporting_files = Vec::new();
+                fn walk_skill_dir(d: &std::path::Path, prefix: &str, out: &mut Vec<String>) {
+                    if let Ok(entries) = std::fs::read_dir(d) {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if name.starts_with('.') || name == "__MACOSX" { continue; }
+                            let rel = if prefix.is_empty() { name.clone() } else { format!("{}/{}", prefix, name) };
+                            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                                walk_skill_dir(&entry.path(), &rel, out);
+                            } else if name != "SKILL.md" && name != "_meta.json" {
+                                out.push(rel);
+                            }
+                        }
+                    }
+                }
+                walk_skill_dir(&skill_base_dir, "", &mut supporting_files);
+
+                return json!({
+                    "ok": true,
+                    "skill": skill_name,
+                    "source": source,
+                    "skillDir": base_dir_str,
+                    "content": content,
+                    "meta": meta,
+                    "supportingFiles": supporting_files,
+                    "truncated": truncated,
+                });
+            }
+            Err(e) => return json!({"ok": false, "error": format!("Failed to read SKILL.md: {}", e)}),
         }
-        Err(_) => json!({"ok": false, "error": format!("Skill '{}' not found", skill_name)}),
     }
+
+    // Not found — provide helpful error
+    let tried = skill_candidates(skill_name, registry_entry);
+    let dirs_str = SKILLS_SEARCH_DIRS.iter().map(|(d, _)| *d).collect::<Vec<_>>().join(" and ");
+    if registry_entry.is_some() {
+        return json!({
+            "ok": false,
+            "error": format!("Skill \"{}\" is registered in data/skills.json but no SKILL.md was found on disk. Tried folder names [{}] under {}. Create SKILL.md at one of these paths, or re-install the skill so its files are unpacked.", skill_name, tried.join(", "), dirs_str),
+            "registered": true,
+            "triedCandidates": tried,
+        });
+    }
+    json!({
+        "ok": false,
+        "error": format!("Skill \"{}\" not found. Tried folder names [{}] under {}.", skill_name, tried.join(", "), dirs_str),
+        "registered": false,
+        "triedCandidates": tried,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -3294,6 +3744,37 @@ async fn exec_bb_propose(args: &Value, session_id: &str, agent_id: &str) -> Valu
         return json!({ "ok": true, "protocol": "blackboard", "action": "propose", "task": task_json, "skipped": true });
     }
     protocols::bus_publish(session_id, agent_id, "bb:proposal", json!({ "task_id": task.task_id, "description": description, "proposed_by": agent_id })).await;
+
+    // In P2P modes, send bid request tasks to all eligible agents via their task channels
+    // so the realtime_agent_loop can evaluate and bid automatically.
+    {
+        let map = realtime_sessions().lock().await;
+        if let Some(session_arc) = map.get(session_id) {
+            let session = session_arc.lock().await;
+            let orch_mode = session.system_config["system"]["orchestration_mode"]
+                .as_str().unwrap_or("hierarchical");
+            if matches!(orch_mode, "p2p" | "p2p_orchestrator") {
+                let task_id = &task.task_id;
+                for (aid, handle) in &session.agents {
+                    if aid == agent_id { continue; } // don't bid on own task
+                    let role = handle.agent_def.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                    if role == "human" || role == "orchestrator" { continue; }
+                    let _ = handle.task_tx.send(AgentTask {
+                        from: format!("bid_request:{}", task_id),
+                        task: format!(
+                            "BID REQUEST: Evaluate this task and decide if you should bid.\n\
+                             Task ID: {}\nDescription: {}\n\
+                             Use bb_bid tool with your confidence score if you want to bid, \
+                             or do nothing if this task is outside your expertise.",
+                            task_id, description
+                        ),
+                        context: None,
+                    }).await;
+                }
+            }
+        }
+    }
+
     json!({ "ok": true, "protocol": "blackboard", "action": "propose", "task": task_json, "hint": format!("Task \"{}\" posted. Bidders notified via bus.", task.task_id) })
 }
 
@@ -3661,17 +4142,25 @@ Return ONLY a valid JSON object (no markdown, no code fences) with this structur
   ],
   "connections": [
     {{ "from": "source_id", "to": "target_id", "label": "label", "protocol": "tcp", "topics": ["topic1"] }}
-  ]
+  ],
+  "workflow": {{
+    "sequence": [
+      {{ "step": 1, "agent": "agent_id", "action": "what this agent does", "outputs_to": ["next_agent_id"] }}
+    ]
+  }}
 }}
 
 RULES:
 - Always include ONE agent with role "human" and id "human"
-- For hierarchical: human → orchestrator → workers
-- For flat: human → all agents
+- For hierarchical: human → orchestrator → workers. Use role "orchestrator" for the coordinator.
+- For flat: human → all agents directly
 - For mesh: no connections (mesh mode bypasses access control)
+- For hybrid: human → orchestrator → workers (workers have mesh.enabled: true)
+- For pipeline: agents form a LINEAR SEQUENTIAL CHAIN. human → agent1 → agent2 → agent3 → ... → final_agent. Each agent connects to exactly ONE next agent. Do NOT use an orchestrator role. Do NOT create star topology (one agent connecting to many). Connections MUST form a strict linear chain. The workflow.sequence MUST list agents in order with outputs_to pointing to the next agent. The last agent has outputs_to: [].
 - For p2p: all non-human agents use role "peer", no connections
 - Agent IDs must be snake_case
-- Generate 3-8 agents including human"#
+- Generate 3-8 agents including human
+- Always include workflow.sequence listing the processing order"#
     );
 
     // Call the LLM to generate the architecture (routes through claude-code if needed)
@@ -3966,7 +4455,13 @@ fn exec_spawn_subagent(
     };
 
     // Build system prompt for this agent
-    let system_prompt = build_agent_system_prompt(&agent_def, &yaml_val, &available_targets);
+    let mut system_prompt = build_agent_system_prompt(&agent_def, &yaml_val, &available_targets);
+
+    // Advertise enabled skills so sub-agents can discover them without calling list_skills.
+    match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA)).await {
+        block if !block.is_empty() => system_prompt.push_str(&block),
+        _ => {}
+    }
 
     // Build message with task
     let user_msg = if context.is_empty() {
@@ -3989,6 +4484,8 @@ fn exec_spawn_subagent(
         session_id: sub_agent.session_id.clone(),
         agent_id: agent_id.to_string(),
         mode: sub_agent.mode.clone(),
+        agent_role: agent_role.to_string(),
+        cancel_flag: sub_agent.cancel_flag.clone(),
     };
 
     // Recursive call — propagate ToolCall/ToolResult to parent UI (drop TextChunk to avoid mangling main text)
@@ -4120,7 +4617,7 @@ const DEFAULT_MAX_ROUNDS: usize = 15;
 const DEFAULT_MAX_TOOL_CALLS: usize = 25;
 const MAX_LOOP_REPEATS: usize = 3;
 const DEFAULT_MAX_CONSECUTIVE_ERRORS: usize = 3;
-const DEFAULT_MAX_ERROR_RECOVERIES: usize = 3;
+const DEFAULT_MAX_ERROR_RECOVERIES: usize = 5; // tiger_cowork: 5 for resilience
 const DEFAULT_COMPRESSION_INTERVAL: usize = 5;
 const DEFAULT_COMPRESSION_WINDOW: usize = 10;
 const DEFAULT_MAX_CONTEXT_TOKENS: usize = 100_000;
@@ -4565,7 +5062,7 @@ async fn llm_call_gemini_cli(
     model: &str,
     messages: &[Value],
     tools: Option<&[Value]>,
-    max_tokens: u64,
+    _max_tokens: u64,
 ) -> Result<Value, String> {
     // Build prompt from messages
     let mut prompt_parts: Vec<String> = Vec::new();
@@ -5045,8 +5542,11 @@ async fn llm_call(
         ];
         // Kimi Code API requires Claude Code identity headers
         if api_url.contains("api.kimi.com") {
-            hdrs.push(("User-Agent".to_string(), "claude-code/1.0".to_string()));
+            hdrs.push(("User-Agent".to_string(), "claude-code/1.0.6".to_string()));
             hdrs.push(("X-Client-Name".to_string(), "claude-code".to_string()));
+            hdrs.push(("X-Client-Version".to_string(), "1.0.6".to_string()));
+            hdrs.push(("HTTP-Referer".to_string(), "https://claude.ai".to_string()));
+            hdrs.push(("X-Traffic-Source".to_string(), "claude-code".to_string()));
         }
         (body, api_url.to_string(), hdrs)
     };
@@ -5236,6 +5736,9 @@ async fn save_checkpoint(
     tool_records: &[ToolCallRecord],
     total_tool_calls: usize,
     collected_files: &[String],
+    tool_call_history: &[String],
+    consecutive_errors: usize,
+    early_content: &str,
 ) {
     if session_id.is_empty() { return; }
     let dir = "data/checkpoints";
@@ -5274,10 +5777,44 @@ async fn save_checkpoint(
         "messages": compact_messages,
         "toolRecords": compact_records,
         "files": collected_files,
+        "toolCallHistory": tool_call_history,
+        "consecutiveErrors": consecutive_errors,
+        "earlyContent": if early_content.is_empty() { Value::Null } else { json!(early_content) },
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
     let _ = tokio::fs::write(&fp, serde_json::to_string_pretty(&checkpoint).unwrap_or_default()).await;
+}
+
+/// Local checkpoint data matching what save_checkpoint writes
+struct LocalCheckpoint {
+    round: usize,
+    messages: Vec<Value>,
+    total_tool_calls: usize,
+    files: Vec<String>,
+    tool_call_history: Vec<String>,
+    consecutive_errors: usize,
+    early_content: Option<String>,
+}
+
+async fn load_checkpoint(session_id: &str) -> Option<LocalCheckpoint> {
+    if session_id.is_empty() { return None; }
+    let fp = format!("data/checkpoints/{}.json", session_id);
+    let content = tokio::fs::read_to_string(&fp).await.ok()?;
+    let v: Value = serde_json::from_str(&content).ok()?;
+    Some(LocalCheckpoint {
+        round: v["round"].as_u64().unwrap_or(0) as usize,
+        messages: v["messages"].as_array().cloned().unwrap_or_default(),
+        total_tool_calls: v["totalToolCalls"].as_u64().unwrap_or(0) as usize,
+        files: v["files"].as_array()
+            .map(|arr| arr.iter().filter_map(|f| f.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default(),
+        tool_call_history: v["toolCallHistory"].as_array()
+            .map(|arr| arr.iter().filter_map(|f| f.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default(),
+        consecutive_errors: v["consecutiveErrors"].as_u64().unwrap_or(0) as usize,
+        early_content: v["earlyContent"].as_str().map(|s| s.to_string()),
+    })
 }
 
 async fn clear_checkpoint(session_id: &str) {
@@ -5314,28 +5851,13 @@ async fn call_with_tools_inner(
         tool_definitions()
     };
 
-    let mut all_messages = Vec::new();
-
-    // Prepend system prompt if provided
-    if let Some(sys) = &system_prompt {
-        all_messages.push(json!({ "role": "system", "content": sys }));
+    // Orchestrators get reduced tools — research delegated to workers
+    if sub_agent.agent_role == "orchestrator" {
+        tools.retain(|t| {
+            let name = t["function"]["name"].as_str().unwrap_or("");
+            !matches!(name, "web_search" | "fetch_url")
+        });
     }
-    all_messages.extend(messages);
-
-    let mut tool_records: Vec<ToolCallRecord> = Vec::new();
-    let mut collected_files: Vec<String> = Vec::new();
-    let mut total_tool_calls: usize = 0;
-    #[allow(unused_assignments)]
-    let mut consecutive_errors: usize = 0;
-    let mut error_recovery_attempts: usize = 0;
-    let mut no_choices_retries: usize = 0;
-    let mut _uses_skill = false;
-    let mut _early_content = String::new();
-
-    // For loop detection: track recent (tool_name, args_signature) tuples
-    let mut recent_signatures: Vec<String> = Vec::new();
-    // For tracking tool call history (loop detection)
-    let mut tool_call_history: Vec<String> = Vec::new();
 
     // Load settings — realtime agents get higher limits since orchestrators need many rounds
     let settings = load_agent_settings();
@@ -5352,7 +5874,49 @@ async fn call_with_tools_inner(
     let max_tokens = settings["agentMaxTokens"].as_u64().unwrap_or(81920);
     let reflection_enabled = settings["agentReflectionEnabled"].as_bool().unwrap_or(false);
     let eval_threshold = settings["agentReflectionThreshold"].as_f64().unwrap_or(0.7);
+    let max_reflection_retries = settings["agentMaxReflectionRetries"].as_u64().unwrap_or(2) as usize;
     let tool_result_max_len = settings["agentToolResultMaxLen"].as_u64().unwrap_or(6000).min(100_000) as usize;
+    let checkpoint_enabled = settings["agentCheckpointEnabled"].as_bool().unwrap_or(true);
+
+    // --- Checkpoint resume (tiger_cowork: try to resume from checkpoint) ---
+    let mut all_messages = Vec::new();
+    let mut tool_records: Vec<ToolCallRecord> = Vec::new();
+    let mut collected_files: Vec<String> = Vec::new();
+    let mut total_tool_calls: usize = 0;
+    #[allow(unused_assignments)]
+    let mut consecutive_errors: usize = 0;
+    let mut error_recovery_attempts: usize = 0;
+    let mut no_choices_retries: usize = 0;
+    let mut _uses_skill = false;
+    let mut early_content = String::new();
+    let mut start_round: usize = 0;
+    // For loop detection: track recent (tool_name, args_signature) tuples
+    let mut recent_signatures: Vec<String> = Vec::new();
+    // For tracking tool call history (loop detection)
+    let mut tool_call_history: Vec<String> = Vec::new();
+
+    if checkpoint_enabled && !sub_agent.session_id.is_empty() {
+        if let Some(checkpoint) = load_checkpoint(&sub_agent.session_id).await {
+            info!("[ToolLoop] Resuming from checkpoint at round {}", checkpoint.round);
+            all_messages = checkpoint.messages;
+            total_tool_calls = checkpoint.total_tool_calls;
+            collected_files = checkpoint.files;
+            tool_call_history = checkpoint.tool_call_history;
+            consecutive_errors = checkpoint.consecutive_errors;
+            if let Some(ec) = checkpoint.early_content {
+                early_content = ec;
+            }
+            start_round = checkpoint.round;
+        }
+    }
+
+    // Initialize messages if not resuming from checkpoint
+    if all_messages.is_empty() {
+        if let Some(sys) = &system_prompt {
+            all_messages.push(json!({ "role": "system", "content": sys }));
+        }
+        all_messages.extend(messages);
+    }
 
     // Extract user objective for reflection (first user message)
     let user_objective: String = all_messages.iter()
@@ -5370,14 +5934,36 @@ async fn call_with_tools_inner(
             || lower.contains("figure") || lower.contains("draw")
     };
 
-    for round in 0..max_rounds {
+    for round in start_round..max_rounds {
+        // --- Abort check: save checkpoint and return early (tiger_cowork: signal.aborted) ---
+        if sub_agent.cancel_flag.load(Ordering::Relaxed) {
+            info!("[ToolLoop] Abort signal received at round {} — saving checkpoint", round);
+            if checkpoint_enabled {
+                save_checkpoint(
+                    &sub_agent.session_id, round, &all_messages, &tool_records,
+                    total_tool_calls, &collected_files, &tool_call_history,
+                    consecutive_errors, &early_content,
+                ).await;
+            }
+            let content = if early_content.is_empty() {
+                "Task was cancelled.".to_string()
+            } else {
+                early_content
+            };
+            return ToolLoopResult {
+                content,
+                tool_results: tool_records,
+                files: collected_files,
+            };
+        }
+
         info!("Tool loop round {}/{}", round + 1, max_rounds);
 
         // --- Context compression ---
         // Periodic compression every N rounds
         if round > 0 && round % compression_interval == 0 {
             let compressed = compact::compress_older_messages(
-                &all_messages, compression_window, api_key, api_url, model,
+                &all_messages, compression_window, api_key, api_url, model, None,
             ).await;
             if compressed.len() < all_messages.len() {
                 info!("[ToolLoop] Periodic compression: {} -> {} messages", all_messages.len(), compressed.len());
@@ -5390,7 +5976,7 @@ async fn call_with_tools_inner(
         if estimated_tokens > max_context_tokens {
             info!("[ToolLoop] Context ~{} tokens exceeds limit {} — compacting...", estimated_tokens, max_context_tokens);
             let compressed = compact::compress_older_messages(
-                &all_messages, compression_window.min(6), api_key, api_url, model,
+                &all_messages, compression_window.min(6), api_key, api_url, model, None,
             ).await;
             if compressed.len() < all_messages.len() {
                 all_messages = compressed;
@@ -5405,9 +5991,19 @@ async fn call_with_tools_inner(
             all_messages = trimmed;
         }
 
+        // Validate message structure after trimming (tiger_cowork: tool-pair consistency)
+        let validated = compact::validate_message_structure(&all_messages);
+        if validated.messages.len() != all_messages.len() {
+            all_messages = validated.messages;
+        }
+
         // Periodic checkpoint save
         if round > 0 && round % CHECKPOINT_INTERVAL == 0 {
-            save_checkpoint(&sub_agent.session_id, round, &all_messages, &tool_records, total_tool_calls, &collected_files).await;
+            save_checkpoint(
+                &sub_agent.session_id, round, &all_messages, &tool_records,
+                total_tool_calls, &collected_files, &tool_call_history,
+                consecutive_errors, &early_content,
+            ).await;
         }
 
         // --- LLM call with retry logic (tiger_cowork: 3 retries + overload backoff) ---
@@ -5426,15 +6022,33 @@ async fn call_with_tools_inner(
                 Err(err_msg) => {
                     // Context overflow: compress before retrying
                     if compact::is_context_overflow(&err_msg) && all_messages.len() > 3 {
-                        info!("[ToolLoop] Context overflow detected — compressing before retry...");
+                        info!("[ToolLoop] Context overflow detected — compressing before retry (attempt {}/{})...", llm_retry + 1, LLM_MAX_RETRIES);
+                        let force_opts = compact::CompactOptions { force: true };
                         let compressed = compact::compress_older_messages(
-                            &all_messages, compression_window.min(6), api_key, api_url, model,
+                            &all_messages, compression_window.min(6), api_key, api_url, model, Some(&force_opts),
                         ).await;
                         if compressed.len() < all_messages.len() {
-                            all_messages = compressed;
+                            all_messages = compact::validate_message_structure(&compressed).messages;
+                        } else if llm_retry >= 1 {
+                            // Retries 2+: target single largest tool result (tiger_cowork)
+                            let before_chars = compact::estimate_messages_chars(&all_messages);
+                            compact::truncate_largest_tool_result(&mut all_messages, 4000);
+                            let after_chars = compact::estimate_messages_chars(&all_messages);
+                            if after_chars < before_chars {
+                                all_messages = compact::validate_message_structure(&all_messages).messages;
+                                info!("[ToolLoop] Truncated largest tool result: {} → {} chars", before_chars, after_chars);
+                            } else {
+                                // No tool message large enough — fall back to halving trim
+                                let trimmed = compact::trim_conversation_context(&all_messages, before_chars / 2);
+                                all_messages = compact::validate_message_structure(&trimmed).messages;
+                                info!("[ToolLoop] Trimmed to {} messages ({} chars)", all_messages.len(), compact::estimate_messages_chars(&all_messages));
+                            }
                         } else {
+                            // First retry: halving trim path
                             let current_chars = compact::estimate_messages_chars(&all_messages);
-                            all_messages = compact::trim_conversation_context(&all_messages, current_chars / 2);
+                            let trimmed = compact::trim_conversation_context(&all_messages, current_chars / 2);
+                            all_messages = compact::validate_message_structure(&trimmed).messages;
+                            info!("[ToolLoop] Trimmed to {} messages ({} chars)", all_messages.len(), compact::estimate_messages_chars(&all_messages));
                         }
                         if llm_retry >= LLM_MAX_RETRIES - 1 {
                             on_update(ToolUpdate::Error(format!("Context overflow after {} retries", LLM_MAX_RETRIES)));
@@ -5496,15 +6110,17 @@ async fn call_with_tools_inner(
             // Context overflow — try compression before giving up
             if compact::is_context_overflow(&err_msg) && all_messages.len() > 3 {
                 info!("[ToolLoop] Context overflow in response — compressing and retrying...");
+                let force_opts2 = compact::CompactOptions { force: true };
                 let compressed = compact::compress_older_messages(
-                    &all_messages, compression_window.min(6), api_key, api_url, model,
+                    &all_messages, compression_window.min(6), api_key, api_url, model, Some(&force_opts2),
                 ).await;
                 if compressed.len() < all_messages.len() {
-                    all_messages = compressed;
+                    all_messages = compact::validate_message_structure(&compressed).messages;
                     continue;
                 } else {
                     let current_chars = compact::estimate_messages_chars(&all_messages);
-                    all_messages = compact::trim_conversation_context(&all_messages, current_chars / 2);
+                    let trimmed = compact::trim_conversation_context(&all_messages, current_chars / 2);
+                    all_messages = compact::validate_message_structure(&trimmed).messages;
                     continue;
                 }
             }
@@ -5566,13 +6182,20 @@ async fn call_with_tools_inner(
         // Capture early content (for abort/cancel scenarios)
         if let Some(text) = message["content"].as_str() {
             if !text.is_empty() {
-                _early_content = text.to_string();
+                early_content = text.to_string();
+            }
+        }
+
+        // Stream reasoning content to callback if present (extended thinking models)
+        if let Some(reasoning) = message.get("reasoning_content").and_then(|r| r.as_str()) {
+            if !reasoning.is_empty() {
+                on_update(ToolUpdate::TextChunk(format!("[reasoning] {}", &reasoning[..reasoning.len().min(500)])));
             }
         }
 
         // Get tool calls and truncate large args before adding to context
         let tool_calls = message["tool_calls"].as_array();
-        let truncated_message = if let Some(calls) = tool_calls {
+        let mut truncated_message = if let Some(calls) = tool_calls {
             if !calls.is_empty() {
                 let truncated = truncate_tool_call_args(calls);
                 let mut msg = message.clone();
@@ -5584,6 +6207,13 @@ async fn call_with_tools_inner(
         } else {
             message.clone()
         };
+
+        // Preserve reasoning_content in the assistant message (tiger_cowork: reasoning support)
+        if let Some(reasoning) = message.get("reasoning_content") {
+            if reasoning.is_string() && !reasoning.as_str().unwrap_or("").is_empty() {
+                truncated_message["reasoning_content"] = reasoning.clone();
+            }
+        }
 
         // Append the assistant message (with truncated args) to the conversation
         all_messages.push(truncated_message);
@@ -5735,6 +6365,13 @@ async fn call_with_tools_inner(
                     session_activated = true;
                     // Refresh tool set to include send_task/wait_result
                     tools = tool_definitions_for_mode(&sub_agent, true, true);
+                    // Orchestrators get reduced tools — research delegated to workers
+                    if sub_agent.agent_role == "orchestrator" {
+                        tools.retain(|t| {
+                            let name = t["function"]["name"].as_str().unwrap_or("");
+                            !matches!(name, "web_search" | "fetch_url")
+                        });
+                    }
                     info!("[ToolLoop] Session activated via {}, tools refreshed with realtime tools", tool_name);
                 }
 
@@ -5923,11 +6560,13 @@ async fn call_with_tools_inner(
             // --- Reflection loop (tiger_cowork: evaluate objective satisfaction) ---
             if reflection_enabled && total_tool_calls > 0 && !content.is_empty() {
                 let mut reflection_content = content.clone();
+                let records_snapshot = tool_records.clone();
                 let reflection_result = run_reflection_loop(
                     &client, api_key, api_url, model, &mut all_messages, &user_objective,
-                    &tool_records, eval_threshold, temperature, max_tokens,
+                    &records_snapshot, eval_threshold, max_reflection_retries,
+                    temperature, max_tokens,
                     &tools, &sub_agent, sandbox_dir, on_update.clone(), realtime,
-                    &mut tool_records.clone(), &mut collected_files.clone(), &mut total_tool_calls.clone(),
+                    &mut tool_records, &mut collected_files, &mut total_tool_calls,
                 ).await;
                 if let Some(improved) = reflection_result {
                     reflection_content = improved;
@@ -5972,6 +6611,12 @@ async fn call_with_tools_inner(
         &client, api_key, api_url, model, &all_messages, &tool_records,
         total_tool_calls, temperature,
     ).await;
+    // Fall back to early_content if force_final_response returned empty
+    let content = if content.is_empty() && !early_content.is_empty() {
+        early_content
+    } else {
+        content
+    };
     on_update(ToolUpdate::TextChunk(content.clone()));
 
     ToolLoopResult {
@@ -6025,7 +6670,7 @@ async fn execute_tool_dispatch(
 }
 
 // ---------------------------------------------------------------------------
-// Reflection loop (tiger_cowork: post-loop evaluation)
+// Reflection loop (tiger_cowork: post-loop evaluation with outer retry)
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
@@ -6036,8 +6681,9 @@ async fn run_reflection_loop(
     model: &str,
     all_messages: &mut Vec<Value>,
     user_objective: &str,
-    _tool_records: &[ToolCallRecord],
+    tool_records: &[ToolCallRecord],
     eval_threshold: f64,
+    max_reflection_retries: usize,
     temperature: f64,
     max_tokens: u64,
     tools: &[Value],
@@ -6049,93 +6695,145 @@ async fn run_reflection_loop(
     collected_files: &mut Vec<String>,
     total_tool_calls: &mut usize,
 ) -> Option<String> {
-    // Build evaluation prompt
-    let eval_messages = vec![
-        json!({"role": "system", "content": "You are a quality evaluator. Assess how well the assistant satisfied the user's objective."}),
-        json!({"role": "user", "content": format!(
-            "User objective: {}\n\nAssistant's final response: {}\n\n\
-            Evaluate on a scale of 0.0 to 1.0. Return JSON: {{\"score\": 0.8, \"missing\": \"what's still needed\"}}",
-            user_objective,
-            all_messages.last().and_then(|m| m["content"].as_str()).unwrap_or("(empty)")
-        )}),
-    ];
+    // Outer retry loop (tiger_cowork: maxReflectionRetries, default 2)
+    for retry_round in 0..max_reflection_retries {
+        info!("[Reflection] Round {}/{} — evaluating objective satisfaction...", retry_round + 1, max_reflection_retries);
 
-    let eval_data = llm_call(client, api_key, api_url, model, &eval_messages, None, temperature, max_tokens).await.ok()?;
-    let eval_content = eval_data["choices"][0]["message"]["content"].as_str().unwrap_or("");
-
-    // Parse score from response
-    let score: f64 = eval_content
-        .find("\"score\"")
-        .and_then(|i| {
-            let rest = &eval_content[i..];
-            let colon = rest.find(':')?;
-            let after = rest[colon + 1..].trim_start();
-            after.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect::<String>().parse().ok()
-        })
-        .unwrap_or(1.0);
-
-    if score >= eval_threshold {
-        return None; // Good enough
-    }
-
-    let missing = eval_content
-        .find("\"missing\"")
-        .and_then(|i| {
-            let rest = &eval_content[i..];
-            let colon = rest.find(':')?;
-            let quote_start = rest[colon + 1..].find('"')? + colon + 2;
-            let quote_end = rest[quote_start..].find('"')? + quote_start;
-            Some(rest[quote_start..quote_end].to_string())
-        })
-        .unwrap_or_default();
-
-    info!("[Reflection] Score {:.2}/{:.2}. Missing: {}. Re-entering loop...", score, eval_threshold, missing);
-
-    // Re-enter loop for up to 5 more rounds
-    all_messages.push(json!({
-        "role": "system",
-        "content": format!("REFLECTION CHECK: Score {:.1}/1.0. Missing: {}. Please address the gaps.", score, missing)
-    }));
-
-    for _extra_round in 0..5 {
-        let resp = llm_call(client, api_key, api_url, model, all_messages, Some(tools), temperature, max_tokens).await.ok()?;
-
-        let message = &resp["choices"][0]["message"];
-        all_messages.push(message.clone());
-
-        if let Some(calls) = message["tool_calls"].as_array() {
-            if calls.is_empty() {
-                return message["content"].as_str().map(|s| s.to_string());
+        // Build tool summary for evaluation (tiger_cowork format)
+        let tool_summary: String = tool_records.iter().chain(tool_records_mut.iter()).map(|tr| {
+            let r = &tr.result;
+            if let Some(files) = r.get("output_files").and_then(|v| v.as_array()) {
+                if !files.is_empty() {
+                    let fnames: Vec<&str> = files.iter().filter_map(|f| f.as_str()).collect();
+                    return format!("[{}] Generated: {}", tr.tool, fnames.join(", "));
+                }
             }
-            for call in calls {
-                let name = call["function"]["name"].as_str().unwrap_or("unknown");
-                let args_str = call["function"]["arguments"].as_str().unwrap_or("{}");
-                let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
-                let id = call["id"].as_str().unwrap_or("");
+            if r.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                return format!("[{}] Error: {}", tr.tool, r.get("error").and_then(|v| v.as_str()).unwrap_or("failed"));
+            }
+            if let Some(stdout) = r.get("stdout").and_then(|v| v.as_str()) {
+                return format!("[{}] {}", tr.tool, &stdout[..stdout.len().min(300)]);
+            }
+            format!("[{}] {}", tr.tool, serde_json::to_string(r).unwrap_or_default().chars().take(300).collect::<String>())
+        }).collect::<Vec<_>>().join("\n");
 
-                let result = execute_tool_dispatch(name, &args, sandbox_dir, sub_agent, on_update.clone(), realtime).await;
-                tool_records_mut.push(ToolCallRecord { tool: name.to_string(), result: result.clone() });
+        let last_assistant = all_messages.iter().rev()
+            .find(|m| m["role"].as_str() == Some("assistant"))
+            .and_then(|m| m["content"].as_str())
+            .unwrap_or("(none)");
 
-                if let Some(files) = result.get("output_files").and_then(|v| v.as_array()) {
-                    for f in files {
-                        if let Some(s) = f.as_str() {
-                            if !collected_files.contains(&s.to_string()) {
-                                collected_files.push(s.to_string());
+        // Rich evaluation prompt matching tiger_cowork
+        let eval_messages = vec![
+            json!({"role": "system", "content": "You are an evaluation judge. Score how well the agent satisfied the user's objective."}),
+            json!({"role": "user", "content": format!(
+                "USER OBJECTIVE:\n{}\n\n\
+                AGENT ACTIONS ({} tool calls):\n{}\n\n\
+                LAST ASSISTANT MESSAGE:\n{}\n\n\
+                Respond in EXACTLY this JSON format (no other text):\n\
+                {{\"score\": <0.0-1.0>, \"satisfied\": <true/false>, \"missing\": \"<what is missing or incomplete, empty string if satisfied>\"}}\n\n\
+                Scoring guide:\n\
+                - 1.0: Fully satisfied, all parts addressed\n\
+                - 0.7-0.9: Mostly satisfied, minor gaps\n\
+                - 0.4-0.6: Partially satisfied, significant gaps\n\
+                - 0.0-0.3: Not satisfied, major parts missing",
+                user_objective, total_tool_calls, tool_summary, last_assistant
+            )}),
+        ];
+
+        let eval_data = match llm_call(client, api_key, api_url, model, &eval_messages, None, temperature, max_tokens).await {
+            Ok(d) => d,
+            Err(e) => {
+                error!("[Reflection] Eval call failed: {}", e);
+                break;
+            }
+        };
+        let eval_content = eval_data["choices"][0]["message"]["content"].as_str().unwrap_or("");
+        info!("[Reflection] Raw eval: {}", &eval_content[..eval_content.len().min(300)]);
+
+        // Parse JSON from response
+        let json_str = eval_content.find('{')
+            .and_then(|start| eval_content.rfind('}').map(|end| &eval_content[start..=end]));
+        let parsed: Value = json_str
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(json!({"score": 1.0, "satisfied": true}));
+
+        let score = parsed["score"].as_f64().unwrap_or(1.0);
+        let satisfied = parsed["satisfied"].as_bool().unwrap_or(false);
+        let missing = parsed["missing"].as_str().unwrap_or("").to_string();
+
+        info!("[Reflection] Score: {:.2}, Satisfied: {}, Missing: {}", score, satisfied, &missing[..missing.len().min(200)]);
+
+        if score >= eval_threshold || satisfied {
+            info!("[Reflection] Score {:.2} >= threshold {:.2}. Objective satisfied.", score, eval_threshold);
+            break;
+        }
+
+        // Score below threshold — re-enter agent loop to address gaps
+        info!("[Reflection] Score {:.2} < threshold {:.2}. Re-entering agent loop...", score, eval_threshold);
+
+        all_messages.push(json!({
+            "role": "system",
+            "content": format!(
+                "REFLECTION CHECK: Your work scored {:.1}/1.0 (threshold: {:.1}). The evaluation found these gaps:\n{}\n\n\
+                Please address what's missing to fully satisfy the user's objective. Use tools as needed.",
+                score, eval_threshold, missing
+            )
+        }));
+
+        // Run additional tool rounds to address the gaps (tiger_cowork: up to 5)
+        for _extra_round in 0..5usize {
+            let resp = match llm_call(client, api_key, api_url, model, all_messages, Some(tools), temperature, max_tokens).await {
+                Ok(d) => d,
+                Err(e) => {
+                    error!("[Reflection retry] LLM call failed: {}", e);
+                    break;
+                }
+            };
+
+            let message = &resp["choices"][0]["message"];
+            all_messages.push(message.clone());
+
+            if let Some(calls) = message["tool_calls"].as_array() {
+                if calls.is_empty() {
+                    break; // LLM done, loop back to re-evaluate
+                }
+                for call in calls {
+                    let name = call["function"]["name"].as_str().unwrap_or("unknown");
+                    let args_str = call["function"]["arguments"].as_str().unwrap_or("{}");
+                    let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                    let id = call["id"].as_str().unwrap_or("");
+
+                    on_update(ToolUpdate::ToolCall { name: name.to_string(), args: args.clone() });
+                    let result = execute_tool_dispatch(name, &args, sandbox_dir, sub_agent, on_update.clone(), realtime).await;
+                    on_update(ToolUpdate::ToolResult { name: name.to_string(), result: result.clone() });
+                    tool_records_mut.push(ToolCallRecord { tool: name.to_string(), result: result.clone() });
+
+                    if let Some(files) = result.get("output_files").and_then(|v| v.as_array()) {
+                        for f in files {
+                            if let Some(s) = f.as_str() {
+                                if !collected_files.contains(&s.to_string()) {
+                                    collected_files.push(s.to_string());
+                                }
                             }
                         }
                     }
-                }
 
-                let result_str = compact::compress_tool_result(name, &result, 6000);
-                all_messages.push(json!({"role": "tool", "tool_call_id": id, "content": result_str}));
-                *total_tool_calls += 1;
+                    let result_str = compact::compress_tool_result(name, &result, 6000);
+                    all_messages.push(json!({"role": "tool", "tool_call_id": id, "content": result_str}));
+                    *total_tool_calls += 1;
+                }
+            } else {
+                break; // No tool calls, done with this round
             }
-        } else {
-            return message["content"].as_str().map(|s| s.to_string());
         }
+        // Loop back to re-evaluate
     }
 
-    None
+    // Return the last assistant message content (may be improved or original)
+    all_messages.iter().rev()
+        .find(|m| m["role"].as_str() == Some("assistant"))
+        .and_then(|m| m["content"].as_str())
+        .map(|s| s.to_string())
 }
 
 // ---------------------------------------------------------------------------

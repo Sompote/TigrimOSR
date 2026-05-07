@@ -303,25 +303,38 @@ async fn process_remote_task(
         }
     }
 
-    // Run the task through the tool loop
-    let messages = vec![json!({"role": "user", "content": task})];
-    let system_prompt = Some(
-        "You are a helpful assistant processing a remote task. Complete the task thoroughly and return a clear result.".to_string()
-    );
+    // Retry logic — load max retries from settings (default 2 → up to 3 total attempts)
+    let max_retries = settings.remote_task_max_retries.unwrap_or(2) as usize;
 
-    let sub_agent = if let Some(ref cf) = config_file {
-        if let Some((_, ids)) = load_agent_yaml(cf) {
-            SubAgentConfig {
-                enabled: !ids.is_empty(),
-                config_file: cf.clone(),
-                agent_ids: ids,
-                api_key: api_key.clone(),
-                api_url: api_url.clone(),
-                model: model.clone(),
-                depth: 0,
-                session_id: session_id.clone(),
-                agent_id: "main".to_string(),
-                mode: "auto".to_string(),
+    for attempt in 0..=max_retries {
+        // Run the task through the tool loop
+        let messages = vec![json!({"role": "user", "content": task.clone()})];
+        let system_prompt = Some(
+            "You are a helpful assistant processing a remote task. Complete the task thoroughly and return a clear result.".to_string()
+        );
+
+        let sub_agent = if let Some(ref cf) = config_file {
+            if let Some((_, ids)) = load_agent_yaml(cf) {
+                SubAgentConfig {
+                    enabled: !ids.is_empty(),
+                    config_file: cf.clone(),
+                    agent_ids: ids,
+                    api_key: api_key.clone(),
+                    api_url: api_url.clone(),
+                    model: model.clone(),
+                    depth: 0,
+                    session_id: session_id.clone(),
+                    agent_id: "main".to_string(),
+                    mode: "auto".to_string(),
+                    agent_role: "orchestrator".to_string(),
+                    cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                }
+            } else {
+                SubAgentConfig {
+                    session_id: session_id.clone(),
+                    agent_id: "main".to_string(),
+                    ..SubAgentConfig::default()
+                }
             }
         } else {
             SubAgentConfig {
@@ -329,63 +342,93 @@ async fn process_remote_task(
                 agent_id: "main".to_string(),
                 ..SubAgentConfig::default()
             }
-        }
-    } else {
-        SubAgentConfig {
-            session_id: session_id.clone(),
-            agent_id: "main".to_string(),
-            ..SubAgentConfig::default()
-        }
-    };
+        };
 
-    let tid = task_id.clone();
-    let on_update = move |update: ToolUpdate| {
-        let tid = tid.clone();
-        match &update {
-            ToolUpdate::ToolCall { name, .. } => {
-                let msg = format!("Calling tool: {}", name);
-                let tid = tid.clone();
-                tokio::spawn(async move {
-                    add_progress(&tid, &msg).await;
-                });
+        let tid = task_id.clone();
+        let on_update = move |update: ToolUpdate| {
+            let tid = tid.clone();
+            match &update {
+                ToolUpdate::ToolCall { name, .. } => {
+                    let msg = format!("Calling tool: {}", name);
+                    let tid = tid.clone();
+                    tokio::spawn(async move {
+                        add_progress(&tid, &msg).await;
+                    });
+                }
+                ToolUpdate::ToolResult { name, result } => {
+                    let ok = result["ok"].as_bool().unwrap_or(false);
+                    let msg = format!("Tool {} → {}", name, if ok { "ok" } else { "error" });
+                    let tid = tid.clone();
+                    tokio::spawn(async move {
+                        add_progress(&tid, &msg).await;
+                    });
+                }
+                _ => {}
             }
-            ToolUpdate::ToolResult { name, result } => {
-                let ok = result["ok"].as_bool().unwrap_or(false);
-                let msg = format!("Tool {} → {}", name, if ok { "ok" } else { "error" });
-                let tid = tid.clone();
-                tokio::spawn(async move {
-                    add_progress(&tid, &msg).await;
-                });
-            }
-            _ => {}
+        };
+
+        let result = call_with_tools(
+            &api_key,
+            &api_url,
+            &model,
+            messages,
+            system_prompt,
+            &sandbox_dir,
+            on_update,
+            sub_agent,
+        )
+        .await;
+
+        // Check if killed during execution — preserve partial output
+        if is_killed(&task_id).await {
+            let partial_content = if result.content.is_empty() {
+                "Task was cancelled.".to_string()
+            } else {
+                result.content
+            };
+            set_result(&task_id, &partial_content).await;
+            add_progress(&task_id, "Task killed — partial result preserved").await;
+            return;
         }
-    };
 
-    let result = call_with_tools(
-        &api_key,
-        &api_url,
-        &model,
-        messages,
-        system_prompt,
-        &sandbox_dir,
-        on_update,
-        sub_agent,
-    )
-    .await;
+        // Detect timeout / context overflow / empty / cancelled responses that warrant a retry
+        let content_lower = result.content.to_lowercase();
+        let is_retryable = result.content.is_empty()
+            || content_lower.contains("timeout")
+            || content_lower.contains("context overflow")
+            || content_lower.contains("cancelled")
+            || content_lower.contains("canceled");
 
-    // Check if killed during execution
-    if is_killed(&task_id).await {
-        return;
+        if is_retryable && attempt < max_retries {
+            add_progress(
+                &task_id,
+                &format!(
+                    "Agent timed out or returned empty — re-delegating (attempt {}/{})",
+                    attempt + 2,
+                    max_retries + 1
+                ),
+            )
+            .await;
+            info!(
+                "[Remote] Task {} retrying (attempt {}/{})",
+                task_id,
+                attempt + 2,
+                max_retries + 1
+            );
+            continue;
+        }
+
+        // Store final result — either success or last attempt exhausted
+        let final_text = if result.content.is_empty() {
+            "No response generated".to_string()
+        } else {
+            result.content
+        };
+        set_result(&task_id, &final_text).await;
+        add_progress(&task_id, "Task completed").await;
+        set_status(&task_id, "completed").await;
+        break;
     }
-
-    let final_text = if result.content.is_empty() {
-        "No response generated".to_string()
-    } else {
-        result.content
-    };
-    set_result(&task_id, &final_text).await;
-    add_progress(&task_id, "Task completed").await;
-    set_status(&task_id, "completed").await;
 
     // Cleanup realtime session if we booted one
     if has_agents {

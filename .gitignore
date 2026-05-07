@@ -1,6 +1,9 @@
 # Tigrimos subapp (separate project)
 Tigrimos/
 
+# Tiger cowork (TypeScript original)
+tiger_cowork/
+
 # Rust build artifacts
 /target/
 Cargo.lock

@@ -12,8 +12,11 @@
 //!  9. Cleanup (transcript)
 
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Mutex;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -31,6 +34,55 @@ const MAX_RECENT_FILES: usize = 10;
 const MAX_PROMPT_RETRIES: usize = 3;
 
 // ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/// Metadata about a compaction operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompactMetadata {
+    pub compaction_id: String,
+    pub tokens_before: usize,
+    pub tokens_after: usize,
+    pub messages_before: usize,
+    pub messages_after: usize,
+    pub timestamp: String,
+    pub transcript_path: Option<String>,
+}
+
+/// A hook that runs before or after compaction.
+/// Receives the message array, optionally returns a string to inject into the summarization prompt.
+pub type CompactHook =
+    Box<dyn Fn(&[Value]) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
+
+/// Checkpoint for resuming a tool loop session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolLoopCheckpoint {
+    pub session_id: String,
+    pub checkpoint_round: usize,
+    pub timestamp: String,
+    pub all_messages: Vec<Value>,
+    pub tool_results: Vec<CheckpointToolResult>,
+    pub tool_call_history: Vec<String>,
+    pub total_tool_calls: usize,
+    pub consecutive_errors: usize,
+    pub early_content: Option<String>,
+    pub system_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointToolResult {
+    pub tool: String,
+    pub result: Value,
+}
+
+/// Options for `compress_older_messages`.
+#[derive(Debug, Default)]
+pub struct CompactOptions {
+    /// Bypass cooldown (used by emergency retry loop).
+    pub force: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Global state
 // ---------------------------------------------------------------------------
 
@@ -40,6 +92,8 @@ struct CompactState {
     recent_file_reads: HashMap<String, FileReadEntry>,
     active_plan: Option<String>,
     invoked_skills: HashMap<String, String>,
+    pre_compact_hooks: Vec<CompactHook>,
+    post_compact_hooks: Vec<CompactHook>,
 }
 
 struct FileReadEntry {
@@ -65,6 +119,8 @@ fn compact_state() -> &'static Mutex<CompactState> {
             recent_file_reads: HashMap::new(),
             active_plan: None,
             invoked_skills: HashMap::new(),
+            pre_compact_hooks: Vec::new(),
+            post_compact_hooks: Vec::new(),
         })
     })
 }
@@ -103,6 +159,11 @@ pub fn set_active_plan(plan: Option<String>) {
     compact_state().lock().unwrap().active_plan = plan;
 }
 
+/// Get the active plan.
+pub fn get_active_plan() -> Option<String> {
+    compact_state().lock().unwrap().active_plan.clone()
+}
+
 /// Track an invoked skill for post-compact restoration.
 pub fn track_invoked_skill(name: &str, content: &str) {
     let truncated: String = content.chars().take(5000).collect();
@@ -111,6 +172,24 @@ pub fn track_invoked_skill(name: &str, content: &str) {
         .unwrap()
         .invoked_skills
         .insert(name.to_string(), truncated);
+}
+
+// ---------------------------------------------------------------------------
+// Compact hooks
+// ---------------------------------------------------------------------------
+
+/// Register a hook to run before compaction.
+/// The hook receives the message array and can return a string to inject into the prompt.
+pub fn on_pre_compact(hook: CompactHook) {
+    compact_state().lock().unwrap().pre_compact_hooks.push(hook);
+}
+
+/// Register a hook to run after compaction.
+pub fn on_post_compact(hook: CompactHook) {
+    compact_state()
+        .lock()
+        .unwrap()
+        .post_compact_hooks.push(hook);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,11 +219,183 @@ pub fn estimate_messages_chars(messages: &[Value]) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// Validate message structure
+// ---------------------------------------------------------------------------
+
+/// Result of message validation.
+pub struct ValidateResult {
+    pub valid: bool,
+    pub messages: Vec<Value>,
+    pub dropped: usize,
+}
+
+/// Validate the structural integrity of a message array against API tool-use rules.
+/// Removes orphaned `tool` messages, strips dangling `tool_calls` ids from
+/// assistant messages, and ensures the first non-system message is a user message.
+pub fn validate_message_structure(messages: &[Value]) -> ValidateResult {
+    let mut cleaned: Vec<Value> = Vec::new();
+    let mut dropped: usize = 0;
+    let mut seen_assistant_tool_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    for (idx, m) in messages.iter().enumerate() {
+        let role = m["role"].as_str().unwrap_or("");
+
+        if role == "assistant" {
+            if let Some(tool_calls) = m["tool_calls"].as_array() {
+                if !tool_calls.is_empty() {
+                    // Look ahead for matching tool results
+                    let mut responded_ids: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    for j in (idx + 1)..messages.len() {
+                        if messages[j]["role"].as_str() != Some("tool") {
+                            break;
+                        }
+                        if let Some(tcid) = messages[j]["tool_call_id"].as_str() {
+                            responded_ids.insert(tcid.to_string());
+                        }
+                    }
+
+                    let kept_tool_calls: Vec<&Value> = tool_calls
+                        .iter()
+                        .filter(|tc| {
+                            tc["id"]
+                                .as_str()
+                                .map(|id| responded_ids.contains(id))
+                                .unwrap_or(false)
+                        })
+                        .collect();
+
+                    if kept_tool_calls.len() == tool_calls.len() {
+                        // All tool_calls have matching results
+                        for tc in &kept_tool_calls {
+                            if let Some(id) = tc["id"].as_str() {
+                                seen_assistant_tool_ids.insert(id.to_string());
+                            }
+                        }
+                        cleaned.push(m.clone());
+                    } else if !kept_tool_calls.is_empty() {
+                        // Some tool_calls survived
+                        for tc in &kept_tool_calls {
+                            if let Some(id) = tc["id"].as_str() {
+                                seen_assistant_tool_ids.insert(id.to_string());
+                            }
+                        }
+                        let kept_arr: Vec<Value> =
+                            kept_tool_calls.into_iter().cloned().collect();
+                        let mut trimmed = m.clone();
+                        trimmed["tool_calls"] = json!(kept_arr);
+                        cleaned.push(trimmed);
+                        dropped += tool_calls.len() - kept_arr.len();
+                    } else {
+                        // No tool_calls survive — keep message only if it has text content
+                        let text = m["content"].as_str().unwrap_or("");
+                        if !text.trim().is_empty() {
+                            let mut stripped = m.clone();
+                            if let Some(obj) = stripped.as_object_mut() {
+                                obj.remove("tool_calls");
+                            }
+                            cleaned.push(stripped);
+                        }
+                        dropped += tool_calls.len();
+                    }
+                    continue;
+                }
+            }
+            // Assistant without tool_calls — pass through
+            cleaned.push(m.clone());
+        } else if role == "tool" {
+            if let Some(tcid) = m["tool_call_id"].as_str() {
+                if seen_assistant_tool_ids.contains(tcid) {
+                    cleaned.push(m.clone());
+                } else {
+                    dropped += 1;
+                }
+            } else {
+                dropped += 1;
+            }
+        } else {
+            cleaned.push(m.clone());
+        }
+    }
+
+    // Ensure the first non-system message is `user`
+    let mut first_non_system = 0;
+    while first_non_system < cleaned.len()
+        && cleaned[first_non_system]["role"].as_str() == Some("system")
+    {
+        first_non_system += 1;
+    }
+    if first_non_system < cleaned.len()
+        && cleaned[first_non_system]["role"].as_str() != Some("user")
+    {
+        cleaned.insert(
+            first_non_system,
+            json!({"role": "user", "content": "Continue."}),
+        );
+    }
+
+    if dropped > 0 {
+        info!("[ValidateMsg] Dropped {} malformed messages", dropped);
+    }
+
+    ValidateResult {
+        valid: dropped == 0,
+        messages: cleaned,
+        dropped,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Truncate largest tool result
+// ---------------------------------------------------------------------------
+
+/// Truncate the largest `tool` message in-place so an oversized single tool
+/// result doesn't keep blowing the context budget. Used by the emergency retry
+/// loop on retries 2+ when compaction couldn't reduce size.
+pub fn truncate_largest_tool_result(messages: &mut Vec<Value>, max_len: usize) {
+    let default_max = if max_len == 0 { 4000 } else { max_len };
+    let mut largest_idx: Option<usize> = None;
+    let mut largest_len: usize = 0;
+
+    for (i, m) in messages.iter().enumerate() {
+        if m["role"].as_str() != Some("tool") {
+            continue;
+        }
+        let len = m["content"].as_str().map(|s| s.len()).unwrap_or(0);
+        if len > largest_len {
+            largest_len = len;
+            largest_idx = Some(i);
+        }
+    }
+
+    if let Some(idx) = largest_idx {
+        if largest_len > default_max {
+            let original = messages[idx]["content"].as_str().unwrap_or("").to_string();
+            let truncated_content: String = original.chars().take(default_max).collect();
+            let truncated = format!(
+                "{}\n\n[... truncated due to context overflow — original was {} chars ...]",
+                truncated_content,
+                original.len()
+            );
+            messages[idx]["content"] = json!(truncated);
+            info!(
+                "[ContextTrim] Truncated largest tool result at idx {}: {} -> {} chars",
+                idx,
+                original.len(),
+                truncated.len()
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Trim conversation context (naive fallback)
 // ---------------------------------------------------------------------------
 
 /// Trim conversation messages to fit within a character budget.
 /// Keeps system messages from the start + most recent messages.
+/// Tool-pair aware: groups assistant+tool messages atomically.
 /// Default ~6M chars (~1.5M tokens).
 pub fn trim_conversation_context(messages: &[Value], max_chars: usize) -> Vec<Value> {
     let total_chars = estimate_messages_chars(messages);
@@ -169,38 +420,103 @@ pub fn trim_conversation_context(messages: &[Value], max_chars: usize) -> Vec<Va
         start_idx += 1;
     }
 
-    // Add messages from the end (most recent) until budget
-    let mut reversed: Vec<Value> = Vec::new();
-    for i in (start_idx..messages.len()).rev() {
-        let msg_chars = messages[i]["content"]
-            .as_str()
-            .map(|s| s.len())
-            .unwrap_or(500);
-        if used_chars + msg_chars > max_chars {
+    // Pre-group remaining messages into atomic units
+    let units = group_into_atomic_units(&messages[start_idx..]);
+
+    let unit_chars = |unit: &[Value]| -> usize {
+        let mut n = 0usize;
+        for m in unit {
+            if let Some(s) = m["content"].as_str() {
+                n += s.len();
+            } else {
+                n += 500;
+            }
+            if m.get("tool_calls").is_some() {
+                n += m["tool_calls"].to_string().len();
+            }
+        }
+        n
+    };
+
+    // Walk units from most recent backward, taking whole units while budget allows
+    let mut taken: Vec<Vec<Value>> = Vec::new();
+    let mut dropped_units = 0;
+    for k in (0..units.len()).rev() {
+        let c = unit_chars(&units[k]);
+        if used_chars + c > max_chars {
+            dropped_units = k + 1;
             break;
         }
-        reversed.push(messages[i].clone());
-        used_chars += msg_chars;
+        taken.push(units[k].clone());
+        used_chars += c;
     }
+    taken.reverse();
 
-    if reversed.len() < messages.len() - start_idx {
+    if dropped_units > 0 {
         result.push(json!({
             "role": "system",
             "content": "[Earlier conversation history was trimmed to fit context window]"
         }));
     }
 
-    reversed.reverse();
-    result.extend(reversed);
+    for unit in &taken {
+        result.extend(unit.iter().cloned());
+    }
+
+    // Final structural validation
+    let validated = validate_message_structure(&result);
 
     info!(
         "[ContextTrim] Trimmed {} messages ({} chars) -> {} messages ({} chars)",
         messages.len(),
         total_chars,
-        result.len(),
+        validated.messages.len(),
         used_chars
     );
-    result
+    validated.messages
+}
+
+/// Group messages into atomic units where each assistant{tool_calls} is bundled
+/// with its matching tool{tool_call_id} results.
+fn group_into_atomic_units(messages: &[Value]) -> Vec<Vec<Value>> {
+    let mut units: Vec<Vec<Value>> = Vec::new();
+    let mut i = 0;
+
+    while i < messages.len() {
+        let msg = &messages[i];
+
+        if msg["role"].as_str() == Some("assistant") {
+            if let Some(tool_calls) = msg["tool_calls"].as_array() {
+                if !tool_calls.is_empty() {
+                    let ids: std::collections::HashSet<String> = tool_calls
+                        .iter()
+                        .filter_map(|tc| tc["id"].as_str().map(|s| s.to_string()))
+                        .collect();
+                    let mut unit = vec![msg.clone()];
+                    let mut j = i + 1;
+                    while j < messages.len()
+                        && messages[j]["role"].as_str() == Some("tool")
+                        && messages[j]["tool_call_id"]
+                            .as_str()
+                            .map(|id| ids.contains(id))
+                            .unwrap_or(false)
+                    {
+                        unit.push(messages[j].clone());
+                        j += 1;
+                    }
+                    units.push(unit);
+                    i = j;
+                    continue;
+                }
+            }
+        }
+
+        // Standalone message (user, system, orphan tool, assistant without tool_calls)
+        units.push(vec![msg.clone()]);
+        i += 1;
+    }
+
+    units
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +663,46 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
 }
 
 // ---------------------------------------------------------------------------
+// Group messages by round
+// ---------------------------------------------------------------------------
+
+/// Group messages by API round: each round = user message + assistant response + tool results.
+/// Used during prompt-too-long retry to intelligently drop message groups.
+fn group_messages_by_round(messages: &[Value]) -> Vec<Vec<Value>> {
+    let mut groups: Vec<Vec<Value>> = Vec::new();
+    let mut current: Vec<Value> = Vec::new();
+
+    for msg in messages {
+        if msg["role"].as_str() == Some("user") && !current.is_empty() {
+            groups.push(current);
+            current = Vec::new();
+        }
+        current.push(msg.clone());
+    }
+    if !current.is_empty() {
+        groups.push(current);
+    }
+
+    groups
+}
+
+// ---------------------------------------------------------------------------
+// Compact artifact detection
+// ---------------------------------------------------------------------------
+
+/// Identify system messages that were injected by a prior compaction so we can
+/// drop them on the next compaction instead of letting them accumulate.
+fn is_compact_artifact(msg: &Value) -> bool {
+    if msg["role"].as_str() != Some("system") {
+        return false;
+    }
+    let c = msg["content"].as_str().unwrap_or("");
+    c.starts_with("[COMPACT BOUNDARY")
+        || c.starts_with("[Post-compact:")
+        || c.starts_with("This session is continued from a previous conversation")
+}
+
+// ---------------------------------------------------------------------------
 // Summarization prompt
 // ---------------------------------------------------------------------------
 
@@ -450,15 +806,7 @@ fn strip_for_summarization(messages: &[Value]) -> Vec<Value> {
 // Format compact summary
 // ---------------------------------------------------------------------------
 
-fn format_compact_summary(
-    raw_summary: &str,
-    compaction_id: &str,
-    messages_before: usize,
-    messages_after: usize,
-    tokens_before: usize,
-    tokens_after: usize,
-    transcript_path: Option<&str>,
-) -> String {
+fn format_compact_summary(raw_summary: &str, metadata: &CompactMetadata) -> String {
     // Strip <analysis> block
     let re_analysis = regex::Regex::new(r"(?si)<analysis>.*?</analysis>").unwrap();
     let formatted = re_analysis.replace_all(raw_summary, "").trim().to_string();
@@ -474,14 +822,21 @@ fn format_compact_summary(
     let header = format!(
         "This session is continued from a previous conversation that was compacted to save context space.\n\
          Compaction ID: {} | Messages: {} -> {} | Tokens saved: ~{}",
-        compaction_id,
-        messages_before,
-        messages_after,
-        tokens_before.saturating_sub(tokens_after)
+        metadata.compaction_id,
+        metadata.messages_before,
+        metadata.messages_after,
+        metadata.tokens_before.saturating_sub(metadata.tokens_after)
     );
 
-    let transcript_note = transcript_path
-        .map(|p| format!("\nFull pre-compact transcript available at: {} (use read_file to access if needed)", p))
+    let transcript_note = metadata
+        .transcript_path
+        .as_ref()
+        .map(|p| {
+            format!(
+                "\nFull pre-compact transcript available at: {} (use read_file to access if needed)",
+                p
+            )
+        })
         .unwrap_or_default();
 
     format!("{}{}\n\n---\n\n{}", header, transcript_note, formatted)
@@ -552,10 +907,7 @@ fn build_post_compact_attachments() -> Vec<Value> {
 // Write pre-compact transcript
 // ---------------------------------------------------------------------------
 
-async fn write_compact_transcript(
-    compaction_id: &str,
-    messages: &[Value],
-) -> Option<String> {
+async fn write_compact_transcript(compaction_id: &str, messages: &[Value]) -> Option<String> {
     let transcript_dir = "data/transcripts";
     if let Err(e) = tokio::fs::create_dir_all(transcript_dir).await {
         error!("[Compact] Failed to create transcript dir: {}", e);
@@ -671,7 +1023,10 @@ pub async fn compress_older_messages(
     api_key: &str,
     api_url: &str,
     model: &str,
+    options: Option<&CompactOptions>,
 ) -> Vec<Value> {
+    let force = options.map(|o| o.force).unwrap_or(false);
+
     // Find system message boundary
     let mut system_end = 0;
     while system_end < all_messages.len()
@@ -680,9 +1035,23 @@ pub async fn compress_older_messages(
         system_end += 1;
     }
 
+    // Preserve only the original system prompt(s); strip prior compaction artifacts
+    // so they don't accumulate on every compaction cycle.
+    let original_system: Vec<Value> = all_messages[..system_end]
+        .iter()
+        .filter(|m| !is_compact_artifact(m))
+        .cloned()
+        .collect();
+
     let non_system = &all_messages[system_end..];
     if non_system.len() <= window_size {
-        return all_messages.to_vec(); // Nothing to compress
+        // Nothing to compress, but dedupe accumulated artifacts if any slipped in
+        if original_system.len() < system_end {
+            let mut result = original_system;
+            result.extend_from_slice(non_system);
+            return result;
+        }
+        return all_messages.to_vec();
     }
 
     // Circuit breaker
@@ -696,9 +1065,9 @@ pub async fn compress_older_messages(
             return all_messages.to_vec();
         }
 
-        // Cooldown
+        // Cooldown — bypassed when called with force from emergency retry loop
         let now = now_ms();
-        if now - state.last_compaction_time < COMPACT_COOLDOWN_MS {
+        if !force && now - state.last_compaction_time < COMPACT_COOLDOWN_MS {
             info!(
                 "[Compact] Cooldown: last compaction was {}s ago (min {}s). Skipping.",
                 (now - state.last_compaction_time) / 1000,
@@ -717,6 +1086,22 @@ pub async fn compress_older_messages(
         all_messages.len(),
         tokens_before
     );
+
+    // Step 1: Pre-compact hooks
+    let pre_hook_futures: Vec<Pin<Box<dyn Future<Output = Option<String>> + Send>>> = {
+        let state = compact_state().lock().unwrap();
+        state
+            .pre_compact_hooks
+            .iter()
+            .map(|hook| hook(all_messages))
+            .collect()
+    };
+    let mut hook_injections: Vec<String> = Vec::new();
+    for fut in pre_hook_futures {
+        if let Some(result) = fut.await {
+            hook_injections.push(result);
+        }
+    }
 
     // Step 2 & 3: Prepare messages for summarization
     let split_point = non_system.len() - window_size;
@@ -770,6 +1155,12 @@ pub async fn compress_older_messages(
         }
     }
 
+    // Add hook injections to the prompt
+    if !hook_injections.is_empty() {
+        summary_parts.push("\n--- Pre-compact hook context ---".to_string());
+        summary_parts.extend(hook_injections);
+    }
+
     // Step 4 & 5: Send to model with retry logic
     let mut summary = String::new();
     let mut prompt_messages = summary_parts.clone();
@@ -804,17 +1195,20 @@ pub async fn compress_older_messages(
                     || err_msg.contains("too many tokens");
 
                 if is_prompt_too_long && retry < MAX_PROMPT_RETRIES - 1 {
-                    // Step 5: Drop oldest message groups
+                    // Step 5: Drop oldest message groups using round-based grouping
                     info!(
                         "[Compact] Prompt too long — dropping oldest message groups (retry {})...",
                         retry + 1
                     );
-                    // Keep only the latter portion
-                    let keep_ratio = stripped.len() / (retry + 2);
-                    let remaining = &stripped[stripped.len().saturating_sub(keep_ratio)..];
+
+                    let keep_count =
+                        stripped.len() - stripped.len() / (retry + 2);
+                    let remaining_messages = &stripped[stripped.len().saturating_sub(keep_count)..];
+                    let groups = group_messages_by_round(remaining_messages);
+                    let remaining: Vec<Value> = groups.into_iter().flatten().collect();
 
                     prompt_messages = Vec::new();
-                    for msg in remaining {
+                    for msg in &remaining {
                         let role = msg["role"].as_str().unwrap_or("");
                         match role {
                             "user" => {
@@ -828,7 +1222,8 @@ pub async fn compress_older_messages(
                                 if let Some(text) = msg["content"].as_str() {
                                     if !text.is_empty() {
                                         let truncated: String = text.chars().take(150).collect();
-                                        prompt_messages.push(format!("ASSISTANT: {}", truncated));
+                                        prompt_messages
+                                            .push(format!("ASSISTANT: {}", truncated));
                                     }
                                 }
                                 if let Some(calls) = msg["tool_calls"].as_array() {
@@ -851,6 +1246,12 @@ pub async fn compress_older_messages(
                             _ => {}
                         }
                     }
+
+                    info!(
+                        "[Compact] Reduced to {} parts (dropped {} parts)",
+                        prompt_messages.len(),
+                        summary_parts.len().saturating_sub(prompt_messages.len())
+                    );
                     continue;
                 }
 
@@ -870,14 +1271,27 @@ pub async fn compress_older_messages(
     // Step 6: Format the summary
     let transcript_path = write_compact_transcript(&compaction_id, to_compress).await;
 
+    let mut metadata = CompactMetadata {
+        compaction_id: compaction_id.clone(),
+        tokens_before,
+        tokens_after: 0, // computed after building final messages
+        messages_before: all_messages.len(),
+        messages_after: 0,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        transcript_path,
+    };
+
+    let formatted_summary = format_compact_summary(&summary, &metadata);
+
     // Step 7: Build post-compact attachments
     let post_compact_attachments = build_post_compact_attachments();
 
     // Step 8: Build the new message history
     let mut compressed: Vec<Value> = Vec::new();
 
-    // Keep original system messages
-    compressed.extend_from_slice(&all_messages[..system_end]);
+    // Keep only the ORIGINAL system prompt(s); compaction artifacts from prior
+    // compactions were filtered out above to prevent unbounded growth.
+    compressed.extend(original_system);
 
     // Compact boundary marker
     compressed.push(json!({
@@ -888,17 +1302,7 @@ pub async fn compress_older_messages(
         )
     }));
 
-    // Formatted summary (compute tokens_after after building)
-    let formatted_summary = format_compact_summary(
-        &summary,
-        &compaction_id,
-        all_messages.len(),
-        0, // placeholder, updated below
-        tokens_before,
-        0,
-        transcript_path.as_deref(),
-    );
-
+    // Formatted summary
     compressed.push(json!({
         "role": "system",
         "content": formatted_summary
@@ -921,15 +1325,17 @@ pub async fn compress_older_messages(
     // Keep recent messages
     compressed.extend_from_slice(to_keep);
 
-    let tokens_after = estimate_messages_chars(&compressed) / 4;
+    // Update metadata with final token count
+    metadata.tokens_after = estimate_messages_chars(&compressed) / 4;
+    metadata.messages_after = compressed.len();
 
     info!(
         "[Compact] Compaction {} complete: {} -> {} messages, ~{} -> ~{} tokens",
         compaction_id,
-        all_messages.len(),
-        compressed.len(),
-        tokens_before,
-        tokens_after
+        metadata.messages_before,
+        metadata.messages_after,
+        metadata.tokens_before,
+        metadata.tokens_after
     );
 
     // Step 9: Cleanup
@@ -937,9 +1343,149 @@ pub async fn compress_older_messages(
         let mut state = compact_state().lock().unwrap();
         state.last_compaction_time = now_ms();
         state.recent_file_reads.clear();
+        state.invoked_skills.clear();
     }
 
-    compressed
+    // Execute post-compact hooks
+    let post_hook_futures: Vec<Pin<Box<dyn Future<Output = Option<String>> + Send>>> = {
+        let state = compact_state().lock().unwrap();
+        state
+            .post_compact_hooks
+            .iter()
+            .map(|hook| hook(&compressed))
+            .collect()
+    };
+    for fut in post_hook_futures {
+        let _ = fut.await;
+    }
+
+    // Final structural validation — make sure the compaction step itself didn't
+    // leave any orphaned tool messages or break the user-first invariant.
+    let validated = validate_message_structure(&compressed);
+    validated.messages
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoint & Resume
+// ---------------------------------------------------------------------------
+
+/// Save a checkpoint for session resumption.
+pub async fn save_checkpoint(session_id: &str, checkpoint: &ToolLoopCheckpoint) {
+    let dir = "data/checkpoints";
+    if let Err(e) = tokio::fs::create_dir_all(dir).await {
+        error!("[Checkpoint] Failed to create checkpoint dir: {}", e);
+        return;
+    }
+
+    let fp = format!("{}/{}.json", dir, session_id);
+
+    // Compress tool results in checkpoint to keep file size reasonable
+    let compact_tool_results: Vec<Value> = checkpoint
+        .tool_results
+        .iter()
+        .map(|tr| {
+            let mut compact_result = json!({"ok": tr.result.get("ok")});
+            if let Some(ec) = tr.result.get("exitCode") {
+                compact_result["exitCode"] = ec.clone();
+            }
+            if let Some(of) = tr.result.get("outputFiles") {
+                compact_result["outputFiles"] = of.clone();
+            }
+            if let Some(stdout) = tr.result["stdout"].as_str() {
+                compact_result["stdout"] = json!(&stdout[..stdout.len().min(2000)]);
+            }
+            if let Some(stderr) = tr.result["stderr"].as_str() {
+                compact_result["stderr"] = json!(&stderr[..stderr.len().min(1000)]);
+            }
+            if let Some(err) = tr.result.get("error") {
+                compact_result["error"] = err.clone();
+            }
+            json!({"tool": tr.tool, "result": compact_result})
+        })
+        .collect();
+
+    // Compress allMessages — only keep last 20 messages fully, summarize earlier ones
+    let compact_messages: Vec<Value> = if checkpoint.all_messages.len() > 30 {
+        let mut msgs = Vec::new();
+        // system prompt(s)
+        msgs.extend_from_slice(&checkpoint.all_messages[..2.min(checkpoint.all_messages.len())]);
+        msgs.push(json!({
+            "role": "system",
+            "content": format!(
+                "[Checkpoint: {} earlier messages omitted]",
+                checkpoint.all_messages.len().saturating_sub(22)
+            )
+        }));
+        let start = checkpoint.all_messages.len().saturating_sub(20);
+        msgs.extend_from_slice(&checkpoint.all_messages[start..]);
+        msgs
+    } else {
+        checkpoint.all_messages.clone()
+    };
+
+    let compact_checkpoint = json!({
+        "sessionId": checkpoint.session_id,
+        "checkpointRound": checkpoint.checkpoint_round,
+        "timestamp": checkpoint.timestamp,
+        "allMessages": compact_messages,
+        "toolResults": compact_tool_results,
+        "toolCallHistory": checkpoint.tool_call_history,
+        "totalToolCalls": checkpoint.total_tool_calls,
+        "consecutiveErrors": checkpoint.consecutive_errors,
+        "earlyContent": checkpoint.early_content,
+        "systemPrompt": checkpoint.system_prompt,
+    });
+
+    let serialized = serde_json::to_string(&compact_checkpoint).unwrap_or_default();
+    let size_kb = serialized.len() / 1024;
+
+    match tokio::fs::write(&fp, &serialized).await {
+        Ok(_) => {
+            info!(
+                "[Checkpoint] Saved round {} for session {} ({}KB)",
+                checkpoint.checkpoint_round, session_id, size_kb
+            );
+        }
+        Err(e) => {
+            error!("[Checkpoint] Failed to save: {}", e);
+        }
+    }
+}
+
+/// Load a checkpoint for session resumption.
+pub async fn load_checkpoint(session_id: &str) -> Option<ToolLoopCheckpoint> {
+    let dir = "data/checkpoints";
+    let fp = format!("{}/{}.json", dir, session_id);
+
+    match tokio::fs::read_to_string(&fp).await {
+        Ok(content) => match serde_json::from_str::<ToolLoopCheckpoint>(&content) {
+            Ok(checkpoint) => {
+                info!(
+                    "[Checkpoint] Loaded checkpoint for session {} at round {}",
+                    session_id, checkpoint.checkpoint_round
+                );
+                Some(checkpoint)
+            }
+            Err(e) => {
+                error!("[Checkpoint] Failed to parse: {}", e);
+                None
+            }
+        },
+        Err(_) => None,
+    }
+}
+
+/// Clear a checkpoint for a session.
+pub async fn clear_checkpoint(session_id: &str) {
+    let dir = "data/checkpoints";
+    let fp = format!("{}/{}.json", dir, session_id);
+
+    match tokio::fs::remove_file(&fp).await {
+        Ok(_) => {
+            info!("[Checkpoint] Cleared checkpoint for session {}", session_id);
+        }
+        Err(_) => {} // Ignore if doesn't exist
+    }
 }
 
 // ---------------------------------------------------------------------------

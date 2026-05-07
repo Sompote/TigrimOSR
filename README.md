@@ -1,8 +1,8 @@
-# TigrimOSR v0.2.4
+# TigrimOSR v0.3.0
 
 **TigrimOSR** is the Rust version of [TigrimOS](https://github.com/Sompote/TigerCowork) — a high-performance native desktop rewrite of the original Python/Node.js AI assistant. Built entirely in Rust using egui for the UI, TigrimOSR delivers faster startup, lower memory usage, and a single self-contained binary with no Node.js or Python runtime required to run the app itself.
 
-TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool calling, and file output. It connects to any OpenAI-compatible API (OpenAI, Anthropic via proxy, DeepSeek, local Ollama, etc.) and lets you orchestrate teams of specialist AI agents defined in simple YAML files.
+TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool calling, and file output. It connects to any OpenAI-compatible API (OpenAI, Anthropic via proxy, DeepSeek, Kimi, local Ollama, etc.) and lets you orchestrate teams of specialist AI agents defined in simple YAML files.
 
 ![TigrimOSR Screenshot](assets/screenshot.png)
 
@@ -18,7 +18,17 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 
 ![Live Agent Monitoring](assets/screenshot_agents.png)
 
-## What's New in v0.2.4
+## What's New in v0.3.0
+
+- **Pipeline architecture mode** — True sequential pipeline orchestration: user task flows from agent1 → agent2 → agent3 automatically via `send_task`. Architecture generation now produces correct linear chain connections with `workflow.sequence` and `outputs_to`.
+- **Pipeline-aware dispatch** — Fully Auto and Manual modes auto-route user tasks to the first pipeline agent and wait for the last agent's result, instead of treating all agents as orchestrator targets.
+- **Checkpoint/Resume on abort** — Tool loop now saves a full checkpoint (messages, tool history, errors, early content) when cancelled, matching tiger_cowork's abort-save behavior. Resumed sessions restore complete state including `tool_call_history`, `consecutive_errors`, and `early_content`.
+- **Kimi API compatibility** — Fixed Agents tab "Auto Architecture" failing with Kimi by adding Claude Code identity headers (`User-Agent`, `X-Client-Name`, `X-Client-Version`) to all Kimi API calls.
+- **Improved graph layout** — Agent nodes in the System Editor now fit within the visible canvas with proper padding. Animated signal dots in the Graphic view use correct time synchronization and show faint lines for runtime connections.
+- **9-step compression pipeline** — Full context compaction system ported from tiger_cowork: LLM-based summarization, smart tool-result compression by type, post-compact context restoration, checkpoint save/resume, circuit breaker, and cooldown.
+- **Cancel flag for tool loops** — `SubAgentConfig.cancel_flag` allows external cancellation of running tool loops with automatic checkpoint save.
+
+### v0.2.4
 
 - **Gemini CLI (Local)** — Use Google's Gemini CLI as an AI backend, no API key needed (same as Claude Code and Codex)
 - **Live agent progress in chat** — Fully Auto mode now shows step-by-step progress (architecture → boot → delegate → wait) with live agent activity updates instead of just "thinking..."
@@ -231,7 +241,7 @@ On first launch, go to **Settings** to configure:
 
 | Setting | Description |
 |---------|-------------|
-| AI Provider | Select from Claude Code (Local), Gemini CLI (Local), Codex (Local), OpenRouter, Anthropic, DeepSeek, etc. |
+| AI Provider | Select from Claude Code (Local), Gemini CLI (Local), Codex (Local), OpenRouter, Anthropic, DeepSeek, Kimi, etc. |
 | API Key | Your API key (not needed for local CLI providers) |
 | Model | Model name (e.g. `o4-mini`, `claude-sonnet-4-20250514`) |
 | Agent Harness | Max turns, temperature, max tokens, context limit, reflection |
@@ -329,6 +339,7 @@ TigrimOSR/
 │   ├── server/
 │   │   ├── services/
 │   │   │   ├── toolbox.rs    # Tool execution + multi-agent loop + CLI providers
+│   │   │   ├── compact.rs    # 9-step context compression pipeline
 │   │   │   ├── protocols.rs  # TCP, Bus, Queue, Blackboard protocols
 │   │   │   ├── clawhub.rs    # ClawHub skill marketplace
 │   │   │   ├── mcp.rs        # MCP client (stdio/SSE/HTTP)

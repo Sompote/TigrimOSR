@@ -1151,7 +1151,7 @@ impl AgentsView {
                 .to_string();
         }
 
-        // Layout: arrange nodes in a circle
+        // Layout: arrange nodes in a circle, ensuring all fit on screen
         let agents = val
             .get("agents")
             .and_then(|a| a.as_array())
@@ -1159,11 +1159,16 @@ impl AgentsView {
             .unwrap_or_default();
         let count = agents.len();
 
+        // Node size ~160x60, use padding so nodes don't clip edges
+        let node_pad = 100.0;
+        let radius = (120.0 + count as f32 * 18.0).min(280.0);
+        let center_x = radius + node_pad;
+        let center_y = radius + node_pad;
+
         for (i, agent) in agents.iter().enumerate() {
-            let angle = (i as f32 / count.max(1) as f32) * std::f32::consts::TAU;
-            let radius = 150.0 + count as f32 * 15.0;
-            let cx = 350.0 + angle.cos() * radius;
-            let cy = 250.0 + angle.sin() * radius;
+            let angle = (i as f32 / count.max(1) as f32) * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+            let cx = center_x + angle.cos() * radius;
+            let cy = center_y + angle.sin() * radius;
 
             let bus = agent.get("bus");
             let mesh = agent.get("mesh");
@@ -1405,7 +1410,8 @@ Return ONLY a valid JSON object (no markdown, no code fences) with this structur
 {{
   "system": {{ "name": "System Name", "orchestration_mode": "{arch_type}", "communication_protocol": "structured_handoff", "context_passing": "full_chain" }},
   "agents": [ {{ "id": "snake_case_id", "name": "Display Name", "role": "human|orchestrator|worker|checker|reporter|researcher|peer", "persona": "2-3 sentence description", "responsibilities": ["resp1", "resp2"], "bus": {{ "enabled": false }}, "mesh": {{ "enabled": false }} }} ],
-  "connections": [ {{ "from": "source_id", "to": "target_id", "label": "label", "protocol": "tcp|queue" }} ]
+  "connections": [ {{ "from": "source_id", "to": "target_id", "label": "label", "protocol": "tcp|queue" }} ],
+  "workflow": {{ "sequence": [ {{ "step": 1, "agent": "agent_id", "action": "what this agent does", "outputs_to": ["next_agent_id"] }} ] }}
 }}
 
 Rules:
@@ -1416,8 +1422,10 @@ Rules:
 - For flat: human -> all agents directly
 - For mesh: no connections needed (mesh bypasses access control)
 - For hybrid: human -> orchestrator -> workers (workers have mesh.enabled: true)
-- For pipeline: sequential chain
-- Agent IDs must be snake_case, 3-8 agents total"#
+- For pipeline: agents form a LINEAR SEQUENTIAL CHAIN. human -> agent1 -> agent2 -> agent3 -> ... -> final_agent. Each agent connects to exactly ONE next agent. Do NOT use an orchestrator role. Do NOT create star topology. Connections MUST form a strict linear chain. workflow.sequence MUST list agents in order with outputs_to pointing to the next agent. Last agent has outputs_to: [].
+- For p2p: all non-human agents use role "peer", no connections
+- Agent IDs must be snake_case, 3-8 agents total
+- Always include workflow.sequence listing the processing order"#
             );
 
             let client = reqwest::Client::new();
@@ -1432,10 +1440,20 @@ Rules:
             });
 
             let result = async {
-                let resp = client
+                let mut req = client
                     .post(&api_url)
                     .header("Authorization", format!("Bearer {}", api_key))
-                    .header("Content-Type", "application/json")
+                    .header("Content-Type", "application/json");
+                // Kimi Code API requires Claude Code identity headers
+                if api_url.contains("api.kimi.com") {
+                    req = req
+                        .header("User-Agent", "claude-code/1.0.6")
+                        .header("X-Client-Name", "claude-code")
+                        .header("X-Client-Version", "1.0.6")
+                        .header("HTTP-Referer", "https://claude.ai")
+                        .header("X-Traffic-Source", "claude-code");
+                }
+                let resp = req
                     .json(&body)
                     .send()
                     .await

@@ -2192,7 +2192,7 @@ impl SettingsView {
             ui.add_space(8.0);
             ui.label(egui::RichText::new("TigrimOS").size(28.0).strong());
             ui.label(
-                egui::RichText::new("v0.2.1")
+                egui::RichText::new("v0.3.0")
                     .size(14.0)
                     .color(egui::Color32::GRAY),
             );
@@ -2201,7 +2201,7 @@ impl SettingsView {
             ui.separator();
             ui.add_space(12.0);
             for line in [
-                "TigrimOS v0.2.1 (Rust/egui edition)",
+                "TigrimOS v0.3.0 (Rust/egui edition)",
                 "Ubuntu 22.04 VM via QEMU",
                 "Node.js 20 + Python 3 + Fastify",
             ] {

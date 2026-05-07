@@ -116,7 +116,7 @@ async fn connect_stdio(name: &str, config: &Value) -> Value {
                     "params": {
                         "protocolVersion": "2024-11-05",
                         "capabilities": {},
-                        "clientInfo": { "name": "TigrimOS", "version": "0.2.1" }
+                        "clientInfo": { "name": "TigrimOS", "version": "0.3.0" }
                     }
                 });
                 let msg = format!("{}\n", serde_json::to_string(&init_req).unwrap());
@@ -390,7 +390,7 @@ async fn call_stdio_tool(conn: &McpConnection, tool_name: &str, args: &Value) ->
         "params": {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": { "name": "TigrimOS", "version": "0.2.1" }
+            "clientInfo": { "name": "TigrimOS", "version": "0.3.0" }
         }
     });
     let _ = stdin

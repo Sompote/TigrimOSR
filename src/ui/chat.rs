@@ -843,6 +843,8 @@ impl ChatView {
                     session_id: sid.clone(),
                     agent_id: "main".to_string(),
                     mode: sub_agent_mode.clone(),
+                    agent_role: "orchestrator".to_string(),
+                    cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 }
             } else {
                 SubAgentConfig::default()
@@ -859,11 +861,29 @@ impl ChatView {
                 "fully_auto" => {
                     // Architecture is created proactively before LLM is called.
                     // By the time the LLM sees this prompt, agents should already be LIVE.
+                    // (This prompt is fallback — normally fully_auto dispatches directly via UI)
+                    let orch = sub_agent_config.config_file.as_str();
+                    let yaml_orch_mode = if !orch.is_empty() {
+                        crate::server::services::toolbox::load_agent_yaml(orch)
+                            .and_then(|(y, _)| y.get("system")?.get("orchestration_mode")?.as_str().map(|s| s.to_string()))
+                            .unwrap_or_default()
+                    } else { String::new() };
+
                     let prompt = if agents.is_empty() {
                         "\n\nFULLY AUTO MODE: An agent team is being created for this task. \
 Use send_task/wait_result to delegate work once agents are ready. \
 If no agents are available yet, call create_architecture to design and boot a team. \
 Do NOT attempt to do work yourself — delegate everything to agents.".to_string()
+                    } else if yaml_orch_mode == "pipeline" {
+                        format!(
+                            "\n\nFULLY AUTO MODE (PIPELINE): An agent pipeline has been created and all agents are LIVE. \
+Pipeline agents: [{}]. \
+This is a SEQUENTIAL PIPELINE — send the task to the FIRST agent only. \
+The first agent will process and forward to the next stage automatically via send_task. \
+Workflow: send_task({{to: \"<first_agent>\", task: \"...\"}}) → wait_result({{from: \"<last_agent>\"}}) to get the final output. \
+Do NOT send tasks to intermediate or final agents directly — the pipeline flows automatically.",
+                            agents
+                        )
                     } else {
                         format!(
                             "\n\nFULLY AUTO MODE: An agent team has been created and all agents are LIVE. \
@@ -904,14 +924,32 @@ Do NOT attempt to do work yourself until a swarm is selected.",
                     (prompt, "Call select_swarm first, then delegate via send_task/wait_result.")
                 }
                 "manual" => {
-                    let prompt = format!(
-                        "\n\nMANUAL AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
+                    let orch = sub_agent_config.config_file.as_str();
+                    let yaml_orch_mode = if !orch.is_empty() {
+                        crate::server::services::toolbox::load_agent_yaml(orch)
+                            .and_then(|(y, _)| y.get("system")?.get("orchestration_mode")?.as_str().map(|s| s.to_string()))
+                            .unwrap_or_default()
+                    } else { String::new() };
+
+                    let prompt = if yaml_orch_mode == "pipeline" {
+                        format!(
+                            "\n\nMANUAL AGENT MODE (PIPELINE): All agents are alive in a sequential pipeline. \
+Pipeline agents: [{}]. \
+Send the task to the FIRST agent only — it will automatically forward through the chain via send_task. \
+Workflow: send_task({{to: \"<first_agent>\", task: \"...\"}}) → wait_result({{from: \"<last_agent>\"}}) to get the final output. \
+Do NOT send tasks to intermediate or final agents directly.",
+                            agents
+                        )
+                    } else {
+                        format!(
+                            "\n\nMANUAL AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
 Available agents: [{}]. \
 Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
 Only use run_python/write_file for formatting the final output. \
 Always delegate, even for simple tasks. If an orchestrator exists, send tasks ONLY to the orchestrator.",
-                        agents
-                    );
+                            agents
+                        )
+                    };
                     (prompt, "Use send_task/wait_result to delegate ALL tasks to agents.")
                 }
                 _ => {
@@ -1195,12 +1233,53 @@ Provide helpful, detailed responses based on tool results.{}",
                         .unwrap_or_else(|| (serde_json::json!({}), vec![]));
                     sub_agent_config.agent_ids = agent_ids.clone();
 
+                    // Determine orchestration mode from YAML
+                    let orch_mode = yaml_val.get("system")
+                        .and_then(|s| s.get("orchestration_mode"))
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("hierarchical")
+                        .to_string();
+
                     // Find orchestrator
                     let orchestrator_id = yaml_val.get("agents")
                         .and_then(|a| a.as_array())
                         .and_then(|arr| arr.iter().find(|a| a["role"].as_str() == Some("orchestrator")))
                         .and_then(|a| a["id"].as_str())
                         .map(|s| s.to_string());
+
+                    // For pipeline mode: find first and last agents in the sequence chain
+                    let (pipeline_first_id, pipeline_last_id) = if orch_mode == "pipeline" {
+                        let sequence = yaml_val.get("workflow")
+                            .and_then(|w| w.get("sequence"))
+                            .and_then(|s| s.as_array());
+                        let first = sequence
+                            .and_then(|arr| arr.first())
+                            .and_then(|step| step.get("agent"))
+                            .and_then(|a| a.as_str())
+                            .map(|s| s.to_string())
+                            // Fallback: first non-human agent
+                            .or_else(|| yaml_val.get("agents")
+                                .and_then(|a| a.as_array())
+                                .and_then(|arr| arr.iter()
+                                    .find(|a| a["role"].as_str() != Some("human"))
+                                    .and_then(|a| a["id"].as_str())
+                                    .map(|s| s.to_string())));
+                        let last = sequence
+                            .and_then(|arr| arr.last())
+                            .and_then(|step| step.get("agent"))
+                            .and_then(|a| a.as_str())
+                            .map(|s| s.to_string())
+                            // Fallback: last non-human agent
+                            .or_else(|| yaml_val.get("agents")
+                                .and_then(|a| a.as_array())
+                                .and_then(|arr| arr.iter().rev()
+                                    .find(|a| a["role"].as_str() != Some("human"))
+                                    .and_then(|a| a["id"].as_str())
+                                    .map(|s| s.to_string())));
+                        (first, last)
+                    } else {
+                        (None, None)
+                    };
 
                     // Signal the Agents tab to show this architecture
                     crate::server::services::toolbox::set_pending_arch_file(cf);
@@ -1238,8 +1317,14 @@ Provide helpful, detailed responses based on tool results.{}",
                             .unwrap_or("")
                             .to_string();
 
-                        let target = orchestrator_id.as_deref()
-                            .unwrap_or_else(|| agent_ids.first().map(|s| s.as_str()).unwrap_or(""));
+                        // Pipeline: send to first pipeline stage; others: send to orchestrator
+                        let target = if orch_mode == "pipeline" {
+                            pipeline_first_id.as_deref()
+                                .unwrap_or_else(|| agent_ids.first().map(|s| s.as_str()).unwrap_or(""))
+                        } else {
+                            orchestrator_id.as_deref()
+                                .unwrap_or_else(|| agent_ids.first().map(|s| s.as_str()).unwrap_or(""))
+                        };
 
                         if !target.is_empty() {
                             let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
@@ -1270,8 +1355,14 @@ Provide helpful, detailed responses based on tool results.{}",
                                 autocreate_ctx.request_repaint();
 
                                 // Wait for result with cancel support + live streaming of agent activity
+                                // Pipeline: wait for LAST agent (end of chain), others: wait for target
                                 let cancel_flag = cancelled.clone();
-                                let wait_args = serde_json::json!({"from": target, "timeout": 600});
+                                let wait_from = if orch_mode == "pipeline" {
+                                    pipeline_last_id.as_deref().unwrap_or(target)
+                                } else {
+                                    target
+                                };
+                                let wait_args = serde_json::json!({"from": wait_from, "timeout": 600});
                                 let wait_sid = sub_agent_config.session_id.clone();
                                 let wait_future = crate::server::services::toolbox::exec_wait_result(
                                     &wait_args,
@@ -1518,6 +1609,46 @@ Provide helpful, detailed responses based on tool results.{}",
                     let _ = f.write_all(log_text.as_bytes()).await;
                     let _ = f.write_all(b"\n\n").await;
                 }
+            }
+
+            // Late result monitor: if a realtime session was active, keep
+            // listening for agent results for up to 5 minutes after the main
+            // loop finishes so late-arriving sub-agent output is captured.
+            if is_realtime {
+                let late_session_id = sid.clone();
+                tokio::spawn(async move {
+                    let deadline = tokio::time::Instant::now()
+                        + tokio::time::Duration::from_secs(300);
+                    let mut rx = crate::server::services::toolbox::subscribe_subagent_log();
+                    loop {
+                        if tokio::time::Instant::now() > deadline {
+                            break;
+                        }
+                        match tokio::time::timeout(
+                            tokio::time::Duration::from_secs(30),
+                            rx.recv(),
+                        )
+                        .await
+                        {
+                            Ok(Ok((sid, aid, line))) if sid == late_session_id => {
+                                let snippet = if line.len() > 200 {
+                                    &line[..200]
+                                } else {
+                                    &line
+                                };
+                                crate::server::services::toolbox::append_session_progress(
+                                    &sid,
+                                    &format!(
+                                        "> **Late result from {}**: {}\n",
+                                        aid, snippet
+                                    ),
+                                );
+                            }
+                            Err(_) => continue, // timeout, keep waiting
+                            _ => break,         // channel closed or different session
+                        }
+                    }
+                });
             }
 
             let mut done = state.done.lock().unwrap();
@@ -1981,23 +2112,20 @@ Provide helpful, detailed responses based on tool results.{}",
 
     fn sidebar(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         ui.horizontal(|ui| {
+            let btn = egui::Button::new(
+                egui::RichText::new("+ New").size(12.0).color(egui::Color32::WHITE),
+            )
+            .fill(egui::Color32::from_rgb(88, 166, 255))
+            .corner_radius(6.0);
+            if ui.add(btn).clicked() {
+                self.create_session(runtime);
+            }
             ui.label(
                 egui::RichText::new("Chats")
                     .size(15.0)
                     .strong()
                     .color(egui::Color32::from_rgb(31, 35, 40)),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(8.0);
-                let btn = egui::Button::new(
-                    egui::RichText::new("+ New").size(12.0).color(egui::Color32::WHITE),
-                )
-                .fill(egui::Color32::from_rgb(88, 166, 255))
-                .corner_radius(6.0);
-                if ui.add(btn).clicked() {
-                    self.create_session(runtime);
-                }
-            });
         });
 
         // Project filter dropdown
@@ -3582,6 +3710,12 @@ Provide helpful, detailed responses based on tool results.{}",
 
         // Draw animated signal dots along edges
         let time = ui.input(|i| i.time);
+        // Convert epoch-based signal timestamps to egui-relative time
+        let epoch_offset = if let Some(first_sig) = self.graphic_signals.first() {
+            first_sig.started_at - time
+        } else {
+            0.0
+        };
         for signal in &self.graphic_signals {
             if signal.from.is_empty() || signal.to.is_empty() {
                 continue;
@@ -3592,8 +3726,19 @@ Provide helpful, detailed responses based on tool results.{}",
             let from_pt = edge_point(from_rect, to_rect.center());
             let to_pt = edge_point(to_rect, from_rect.center());
 
-            // Animate: cycle every 4 seconds
-            let t = ((time - signal.started_at) % 4.0 / 4.0) as f32;
+            // Draw a faint line for signals that don't have a visible edge
+            let has_edge = self.graphic_edges.iter().any(|e|
+                (e.from == signal.from && e.to == signal.to) ||
+                (e.from == signal.to && e.to == signal.from)
+            );
+            if !has_edge {
+                let faint_stroke = egui::Stroke::new(1.0 * zoom, link_kind_color(&signal.kind).gamma_multiply(0.25));
+                painter.line_segment([from_pt, to_pt], faint_stroke);
+            }
+
+            // Animate: cycle every 4 seconds, using corrected relative time
+            let relative_t = time - (signal.started_at - epoch_offset);
+            let t = ((relative_t % 4.0 + 4.0) % 4.0 / 4.0) as f32; // ensure positive modulo
             let dot_pos = from_pt + (to_pt - from_pt) * t;
             let color = link_kind_color(&signal.kind);
             painter.circle_filled(dot_pos, 3.5 * zoom, color);

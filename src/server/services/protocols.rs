@@ -961,6 +961,20 @@ pub async fn blackboard_get_log(
     }
 }
 
+/// Check if an agent was recently awarded a task on the blackboard.
+/// Returns true if any task in the session's blackboard has `awarded_to == Some(agent_id)`
+/// with status "awarded", "in_progress", or "completed".
+pub async fn blackboard_check_awarded(session_id: &str, agent_id: &str) -> bool {
+    let bbs = blackboards().lock().await;
+    match bbs.get(session_id) {
+        Some(bb) => bb.tasks.values().any(|t| {
+            t.awarded_to.as_deref() == Some(agent_id)
+                && matches!(t.status.as_str(), "awarded" | "in_progress" | "completed")
+        }),
+        None => false,
+    }
+}
+
 pub async fn blackboard_destroy(session_id: &str) {
     if blackboards().lock().await.remove(session_id).is_some() {
         info!("[Protocol:Blackboard] Destroyed blackboard for session {}", session_id);

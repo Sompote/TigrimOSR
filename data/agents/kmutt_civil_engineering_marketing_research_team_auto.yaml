@@ -1,0 +1,155 @@
+agents:
+- bus:
+    enabled: true
+    topics:
+    - research_request
+    - final_report
+  id: human
+  mesh:
+    enabled: false
+  name: Project Sponsor
+  persona: Executive stakeholder from KMUTT Department of Civil Engineering who requires comprehensive market research to inform strategic marketing decisions and student recruitment initiatives.
+  responsibilities:
+  - Submit initial research request with objectives
+  - Review and approve research scope
+  - Validate final report recommendations
+  - Provide feedback on research priorities
+  role: human
+- bus:
+    enabled: true
+    topics:
+    - task_dispatch
+    - status_update
+    - quality_check
+  id: orchestrator
+  mesh:
+    enabled: false
+  name: Research Director
+  persona: Senior research coordinator with expertise in marketing strategy who orchestrates end-to-end market research projects, manages team workflows, and ensures alignment between research deliverables and business objectives for KMUTT Civil Engineering.
+  responsibilities:
+  - Parse and scope research requirements from human input
+  - Delegate specialized research tasks to team members
+  - Monitor progress across all research workstreams
+  - Quality check intermediate deliverables
+  - Manage overall project timeline and escalation
+  role: orchestrator
+- bus:
+    enabled: true
+    topics:
+    - market_data
+    - competitor_intel
+    - audience_insights
+  id: market_researcher
+  mesh:
+    enabled: false
+  name: Market Intelligence Analyst
+  persona: Marketing research specialist focused on competitor analysis, target audience profiling, and industry trend identification within the higher education engineering sector, particularly Southeast Asian civil engineering programs.
+  responsibilities:
+  - Conduct target audience analysis for prospective civil engineering students
+  - Analyze competitor positioning among Thai and international engineering schools
+  - Research industry trends in civil engineering education
+  - Gather student recruitment channel effectiveness data
+  - Document marketing channel benchmarks
+  role: researcher
+- bus:
+    enabled: true
+    topics:
+    - processed_data
+    - analysis_results
+    - metrics
+  id: data_analyst
+  mesh:
+    enabled: false
+  name: Analytics Specialist
+  persona: Quantitative analyst who transforms raw market data into structured datasets, performs statistical analysis to identify patterns, and creates data visualizations that reveal actionable insights for marketing decision-making.
+  responsibilities:
+  - Process and clean raw market research data
+  - Identify patterns and correlations in student recruitment metrics
+  - Create comparative analysis matrices for competitive positioning
+  - Generate statistical summaries and trend indicators
+  - Develop data-driven recommendations from findings
+  role: worker
+- bus:
+    enabled: true
+    topics:
+    - draft_content
+    - final_report
+    - presentation_materials
+  id: report_compiler
+  mesh:
+    enabled: false
+  name: Research Report Writer
+  persona: Professional technical writer specializing in marketing research reports who synthesizes complex data and insights into clear, actionable documents with strategic recommendations for academic stakeholder audiences.
+  responsibilities:
+  - Synthesize findings from market researcher and data analyst
+  - Structure comprehensive research reports with executive summary
+  - Develop actionable marketing recommendations
+  - Create student recruitment strategy proposals
+  - Format deliverables for stakeholder presentation
+  role: reporter
+connections:
+- from: human
+  label: Initial Request
+  protocol: tcp
+  to: orchestrator
+  topics:
+  - research_request
+- from: orchestrator
+  label: 'Task: Market Analysis'
+  protocol: tcp
+  to: market_researcher
+  topics:
+  - task_dispatch
+- from: orchestrator
+  label: 'Task: Data Processing'
+  protocol: tcp
+  to: data_analyst
+  topics:
+  - task_dispatch
+- from: orchestrator
+  label: 'Task: Report Compilation'
+  protocol: tcp
+  to: report_compiler
+  topics:
+  - task_dispatch
+- from: market_researcher
+  label: Raw Market Data
+  protocol: tcp
+  to: data_analyst
+  topics:
+  - market_data
+- from: market_researcher
+  label: Progress Update
+  protocol: tcp
+  to: orchestrator
+  topics:
+  - status_update
+- from: data_analyst
+  label: Analyzed Insights
+  protocol: tcp
+  to: report_compiler
+  topics:
+  - analysis_results
+- from: data_analyst
+  label: Progress Update
+  protocol: tcp
+  to: orchestrator
+  topics:
+  - status_update
+- from: report_compiler
+  label: Draft Report
+  protocol: tcp
+  to: orchestrator
+  topics:
+  - draft_content
+- from: orchestrator
+  label: Final Report
+  protocol: tcp
+  to: human
+  topics:
+  - final_report
+system:
+  communication_protocol: structured_handoff
+  context_passing: full_chain
+  name: KMUTT Civil Engineering Marketing Research Team
+  orchestration_mode: hierarchical

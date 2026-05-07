@@ -176,6 +176,8 @@ pub struct Settings {
     pub remote_enabled: Option<bool>,
     #[serde(rename = "remoteToken", skip_serializing_if = "Option::is_none")]
     pub remote_token: Option<String>,
+    #[serde(rename = "remoteTaskMaxRetries", skip_serializing_if = "Option::is_none")]
+    pub remote_task_max_retries: Option<u64>,
     #[serde(rename = "remoteInstances", skip_serializing_if = "Option::is_none")]
     pub remote_instances: Option<Vec<RemoteInstance>>,
     #[serde(rename = "localFileMounts", skip_serializing_if = "Option::is_none")]

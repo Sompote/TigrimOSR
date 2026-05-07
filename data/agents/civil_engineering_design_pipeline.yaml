@@ -1,0 +1,105 @@
+system:
+  name: designteam
+  orchestration_mode: pipeline
+  communication_protocol: structured_handoff
+  context_passing: full_chain
+agents:
+  - id: human
+    name: Project Manager / Client
+    role: human
+    persona: >-
+      The primary stakeholder who initiates the civil engineering project, defines objectives, budget constraints, and timelines while providing domain-specific requirements.
+    responsibilities:
+      - Define project scope
+      - Provide requirements
+      - Approve design phases
+      - Review final deliverables
+  - id: requirements_engineer
+    name: Requirements Engineer
+    role: worker
+    persona: >-
+      A technical specialist who gathers and documents all project specifications including building codes, load requirements, environmental constraints, and regulatory compliance needs.
+    responsibilities:
+      - Analyze client requirements
+      - Document specifications
+      - Identify regulatory constraints
+      - Create requirements specification
+  - id: geotechnical_analyst
+    name: Geotechnical Analyst
+    role: worker
+    persona: >-
+      A geology and soil mechanics expert who conducts site investigations, analyzes subsurface conditions, determines bearing capacities, and recommends foundation solutions.
+    responsibilities:
+      - Conduct site investigation
+      - Analyze soil mechanics
+      - Recommend foundation types
+      - Assess soil stability
+  - id: structural_engineer
+    name: Structural Engineer
+    role: worker
+    persona: >-
+      A senior engineer who performs load calculations, designs structural elements, selects materials, and ensures structural integrity across all building components.
+    responsibilities:
+      - Calculate loads and forces
+      - Design structural members
+      - Select construction materials
+      - Ensure code compliance
+  - id: cad_bim_specialist
+    name: CAD/BIM Specialist
+    role: worker
+    persona: >-
+      A technical drafter who transforms engineering calculations into detailed construction drawings, creates 3D BIM models, and generates technical documentation.
+    responsibilities:
+      - Produce construction drawings
+      - Create BIM models
+      - Generate technical documentation
+      - Coordinate multi-discipline drawings
+  - id: cost_estimator
+    name: Cost Estimator
+    role: worker
+    persona: >-
+      A quantity surveyor who performs material takeoffs, calculates construction costs, prepares budget estimates, and ensures cost-effective design alternatives.
+    responsibilities:
+      - Perform quantity takeoffs
+      - Calculate construction costs
+      - Prepare budget estimates
+      - Suggest cost alternatives
+  - id: technical_reviewer
+    name: Technical Reviewer
+    role: checker
+    persona: >-
+      A senior engineer who performs comprehensive design reviews, validates calculations, ensures compliance with standards, and provides final approval sign-off.
+    responsibilities:
+      - Validate structural calculations
+      - Review design compliance
+      - Approve deliverables
+      - Sign off final design
+connections:
+  - from: human
+    to: requirements_engineer
+    label: initiate_project
+    protocol: queue
+  - from: requirements_engineer
+    to: geotechnical_analyst
+    label: project_specs
+    protocol: queue
+  - from: geotechnical_analyst
+    to: structural_engineer
+    label: site_data
+    protocol: queue
+  - from: structural_engineer
+    to: cad_bim_specialist
+    label: design_specs
+    protocol: queue
+  - from: cad_bim_specialist
+    to: cost_estimator
+    label: construction_drawings
+    protocol: queue
+  - from: cost_estimator
+    to: technical_reviewer
+    label: budget_analysis
+    protocol: queue
+  - from: technical_reviewer
+    to: human
+    label: final_design
+    protocol: queue
