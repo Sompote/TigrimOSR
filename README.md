@@ -218,6 +218,12 @@ pip install duckduckgo-search matplotlib numpy pandas requests
 
 One-command installer that clones, builds, and sets up the app for you.
 
+**Prerequisites:** Install Rust first (if not already installed):
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+
 **macOS:**
 ```bash
 curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.sh | bash
