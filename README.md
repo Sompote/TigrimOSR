@@ -223,10 +223,31 @@ One-command installer that clones, builds, and sets up the app for you.
 curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.sh | bash
 ```
 
-**Linux:**
+**Linux (Desktop):**
 ```bash
 curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
 ```
+Select **"Desktop mode"** when prompted.
+
+**Linux (Headless / Remote Server):**
+```bash
+curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
+```
+Select **"Headless mode"** when prompted. The installer will:
+- Ask for a port (default 3001) and access token (min 8 chars)
+- Create a **systemd service** (auto-start on boot)
+- Optionally set up **nginx** reverse proxy (port 80)
+- Optionally configure **HTTPS** via Let's Encrypt
+- Open **firewall** ports (ufw)
+
+After install, manage the server with:
+```bash
+sudo systemctl start tigrimos    # start server
+sudo systemctl stop tigrimos     # stop server
+sudo journalctl -u tigrimos -f   # view logs
+```
+
+Access the web UI at `http://<server-ip>/web/` and log in with your token.
 
 **Windows (PowerShell):**
 ```powershell
@@ -240,8 +261,9 @@ The installer will:
 1. Check prerequisites (git, Rust)
 2. Let you choose an install location
 3. Clone and build in release mode
-4. Create a native app (macOS `.app` / Linux `.desktop` / Windows shortcut)
-5. Optionally launch the app
+4. **Desktop**: Create a native app (macOS `.app` / Linux `.desktop` / Windows shortcut)
+5. **Headless (Linux)**: Create systemd service + nginx + firewall + HTTPS
+6. Optionally launch the app or start the server
 
 ---
 
