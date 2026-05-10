@@ -13,6 +13,7 @@ struct McpConnection {
     command: Option<String>,
     args: Vec<String>,
     url: Option<String>,
+    headers: HashMap<String, String>, // custom headers for HTTP/SSE
     tools: Vec<Value>,       // tool definitions in OpenAI format
     connected: bool,
     error: Option<String>,
@@ -25,39 +26,65 @@ fn connections() -> &'static TokioMutex<HashMap<String, McpConnection>> {
     MCP_CONNECTIONS.get_or_init(|| TokioMutex::new(HashMap::new()))
 }
 
-/// Initialize MCP servers from settings
+/// Initialize MCP servers from settings (reads `mcpTools` array from settings.json)
 pub async fn init_mcp_servers() {
-    let settings: Value = match tokio::fs::read_to_string("data/settings.json").await {
-        Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
-        Err(_) => return,
-    };
+    use crate::server::data::get_settings;
 
-    let servers = match settings["mcpServers"].as_array() {
-        Some(arr) => arr.clone(),
-        None => return,
-    };
+    let settings = get_settings().await;
+    let mcp_tools = settings.mcp_tools;
 
-    for server_config in &servers {
-        let enabled = server_config["enabled"].as_bool().unwrap_or(true);
-        if !enabled {
+    if mcp_tools.is_empty() {
+        info!("[MCP] No MCP tools configured");
+        return;
+    }
+
+    info!("[MCP] Initializing {} MCP server(s)...", mcp_tools.len());
+
+    for tool in &mcp_tools {
+        if !tool.enabled {
+            info!("[MCP] Skipping disabled server '{}'", tool.name);
             continue;
         }
 
-        let name = server_config["name"].as_str().unwrap_or("unknown").to_string();
-        let transport = server_config["transport"]
-            .as_str()
-            .unwrap_or("stdio")
-            .to_string();
+        // Determine transport type
+        let transport = tool.tool_type.as_deref().unwrap_or("auto");
 
-        let result = connect_server_impl(&name, &transport, server_config).await;
-        if result["ok"].as_bool().unwrap_or(false) {
-            info!("[MCP] Connected to server '{}'", name);
+        // Build config Value for connect_server_impl
+        let mut config = json!({
+            "name": tool.name,
+            "url": tool.url,
+            "enabled": tool.enabled,
+        });
+
+        // For stdio: parse "command arg1 arg2" from url if no explicit command
+        if transport == "stdio" || (!tool.url.starts_with("http") && transport == "auto") {
+            let parts: Vec<&str> = tool.url.split_whitespace().collect();
+            if !parts.is_empty() {
+                config["command"] = json!(parts[0]);
+                config["args"] = json!(parts[1..]);
+            }
+            let result = connect_server_impl(&tool.name, "stdio", &config).await;
+            if result["ok"].as_bool().unwrap_or(false) {
+                info!("[MCP] Connected to '{}' (stdio) — {} tool(s)", tool.name, result["tools"]);
+            } else {
+                warn!("[MCP] Failed to connect to '{}': {}", tool.name, result["error"].as_str().unwrap_or("unknown"));
+            }
         } else {
-            warn!(
-                "[MCP] Failed to connect to '{}': {}",
-                name,
-                result["error"].as_str().unwrap_or("unknown")
-            );
+            // HTTP/SSE
+            if let Some(headers) = &tool.headers {
+                let h: serde_json::Map<String, Value> = headers
+                    .iter()
+                    .map(|(k, v)| (k.clone(), json!(v)))
+                    .collect();
+                config["headers"] = Value::Object(h);
+            }
+            let t = if transport == "auto" || transport == "http" { "http" } else { transport };
+            let result = connect_server_impl(&tool.name, t, &config).await;
+            if result["ok"].as_bool().unwrap_or(false) {
+                info!("[MCP] Connected to '{}' ({}) — {} tool(s)", tool.name, t, result["tools"]);
+            } else {
+                warn!("[MCP] Failed to connect to '{}': {}", tool.name, result["error"].as_str().unwrap_or("unknown"));
+            }
         }
     }
 }
@@ -192,6 +219,7 @@ async fn connect_stdio(name: &str, config: &Value) -> Value {
                             command: Some(command),
                             args,
                             url: None,
+                            headers: HashMap::new(),
                             tools: openai_tools,
                             connected: true,
                             error: None,
@@ -226,18 +254,57 @@ async fn connect_http(name: &str, transport: &str, config: &Value) -> Value {
         None => return json!({ "ok": false, "error": "No URL specified for HTTP/SSE transport" }),
     };
 
-    let client = reqwest::Client::new();
+    // Build client with custom headers if provided
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("Content-Type", "application/json".parse().unwrap());
+    if let Some(h) = config["headers"].as_object() {
+        for (k, v) in h {
+            if let (Ok(hname), Some(hval)) = (
+                reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                v.as_str(),
+            ) {
+                if let Ok(hv) = reqwest::header::HeaderValue::from_str(hval) {
+                    headers.insert(hname, hv);
+                }
+            }
+        }
+    }
 
-    // Try to discover tools via HTTP
-    let tools_url = if url.ends_with('/') {
-        format!("{}tools/list", url)
+    let client = reqwest::Client::builder()
+        .default_headers(headers.clone())
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    // For MCP over HTTP: first try initialize, then tools/list on the base URL
+    // Many MCP servers use a single endpoint (the base URL) for all JSON-RPC calls
+    let init_body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "TigrimOS", "version": "0.3.0" }
+        }
+    });
+
+    // Try base URL first (standard MCP HTTP), fallback to /tools/list path
+    let base_url = url.trim_end_matches('/');
+    let init_result = client.post(base_url).json(&init_body).send().await;
+    let use_base_url = match &init_result {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    };
+
+    let tools_url = if use_base_url {
+        base_url.to_string()
     } else {
-        format!("{}/tools/list", url)
+        format!("{}/tools/list", base_url)
     };
 
     let body = json!({
         "jsonrpc": "2.0",
-        "id": 1,
+        "id": 2,
         "method": "tools/list",
         "params": {}
     });
@@ -272,12 +339,23 @@ async fn connect_http(name: &str, transport: &str, config: &Value) -> Value {
 
                 let tool_count = openai_tools.len();
 
+                // Extract headers from config for storage
+                let stored_headers: HashMap<String, String> = config["headers"]
+                    .as_object()
+                    .map(|h| {
+                        h.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 let conn = McpConnection {
                     name: name.to_string(),
                     transport: transport.to_string(),
                     command: None,
                     args: vec![],
                     url: Some(url),
+                    headers: stored_headers,
                     tools: openai_tools,
                     connected: true,
                     error: None,
@@ -448,11 +526,8 @@ async fn call_http_tool(conn: &McpConnection, tool_name: &str, args: &Value) -> 
         None => return json!({ "ok": false, "error": "No URL for HTTP transport" }),
     };
 
-    let call_url = if base_url.ends_with('/') {
-        format!("{}tools/call", base_url)
-    } else {
-        format!("{}/tools/call", base_url)
-    };
+    // Use base URL directly for MCP JSON-RPC (standard MCP HTTP transport)
+    let call_url = base_url.trim_end_matches('/').to_string();
 
     let body = json!({
         "jsonrpc": "2.0", "id": 1,
@@ -460,7 +535,24 @@ async fn call_http_tool(conn: &McpConnection, tool_name: &str, args: &Value) -> 
         "params": { "name": tool_name, "arguments": args }
     });
 
-    let client = reqwest::Client::new();
+    // Build client with stored headers
+    let mut req_headers = reqwest::header::HeaderMap::new();
+    req_headers.insert("Content-Type", "application/json".parse().unwrap());
+    for (k, v) in &conn.headers {
+        if let (Ok(hname), Ok(hval)) = (
+            reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+            reqwest::header::HeaderValue::from_str(v),
+        ) {
+            req_headers.insert(hname, hval);
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .default_headers(req_headers)
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
     match client.post(&call_url).json(&body).send().await {
         Ok(resp) => {
             if resp.status().is_success() {

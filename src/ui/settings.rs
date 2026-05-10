@@ -147,6 +147,9 @@ pub struct SettingsView {
     new_mcp_name: String,
     new_mcp_url: String,
     new_mcp_headers: String,
+    mcp_json_mode: bool,
+    mcp_json_text: String,
+    mcp_json_error: Option<String>,
 
     // --- Remote Instances ---
     remote_enabled: bool,
@@ -229,6 +232,9 @@ impl Default for SettingsView {
             new_mcp_name: String::new(),
             new_mcp_url: String::new(),
             new_mcp_headers: String::new(),
+            mcp_json_mode: false,
+            mcp_json_text: String::new(),
+            mcp_json_error: None,
 
             remote_enabled: false,
             remote_token: String::new(),
@@ -511,6 +517,13 @@ impl SettingsView {
 
         // MCP Tools
         settings.mcp_tools = self.mcp_tools.clone();
+
+        // Reconnect MCP servers after saving
+        runtime.spawn(async {
+            use crate::server::services::mcp;
+            mcp::disconnect_all().await;
+            mcp::init_mcp_servers().await;
+        });
 
         // Remote
         settings.remote_enabled = Some(self.remote_enabled);
@@ -1186,6 +1199,70 @@ impl SettingsView {
     //  4. MCP Tools
     // ==================================================================
 
+    /// Convert current mcp_tools list to the Claude Desktop JSON format for the editor.
+    fn mcp_tools_to_json(&self) -> String {
+        let mut servers = serde_json::Map::new();
+        for tool in &self.mcp_tools {
+            let mut entry = serde_json::Map::new();
+            if let Some(t) = &tool.tool_type {
+                entry.insert("type".into(), serde_json::Value::String(t.clone()));
+            }
+            entry.insert("url".into(), serde_json::Value::String(tool.url.clone()));
+            if !tool.enabled {
+                entry.insert("enabled".into(), serde_json::Value::Bool(false));
+            }
+            if let Some(headers) = &tool.headers {
+                if !headers.is_empty() {
+                    let h: serde_json::Map<String, serde_json::Value> = headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    entry.insert("headers".into(), serde_json::Value::Object(h));
+                }
+            }
+            servers.insert(tool.name.clone(), serde_json::Value::Object(entry));
+        }
+        let root = serde_json::json!({ "mcpServers": servers });
+        serde_json::to_string_pretty(&root).unwrap_or_default()
+    }
+
+    /// Parse Claude Desktop JSON format into McpTool list.
+    fn parse_mcp_json(text: &str) -> Result<Vec<McpTool>, String> {
+        let val: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| format!("Invalid JSON: {e}"))?;
+        let servers = val
+            .get("mcpServers")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| "Missing \"mcpServers\" object".to_string())?;
+
+        let mut tools = Vec::new();
+        for (name, cfg) in servers {
+            let obj = cfg
+                .as_object()
+                .ok_or_else(|| format!("\"{name}\" must be an object"))?;
+            let url = obj
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let tool_type = obj.get("type").and_then(|v| v.as_str()).map(String::from);
+            let enabled = obj.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let headers = obj.get("headers").and_then(|v| v.as_object()).map(|h| {
+                h.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect::<HashMap<String, String>>()
+            });
+            tools.push(McpTool {
+                name: name.clone(),
+                url,
+                enabled,
+                tool_type,
+                headers,
+            });
+        }
+        Ok(tools)
+    }
+
     fn section_mcp_tools(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         self.load_settings_if_needed(runtime);
 
@@ -1200,6 +1277,124 @@ impl SettingsView {
         );
         ui.add_space(8.0);
 
+        // Toggle between form mode and JSON mode
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(!self.mcp_json_mode, "Form Editor")
+                .clicked()
+            {
+                self.mcp_json_mode = false;
+                self.mcp_json_error = None;
+            }
+            if ui
+                .selectable_label(self.mcp_json_mode, "JSON Editor")
+                .clicked()
+            {
+                self.mcp_json_mode = true;
+                self.mcp_json_text = self.mcp_tools_to_json();
+                self.mcp_json_error = None;
+            }
+        });
+        ui.add_space(8.0);
+
+        if self.mcp_json_mode {
+            self.section_mcp_tools_json(ui, runtime);
+        } else {
+            self.section_mcp_tools_form(ui, runtime);
+        }
+    }
+
+    fn section_mcp_tools_json(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        ui.label(
+            egui::RichText::new("Paste MCP server configuration in JSON format:")
+                .size(12.0)
+                .color(egui::Color32::GRAY),
+        );
+        ui.add_space(4.0);
+
+        // Show example hint
+        ui.collapsing("Example format", |ui| {
+            ui.label(
+                egui::RichText::new(
+                    r#"{
+  "mcpServers": {
+    "web-search": {
+      "type": "http",
+      "url": "https://api.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer your_key"
+      }
+    },
+    "local-tool": {
+      "type": "stdio",
+      "url": "python -m my_tool"
+    }
+  }
+}"#,
+                )
+                .size(11.0)
+                .monospace()
+                .color(egui::Color32::GRAY),
+            );
+        });
+        ui.add_space(4.0);
+
+        // JSON textarea
+        egui::ScrollArea::vertical()
+            .max_height(300.0)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.mcp_json_text)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(15)
+                        .font(egui::TextStyle::Monospace),
+                );
+            });
+
+        // Error message
+        if let Some(err) = &self.mcp_json_error {
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(err)
+                    .size(12.0)
+                    .color(egui::Color32::from_rgb(239, 68, 68)),
+            );
+        }
+
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if ui.button("Apply JSON").clicked() {
+                match Self::parse_mcp_json(&self.mcp_json_text) {
+                    Ok(tools) => {
+                        self.mcp_tools = tools;
+                        self.mcp_json_error = None;
+                        self.api_status_msg = Some("JSON applied — click Save to persist.".to_string());
+                    }
+                    Err(e) => {
+                        self.mcp_json_error = Some(e);
+                    }
+                }
+            }
+
+            if Self::save_button(ui, "Save & Connect All") {
+                match Self::parse_mcp_json(&self.mcp_json_text) {
+                    Ok(tools) => {
+                        self.mcp_tools = tools;
+                        self.mcp_json_error = None;
+                        self.save_all_settings(runtime);
+                        self.api_status_msg = Some("MCP Tools saved!".to_string());
+                    }
+                    Err(e) => {
+                        self.mcp_json_error = Some(e);
+                    }
+                }
+            }
+
+            Self::status_label(ui, &self.api_status_msg);
+        });
+    }
+
+    fn section_mcp_tools_form(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         // List existing tools
         let mut to_delete: Option<usize> = None;
         for (idx, tool) in self.mcp_tools.iter_mut().enumerate() {
@@ -1207,6 +1402,13 @@ impl SettingsView {
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut tool.enabled, "");
                     ui.label(egui::RichText::new(&tool.name).strong());
+                    if let Some(t) = &tool.tool_type {
+                        ui.label(
+                            egui::RichText::new(format!("[{t}]"))
+                                .size(11.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(egui::Button::new(
@@ -1336,28 +1538,17 @@ impl SettingsView {
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 ui.label("Token:");
-                let masked = if self.remote_token.is_empty() {
-                    "(not set)".to_string()
-                } else {
-                    let len = self.remote_token.len();
-                    if len > 8 {
-                        format!(
-                            "{}...{}",
-                            &self.remote_token[..4],
-                            &self.remote_token[len - 4..]
-                        )
-                    } else {
-                        "*".repeat(len)
-                    }
-                };
                 ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(&masked)
-                            .size(12.0)
-                            .color(egui::Color32::GRAY)
-                            .monospace(),
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.remote_token)
+                            .desired_width(300.0)
+                            .hint_text("Enter or generate a token")
+                            .font(egui::TextStyle::Monospace),
                     );
-                    if ui.button("Regenerate").clicked() {
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(self.remote_token.clone());
+                    }
+                    if ui.button("Generate").clicked() {
                         self.remote_token = generate_token();
                     }
                 });

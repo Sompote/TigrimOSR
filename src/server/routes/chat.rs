@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 use crate::server::data::*;
 use crate::server::AppState;
+use std::sync::atomic::AtomicBool;
+use crate::server::services::toolbox::{call_with_tools, SubAgentConfig, ToolUpdate};
 
 // ---------------------------------------------------------------------------
 // Log directories
@@ -320,31 +322,122 @@ async fn send_message(
     // Save user message
     session.messages.push(ChatMessage {
         role: "user".to_string(),
-        content: message,
+        content: message.clone(),
         timestamp: now.clone(),
         files: None,
         feedback: None,
     });
 
-    // Placeholder assistant response (tigerbot service will be added later)
-    let assistant_content =
-        "[Placeholder] TigerBot service not yet connected.".to_string();
-    session.messages.push(ChatMessage {
-        role: "assistant".to_string(),
-        content: assistant_content.clone(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        files: None,
-        feedback: None,
-    });
+    // Update title from first message
+    if session.messages.len() == 1 {
+        session.title = message.chars().take(60).collect();
+    }
 
     session.updated_at = chrono::Utc::now().to_rfc3339();
     save_chat_history(&sessions).await;
+
+    // Load settings for API credentials
+    let settings = get_settings().await;
+    let api_key = settings.tiger_bot_api_key.clone();
+    let model = if settings.tiger_bot_model.is_empty() {
+        "deepseek-chat".to_string()
+    } else {
+        settings.tiger_bot_model.clone()
+    };
+    let raw_url = settings
+        .tiger_bot_api_url
+        .clone()
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
+    let api_url = if raw_url == "claude-code" {
+        raw_url
+    } else if raw_url.ends_with("/chat/completions") {
+        raw_url
+    } else {
+        format!("{}/chat/completions", raw_url.trim_end_matches('/'))
+    };
+    let sandbox_dir = settings.sandbox_dir.clone();
+
+    if api_key.is_empty() {
+        let err = "API key not configured. Set it in Settings > AI Configuration.".to_string();
+        // Save error as assistant message
+        let mut sessions2 = get_chat_history().await;
+        if let Some(s) = sessions2.iter_mut().find(|s| s.id == id) {
+            s.messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: err.clone(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                files: None,
+                feedback: None,
+            });
+            s.updated_at = chrono::Utc::now().to_rfc3339();
+            save_chat_history(&sessions2).await;
+        }
+        return (StatusCode::OK, Json(json!({ "content": err }))).into_response();
+    }
+
+    // Build message history for LLM
+    let sessions_snap = get_chat_history().await;
+    let session_snap = sessions_snap.iter().find(|s| s.id == id);
+    let llm_messages: Vec<Value> = session_snap
+        .map(|s| {
+            s.messages.iter().map(|m| {
+                json!({ "role": m.role, "content": m.content })
+            }).collect()
+        })
+        .unwrap_or_default();
+
+    let config_file = settings.sub_agent_config_file.clone().unwrap_or_default();
+    let sub_agent_enabled = settings.sub_agent_enabled.unwrap_or(false) && !config_file.is_empty();
+
+    let sub_agent = SubAgentConfig {
+        enabled: sub_agent_enabled,
+        mode: settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string()),
+        session_id: id.clone(),
+        agent_id: "web".to_string(),
+        agent_ids: vec![],
+        agent_role: String::new(),
+        config_file,
+        api_key: api_key.clone(),
+        api_url: api_url.clone(),
+        model: model.clone(),
+        depth: 0,
+        cancel_flag: Arc::new(AtomicBool::new(false)),
+    };
+
+    // Call the AI tool loop
+    let result = call_with_tools(
+        &api_key,
+        &api_url,
+        &model,
+        llm_messages,
+        None,
+        &sandbox_dir,
+        |_update: ToolUpdate| {},  // no live updates for HTTP
+        sub_agent,
+    ).await;
+
+    let assistant_content = result.content;
+
+    // Save assistant response
+    let mut sessions3 = get_chat_history().await;
+    if let Some(s) = sessions3.iter_mut().find(|s| s.id == id) {
+        s.messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: assistant_content.clone(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            files: None,
+            feedback: None,
+        });
+        s.updated_at = chrono::Utc::now().to_rfc3339();
+        save_chat_history(&sessions3).await;
+    }
 
     (
         StatusCode::OK,
         Json(json!({
             "content": assistant_content,
-            "usage": null,
+            "files": result.files,
         })),
     )
         .into_response()

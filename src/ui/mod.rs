@@ -10,6 +10,7 @@ pub mod setup;
 pub mod shared_folders;
 pub mod skills_view;
 pub mod tasks_view;
+pub mod remote_view;
 pub mod terminal_view;
 
 #[allow(unused_imports)]

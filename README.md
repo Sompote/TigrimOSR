@@ -1,4 +1,4 @@
-# TigrimOSR v0.3.0
+# TigrimOSR v0.4.0
 
 **TigrimOSR** is the Rust version of [TigrimOS](https://github.com/Sompote/TigerCowork) — a high-performance native desktop rewrite of the original Python/Node.js AI assistant. Built entirely in Rust using egui for the UI, TigrimOSR delivers faster startup, lower memory usage, and a single self-contained binary with no Node.js or Python runtime required to run the app itself.
 
@@ -18,7 +18,99 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 
 ![Live Agent Monitoring](assets/screenshot_agents.png)
 
-## What's New in v0.3.0
+## What's New in v0.4.0
+
+- **Headless mode** — Run TigrimOS on a remote Linux server without GUI: `./tigrimos --headless`. Interactive token prompt ensures security — empty tokens are blocked.
+- **Remote Web UI** — Full embedded web interface at `/web/` for controlling TigrimOS from any browser or mobile phone. Includes Chat, Files, Terminal, Agents, Tasks, and Settings pages. No Node.js or build tools needed — the SPA is compiled into the binary.
+- **Remote Server tab** — Native Mac app can connect to and control remote TigrimOS instances. Browse files, submit tasks, chat, and view settings on the remote server from your local desktop.
+- **Remote authentication** — Set a Remote Token in Settings to secure API access. When enabled, all API endpoints require the token. The web UI shows a login page — no data accessible without authentication.
+- **LaTeX math rendering** — Web UI renders LaTeX equations via KaTeX (`\[...\]`, `\(...\)`, `$$...$$`, `$...$`). Supports fractions, subscripts, Greek letters, and display math.
+- **Markdown rendering** — Web UI renders tables, headings, bold/italic, code blocks, lists, and horizontal rules in chat and task results.
+- **MCP tool integration** — MCP tools configured in Settings are now injected into the AI agent's tool loop. The agent can discover and call MCP tools during execution.
+
+### Remote Access Setup
+
+TigrimOS can run on a remote cloud server and be controlled from your Mac or any browser.
+
+**On the remote server (Linux):**
+
+```bash
+# Build
+git clone https://github.com/Sompote/TigrimOSR.git
+cd TigrimOSR
+cargo build --release
+
+# Run headless — prompts for a security token
+./target/release/tigrimos --headless
+
+# Or set token via environment variable
+ACCESS_TOKEN=my-secret-token PORT=3001 ./tigrimos --headless
+```
+
+The server will prompt:
+```
+===========================================
+  TigrimOS Headless Mode — Security Setup
+===========================================
+
+Enter access token (min 8 chars): ********
+
+Token set. Use this to connect from your Mac or browser.
+  Web UI:  http://<server-ip>:3001/web/
+  Token:   your-token-here
+```
+
+**Access from a browser:**
+1. Open `http://<server-ip>:3001/web/`
+2. Enter the access token on the login page
+3. Use Chat, Files, Terminal, Agents, Tasks, Settings tabs
+
+**Access from your Mac TigrimOS app:**
+1. Go to **Settings → Remote Instances**
+2. Check **"Enable remote agent access"**
+3. Under **Add Remote Instance**, enter:
+   - **Name:** My Cloud Server
+   - **URL:** `http://<server-ip>:3001`
+   - **Token:** the access token from the server
+4. Click **Add Instance**
+5. Go to the **Remote** tab — select the server, see connection status
+6. Submit tasks, browse files, or chat with the remote AI
+
+**With nginx (recommended for production):**
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+Add HTTPS with Let's Encrypt: `sudo certbot --nginx -d your-domain.com`
+
+### Security
+
+| Method | How to Set | When Auth is Required |
+|--------|-----------|----------------------|
+| `ACCESS_TOKEN` env var | `ACCESS_TOKEN=xxx ./tigrimos` | Always (headless or GUI) |
+| Remote Token (Settings) | Settings → Remote Instances → set token + enable | When "Enable remote agent access" is checked |
+| `--headless` prompt | Interactive prompt on startup | Always in headless mode |
+| No token set | — | No auth (local desktop use only) |
+
+### Previous Releases
+
+<details>
+<summary>v0.3.0 — Pipeline architecture, checkpoint/resume, 9-step compression</summary>
 
 - **Pipeline architecture mode** — True sequential pipeline orchestration: user task flows from agent1 → agent2 → agent3 automatically via `send_task`. Architecture generation now produces correct linear chain connections with `workflow.sequence` and `outputs_to`.
 - **Pipeline-aware dispatch** — Fully Auto and Manual modes auto-route user tasks to the first pipeline agent and wait for the last agent's result, instead of treating all agents as orchestrator targets.
@@ -28,7 +120,10 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 - **9-step compression pipeline** — Full context compaction system ported from tiger_cowork: LLM-based summarization, smart tool-result compression by type, post-compact context restoration, checkpoint save/resume, circuit breaker, and cooldown.
 - **Cancel flag for tool loops** — `SubAgentConfig.cancel_flag` allows external cancellation of running tool loops with automatic checkpoint save.
 
-### v0.2.4
+</details>
+
+<details>
+<summary>v0.2.4 — Gemini CLI, live agent progress, 6 orchestration modes</summary>
 
 - **Gemini CLI (Local)** — Use Google's Gemini CLI as an AI backend, no API key needed (same as Claude Code and Codex)
 - **Live agent progress in chat** — Fully Auto mode now shows step-by-step progress (architecture → boot → delegate → wait) with live agent activity updates instead of just "thinking..."
@@ -38,7 +133,10 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 - **Smarter loop detection** — Monitoring tools (check_agents, bb_read) exempt from loop detection; realtime agents get higher limits (30 rounds, 60 tool calls)
 - **Agent history fix** — spawn.jsonl now writes to the correct data directory so the graphic view works from .app bundles
 
-### v0.2.3
+</details>
+
+<details>
+<summary>v0.2.3 — Local CLI providers, agent harness settings, VM terminal</summary>
 
 - **Local CLI providers** — Use Claude Code or OpenAI Codex CLI installed on your machine as AI backends, no API key needed
 - **Agent harness settings** — Configurable max turns, max tool calls, temperature, max tokens, context limit, compression interval, and reflection toggle in Settings
@@ -48,7 +146,10 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 - **Robust CLI spawning** — Node.js-based CLIs (claude, codex) launched via `node script.js` directly, bypassing shebang issues in .app bundles
 - **Environment fixes** — Proper PATH/HOME injection for .app bundle launches where env vars are minimal
 
-### v0.2.1
+</details>
+
+<details>
+<summary>v0.2.1 — Cross-platform, .app fixes, parallel streaming</summary>
 
 - **Cross-platform support** — Windows and Linux compatibility for sandbox execution, Python/shell discovery, and subprocess spawning
 - **.app bundle fixes** — Resolved issues with data directories, sandbox paths, Python/shell not found when launched from macOS `.app` bundle
@@ -57,7 +158,10 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 - **Installer improvements** — Robust `curl | bash` support with proper cwd handling, terminal prompt fallbacks
 - **Zero compiler warnings** — All 162 warnings resolved (deprecated egui APIs, unused imports, dead code)
 
-### v0.2.0
+</details>
+
+<details>
+<summary>v0.2.0 — Multi-agent core, MCP, Cloudflare tunnel</summary>
 
 - **Agent modes** — Auto, Fully Auto, Auto Swarm, and Manual modes for flexible agent orchestration
 - **Connection editor** — Click agent connection lines to change protocol type (TCP, Queue, Bus, Blackboard)
@@ -72,11 +176,15 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 - **ClawHub marketplace** — Search, install, and manage skills from the ClawHub skill marketplace
 - **Custom app icon** — Program icon replaces emoji in the title bar
 
+</details>
+
 ## Features
 
 - **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
-- **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading
+- **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
+- **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
+- **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
 - **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
 - **Output panel** — inline preview for images (PNG/JPG), markdown reports, CSV tables, JSON, PDF, HTML
 - **Agent history log** — JSONL logs per session in `data/agent_history/`
@@ -84,12 +192,13 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 - **Sandboxed Python** — matplotlib plots auto-saved as PNG via Agg backend
 - **Resizable layout** — drag handles for chat sidebar and output panel widths
 - **Session management** — persistent chat history with project context
+- **LaTeX math** — KaTeX rendering in web UI for equations and formulas
 
 ## Requirements
 
 - Rust 1.75+ (`rustup` recommended)
 - Python 3.8+ with pip (for tool execution)
-- macOS 12+ (primary target; Linux supported without sandbox-exec)
+- macOS 12+ (primary target; Linux supported for headless mode)
 
 ### Optional local CLI agents
 
@@ -220,12 +329,17 @@ cargo build --release
 
 #### Step 5 — Run
 
+**Desktop mode (with GUI):**
 ```bash
 cargo run --release
 ```
 
-Or run the compiled binary directly after building:
+**Headless mode (remote server, no GUI):**
+```bash
+./target/release/tigrimos --headless
+```
 
+Or run the compiled binary directly:
 ```bash
 ./target/release/tigrimos
 ```
@@ -248,6 +362,8 @@ On first launch, go to **Settings** to configure:
 | Sub-agent system | Enable multi-agent mode |
 | Agent config file | Select a YAML file from `data/agents/` |
 | Agent mode | Fully Auto, Auto, Auto Swarm, or Manual |
+| Remote access | Enable remote + set token for web UI and remote connections |
+| MCP tools | Configure external tool servers (stdio/HTTP) in JSON format |
 
 ## Multi-Agent System
 
@@ -325,13 +441,14 @@ connections:
 ```
 TigrimOSR/
 ├── src/
-│   ├── main.rs              # Entry point
+│   ├── main.rs              # Entry point (GUI + headless mode)
 │   ├── ui/
 │   │   ├── app.rs           # Main app frame, logo, tab routing
 │   │   ├── chat.rs          # Chat UI, streaming, info card, log panel
 │   │   ├── agents_view.rs   # Agent architecture canvas, connection editor
 │   │   ├── files_view.rs    # Sandbox file browser with image preview
-│   │   ├── tasks_view.rs    # Active/Scheduled/Finished task management
+│   │   ├── tasks_view.rs    # Active/Scheduled/Finished/Remote task management
+│   │   ├── remote_view.rs   # Remote server dashboard (connect to remote instances)
 │   │   ├── settings.rs      # Settings UI with harness parameters
 │   │   ├── terminal_view.rs # VM Terminal via SSH
 │   │   ├── output_panel.rs  # File output panel (images, MD, CSV, etc.)
@@ -345,11 +462,14 @@ TigrimOSR/
 │   │   │   ├── mcp.rs        # MCP client (stdio/SSE/HTTP)
 │   │   │   └── tunnel.rs     # Cloudflare tunnel management
 │   │   ├── routes/
-│   │   │   └── remote.rs     # Remote task API endpoints
+│   │   │   ├── remote.rs     # Remote task API endpoints
+│   │   │   └── web_ui.rs     # Embedded web UI serving
 │   │   └── data.rs           # Data models and persistence
 │   └── vm/
 │       ├── manager.rs        # QEMU VM lifecycle management
 │       └── config.rs         # VM configuration constants
+├── static/
+│   └── index.html            # Embedded web UI (SPA with KaTeX)
 ├── data/
 │   └── agents/              # YAML agent config files
 ├── assets/

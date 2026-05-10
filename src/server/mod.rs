@@ -61,10 +61,6 @@ async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    if state.access_token.is_empty() {
-        return next.run(req).await;
-    }
-
     let uri = req.uri().clone();
     let path = uri.path().to_string();
 
@@ -73,19 +69,30 @@ async fn auth_middleware(
         return next.run(req).await;
     }
 
+    // Check if any auth is configured (access_token or remote_token)
+    let settings = get_settings().await;
+    let remote_token = if settings.remote_enabled == Some(true) {
+        settings.remote_token.clone().filter(|t| !t.is_empty())
+    } else {
+        None
+    };
+
+    // If no access_token AND no remote_token configured, allow all (local-only use)
+    if state.access_token.is_empty() && remote_token.is_none() {
+        return next.run(req).await;
+    }
+
     let token = extract_bearer(req.headers()).or_else(|| extract_query_token(&uri));
 
     if let Some(ref t) = token {
-        if *t == state.access_token {
+        // Check main access token
+        if !state.access_token.is_empty() && *t == state.access_token {
             return next.run(req).await;
         }
         // Check remote token
-        let settings = get_settings().await;
-        if settings.remote_enabled == Some(true) {
-            if let Some(ref rt) = settings.remote_token {
-                if t == rt {
-                    return next.run(req).await;
-                }
+        if let Some(ref rt) = remote_token {
+            if t == rt {
+                return next.run(req).await;
             }
         }
         // Check file token for /files routes
@@ -157,6 +164,9 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         save_file_tokens(&[default_token]).await;
     }
 
+    // Initialize MCP server connections from settings
+    services::mcp::init_mcp_servers().await;
+
     let state = Arc::new(AppState {
         sandbox_dir: sandbox_dir.clone(),
         data_dir,
@@ -177,10 +187,22 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         axum::routing::post(routes::auth::verify_handler),
     );
 
+    // Web UI (no auth needed — auth happens client-side via API calls)
+    let web_ui = routes::web_ui::router();
+
+    // API routes with auth middleware
+    let api_with_auth = Router::new()
+        .nest("/api", api_routes)
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+
+    // Combine: unauthenticated routes + authenticated API
     let app = Router::new()
         .merge(auth_verify)
-        .nest("/api", api_routes)
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .nest("/web", web_ui.clone())
+        .route("/web/", axum::routing::get(|| async {
+            axum::response::Redirect::permanent("/web")
+        }))
+        .merge(api_with_auth)
         .layer(cors)
         .with_state(state);
 

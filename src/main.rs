@@ -18,12 +18,11 @@ fn main() {
         );
     }
 
+    let headless = std::env::args().any(|a| a == "--headless");
+
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     let handle = runtime.handle().clone();
 
-    let vm_manager = Arc::new(VmManager::new());
-
-    // Start the Axum server in background
     // Resolve sandbox dir — use absolute path so .app bundles work (cwd may be /)
     let sandbox_dir = std::env::var("SANDBOX_DIR").unwrap_or_else(|_| {
         let raw = "sandbox".to_string();
@@ -39,6 +38,45 @@ fn main() {
     });
     let _ = std::fs::create_dir_all(&sandbox_dir);
     let access_token = std::env::var("ACCESS_TOKEN").unwrap_or_default();
+
+    if headless {
+        // Require access token for security — prompt if not set via env
+        let access_token = if access_token.is_empty() {
+            println!("===========================================");
+            println!("  TigrimOS Headless Mode — Security Setup");
+            println!("===========================================");
+            println!();
+            loop {
+                print!("Enter access token (min 8 chars): ");
+                use std::io::Write;
+                std::io::stdout().flush().unwrap();
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).unwrap();
+                let token = input.trim().to_string();
+                if token.len() >= 8 {
+                    println!();
+                    println!("Token set. Use this to connect from your Mac or browser.");
+                    println!("  Web UI:  http://<server-ip>:{}/web/", std::env::var("PORT").unwrap_or_else(|_| "3001".to_string()));
+                    println!("  Token:   {}", token);
+                    println!();
+                    break token;
+                }
+                println!("Token too short — must be at least 8 characters.");
+            }
+        } else {
+            println!("Access token loaded from ACCESS_TOKEN env var.");
+            access_token
+        };
+
+        tracing::info!("Running in headless mode (HTTP server only)");
+        server::services::skill_synthesizer::start_cron(handle.clone());
+        runtime.block_on(server::start_server(sandbox_dir, access_token));
+        return;
+    }
+
+    let vm_manager = Arc::new(VmManager::new());
+
+    // Start the Axum server in background
     handle.spawn(server::start_server(sandbox_dir, access_token));
 
     // Start skill auto-update cron job

@@ -110,6 +110,7 @@ const CRON_PRESETS: &[(&str, &str)] = &[
 enum TaskTab {
     Scheduled,
     Active,
+    Remote,
     Finished,
 }
 
@@ -150,6 +151,11 @@ pub struct TasksView {
     finished_needs_load: bool,
     expanded_finished_id: Option<String>,
 
+    // remote tasks
+    remote_tasks: Vec<serde_json::Value>,
+    remote_needs_refresh: bool,
+    expanded_remote_id: Option<String>,
+
     // navigation to chat
     pub navigate_to_chat: Option<String>, // session_id to jump to
 }
@@ -175,6 +181,9 @@ impl TasksView {
             finished_tasks: Vec::new(),
             finished_needs_load: true,
             expanded_finished_id: None,
+            remote_tasks: Vec::new(),
+            remote_needs_refresh: true,
+            expanded_remote_id: None,
             navigate_to_chat: None,
         }
     }
@@ -331,6 +340,22 @@ impl TasksView {
                 self.needs_refresh = true;
             }
 
+            let remote_count = self.remote_tasks.iter()
+                .filter(|t| t["status"].as_str() == Some("running"))
+                .count();
+            let remote_label = if remote_count > 0 {
+                format!("Remote ({})", remote_count)
+            } else {
+                "Remote".to_string()
+            };
+            if ui
+                .selectable_label(self.current_tab == TaskTab::Remote, remote_label)
+                .clicked()
+            {
+                self.current_tab = TaskTab::Remote;
+                self.remote_needs_refresh = true;
+            }
+
             if ui
                 .selectable_label(self.current_tab == TaskTab::Finished, "Finished")
                 .clicked()
@@ -346,6 +371,7 @@ impl TasksView {
         match self.current_tab {
             TaskTab::Scheduled => self.show_scheduled_tab(ui, runtime),
             TaskTab::Active => self.show_active_tab(ui, runtime),
+            TaskTab::Remote => self.show_remote_tab(ui, runtime),
             TaskTab::Finished => self.show_finished_tab(ui, runtime),
         }
     }
@@ -1096,6 +1122,168 @@ impl TasksView {
                     }
                 }
             });
+    }
+
+    // ===================================================================
+    // REMOTE TAB — shows tasks submitted via web UI / HTTP API
+    // ===================================================================
+    fn show_remote_tab(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        // Auto-refresh every frame when tab is active
+        if self.remote_needs_refresh {
+            self.remote_needs_refresh = false;
+            self.remote_tasks = runtime.block_on(
+                crate::server::routes::remote::get_all_remote_tasks()
+            );
+        }
+
+        // Auto-refresh periodically
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs(3));
+        // Silently refresh in background
+        self.remote_tasks = runtime.block_on(
+            crate::server::routes::remote::get_all_remote_tasks()
+        );
+
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("{} remote task(s)", self.remote_tasks.len()))
+                    .size(13.0)
+                    .color(egui::Color32::GRAY),
+            );
+            if ui.button("Refresh").clicked() {
+                self.remote_needs_refresh = true;
+            }
+        });
+
+        ui.add_space(8.0);
+
+        if self.remote_tasks.is_empty() {
+            ui.label(
+                egui::RichText::new("No remote tasks. Submit tasks via the web UI at /web")
+                    .color(egui::Color32::GRAY),
+            );
+            return;
+        }
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let mut kill_id: Option<String> = None;
+            let mut toggle_id: Option<String> = None;
+
+            for task in &self.remote_tasks {
+                let id = task["id"].as_str().unwrap_or("?");
+                let status = task["status"].as_str().unwrap_or("?");
+                let task_text = task["task"].as_str().unwrap_or("");
+                let created = task["createdAt"].as_str().unwrap_or("");
+                let progress_count = task["progressCount"].as_u64().unwrap_or(0);
+                let is_expanded = self.expanded_remote_id.as_deref() == Some(id);
+
+                let status_color = match status {
+                    "running" => egui::Color32::from_rgb(59, 130, 246),
+                    "completed" => egui::Color32::from_rgb(74, 222, 128),
+                    "failed" => egui::Color32::from_rgb(239, 68, 68),
+                    "killed" => egui::Color32::from_rgb(107, 114, 128),
+                    "pending" => egui::Color32::from_rgb(245, 158, 11),
+                    _ => egui::Color32::GRAY,
+                };
+
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        // Status badge
+                        let badge = egui::RichText::new(format!(" {} ", status.to_uppercase()))
+                            .size(10.0)
+                            .color(egui::Color32::WHITE)
+                            .background_color(status_color);
+                        ui.label(badge);
+
+                        // Task text (truncated)
+                        let display: String = task_text.chars().take(80).collect();
+                        if ui.link(egui::RichText::new(&display).size(13.0)).clicked() {
+                            toggle_id = Some(id.to_string());
+                        }
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if status == "running" || status == "pending" {
+                                if ui.button(
+                                    egui::RichText::new("Kill")
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(239, 68, 68)),
+                                ).clicked() {
+                                    kill_id = Some(id.to_string());
+                                }
+                            }
+                        });
+                    });
+
+                    // Info line
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("ID: {}  |  {}  |  {} progress entries",
+                                &id[..8.min(id.len())], created, progress_count))
+                                .size(11.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    });
+
+                    // Expanded: show result + progress
+                    if is_expanded {
+                        ui.add_space(4.0);
+
+                        // Result
+                        if let Some(result) = task["result"].as_str() {
+                            ui.separator();
+                            ui.label(egui::RichText::new("Result:").size(12.0).strong());
+                            egui::ScrollArea::vertical()
+                                .max_height(200.0)
+                                .id_salt(format!("remote_result_{}", id))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(result)
+                                            .size(12.0)
+                                            .monospace(),
+                                    );
+                                });
+                        }
+
+                        // Progress
+                        if let Some(progress) = task["progress"].as_array() {
+                            if !progress.is_empty() {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Progress:").size(12.0).strong());
+                                egui::ScrollArea::vertical()
+                                    .max_height(150.0)
+                                    .id_salt(format!("remote_prog_{}", id))
+                                    .show(ui, |ui| {
+                                        for p in progress.iter().rev().take(50) {
+                                            let msg = p["message"].as_str().unwrap_or("");
+                                            let ts = p["timestamp"].as_str().unwrap_or("");
+                                            ui.label(
+                                                egui::RichText::new(format!("[{}] {}", ts, msg))
+                                                    .size(11.0)
+                                                    .monospace()
+                                                    .color(egui::Color32::GRAY),
+                                            );
+                                        }
+                                    });
+                            }
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+            }
+
+            // Handle kills
+            if let Some(kid) = kill_id {
+                runtime.block_on(crate::server::routes::remote::kill_remote_task(&kid));
+                self.remote_needs_refresh = true;
+            }
+            // Handle expand toggle
+            if let Some(tid) = toggle_id {
+                if self.expanded_remote_id.as_deref() == Some(&tid) {
+                    self.expanded_remote_id = None;
+                } else {
+                    self.expanded_remote_id = Some(tid);
+                }
+            }
+        });
     }
 
     // ===================================================================

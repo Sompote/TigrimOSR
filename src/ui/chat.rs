@@ -3341,6 +3341,11 @@ Provide helpful, detailed responses based on tool results.{}",
             std::collections::HashMap::new(); // id -> (role, status, tools)
         let mut edge_set: std::collections::HashSet<(String, String)> =
             std::collections::HashSet::new();
+        // YAML-defined connections (from SESSION_CONFIG event)
+        let mut yaml_edges: Vec<(String, String)> = Vec::new();
+        let mut orchestration_mode = String::new();
+        // Pipeline order from workflow.sequence
+        let mut pipeline_order: Vec<String> = Vec::new();
 
         // Always add "main" orchestrator
         agent_map
@@ -3358,6 +3363,36 @@ Provide helpful, detailed responses based on tool results.{}",
             let data = entry.get("data");
 
             match event {
+                "SESSION_CONFIG" => {
+                    orchestration_mode = data
+                        .and_then(|d| d.get("orchestration_mode"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    // Extract YAML connections
+                    if let Some(conns) = data.and_then(|d| d.get("connections")).and_then(|v| v.as_array()) {
+                        for conn in conns {
+                            let from = conn.get("from").and_then(|v| v.as_str()).unwrap_or("");
+                            let to = conn.get("to").and_then(|v| v.as_str()).unwrap_or("");
+                            if !from.is_empty() && !to.is_empty() && from != "human" && to != "human" {
+                                yaml_edges.push((from.to_string(), to.to_string()));
+                            }
+                        }
+                    }
+                    // Extract pipeline order from workflow.sequence
+                    if let Some(seq) = data.and_then(|d| d.get("workflow"))
+                        .and_then(|w| w.get("sequence"))
+                        .and_then(|s| s.as_array())
+                    {
+                        for step in seq {
+                            if let Some(agent) = step.get("agent").and_then(|v| v.as_str()) {
+                                if agent != "human" {
+                                    pipeline_order.push(agent.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
                 "SUBAGENT_SPAWN" => {
                     let name = data
                         .and_then(|d| d.get("agent_name"))
@@ -3367,14 +3402,11 @@ Provide helpful, detailed responses based on tool results.{}",
                         .and_then(|d| d.get("role"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("worker");
-                    let parent = data
-                        .and_then(|d| d.get("parent"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("main");
                     agent_map
                         .entry(name.to_string())
                         .or_insert_with(|| (role.to_string(), "working".to_string(), Vec::new()));
-                    edge_set.insert((parent.to_string(), name.to_string()));
+                    // Only add parent→child edge if no YAML connections (fallback for non-realtime)
+                    // For realtime sessions with SESSION_CONFIG, we use YAML edges instead
                 }
                 "SUBAGENT_DONE" => {
                     let name = data
@@ -3487,8 +3519,58 @@ Provide helpful, detailed responses based on tool results.{}",
             }
         }
 
-        // Layout agents: orchestrator at top center, workers in grid below
-        let names: Vec<String> = {
+        // Decide edges: prefer YAML connections when available, fall back to history edges
+        let final_edges: Vec<(String, String)> = if !yaml_edges.is_empty() {
+            // Use YAML-defined topology + only runtime edges between main and first agent
+            let mut edges = yaml_edges.clone();
+            // Add main → first_agent edge from runtime send_task calls
+            for (from, to) in &edge_set {
+                if from == "main" {
+                    // Only add main's direct delegation edge (to first pipeline agent or orchestrator)
+                    if !edges.iter().any(|(f, t)| f == from && t == to) {
+                        edges.push((from.clone(), to.clone()));
+                    }
+                    break; // Only first send_task from main
+                }
+            }
+            edges
+        } else {
+            // No YAML config — use all runtime edges (legacy / spawn_subagent mode)
+            // Also add parent edges from SUBAGENT_SPAWN
+            for line in hist.lines() {
+                if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
+                    if entry.get("event").and_then(|v| v.as_str()) == Some("SUBAGENT_SPAWN") {
+                        let name = entry.get("data").and_then(|d| d.get("agent_name")).and_then(|v| v.as_str()).unwrap_or("");
+                        let parent = entry.get("data").and_then(|d| d.get("parent")).and_then(|v| v.as_str()).unwrap_or("main");
+                        if !name.is_empty() {
+                            edge_set.insert((parent.to_string(), name.to_string()));
+                        }
+                    }
+                }
+            }
+            edge_set.into_iter().collect()
+        };
+
+        // Determine layout mode
+        let is_pipeline = orchestration_mode == "pipeline";
+
+        // Build ordered agent list for layout
+        let names: Vec<String> = if is_pipeline && !pipeline_order.is_empty() {
+            // Pipeline: main first, then pipeline order
+            let mut ordered = vec!["main".to_string()];
+            for id in &pipeline_order {
+                if !ordered.contains(id) {
+                    ordered.push(id.clone());
+                }
+            }
+            // Add any remaining agents not in pipeline order
+            for id in agent_map.keys() {
+                if !ordered.contains(id) {
+                    ordered.push(id.clone());
+                }
+            }
+            ordered
+        } else {
             let mut n: Vec<String> = agent_map.keys().cloned().collect();
             // Put orchestrators first
             n.sort_by(|a, b| {
@@ -3501,21 +3583,30 @@ Provide helpful, detailed responses based on tool results.{}",
             n
         };
 
-        let total = names.len();
-        let cols = (total as f32).sqrt().ceil().max(1.0) as usize;
         let canvas_w: f32 = 700.0;
-        let spacing_x = canvas_w / (cols as f32 + 1.0);
-        let mut row = 0usize;
-        let mut col = 0usize;
 
-        for (i, name) in names.iter().enumerate() {
-            let (ref role, ref status, ref _tools) = agent_map[name];
-            let is_orch = role == "orchestrator";
+        if is_pipeline && !pipeline_order.is_empty() {
+            // Pipeline layout: horizontal chain left → right
+            // main at top-left, then pipeline stages flow left → right
+            let pipeline_count = pipeline_order.len();
+            let spacing_x = canvas_w / (pipeline_count as f32 + 1.0);
 
-            if is_orch {
-                // Orchestrator centered at top
-                let x = canvas_w / 2.0 - 50.0;
-                let y = 30.0;
+            for (i, name) in names.iter().enumerate() {
+                let (ref role, ref status, ref _tools) = agent_map.get(name)
+                    .cloned()
+                    .unwrap_or(("worker".to_string(), "idle".to_string(), Vec::new()));
+
+                let (x, y) = if name == "main" {
+                    // Main at top-left, connected to first pipeline stage
+                    (spacing_x * 0.5 - 50.0, 30.0)
+                } else if let Some(pos) = pipeline_order.iter().position(|id| id == name) {
+                    // Pipeline stages in a horizontal row
+                    (spacing_x * (pos as f32 + 0.5) - 50.0, 160.0)
+                } else {
+                    // Extra agents below
+                    (spacing_x * (i as f32) - 50.0, 280.0)
+                };
+
                 self.graphic_agents.push(GraphicAgent {
                     id: name.clone(),
                     name: name.clone(),
@@ -3526,35 +3617,65 @@ Provide helpful, detailed responses based on tool results.{}",
                     color: agent_node_color(i),
                     last_tool: _tools.last().cloned().unwrap_or_default(),
                 });
-            } else {
-                let x = spacing_x * (col as f32 + 1.0) - 50.0;
-                let y = 140.0 + row as f32 * 100.0;
-                self.graphic_agents.push(GraphicAgent {
-                    id: name.clone(),
-                    name: name.clone(),
-                    role: role.clone(),
-                    status: status.clone(),
-                    x,
-                    y,
-                    color: agent_node_color(i),
-                    last_tool: _tools.last().cloned().unwrap_or_default(),
-                });
-                col += 1;
-                if col >= cols {
-                    col = 0;
-                    row += 1;
+            }
+        } else {
+            // Default layout: orchestrator at top, workers in grid
+            let worker_count = names.iter().filter(|n| {
+                agent_map.get(*n).map(|e| e.0 != "orchestrator").unwrap_or(true)
+            }).count();
+            let cols = (worker_count as f32).sqrt().ceil().max(1.0) as usize;
+            let spacing_x = canvas_w / (cols as f32 + 1.0);
+            let mut row = 0usize;
+            let mut col = 0usize;
+
+            for (i, name) in names.iter().enumerate() {
+                let (ref role, ref status, ref _tools) = agent_map.get(name)
+                    .cloned()
+                    .unwrap_or(("worker".to_string(), "idle".to_string(), Vec::new()));
+                let is_orch = role == "orchestrator";
+
+                if is_orch {
+                    let x = canvas_w / 2.0 - 50.0;
+                    let y = 30.0;
+                    self.graphic_agents.push(GraphicAgent {
+                        id: name.clone(),
+                        name: name.clone(),
+                        role: role.clone(),
+                        status: status.clone(),
+                        x,
+                        y,
+                        color: agent_node_color(i),
+                        last_tool: _tools.last().cloned().unwrap_or_default(),
+                    });
+                } else {
+                    let x = spacing_x * (col as f32 + 1.0) - 50.0;
+                    let y = 140.0 + row as f32 * 100.0;
+                    self.graphic_agents.push(GraphicAgent {
+                        id: name.clone(),
+                        name: name.clone(),
+                        role: role.clone(),
+                        status: status.clone(),
+                        x,
+                        y,
+                        color: agent_node_color(i),
+                        last_tool: _tools.last().cloned().unwrap_or_default(),
+                    });
+                    col += 1;
+                    if col >= cols {
+                        col = 0;
+                        row += 1;
+                    }
                 }
             }
         }
 
-        // Build edges
-        for (from, to) in &edge_set {
-            let kind = "delegate";
+        // Build edges from final_edges
+        for (from, to) in &final_edges {
             self.graphic_edges.push(GraphicEdge {
                 from: from.clone(),
                 to: to.clone(),
                 label: String::new(),
-                protocol: kind.to_string(),
+                protocol: "delegate".to_string(),
                 state: "idle".to_string(),
             });
         }

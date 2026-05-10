@@ -11,13 +11,14 @@ use tokio::time::{timeout, Duration};
 use tracing::{error, info, warn};
 use crate::server::services::protocols;
 use crate::server::services::compact;
+use crate::server::services::mcp;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /// Find python binary — checks PATH first, then common platform-specific locations.
-fn find_python() -> String {
+pub(crate) fn find_python() -> String {
     // On Windows, try "python" first (standard), then "python3"
     // On Unix, try "python3" first, then "python"
     #[cfg(target_os = "windows")]
@@ -595,6 +596,14 @@ pub async fn start_realtime_session(
         info!("[Realtime] Agent {} ({}) booted and listening", agent_id, role);
     }
 
+    // Write SESSION_CONFIG so the graphic view knows the orchestration mode and YAML connections
+    let orch_mode = yaml_val["system"]["orchestration_mode"].as_str().unwrap_or("hierarchical");
+    write_agent_history(session_id, "SESSION_CONFIG", json!({
+        "orchestration_mode": orch_mode,
+        "connections": yaml_val.get("connections").cloned().unwrap_or(json!([])),
+        "workflow": yaml_val.get("workflow").cloned().unwrap_or(json!({})),
+    })).await;
+
     let session = Arc::new(TokioMutex::new(RealtimeSession {
         session_id: session_id.to_string(),
         agents: agent_handles,
@@ -1069,6 +1078,7 @@ async fn realtime_agent_loop(
         let status_arc = status.clone();
 
         let log_tx = subagent_log_tx().clone();
+        let fwd_log_tx = log_tx.clone(); // for pipeline auto-forward logging
         let log_sid = session_id.clone();
         let log_aid = agent_id.clone();
         let progress_sid = session_id.clone(); // for activity log
@@ -1197,6 +1207,36 @@ async fn realtime_agent_loop(
         };
 
         info!("[Realtime] Agent {} finished. Result length: {}", agent_id, agent_result.result.len());
+
+        // Pipeline auto-forwarding: if this agent has a downstream target in pipeline mode,
+        // automatically send_task to the next agent in the chain.
+        let orch_mode = system_config["system"]["orchestration_mode"]
+            .as_str().unwrap_or("hierarchical");
+        if orch_mode == "pipeline" {
+            let downstream = get_downstream(&agent_id, &system_config);
+            if let Some(next_agent) = downstream.first() {
+                info!("[Realtime] Pipeline auto-forward: {} → {}", agent_id, next_agent);
+                let forward_task = format!(
+                    "Previous pipeline stage ({}) produced the following result. Continue processing:\n\n{}",
+                    agent_id, loop_result.content
+                );
+                let forward_args = serde_json::json!({
+                    "to": next_agent,
+                    "task": forward_task,
+                });
+                let fwd_result = exec_send_task_from(&forward_args, &session_id, &agent_id).await;
+                let fwd_ok = fwd_result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                if fwd_ok {
+                    info!("[Realtime] Pipeline auto-forward {} → {} succeeded", agent_id, next_agent);
+                    let _ = fwd_log_tx.send((
+                        session_id.clone(), agent_id.clone(),
+                        format!("[{}] [{}] PIPELINE FORWARD → {}", chrono::Utc::now().format("%H:%M:%S"), agent_id, next_agent),
+                    ));
+                } else {
+                    warn!("[Realtime] Pipeline auto-forward {} → {} failed: {:?}", agent_id, next_agent, fwd_result);
+                }
+            }
+        }
 
         // Publish result — consumed by wait_result
         {
@@ -4582,6 +4622,10 @@ async fn execute_tool_with_context(
         "clawhub_search" => exec_clawhub_search(args).await,
         "clawhub_install" => exec_clawhub_install(args).await,
         "openrouter_web_search" => exec_openrouter_web_search(args).await,
+        _ if mcp::is_mcp_tool(name) => {
+            info!("[execute_tool] Routing MCP tool call: {name}");
+            mcp::call_mcp_tool(name, args).await
+        }
         _ => json!({ "ok": false, "error": format!("Unknown tool: {name}") }),
     }
 }
@@ -5850,6 +5894,14 @@ async fn call_with_tools_inner(
         info!("[call_with_tools] sub_agent disabled, using default tools");
         tool_definitions()
     };
+
+    // Inject MCP tools from connected servers
+    let mcp_tools = mcp::get_mcp_tools().await;
+    if !mcp_tools.is_empty() {
+        info!("[call_with_tools] Adding {} MCP tool(s): {}", mcp_tools.len(),
+            mcp_tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+        tools.extend(mcp_tools);
+    }
 
     // Orchestrators get reduced tools — research delegated to workers
     if sub_agent.agent_role == "orchestrator" {

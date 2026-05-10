@@ -12,6 +12,7 @@ pub mod python;
 pub mod tools;
 pub mod clawhub;
 pub mod remote;
+pub mod web_ui;
 
 use std::sync::Arc;
 use axum::Router;

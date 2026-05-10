@@ -442,6 +442,45 @@ async fn process_remote_task(
 // Router
 // ---------------------------------------------------------------------------
 
+/// Public: get all remote tasks as JSON values (for native UI)
+pub async fn get_all_remote_tasks() -> Vec<Value> {
+    let tasks = remote_tasks().lock().await;
+    let mut list: Vec<Value> = tasks
+        .values()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "task": t.task,
+                "status": t.status,
+                "sessionId": t.session_id,
+                "createdAt": t.created_at,
+                "completedAt": t.completed_at,
+                "progressCount": t.progress.len(),
+                "result": t.result,
+                "progress": t.progress,
+            })
+        })
+        .collect();
+    list.sort_by(|a, b| {
+        b["createdAt"].as_str().cmp(&a["createdAt"].as_str())
+    });
+    list
+}
+
+/// Public: kill a remote task by ID (for native UI)
+pub async fn kill_remote_task(id: &str) -> bool {
+    let mut tasks = remote_tasks().lock().await;
+    if let Some(entry) = tasks.get_mut(id) {
+        if entry.status == "running" || entry.status == "pending" {
+            entry.status = "killed".to_string();
+            entry.completed_at = Some(now_iso());
+            add_progress_inner(entry, "Task killed by user");
+            return true;
+        }
+    }
+    false
+}
+
 pub fn router() -> Router<std::sync::Arc<crate::server::AppState>> {
     Router::new()
         .route("/task", post(submit_task))

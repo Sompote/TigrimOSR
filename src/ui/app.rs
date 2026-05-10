@@ -14,6 +14,7 @@ use super::setup::SetupView;
 use super::shared_folders::shared_folders_view;
 use super::skills_view::SkillsView;
 use super::tasks_view::TasksView;
+use super::remote_view::RemoteView;
 use super::terminal_view::TerminalView;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +26,7 @@ pub enum Tab {
     Tasks,
     Skills,
     Terminal,
+    RemoteServer,
     Console,
     Folders,
 }
@@ -43,6 +45,7 @@ pub struct TigrimOSApp {
     skills_view: SkillsView,
     agents_view: AgentsView,
     terminal_view: TerminalView,
+    remote_view: RemoteView,
     logo_texture: Option<egui::TextureHandle>,
 }
 
@@ -209,6 +212,7 @@ impl TigrimOSApp {
             skills_view: SkillsView::new(),
             agents_view: AgentsView::default(),
             terminal_view: TerminalView::new(),
+            remote_view: RemoteView::new(),
             logo_texture: None,
         }
     }
@@ -353,6 +357,7 @@ impl eframe::App for TigrimOSApp {
                         (Tab::Tasks, "Tasks"),
                         (Tab::Skills, "Skills"),
                         (Tab::Terminal, "Terminal"),
+                        (Tab::RemoteServer, "Remote"),
                     ];
 
                     for &(tab, label) in tabs {
@@ -490,6 +495,7 @@ impl eframe::App for TigrimOSApp {
                 Tab::Tasks => self.tasks_view.show(ui, &self.runtime),
                 Tab::Skills => self.skills_view.show(ui, &self.runtime),
                 Tab::Terminal => self.terminal_view.show(ui, &self.runtime, snap.state),
+                Tab::RemoteServer => self.remote_view.show(ui, &self.runtime),
                 Tab::Console => console_view(ui, &snap.console_output, &self.vm_manager, &self.runtime),
                 Tab::Folders => shared_folders_view(ui, &snap.shared_folders, &self.vm_manager, &self.runtime),
             }

@@ -12,6 +12,7 @@ use serde_json::json;
 use tokio::fs;
 
 use crate::server::data::*;
+use crate::server::services::toolbox::find_python;
 use crate::server::AppState;
 
 // ---------------------------------------------------------------------------
@@ -103,12 +104,12 @@ async fn run_python(
         );
     }
 
-    // Determine python binary
+    // Determine python binary — use settings override, else robust find_python()
     let settings = get_settings().await;
     let python_bin = settings
         .python_path
         .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| "python3".to_string());
+        .unwrap_or_else(find_python);
 
     // Execute
     let result = tokio::process::Command::new(&python_bin)

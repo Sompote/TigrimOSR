@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TigrimOS Remote</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --bg2: #16213e;
+  --bg3: #0f3460;
+  --fg: #e0e0e0;
+  --fg2: #a0a0b0;
+  --accent: #e94560;
+  --accent2: #0f3460;
+  --green: #4ade80;
+  --red: #ef4444;
+  --border: #2a2a4a;
+  --input-bg: #0d1b2a;
+  --radius: 8px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 16px;
+  font-size: 14px;
+  background: var(--accent);
+  color: white;
+  transition: opacity 0.2s;
+}
+button:hover { opacity: 0.85; }
+button:disabled { opacity: 0.4; cursor: default; }
+button.secondary { background: var(--bg3); }
+input, textarea, select {
+  background: var(--input-bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 14px;
+  width: 100%;
+  outline: none;
+}
+input:focus, textarea:focus { border-color: var(--accent); }
+textarea { resize: vertical; font-family: monospace; }
+.hidden { display: none !important; }
+
+/* Login */
+#login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+.login-box {
+  background: var(--bg2);
+  padding: 40px;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+}
+.login-box h1 { font-size: 28px; margin-bottom: 8px; }
+.login-box p { color: var(--fg2); margin-bottom: 24px; }
+.login-box input { margin-bottom: 16px; }
+#login-error { color: var(--red); font-size: 13px; margin-bottom: 12px; }
+
+/* App layout */
+#app { display: none; flex-direction: column; height: 100vh; }
+.topbar {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  flex-shrink: 0;
+}
+.topbar h2 { font-size: 16px; margin-right: auto; }
+.topbar .tab {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: transparent;
+  color: var(--fg2);
+  border: 1px solid transparent;
+}
+.topbar .tab.active { background: var(--accent); color: white; }
+.topbar .tab:hover:not(.active) { background: var(--bg3); }
+#logout-btn { background: var(--bg3); font-size: 12px; padding: 6px 10px; }
+
+/* Tabs - mobile scroll */
+.tab-scroll {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.tab-scroll::-webkit-scrollbar { display: none; }
+
+/* Pages */
+.page { display: none; flex: 1; overflow: hidden; flex-direction: column; min-height: 0; }
+.page.active { display: flex; }
+.page-content { flex: 1; overflow-y: auto; padding: 16px; }
+
+/* Chat */
+#chat-page { display: flex; flex-direction: row; flex: 1; height: 100%; overflow: hidden; }
+#chat-sidebar {
+  width: 240px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg2);
+}
+#chat-sidebar .header {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+#session-list { flex: 1; overflow-y: auto; padding: 8px; }
+.session-item {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: var(--fg2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-item:hover { background: var(--bg3); }
+.session-item.active { background: var(--accent); color: white; }
+#chat-main { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.msg {
+  max-width: 85%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msg.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+.msg.system {
+  align-self: center;
+  background: var(--bg3);
+  font-size: 12px;
+  color: var(--fg2);
+}
+#chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+#chat-input {
+  flex: 1;
+  min-height: 42px;
+  max-height: 120px;
+}
+#send-btn { flex-shrink: 0; }
+
+/* Files */
+.file-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+#file-path-input { flex: 1; }
+.file-list { list-style: none; }
+.file-item {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.file-item:hover { background: var(--bg2); }
+.file-icon { font-size: 16px; width: 24px; text-align: center; }
+.file-viewer {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+.file-viewer pre {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Terminal */
+#terminal-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  background: #0a0a1a;
+}
+.term-entry { margin-bottom: 12px; }
+.term-cmd { color: var(--green); }
+.term-out { color: var(--fg); }
+.term-err { color: var(--red); }
+#terminal-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+#term-input { flex: 1; font-family: monospace; }
+
+/* Settings / Agents / Tasks */
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.card h3 { font-size: 15px; margin-bottom: 8px; }
+.card .detail { font-size: 13px; color: var(--fg2); margin-bottom: 4px; }
+.card .badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge.running { background: #2563eb; color: white; }
+.badge.completed { background: var(--green); color: #000; }
+.badge.failed { background: var(--red); color: white; }
+.badge.pending { background: #f59e0b; color: #000; }
+.badge.killed { background: #6b7280; color: white; }
+
+.settings-group { margin-bottom: 24px; }
+.settings-group h3 { margin-bottom: 12px; color: var(--accent); }
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.settings-row label { width: 160px; font-size: 13px; color: var(--fg2); flex-shrink: 0; }
+.settings-row input, .settings-row select { flex: 1; }
+
+/* Remote task submit */
+.submit-task-area {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+#task-input { flex: 1; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  #chat-sidebar { display: none; }
+  .topbar { padding: 6px 8px; }
+  .topbar h2 { font-size: 14px; }
+  .settings-row { flex-direction: column; align-items: stretch; }
+  .settings-row label { width: auto; }
+  .msg { max-width: 95%; }
+}
+
+/* Loading spinner */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--fg2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Status dot */
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.green { background: var(--green); }
+.dot.red { background: var(--red); }
+/* Markdown styles */
+.msg.assistant { white-space: normal; max-width: 95%; width: 95%; }
+.md-code {
+  background: #0d1b2a; border: 1px solid var(--border); border-radius: 6px;
+  padding: 12px; overflow-x: auto; font-size: 13px; line-height: 1.4;
+  margin: 8px 0; font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.md-inline {
+  background: #0d1b2a; border: 1px solid var(--border); border-radius: 3px;
+  padding: 2px 5px; font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.md-table-wrap { overflow-x: auto; margin: 8px 0; }
+.md-table {
+  border-collapse: collapse; width: 100%; font-size: 13px;
+}
+.md-table th, .md-table td {
+  border: 1px solid var(--border); padding: 6px 10px; text-align: left;
+}
+.md-table th { background: var(--bg3); font-weight: 600; }
+.md-table tr:nth-child(even) td { background: rgba(15,52,96,0.3); }
+.md-h { margin: 12px 0 6px; color: var(--accent); }
+h1.md-h { font-size: 1.4em; }
+h2.md-h { font-size: 1.25em; }
+h3.md-h { font-size: 1.1em; }
+h4.md-h { font-size: 1em; }
+.md-hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.md-ul, .md-ol { padding-left: 20px; margin: 6px 0; }
+.md-ul li, .md-ol li { margin: 2px 0; }
+.md-math { font-family: 'KaTeX_Main', serif; color: #8be9fd; }
+.katex-display { margin: 12px 0; overflow-x: visible; overflow-y: visible; }
+.katex-display > .katex { text-align: center; }
+.katex { font-size: 1.0em; }
+.msg.assistant .katex-display { padding: 4px 0; }
+.msg.assistant .katex-html { white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN PAGE -->
+<div id="login-page">
+  <div class="login-box">
+    <h1>TigrimOS</h1>
+    <p>Remote Control</p>
+    <div id="login-error"></div>
+    <input type="password" id="token-input" placeholder="Enter access token" autocomplete="off">
+    <br><br>
+    <button onclick="doLogin()" style="width:100%">Connect</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="topbar">
+    <h2>TigrimOS</h2>
+    <div class="tab-scroll">
+      <button class="tab active" data-tab="chat">Chat</button>
+      <button class="tab" data-tab="files">Files</button>
+      <button class="tab" data-tab="terminal">Terminal</button>
+      <button class="tab" data-tab="agents">Agents</button>
+      <button class="tab" data-tab="tasks">Tasks</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </div>
+    <button id="logout-btn" onclick="doLogout()">Logout</button>
+  </div>
+
+  <!-- CHAT PAGE -->
+  <div class="page active" id="page-chat">
+    <div id="chat-page">
+      <div id="chat-sidebar">
+        <div class="header">
+          <button onclick="newSession()" style="flex:1;font-size:12px">+ New Chat</button>
+        </div>
+        <div id="session-list"></div>
+      </div>
+      <div id="chat-main">
+        <div id="messages">
+          <div class="msg system">Send a message to start chatting</div>
+        </div>
+        <div id="chat-input-area">
+          <textarea id="chat-input" rows="1" placeholder="Type a message..."></textarea>
+          <button id="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FILES PAGE -->
+  <div class="page" id="page-files">
+    <div class="file-path-bar">
+      <button class="secondary" onclick="fileUp()" style="padding:8px 12px">&#8593;</button>
+      <input id="file-path-input" value="." placeholder="Path...">
+      <button class="secondary" onclick="loadFiles()">Go</button>
+    </div>
+    <div class="page-content" id="files-content">
+      <ul class="file-list" id="file-list"></ul>
+    </div>
+  </div>
+
+  <!-- TERMINAL PAGE -->
+  <div class="page" id="page-terminal">
+    <div id="terminal-output"></div>
+    <div id="terminal-input-area">
+      <input id="term-input" placeholder="$ command..." autocomplete="off">
+      <button onclick="runCommand()">Run</button>
+    </div>
+  </div>
+
+  <!-- AGENTS PAGE -->
+  <div class="page" id="page-agents">
+    <!-- Sub-Agent Config Selector -->
+    <div style="padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <label style="font-size:13px;color:var(--fg2);white-space:nowrap">Sub-Agent System:</label>
+        <select id="agent-config-select" onchange="selectAgentConfig()" style="flex:1;min-width:200px;max-width:400px">
+          <option value="">None (single agent)</option>
+        </select>
+        <label class="secondary" style="padding:8px 14px;background:var(--bg3);border-radius:var(--radius);cursor:pointer;font-size:13px;display:inline-block">
+          Upload YAML
+          <input type="file" accept=".yaml,.yml" onchange="uploadAgentConfig(this)" style="display:none">
+        </label>
+        <span id="agent-config-status" style="font-size:12px;color:var(--green)"></span>
+      </div>
+      <!-- Preview selected config -->
+      <div id="agent-config-preview" style="margin-top:8px;display:none">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-size:12px;color:var(--fg2)" id="agent-config-info"></span>
+          <button class="secondary" onclick="viewAgentYaml()" style="font-size:11px;padding:4px 8px">View YAML</button>
+          <button onclick="deleteAgentConfig()" style="font-size:11px;padding:4px 8px;background:var(--red)">Delete</button>
+        </div>
+      </div>
+    </div>
+    <!-- Task submit -->
+    <div class="submit-task-area">
+      <textarea id="task-input" rows="2" placeholder="Submit a task for AI execution..."></textarea>
+      <button onclick="submitTask()">Submit</button>
+    </div>
+    <div class="page-content" id="agents-content">
+      <h3 style="margin-bottom:12px">Remote Tasks</h3>
+      <div id="remote-tasks-list"></div>
+    </div>
+    <!-- YAML viewer modal -->
+    <div id="yaml-modal" class="hidden" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.classList.add('hidden')">
+      <div style="background:var(--bg2);border-radius:12px;width:100%;max-width:700px;max-height:80vh;display:flex;flex-direction:column">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <h3 id="yaml-modal-title" style="font-size:15px">Agent Config</h3>
+          <button class="secondary" onclick="document.getElementById('yaml-modal').classList.add('hidden')" style="padding:4px 10px;font-size:12px">Close</button>
+        </div>
+        <pre id="yaml-modal-content" style="padding:16px;overflow:auto;flex:1;font-size:13px;line-height:1.5;margin:0"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- TASKS PAGE -->
+  <div class="page" id="page-tasks">
+    <div class="page-content" id="tasks-content">
+      <h3 style="margin-bottom:12px">Scheduled Tasks</h3>
+      <div id="tasks-list"></div>
+    </div>
+  </div>
+
+  <!-- SETTINGS PAGE -->
+  <div class="page" id="page-settings">
+    <div class="page-content" id="settings-content"></div>
+  </div>
+</div>
+
+<script>
+// ========== API ==========
+const BASE = location.origin;
+let TOKEN = localStorage.getItem('tigrimos_token') || '';
+
+let authRequired = false;
+function api(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  return fetch(BASE + path, { ...opts, headers: { ...headers, ...(opts.headers||{}) } })
+    .then(r => {
+      if ((r.status === 401 || r.status === 403) && authRequired) {
+        doLogout();
+        throw new Error('Unauthorized');
+      }
+      if (!r.ok) {
+        return r.text().then(t => {
+          try { return JSON.parse(t); } catch(e) { throw new Error(t || 'Request failed'); }
+        });
+      }
+      return r.json();
+    });
+}
+
+// ========== AUTH ==========
+function doLogin() {
+  const t = document.getElementById('token-input').value.trim();
+  if (!t) return;
+  TOKEN = t;
+  authRequired = true;
+  fetch(BASE + '/api/auth/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t },
+    body: JSON.stringify({ token: t })
+  }).then(r => r.json()).then(data => {
+    if (data.valid || data.ok) {
+      localStorage.setItem('tigrimos_token', t);
+      showApp();
+    } else {
+      document.getElementById('login-error').textContent = 'Invalid token';
+    }
+  }).catch(() => {
+    // If verify endpoint doesn't exist, try a settings fetch
+    fetch(BASE + '/api/settings', {
+      headers: { 'Authorization': 'Bearer ' + t }
+    }).then(r => {
+      if (r.ok) {
+        localStorage.setItem('tigrimos_token', t);
+        showApp();
+      } else {
+        document.getElementById('login-error').textContent = 'Invalid token';
+      }
+    }).catch(() => {
+      document.getElementById('login-error').textContent = 'Cannot connect to server';
+    });
+  });
+}
+
+function doLogout() {
+  TOKEN = '';
+  localStorage.removeItem('tigrimos_token');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-page').style.display = 'flex';
+}
+
+function showApp() {
+  document.getElementById('login-page').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  loadSessions();
+  loadFiles();
+  loadAgents();
+}
+
+// Auto-login: try without token first (no auth mode), then with saved token
+fetch(BASE + '/api/settings')
+  .then(r => {
+    if (r.ok) {
+      // No auth required — skip login
+      showApp();
+    } else if (TOKEN) {
+      // Try saved token
+      fetch(BASE + '/api/settings', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
+        .then(r2 => { if (r2.ok) showApp(); });
+    }
+  })
+  .catch(() => {
+    if (TOKEN) {
+      fetch(BASE + '/api/settings', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
+        .then(r => { if (r.ok) showApp(); })
+        .catch(() => {});
+    }
+  });
+
+// ========== TABS ==========
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('page-' + tab.dataset.tab).classList.add('active');
+    // Load data for tab
+    if (tab.dataset.tab === 'chat') loadSessions();
+    if (tab.dataset.tab === 'agents') { loadAgents(); loadRemoteTasks(); }
+    if (tab.dataset.tab === 'tasks') loadTasks();
+    if (tab.dataset.tab === 'settings') loadSettings();
+    if (tab.dataset.tab === 'files') loadFiles();
+  });
+});
+
+// ========== CHAT ==========
+let currentSessionId = null;
+let sessions = [];
+
+function loadSessions() {
+  api('/api/chat/sessions').then(data => {
+    sessions = Array.isArray(data) ? data : (data.sessions || []);
+    // Sort by updatedAt descending
+    sessions.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    renderSessions();
+  }).catch(() => {});
+}
+
+function renderSessions() {
+  const el = document.getElementById('session-list');
+  el.innerHTML = sessions.map(s =>
+    `<div class="session-item ${s.id === currentSessionId ? 'active' : ''}"
+          onclick="selectSession('${s.id}')">
+      ${esc(s.title || s.id.slice(0,8))}
+    </div>`
+  ).join('');
+}
+
+function selectSession(id) {
+  currentSessionId = id;
+  renderSessions();
+  // Fetch full session with messages
+  api('/api/chat/sessions/' + id).then(data => {
+    renderMessages(data.messages || []);
+  }).catch(() => renderMessages([]));
+}
+
+function renderMessages(msgs) {
+  const el = document.getElementById('messages');
+  if (!msgs || !msgs.length) {
+    el.innerHTML = '<div class="msg system">No messages yet</div>';
+    return;
+  }
+  el.innerHTML = msgs.map(m =>
+    `<div class="msg ${m.role}">${m.role === 'assistant' ? md(m.content) : esc(m.content)}</div>`
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+let creatingSession = false;
+function newSession() {
+  if (creatingSession) return;
+  creatingSession = true;
+  api('/api/chat/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ title: 'New Chat' })
+  }).then(data => {
+    currentSessionId = data.id;
+    loadSessions();
+    renderMessages([]);
+    creatingSession = false;
+  }).catch(() => { creatingSession = false; });
+}
+
+let sending = false;
+function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg || !currentSessionId || sending) return;
+  sending = true;
+  input.value = '';
+
+  // Add user message to UI immediately
+  const el = document.getElementById('messages');
+  el.innerHTML += `<div class="msg user">${esc(msg)}</div>`;
+  el.innerHTML += `<div class="msg assistant"><span class="spinner"></span> Thinking...</div>`;
+  el.scrollTop = el.scrollHeight;
+
+  // Try remote task first (if enabled), fallback to chat API
+  api('/api/remote/task', {
+    method: 'POST',
+    body: JSON.stringify({ task: msg })
+  }).then(data => {
+    if (data.ok === false) throw new Error(data.error || 'Remote not enabled');
+    if (data.id) {
+      pollTask(data.id, (result) => {
+        replaceLastMsg(el, result || 'Done');
+        sending = false;
+        // Save to chat history
+        api(`/api/chat/sessions/${currentSessionId}/messages`, {
+          method: 'POST', body: JSON.stringify({ message: msg })
+        }).catch(() => {});
+      });
+    } else {
+      throw new Error('No task ID');
+    }
+  }).catch(() => {
+    // Fallback: use chat API (placeholder response)
+    api(`/api/chat/sessions/${currentSessionId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ message: msg })
+    }).then(data => {
+      replaceLastMsg(el, data.content || 'No response');
+      sending = false;
+      loadSessions();
+    }).catch(() => {
+      replaceLastMsg(el, '[Error] Failed to send message');
+      sending = false;
+    });
+  });
+}
+
+function replaceLastMsg(el, text) {
+  const msgs = el.querySelectorAll('.msg');
+  const last = msgs[msgs.length - 1];
+  if (last) last.innerHTML = md(text);
+  el.scrollTop = el.scrollHeight;
+}
+
+function pollTask(taskId, onComplete) {
+  const poll = () => {
+    api(`/api/remote/task/${taskId}`).then(data => {
+      if (data.status === 'completed') {
+        onComplete(data.result || 'Task completed');
+      } else if (data.status === 'failed') {
+        onComplete('[Error] ' + (data.result || 'Task failed'));
+      } else if (data.status === 'killed') {
+        onComplete('[Killed]');
+      } else {
+        setTimeout(poll, 2000);
+      }
+    }).catch(() => setTimeout(poll, 3000));
+  };
+  poll();
+}
+
+// Enter to send
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+// ========== FILES ==========
+let currentFilePath = '.';
+let viewingFile = false;
+
+function loadFiles() {
+  const path = document.getElementById('file-path-input').value || '.';
+  currentFilePath = path;
+  api('/api/files/?path=' + encodeURIComponent(path)).then(data => {
+    viewingFile = false;
+    const files = Array.isArray(data) ? data : (data.files || data.entries || []);
+    const el = document.getElementById('file-list');
+    if (!files.length) {
+      document.getElementById('files-content').innerHTML = '<div style="padding:20px;color:var(--fg2)">Empty directory</div>';
+      return;
+    }
+    document.getElementById('files-content').innerHTML = '<ul class="file-list" id="file-list"></ul>';
+    document.getElementById('file-list').innerHTML = files.map(f => {
+      const name = typeof f === 'string' ? f : (f.name || f.path || '');
+      const isDir = typeof f === 'object' ? f.isDirectory || f.is_dir || false : name.endsWith('/');
+      const icon = isDir ? '&#128193;' : '&#128196;';
+      return `<li class="file-item" onclick="openFile('${esc(name)}', ${isDir})">
+        <span class="file-icon">${icon}</span>
+        <span>${esc(name)}</span>
+      </li>`;
+    }).join('');
+  }).catch(() => {});
+}
+
+function openFile(name, isDir) {
+  if (isDir) {
+    const newPath = currentFilePath === '.' ? name : currentFilePath + '/' + name;
+    document.getElementById('file-path-input').value = newPath;
+    loadFiles();
+  } else {
+    const filePath = currentFilePath === '.' ? name : currentFilePath + '/' + name;
+    api('/api/files/read?path=' + encodeURIComponent(filePath)).then(data => {
+      viewingFile = true;
+      const content = typeof data === 'string' ? data : (data.content || data.data || JSON.stringify(data, null, 2));
+      document.getElementById('files-content').innerHTML =
+        `<div style="padding:8px 16px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+          <button class="secondary" onclick="loadFiles()" style="padding:6px 10px;font-size:12px">&#8592; Back</button>
+          <span style="font-size:13px;color:var(--fg2)">${esc(filePath)}</span>
+        </div>
+        <div class="file-viewer"><pre>${esc(content)}</pre></div>`;
+    }).catch(() => {});
+  }
+}
+
+function fileUp() {
+  const parts = currentFilePath.split('/').filter(Boolean);
+  parts.pop();
+  const newPath = parts.length ? parts.join('/') : '.';
+  document.getElementById('file-path-input').value = newPath;
+  loadFiles();
+}
+
+// ========== TERMINAL ==========
+document.getElementById('term-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); runCommand(); }
+});
+
+function runCommand() {
+  const input = document.getElementById('term-input');
+  const cmd = input.value.trim();
+  if (!cmd) return;
+  input.value = '';
+
+  const out = document.getElementById('terminal-output');
+  out.innerHTML += `<div class="term-entry"><span class="term-cmd">$ ${esc(cmd)}</span></div>`;
+  out.scrollTop = out.scrollHeight;
+
+  api('/api/terminal/exec', {
+    method: 'POST',
+    body: JSON.stringify({ command: cmd })
+  }).then(data => {
+    let html = '';
+    if (data.stdout) html += `<span class="term-out">${esc(data.stdout)}</span>`;
+    if (data.stderr) html += `<span class="term-err">${esc(data.stderr)}</span>`;
+    if (data.exitCode !== undefined && data.exitCode !== 0) {
+      html += `<span class="term-err">[exit: ${data.exitCode}]</span>`;
+    }
+    if (!html && data.error) html = `<span class="term-err">${esc(data.error)}</span>`;
+    out.innerHTML += `<div class="term-entry">${html || '<span class="term-out">(no output)</span>'}</div>`;
+    out.scrollTop = out.scrollHeight;
+  }).catch(err => {
+    out.innerHTML += `<div class="term-entry"><span class="term-err">Error: ${esc(err.message)}</span></div>`;
+  });
+}
+
+// ========== AGENTS ==========
+let agentConfigs = [];
+let currentAgentConfig = '';
+
+function loadAgents() {
+  // Load agent config files
+  api('/api/agents').then(data => {
+    agentConfigs = Array.isArray(data) ? data : (data.configs || data.agents || []);
+    updateAgentSelect();
+  }).catch(() => {});
+  // Load current setting
+  api('/api/settings').then(data => {
+    currentAgentConfig = data.subAgentConfigFile || '';
+    updateAgentSelect();
+  }).catch(() => {});
+  loadRemoteTasks();
+}
+
+function updateAgentSelect() {
+  const sel = document.getElementById('agent-config-select');
+  const prev = sel.value || currentAgentConfig;
+  sel.innerHTML = '<option value="">None (single agent)</option>' +
+    agentConfigs.map(c => {
+      const fn = c.filename || c.name || c;
+      const label = c.name ? `${c.name} (${fn})` : fn;
+      const count = c.agentCount ? ` — ${c.agentCount} agents` : '';
+      return `<option value="${esc(fn)}" ${fn === prev ? 'selected' : ''}>${esc(label + count)}</option>`;
+    }).join('');
+  // Show preview
+  const preview = document.getElementById('agent-config-preview');
+  const info = document.getElementById('agent-config-info');
+  if (sel.value) {
+    preview.style.display = 'block';
+    const cfg = agentConfigs.find(c => (c.filename || c.name) === sel.value);
+    info.textContent = cfg ? `${cfg.agentCount || 0} agents • ${cfg.updatedAt || ''}` : sel.value;
+  } else {
+    preview.style.display = 'none';
+  }
+}
+
+function selectAgentConfig() {
+  const sel = document.getElementById('agent-config-select');
+  const val = sel.value;
+  currentAgentConfig = val;
+  // Save to settings
+  api('/api/settings').then(data => {
+    data.subAgentConfigFile = val || null;
+    data.subAgentEnabled = !!val;
+    if (val) data.subAgentMode = data.subAgentMode || 'auto';
+    return api('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }).then(() => {
+    const status = document.getElementById('agent-config-status');
+    status.textContent = val ? 'Config activated!' : 'Sub-agent disabled';
+    setTimeout(() => status.textContent = '', 3000);
+    updateAgentSelect();
+  }).catch(() => {});
+}
+
+function uploadAgentConfig(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const content = e.target.result;
+    api('/api/agents/', {
+      method: 'POST',
+      body: JSON.stringify({ filename: file.name, content: content })
+    }).then(data => {
+      if (data.ok) {
+        const status = document.getElementById('agent-config-status');
+        status.textContent = 'Uploaded: ' + (data.filename || file.name);
+        setTimeout(() => status.textContent = '', 3000);
+        loadAgents();
+      } else {
+        alert('Upload failed: ' + (data.error || 'Unknown error'));
+      }
+    }).catch(err => alert('Upload failed: ' + err.message));
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+function viewAgentYaml() {
+  const sel = document.getElementById('agent-config-select').value;
+  if (!sel) return;
+  api('/api/agents/' + encodeURIComponent(sel)).then(data => {
+    document.getElementById('yaml-modal-title').textContent = sel;
+    document.getElementById('yaml-modal-content').textContent = data.content || 'No content';
+    document.getElementById('yaml-modal').classList.remove('hidden');
+  }).catch(() => {});
+}
+
+function deleteAgentConfig() {
+  const sel = document.getElementById('agent-config-select').value;
+  if (!sel || !confirm('Delete ' + sel + '?')) return;
+  api('/api/agents/' + encodeURIComponent(sel), { method: 'DELETE' }).then(() => {
+    if (currentAgentConfig === sel) {
+      currentAgentConfig = '';
+      selectAgentConfig();
+    }
+    loadAgents();
+  }).catch(() => {});
+}
+
+function loadRemoteTasks() {
+  api('/api/remote/tasks').then(data => {
+    const tasks = Array.isArray(data) ? data : (data.tasks || []);
+    const el = document.getElementById('remote-tasks-list');
+    if (!tasks.length) {
+      el.innerHTML = '<div style="color:var(--fg2)">No remote tasks</div>';
+      return;
+    }
+    el.innerHTML = tasks.map(t => `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3>${esc((t.task||'').slice(0,60))}</h3>
+          <span class="badge ${t.status}">${t.status}</span>
+        </div>
+        <div class="detail">ID: ${t.id}</div>
+        <div class="detail">Created: ${t.created_at || ''}</div>
+        ${t.result ? `<div style="margin-top:8px;color:var(--fg)">${md(t.result)}</div>` : ''}
+        ${t.status === 'running' ? `<button onclick="killTask('${t.id}')" style="margin-top:8px;background:var(--red);font-size:12px;padding:4px 10px">Kill</button>` : ''}
+      </div>
+    `).join('');
+  }).catch(() => {});
+}
+
+function submitTask() {
+  const input = document.getElementById('task-input');
+  const task = input.value.trim();
+  if (!task) return;
+  input.value = '';
+  api('/api/remote/task', {
+    method: 'POST',
+    body: JSON.stringify({ task })
+  }).then(() => {
+    setTimeout(loadRemoteTasks, 500);
+  }).catch(err => alert('Error: ' + err.message));
+}
+
+function killTask(id) {
+  api(`/api/remote/task/${id}/kill`, { method: 'POST' })
+    .then(() => setTimeout(loadRemoteTasks, 500))
+    .catch(() => {});
+}
+
+// ========== TASKS ==========
+function loadTasks() {
+  api('/api/tasks/').then(data => {
+    const tasks = Array.isArray(data) ? data : (data.tasks || []);
+    const el = document.getElementById('tasks-list');
+    if (!tasks.length) {
+      el.innerHTML = '<div style="color:var(--fg2)">No scheduled tasks</div>';
+      return;
+    }
+    el.innerHTML = tasks.map(t => `
+      <div class="card">
+        <h3>${esc(t.name || t.title || t.id)}</h3>
+        <div class="detail">${esc(t.schedule || t.cron || '')}</div>
+        <div class="detail">${esc(t.description || '')}</div>
+      </div>
+    `).join('');
+  }).catch(() => {});
+}
+
+// ========== SETTINGS ==========
+function loadSettings() {
+  api('/api/settings').then(data => {
+    const el = document.getElementById('settings-content');
+    el.innerHTML = `
+      <div class="settings-group">
+        <h3>AI Configuration</h3>
+        <div class="settings-row">
+          <label>Model</label>
+          <input id="s-model" value="${esc(data.tigerBotModel || '')}">
+        </div>
+        <div class="settings-row">
+          <label>API URL</label>
+          <input id="s-api-url" value="${esc(data.tigerBotApiUrl || '')}">
+        </div>
+        <div class="settings-row">
+          <label>API Key</label>
+          <input id="s-api-key" type="password" value="${esc(data.tigerBotApiKey || '')}">
+        </div>
+      </div>
+      <div class="settings-group">
+        <h3>MCP Tools</h3>
+        <div id="s-mcp-list">${(data.mcpTools || []).map(t => `
+          <div class="card">
+            <h3>${esc(t.name)} <span class="dot ${t.enabled !== false ? 'green' : 'red'}"></span></h3>
+            <div class="detail">URL: ${esc(t.url || '')}</div>
+            <div class="detail">Type: ${esc(t.type || 'auto')}</div>
+          </div>
+        `).join('') || '<div style="color:var(--fg2)">No MCP tools configured</div>'}</div>
+      </div>
+      <div class="settings-group">
+        <h3>Remote Access</h3>
+        <div class="settings-row">
+          <label>Remote Enabled</label>
+          <span>${data.remoteEnabled ? 'Yes' : 'No'}</span>
+        </div>
+        <div class="settings-row">
+          <label>Sandbox Dir</label>
+          <span style="font-size:13px;color:var(--fg2)">${esc(data.sandboxDir || '')}</span>
+        </div>
+      </div>
+      <div class="settings-group">
+        <h3>General</h3>
+        <div class="settings-row">
+          <label>Web Search</label>
+          <span>${data.webSearchEnabled ? 'Enabled' : 'Disabled'}</span>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <button onclick="saveSettings()">Save Settings</button>
+      </div>
+    `;
+  }).catch(() => {});
+}
+
+function saveSettings() {
+  const body = {
+    tigerBotModel: document.getElementById('s-model').value,
+    tigerBotApiUrl: document.getElementById('s-api-url').value || null,
+    tigerBotApiKey: document.getElementById('s-api-key').value,
+  };
+  api('/api/settings', {
+    method: 'PUT',
+    body: JSON.stringify(body)
+  }).then(() => alert('Settings saved!')).catch(() => alert('Failed to save'));
+}
+
+// ========== HELPERS ==========
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Render LaTeX with KaTeX (returns HTML string)
+function renderLatex(tex, displayMode) {
+  if (typeof katex !== 'undefined') {
+    try { return katex.renderToString(tex, { displayMode, throwOnError: false }); }
+    catch(e) { return esc(tex); }
+  }
+  return displayMode ? `<div class="md-math">${esc(tex)}</div>` : `<span class="md-math">${esc(tex)}</span>`;
+}
+
+// Simple markdown to HTML renderer
+function md(s) {
+  if (!s) return '';
+
+  // Extract LaTeX blocks BEFORE escaping (they contain special chars)
+  const placeholders = [];
+  let raw = String(s);
+
+  // Display math: \[...\] or $$...$$
+  raw = raw.replace(/\\\[([\s\S]*?)\\\]/g, (_, tex) => {
+    placeholders.push(renderLatex(tex.trim(), true));
+    return `%%MATH${placeholders.length - 1}%%`;
+  });
+  raw = raw.replace(/\$\$([\s\S]*?)\$\$/g, (_, tex) => {
+    placeholders.push(renderLatex(tex.trim(), true));
+    return `%%MATH${placeholders.length - 1}%%`;
+  });
+
+  // Inline math: \(...\) or $...$
+  raw = raw.replace(/\\\(([\s\S]*?)\\\)/g, (_, tex) => {
+    placeholders.push(renderLatex(tex.trim(), false));
+    return `%%MATH${placeholders.length - 1}%%`;
+  });
+  raw = raw.replace(/(?<!\$)\$(?!\$)([^\n$]+?)\$/g, (_, tex) => {
+    placeholders.push(renderLatex(tex.trim(), false));
+    return `%%MATH${placeholders.length - 1}%%`;
+  });
+
+  let h = esc(raw);
+
+  // Restore math placeholders
+  h = h.replace(/%%MATH(\d+)%%/g, (_, i) => placeholders[parseInt(i)]);
+
+  // Code blocks (``` ... ```)
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="md-code"><code>$2</code></pre>');
+
+  // Inline code
+  h = h.replace(/`([^`]+)`/g, '<code class="md-inline">$1</code>');
+
+  // Tables
+  h = h.replace(/((?:^\|.+\|\s*$\n?)+)/gm, function(table) {
+    const rows = table.trim().split('\n').filter(r => r.trim());
+    if (rows.length < 2) return table;
+    let html = '<div class="md-table-wrap"><table class="md-table">';
+    rows.forEach((row, i) => {
+      // Skip separator row (|---|---|)
+      if (/^\|[\s\-:]+\|$/.test(row.trim()) || /^\|(\s*-+\s*\|)+$/.test(row.trim()) ||
+          /^\|[\s\-:|]+\|$/.test(row.trim())) return;
+      const cells = row.split('|').filter((c, j, a) => j > 0 && j < a.length - 1);
+      const tag = i === 0 ? 'th' : 'td';
+      html += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
+    });
+    html += '</table></div>';
+    return html;
+  });
+
+  // Headings
+  h = h.replace(/^#### (.+)$/gm, '<h4 class="md-h">$1</h4>');
+  h = h.replace(/^### (.+)$/gm, '<h3 class="md-h">$1</h3>');
+  h = h.replace(/^## (.+)$/gm, '<h2 class="md-h">$1</h2>');
+  h = h.replace(/^# (.+)$/gm, '<h1 class="md-h">$1</h1>');
+
+  // Horizontal rule
+  h = h.replace(/^---+$/gm, '<hr class="md-hr">');
+
+  // Bold and italic
+  h = h.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  // Unordered lists
+  h = h.replace(/^(\s*)[*\-] (.+)$/gm, function(m, indent, content) {
+    return `<li class="md-li">${content}</li>`;
+  });
+  // Wrap consecutive <li> in <ul>
+  h = h.replace(/((?:<li class="md-li">.*<\/li>\s*)+)/g, '<ul class="md-ul">$1</ul>');
+
+  // Numbered lists
+  h = h.replace(/^\d+\. (.+)$/gm, '<li class="md-oli">$1</li>');
+  h = h.replace(/((?:<li class="md-oli">.*<\/li>\s*)+)/g, '<ol class="md-ol">$1</ol>');
+
+  // Line breaks (but not inside block elements)
+  h = h.replace(/\n\n/g, '<br><br>');
+
+  return h;
+}
+
+// Enter key on login
+document.getElementById('token-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+// Auto-refresh remote tasks every 5s if on agents tab
+setInterval(() => {
+  if (document.getElementById('page-agents').classList.contains('active')) {
+    loadRemoteTasks();
+  }
+}, 5000);
+</script>
+</body>
+</html>
