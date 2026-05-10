@@ -199,21 +199,218 @@ if [[ "$add_path" != "n" && "$add_path" != "N" ]]; then
     fi
 fi
 
-# ── Summary ──
+# ── Install mode: Desktop or Headless (remote server) ──
 echo ""
-echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}  Installation complete!${NC}"
-echo -e "${BLUE}========================================${NC}"
+echo -e "${YELLOW}How do you want to run TigrimOS?${NC}"
 echo ""
-echo "  Source:  $INSTALL_DIR"
-echo "  Binary:  $DIST_DIR/$BINARY_NAME"
+echo "  1) Desktop mode     (GUI app — requires display)"
+echo "  2) Headless mode    (remote server — no GUI, access via web browser)"
 echo ""
-echo "  To run:  $DIST_DIR/$BINARY_NAME"
-[ -f "$HOME/.local/bin/$BINARY_NAME" ] && echo "  Or:      $BINARY_NAME  (via PATH)"
-echo ""
+prompt run_mode "Select [1-2] (default: 1): " ""
 
-prompt launch_choice "Launch $APP_NAME now? [Y/n]: " "y"
-if [[ "$launch_choice" != "n" && "$launch_choice" != "N" ]]; then
-    nohup "$DIST_DIR/$BINARY_NAME" &>/dev/null &
-    echo -e "${GREEN}Launched!${NC}"
+HEADLESS=false
+[[ "$run_mode" == "2" ]] && HEADLESS=true
+
+if $HEADLESS; then
+    echo ""
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}  Headless (Remote Server) Setup${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+
+    # Port
+    prompt server_port "Server port [3001]: " "3001"
+    [ -z "$server_port" ] && server_port="3001"
+
+    # Access token
+    while true; do
+        prompt access_token "Access token (min 8 chars): " ""
+        if [ ${#access_token} -ge 8 ]; then
+            break
+        fi
+        echo -e "${RED}Token too short — must be at least 8 characters.${NC}"
+    done
+
+    # ── Create systemd service ──
+    echo ""
+    prompt create_service "Create systemd service (auto-start on boot)? [Y/n]: " "y"
+    if [[ "$create_service" != "n" && "$create_service" != "N" ]]; then
+        SERVICE_FILE="/etc/systemd/system/tigrimos.service"
+        echo -e "${BLUE}Creating systemd service...${NC}"
+
+        sudo tee "$SERVICE_FILE" > /dev/null <<SVCEOF
+[Unit]
+Description=TigrimOS Headless Server
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$DIST_DIR/$BINARY_NAME --headless
+Environment=ACCESS_TOKEN=$access_token
+Environment=PORT=$server_port
+Environment=SANDBOX_DIR=$INSTALL_DIR/sandbox
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+        sudo systemctl daemon-reload
+        sudo systemctl enable tigrimos
+        echo -e "${GREEN}[OK]${NC} systemd service created and enabled"
+        echo "  Start:   sudo systemctl start tigrimos"
+        echo "  Stop:    sudo systemctl stop tigrimos"
+        echo "  Logs:    sudo journalctl -u tigrimos -f"
+    fi
+
+    # ── Setup nginx reverse proxy ──
+    echo ""
+    prompt setup_nginx "Setup nginx reverse proxy (access via port 80/443)? [Y/n]: " "y"
+    if [[ "$setup_nginx" != "n" && "$setup_nginx" != "N" ]]; then
+        # Install nginx if not present
+        if ! command -v nginx &>/dev/null; then
+            echo -e "${BLUE}Installing nginx...${NC}"
+            if command -v apt &>/dev/null; then
+                sudo apt update && sudo apt install -y nginx
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y nginx
+            elif command -v pacman &>/dev/null; then
+                sudo pacman -S --noconfirm nginx
+            else
+                echo -e "${RED}Could not detect package manager. Install nginx manually.${NC}"
+            fi
+        fi
+
+        if command -v nginx &>/dev/null; then
+            prompt server_domain "Server domain or IP (e.g. example.com or _ for any): " "_"
+            [ -z "$server_domain" ] && server_domain="_"
+
+            NGINX_CONF="/etc/nginx/sites-available/tigrimos"
+            NGINX_ENABLED="/etc/nginx/sites-enabled/tigrimos"
+
+            sudo tee "$NGINX_CONF" > /dev/null <<NGXEOF
+server {
+    listen 80;
+    server_name $server_domain;
+
+    client_max_body_size 50M;
+
+    location / {
+        proxy_pass http://127.0.0.1:$server_port;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Long timeout for AI responses
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+NGXEOF
+
+            # Enable the site
+            if [ -d "/etc/nginx/sites-enabled" ]; then
+                sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
+            fi
+
+            # Test and reload
+            if sudo nginx -t 2>/dev/null; then
+                sudo systemctl reload nginx 2>/dev/null || sudo systemctl restart nginx
+                echo -e "${GREEN}[OK]${NC} nginx configured and reloaded"
+            else
+                echo -e "${RED}nginx config test failed. Check: sudo nginx -t${NC}"
+            fi
+
+            # Offer SSL setup
+            echo ""
+            if [[ "$server_domain" != "_" ]] && command -v certbot &>/dev/null; then
+                prompt setup_ssl "Setup HTTPS with Let's Encrypt? [y/N]: " "n"
+                if [[ "$setup_ssl" == "y" || "$setup_ssl" == "Y" ]]; then
+                    sudo certbot --nginx -d "$server_domain"
+                    echo -e "${GREEN}[OK]${NC} HTTPS configured"
+                fi
+            elif [[ "$server_domain" != "_" ]]; then
+                echo -e "${YELLOW}Tip: Install certbot for HTTPS:${NC}"
+                echo "  sudo apt install certbot python3-certbot-nginx"
+                echo "  sudo certbot --nginx -d $server_domain"
+            fi
+        fi
+    fi
+
+    # ── Open firewall ──
+    echo ""
+    if command -v ufw &>/dev/null; then
+        prompt open_fw "Open firewall port $server_port (ufw)? [Y/n]: " "y"
+        if [[ "$open_fw" != "n" && "$open_fw" != "N" ]]; then
+            sudo ufw allow "$server_port/tcp"
+            sudo ufw allow 80/tcp
+            sudo ufw allow 443/tcp
+            echo -e "${GREEN}[OK]${NC} Firewall ports opened"
+        fi
+    fi
+
+    # ── Summary ──
+    echo ""
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}  Headless Installation Complete!${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+    echo "  Source:   $INSTALL_DIR"
+    echo "  Binary:   $DIST_DIR/$BINARY_NAME"
+    echo "  Port:     $server_port"
+    echo "  Token:    $access_token"
+    echo ""
+    echo -e "${YELLOW}  Access:${NC}"
+    echo "    Web UI:     http://<server-ip>:$server_port/web/"
+    if [[ "$setup_nginx" != "n" && "$setup_nginx" != "N" ]] && command -v nginx &>/dev/null; then
+        echo "    Via nginx:  http://<server-ip>/web/"
+    fi
+    echo ""
+    echo -e "${YELLOW}  Commands:${NC}"
+    echo "    Start:  sudo systemctl start tigrimos"
+    echo "    Stop:   sudo systemctl stop tigrimos"
+    echo "    Logs:   sudo journalctl -u tigrimos -f"
+    echo "    Manual: ACCESS_TOKEN=$access_token PORT=$server_port $DIST_DIR/$BINARY_NAME --headless"
+    echo ""
+
+    prompt launch_now "Start TigrimOS server now? [Y/n]: " "y"
+    if [[ "$launch_now" != "n" && "$launch_now" != "N" ]]; then
+        if [ -f "/etc/systemd/system/tigrimos.service" ]; then
+            sudo systemctl start tigrimos
+            echo -e "${GREEN}Server started via systemd!${NC}"
+            echo "  Check: sudo systemctl status tigrimos"
+        else
+            echo "Starting in background..."
+            ACCESS_TOKEN="$access_token" PORT="$server_port" nohup "$DIST_DIR/$BINARY_NAME" --headless &>/dev/null &
+            echo -e "${GREEN}Server started! PID: $!${NC}"
+        fi
+    fi
+else
+    # ── Desktop mode summary ──
+    echo ""
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}  Installation complete!${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo ""
+    echo "  Source:  $INSTALL_DIR"
+    echo "  Binary:  $DIST_DIR/$BINARY_NAME"
+    echo ""
+    echo "  To run:  $DIST_DIR/$BINARY_NAME"
+    [ -f "$HOME/.local/bin/$BINARY_NAME" ] && echo "  Or:      $BINARY_NAME  (via PATH)"
+    echo ""
+
+    prompt launch_choice "Launch $APP_NAME now? [Y/n]: " "y"
+    if [[ "$launch_choice" != "n" && "$launch_choice" != "N" ]]; then
+        nohup "$DIST_DIR/$BINARY_NAME" &>/dev/null &
+        echo -e "${GREEN}Launched!${NC}"
+    fi
 fi
