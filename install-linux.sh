@@ -46,7 +46,20 @@ command -v rustc &>/dev/null || die "rustc not found. Install: curl --proto '=ht
 command -v cargo &>/dev/null || die "cargo not found. Install: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
 echo -e "${GREEN}[OK]${NC} Prerequisites found (git, rustc, cargo)"
 
-# Check for common build dependencies (needed for egui/eframe)
+# Auto-install essential build dependencies (OpenSSL, pkg-config)
+if ! command -v pkg-config &>/dev/null || ! pkg-config --exists openssl 2>/dev/null; then
+    echo -e "${YELLOW}Installing build dependencies (pkg-config, libssl-dev)...${NC}"
+    if command -v apt &>/dev/null; then
+        sudo apt update && sudo apt install -y pkg-config libssl-dev build-essential
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y pkg-config openssl-devel gcc make
+    elif command -v pacman &>/dev/null; then
+        sudo pacman -S --noconfirm pkg-config openssl base-devel
+    fi
+    echo -e "${GREEN}[OK]${NC} Build dependencies installed"
+fi
+
+# Check for GUI dependencies (only needed for desktop mode)
 dev_missing=()
 for lib in libxcb libxkbcommon libgtk-3; do
     if ! pkg-config --exists "$lib" 2>/dev/null; then
@@ -55,13 +68,13 @@ for lib in libxcb libxkbcommon libgtk-3; do
 done
 
 if [ ${#dev_missing[@]} -gt 0 ]; then
-    echo -e "${YELLOW}[WARN] Possibly missing dev libraries: ${dev_missing[*]}${NC}"
+    echo -e "${YELLOW}[WARN] GUI libraries missing: ${dev_missing[*]}${NC}"
+    echo "  These are only needed for desktop mode (not headless)."
     echo ""
-    echo "  Debian/Ubuntu: sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev"
-    echo "  Fedora:        sudo dnf install libxcb-devel libxkbcommon-devel gtk3-devel"
-    echo "  Arch:          sudo pacman -S libxcb libxkbcommon gtk3"
+    echo "  To install (Debian/Ubuntu):"
+    echo "    sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev"
     echo ""
-    prompt cont "Continue anyway? [Y/n]: " "y"
+    prompt cont "Continue anyway? (headless mode works without these) [Y/n]: " "y"
     [[ "$cont" == "n" || "$cont" == "N" ]] && exit 1
 fi
 
