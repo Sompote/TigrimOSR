@@ -295,9 +295,17 @@ textarea { resize: vertical; font-family: monospace; }
 }
 #task-input { flex: 1; }
 
+/* Mobile chat controls (visible when sidebar hidden) */
+#mobile-chat-bar { display: none; padding: 8px 12px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--bg2); align-items: center; }
+#mobile-chat-bar select { flex: 1; background: var(--bg3); color: var(--fg1); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px; font-size: 13px; }
+#sidebar-toggle { display: none; background: var(--bg3); border: 1px solid var(--border); color: var(--fg1); padding: 6px 10px; border-radius: var(--radius); cursor: pointer; font-size: 13px; }
+
 /* Responsive */
 @media (max-width: 768px) {
-  #chat-sidebar { display: none; }
+  #chat-sidebar { display: none; position: absolute; top: 0; left: 0; width: 260px; height: 100%; z-index: 100; }
+  #chat-sidebar.open { display: flex; }
+  #mobile-chat-bar { display: flex; }
+  #sidebar-toggle { display: inline-block; }
   .topbar { padding: 6px 8px; }
   .topbar h2 { font-size: 14px; }
   .settings-row { flex-direction: column; align-items: stretch; }
@@ -408,6 +416,11 @@ h4.md-h { font-size: 1em; }
         <div id="session-list"></div>
       </div>
       <div id="chat-main">
+        <div id="mobile-chat-bar">
+          <button id="sidebar-toggle" onclick="toggleSidebar()">&#9776;</button>
+          <select id="mobile-session-select" onchange="selectSession(this.value)"></select>
+          <button onclick="newSession()" style="font-size:12px;padding:6px 10px">+ New</button>
+        </div>
         <div id="messages">
           <div class="msg system">Send a message to start chatting</div>
         </div>
@@ -687,6 +700,18 @@ function renderSessions() {
       ${esc(s.title || s.id.slice(0,8))}
     </div>`
   ).join('');
+  // Update mobile dropdown
+  const sel = document.getElementById('mobile-session-select');
+  if (sel) {
+    sel.innerHTML = '<option value="">Select chat...</option>' + sessions.map(s =>
+      `<option value="${s.id}" ${s.id === currentSessionId ? 'selected' : ''}>${esc(s.title || s.id.slice(0,8))}</option>`
+    ).join('');
+  }
+}
+
+function toggleSidebar() {
+  const sb = document.getElementById('chat-sidebar');
+  sb.classList.toggle('open');
 }
 
 function selectSession(id) {
