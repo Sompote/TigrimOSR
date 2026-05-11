@@ -11,6 +11,8 @@ TigrimOSR runs as a **local desktop app** on macOS or as a **headless server** o
 - **Native Mac app** — Toggle Local/Remote in the topbar. All tabs (Chat, Projects, Agents, Files, Tasks, Terminal, Settings) transparently switch to controlling the remote server using the same familiar UI.
 - **Web browser** — Open `http://<server-ip>:3001/web/` from any device (desktop, tablet, phone). Full web UI with chat, files, terminal, agents, tasks, and settings — with live progress updates while the AI is thinking.
 
+![TigrimOSR Architecture](assets/architecture.png)
+
 ![TigrimOSR Screenshot](assets/screenshot.png)
 
 ### AI Provider Settings
