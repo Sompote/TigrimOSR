@@ -423,7 +423,14 @@ async fn send_message(
         cancel_flag: Arc::new(AtomicBool::new(false)),
     };
 
-    // Call the AI tool loop
+    // Clear activity log before starting
+    let log_dir = activity_log_dir();
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join(format!("{}.log", id));
+    let _ = std::fs::write(&log_path, "");
+
+    // Call the AI tool loop — write progress to activity log
+    let session_id_for_log = id.clone();
     let result = call_with_tools(
         &api_key,
         &api_url,
@@ -431,7 +438,33 @@ async fn send_message(
         llm_messages,
         None,
         &sandbox_dir,
-        |_update: ToolUpdate| {},  // no live updates for HTTP
+        move |update: ToolUpdate| {
+            use crate::server::services::toolbox::append_session_progress;
+            let line = match &update {
+                ToolUpdate::ToolCall { name, args } => {
+                    let preview: String = args.to_string().chars().take(120).collect();
+                    format!("🔧 Calling **{}** — {}\n", name, preview)
+                }
+                ToolUpdate::ToolResult { name, result } => {
+                    let preview: String = result.to_string().chars().take(200).collect();
+                    format!("✅ **{}** done — {}\n", name, preview)
+                }
+                ToolUpdate::TextChunk(text) => {
+                    if text.starts_with("[reasoning]") {
+                        format!("💭 Reasoning...\n")
+                    } else {
+                        String::new() // final text, skip
+                    }
+                }
+                ToolUpdate::Error(err) => format!("❌ {}\n", err),
+                ToolUpdate::ApprovalRequired { name, .. } => {
+                    format!("⚠️ Approval needed for **{}**\n", name)
+                }
+            };
+            if !line.is_empty() {
+                append_session_progress(&session_id_for_log, &line);
+            }
+        },
         sub_agent,
     ).await;
 

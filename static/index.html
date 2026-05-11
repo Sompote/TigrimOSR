@@ -737,17 +737,37 @@ function sendMessage() {
   const doSend = (sessionId) => {
     const el = document.getElementById('messages');
     el.innerHTML += `<div class="msg user">${esc(msg)}</div>`;
-    el.innerHTML += `<div class="msg assistant"><span class="spinner"></span> Thinking...</div>`;
+    el.innerHTML += `<div class="msg assistant" id="thinking-msg"><span class="spinner"></span> Thinking...</div>`;
     el.scrollTop = el.scrollHeight;
 
+    // Poll activity log for progress updates
+    let lastLen = 0;
+    const progressPoll = setInterval(() => {
+      api(`/api/chat/sessions/${sessionId}/activity`).then(data => {
+        const content = data.content || '';
+        if (content.length > lastLen) {
+          lastLen = content.length;
+          const lines = content.trim().split('\n').filter(l => l.trim());
+          const latest = lines.slice(-3).map(l => esc(l)).join('<br>');
+          const thinkEl = document.getElementById('thinking-msg');
+          if (thinkEl) {
+            thinkEl.innerHTML = '<span class="spinner"></span> ' + latest;
+            el.scrollTop = el.scrollHeight;
+          }
+        }
+      }).catch(() => {});
+    }, 1500);
+
     api(`/api/chat/sessions/${sessionId}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ message: msg })
-  }).then(data => {
-    replaceLastMsg(el, data.content || 'No response');
-    sending = false;
-    loadSessions();
+      method: 'POST',
+      body: JSON.stringify({ message: msg })
+    }).then(data => {
+      clearInterval(progressPoll);
+      replaceLastMsg(el, data.content || 'No response');
+      sending = false;
+      loadSessions();
     }).catch(() => {
+      clearInterval(progressPoll);
       replaceLastMsg(el, '[Error] Failed to send message');
       sending = false;
     });
