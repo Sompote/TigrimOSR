@@ -2669,6 +2669,7 @@ except ImportError:
         }
     }
 
+    #[cfg(target_os = "macos")]
     let abs_sandbox = std::path::Path::new(sandbox_dir)
         .canonicalize()
         .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
@@ -2836,6 +2837,7 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
         .map(|s| s.to_string())
         .unwrap_or_else(|| sandbox_dir.to_string());
 
+    #[cfg(target_os = "macos")]
     let abs_sandbox = std::path::Path::new(sandbox_dir)
         .canonicalize()
         .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));

@@ -123,6 +123,7 @@ async fn remote_get_cached<T: serde::de::DeserializeOwned + Default>(
     }
 }
 
+#[allow(dead_code)]
 async fn remote_get_json<T: serde::de::DeserializeOwned + Default>(rb: &RemoteBackend, path: &str) -> T {
     match remote_client()
         .get(format!("{}{}", rb.url, path))
