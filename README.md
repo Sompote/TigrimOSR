@@ -4,6 +4,13 @@
 
 TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool calling, and file output. It connects to any OpenAI-compatible API (OpenAI, Anthropic via proxy, DeepSeek, Kimi, local Ollama, etc.) and lets you orchestrate teams of specialist AI agents defined in simple YAML files.
 
+### Run Locally or Remotely — Control from Anywhere
+
+TigrimOSR runs as a **local desktop app** on macOS or as a **headless server** on remote Linux machines. When running remotely, you can control it from:
+
+- **Native Mac app** — Toggle Local/Remote in the topbar. All tabs (Chat, Projects, Agents, Files, Tasks, Terminal, Settings) transparently switch to controlling the remote server using the same familiar UI.
+- **Web browser** — Open `http://<server-ip>:3001/web/` from any device (desktop, tablet, phone). Full web UI with chat, files, terminal, agents, tasks, and settings — with live progress updates while the AI is thinking.
+
 ![TigrimOSR Screenshot](assets/screenshot.png)
 
 ### AI Provider Settings
