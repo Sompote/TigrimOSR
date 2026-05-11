@@ -34,6 +34,7 @@ fn chat_log_dir() -> std::path::PathBuf {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/sessions", get(list_sessions).post(create_session))
+        .route("/sessions/bulk", get(get_all_sessions).put(put_all_sessions))
         .route(
             "/sessions/{id}",
             get(get_session).delete(delete_session).patch(rename_session),
@@ -45,6 +46,23 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/sessions/{id}/activity", get(get_activity_log))
         .route("/sessions/{id}/chatlog", get(get_chat_log))
+}
+
+// ---------------------------------------------------------------------------
+// GET /sessions/bulk - get all sessions with messages (for remote sync)
+// ---------------------------------------------------------------------------
+
+async fn get_all_sessions() -> Json<Vec<ChatSession>> {
+    Json(get_chat_history().await)
+}
+
+// ---------------------------------------------------------------------------
+// PUT /sessions/bulk - save all sessions (for remote sync)
+// ---------------------------------------------------------------------------
+
+async fn put_all_sessions(Json(sessions): Json<Vec<ChatSession>>) -> impl IntoResponse {
+    save_chat_history(&sessions).await;
+    StatusCode::OK
 }
 
 // ---------------------------------------------------------------------------

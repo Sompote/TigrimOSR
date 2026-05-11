@@ -149,34 +149,69 @@ impl ProjectsView {
     }
 
     fn load_memory(&mut self, runtime: &tokio::runtime::Handle, project_id: &str) {
-        let fp = Self::memory_file_path(project_id);
-        self.memory_text = runtime.block_on(async {
-            match tokio::fs::read_to_string(&fp).await {
-                Ok(c) => c,
-                Err(_) => String::new(),
-            }
-        });
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let url = format!("{}/api/projects/{}/memory", rb.url, project_id);
+            let token = rb.token.clone();
+            self.memory_text = runtime.block_on(async {
+                let client = reqwest::Client::new();
+                match client.get(&url).bearer_auth(&token).send().await {
+                    Ok(resp) => {
+                        if let Ok(val) = resp.json::<serde_json::Value>().await {
+                            val.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                        } else {
+                            String::new()
+                        }
+                    }
+                    Err(_) => String::new(),
+                }
+            });
+        } else {
+            let fp = Self::memory_file_path(project_id);
+            self.memory_text = runtime.block_on(async {
+                match tokio::fs::read_to_string(&fp).await {
+                    Ok(c) => c,
+                    Err(_) => String::new(),
+                }
+            });
+        }
         self.memory_loaded_for = Some(project_id.to_string());
         self.memory_dirty = false;
         self.memory_status = None;
     }
 
     fn save_memory(&mut self, runtime: &tokio::runtime::Handle, project_id: &str) {
-        let fp = Self::memory_file_path(project_id);
-        let content = self.memory_text.clone();
-        let result = runtime.block_on(async {
-            if let Some(parent) = fp.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-            tokio::fs::write(&fp, &content).await
-        });
-        match result {
-            Ok(()) => {
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let url = format!("{}/api/projects/{}/memory", rb.url, project_id);
+            let token = rb.token.clone();
+            let content = self.memory_text.clone();
+            let ok = runtime.block_on(async {
+                let client = reqwest::Client::new();
+                let body = serde_json::json!({ "content": content });
+                client.put(&url).bearer_auth(&token).json(&body).send().await.is_ok()
+            });
+            if ok {
                 self.memory_dirty = false;
                 self.memory_status = Some(("Memory saved.".to_string(), false));
+            } else {
+                self.memory_status = Some(("Failed to save to remote".to_string(), true));
             }
-            Err(e) => {
-                self.memory_status = Some((format!("Failed to save: {}", e), true));
+        } else {
+            let fp = Self::memory_file_path(project_id);
+            let content = self.memory_text.clone();
+            let result = runtime.block_on(async {
+                if let Some(parent) = fp.parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                tokio::fs::write(&fp, &content).await
+            });
+            match result {
+                Ok(()) => {
+                    self.memory_dirty = false;
+                    self.memory_status = Some(("Memory saved.".to_string(), false));
+                }
+                Err(e) => {
+                    self.memory_status = Some((format!("Failed to save: {}", e), true));
+                }
             }
         }
     }

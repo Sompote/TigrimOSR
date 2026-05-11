@@ -46,6 +46,7 @@ pub struct TigrimOSApp {
     agents_view: AgentsView,
     terminal_view: TerminalView,
     remote_view: RemoteView,
+    pub remote_mode: bool,
     logo_texture: Option<egui::TextureHandle>,
 }
 
@@ -213,6 +214,7 @@ impl TigrimOSApp {
             agents_view: AgentsView::default(),
             terminal_view: TerminalView::new(),
             remote_view: RemoteView::new(),
+            remote_mode: false,
             logo_texture: None,
         }
     }
@@ -423,6 +425,46 @@ impl eframe::App for TigrimOSApp {
                         if ui.add(gear).on_hover_text("Settings").clicked() {
                             self.settings_view.open = true;
                         }
+
+                        // Remote/Local toggle
+                        if self.remote_mode {
+                            // Badge showing remote server name
+                            let name = self.remote_view.instance_name();
+                            let badge_text = if name.is_empty() {
+                                "REMOTE".to_string()
+                            } else {
+                                format!("REMOTE: {}", name)
+                            };
+                            let badge = egui::Button::new(
+                                egui::RichText::new(&badge_text)
+                                    .size(11.0)
+                                    .color(egui::Color32::WHITE)
+                                    .strong(),
+                            )
+                            .fill(egui::Color32::from_rgb(22, 163, 74))
+                            .corner_radius(4.0);
+                            if ui.add(badge).on_hover_text("Click to switch to Local").clicked() {
+                                self.remote_mode = false;
+                                crate::server::data::set_remote_backend(None);
+                            }
+                        } else {
+                            self.remote_view.ensure_loaded(&self.runtime);
+                            if self.remote_view.has_instances() {
+                                let toggle = egui::Button::new(
+                                    egui::RichText::new("LOCAL")
+                                        .size(11.0)
+                                        .color(text_dim),
+                                )
+                                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 10))
+                                .corner_radius(4.0);
+                                if ui.add(toggle).on_hover_text("Click to switch to Remote").clicked() {
+                                    if let Some(rb) = self.remote_view.selected_remote_backend() {
+                                        crate::server::data::set_remote_backend(Some(rb));
+                                        self.remote_mode = true;
+                                    }
+                                }
+                            }
+                        }
                     });
                 });
 
@@ -487,6 +529,9 @@ impl eframe::App for TigrimOSApp {
                 self.selected_tab = Tab::Chat;
             }
 
+            // In remote mode, the same tabs work transparently against the remote server
+            // via the data layer's RemoteBackend proxy. Terminal passes VmState::Running
+            // since the remote server is always "running".
             match self.selected_tab {
                 Tab::Chat => self.chat_view.show(ui, &self.runtime),
                 Tab::Projects => self.projects_view.show(ui, &self.runtime),
@@ -494,7 +539,10 @@ impl eframe::App for TigrimOSApp {
                 Tab::Files => self.files_view.show(ui, &self.runtime),
                 Tab::Tasks => self.tasks_view.show(ui, &self.runtime),
                 Tab::Skills => self.skills_view.show(ui, &self.runtime),
-                Tab::Terminal => self.terminal_view.show(ui, &self.runtime, snap.state),
+                Tab::Terminal => {
+                    let effective_state = if self.remote_mode { VmState::Running } else { snap.state };
+                    self.terminal_view.show(ui, &self.runtime, effective_state);
+                }
                 Tab::RemoteServer => self.remote_view.show(ui, &self.runtime),
                 Tab::Console => console_view(ui, &snap.console_output, &self.vm_manager, &self.runtime),
                 Tab::Folders => shared_folders_view(ui, &snap.shared_folders, &self.vm_manager, &self.runtime),

@@ -5,7 +5,7 @@ use axum::{
     extract::{Multipart, Path},
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{get, patch, post},
+    routing::{get, patch, post, put},
     Router,
 };
 use serde::Deserialize;
@@ -163,6 +163,7 @@ fn find_skill_file(skill: &Skill) -> Option<PathBuf> {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(list_skills).post(install_skill))
+        .route("/bulk", put(put_all_skills))
         .route("/upload", post(upload_skill))
         .route("/catalog", get(catalog))
         .route("/auto/run-now", post(auto_run_now))
@@ -186,6 +187,12 @@ async fn list_skills() -> Json<Vec<Skill>> {
     let skills = get_skills().await;
     // NOTE: ClawHub merge logic would go here; skipped for now.
     Json(skills)
+}
+
+/// PUT /bulk - save all skills (for remote sync)
+async fn put_all_skills(Json(skills): Json<Vec<Skill>>) -> StatusCode {
+    save_skills(&skills).await;
+    StatusCode::OK
 }
 
 /// POST / - install a new skill

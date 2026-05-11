@@ -4,7 +4,7 @@ use axum::{
     extract::Path,
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{get, patch, post},
+    routing::{get, patch, post, put},
     Router,
 };
 use serde::Deserialize;
@@ -42,6 +42,7 @@ struct UpdateTaskBody {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(list_tasks).post(create_task))
+        .route("/bulk", put(put_all_tasks))
         .route("/active", get(list_active))
         .route("/finished", get(list_finished))
         .route("/active/{id}/kill", post(kill_active))
@@ -55,6 +56,12 @@ pub fn router() -> Router<Arc<AppState>> {
 /// GET / - list all scheduled tasks
 async fn list_tasks() -> Json<Vec<ScheduledTask>> {
     Json(get_tasks().await)
+}
+
+/// PUT /bulk - save all tasks (for remote sync)
+async fn put_all_tasks(Json(tasks): Json<Vec<ScheduledTask>>) -> StatusCode {
+    save_tasks(&tasks).await;
+    StatusCode::OK
 }
 
 /// GET /active - list currently running tasks (stub)

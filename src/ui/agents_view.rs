@@ -1121,10 +1121,30 @@ impl AgentsView {
     // Data operations
     // -------------------------------------------------------------------
 
-    fn load_agent_file(&mut self, filename: &str, _rt: &tokio::runtime::Handle) {
-        let dir = crate::server::data::data_dir().join("agents");
-        let fp = dir.join(filename);
-        if let Ok(content) = std::fs::read_to_string(&fp) {
+    fn load_agent_file(&mut self, filename: &str, rt: &tokio::runtime::Handle) {
+        let content = if let Some(rb) = crate::server::data::get_remote_backend() {
+            let url = format!("{}/api/agents/{}", rb.url, urlencoding::encode(filename));
+            let token = rb.token.clone();
+            rt.block_on(async {
+                let client = reqwest::Client::new();
+                match client.get(&url).bearer_auth(&token).send().await {
+                    Ok(resp) => {
+                        if let Ok(val) = resp.json::<Value>().await {
+                            val.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                        } else {
+                            String::new()
+                        }
+                    }
+                    Err(_) => String::new(),
+                }
+            })
+        } else {
+            let dir = crate::server::data::data_dir().join("agents");
+            let fp = dir.join(filename);
+            std::fs::read_to_string(&fp).unwrap_or_default()
+        };
+
+        if !content.is_empty() {
             if let Ok(parsed) = serde_yaml::from_str::<Value>(&content) {
                 self.load_from_value(&parsed);
                 self.selected_file = Some(filename.to_string());
@@ -1326,7 +1346,7 @@ impl AgentsView {
         }
     }
 
-    fn save_current_system(&mut self, _rt: &tokio::runtime::Handle) {
+    fn save_current_system(&mut self, rt: &tokio::runtime::Handle) {
         let yaml = self.generate_yaml();
         let filename = self
             .selected_file
@@ -1342,18 +1362,35 @@ impl AgentsView {
                 format!("{}.yaml", safe)
             });
 
-        let dir = crate::server::data::data_dir().join("agents");
-        let _ = std::fs::create_dir_all(&dir);
-        let fp = dir.join(&filename);
-
-        match std::fs::write(&fp, &yaml) {
-            Ok(_) => {
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let body = serde_json::json!({ "filename": filename, "content": yaml });
+            let url = format!("{}/api/agents", rb.url);
+            let token = rb.token.clone();
+            let ok = rt.block_on(async {
+                let client = reqwest::Client::new();
+                client.post(&url).bearer_auth(&token).json(&body).send().await.is_ok()
+            });
+            if ok {
                 self.selected_file = Some(filename);
                 self.save_status = Some(("Saved!".to_string(), false));
                 self.needs_refresh = true;
+            } else {
+                self.save_status = Some(("Error saving to remote".to_string(), true));
             }
-            Err(e) => {
-                self.save_status = Some((format!("Error: {}", e), true));
+        } else {
+            let dir = crate::server::data::data_dir().join("agents");
+            let _ = std::fs::create_dir_all(&dir);
+            let fp = dir.join(&filename);
+
+            match std::fs::write(&fp, &yaml) {
+                Ok(_) => {
+                    self.selected_file = Some(filename);
+                    self.save_status = Some(("Saved!".to_string(), false));
+                    self.needs_refresh = true;
+                }
+                Err(e) => {
+                    self.save_status = Some((format!("Error: {}", e), true));
+                }
             }
         }
     }
@@ -1522,6 +1559,31 @@ fn role_color(role: &str) -> Color32 {
 }
 
 async fn load_agent_files() -> Result<Vec<AgentSystemFile>, String> {
+    // Remote mode: GET /api/agents
+    if let Some(rb) = crate::server::data::get_remote_backend() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_default();
+        let resp = client
+            .get(format!("{}/api/agents", rb.url))
+            .bearer_auth(&rb.token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let items: Vec<Value> = resp.json().await.unwrap_or_default();
+        let mut result = Vec::new();
+        for item in &items {
+            let filename = item.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let name = item.get("name").and_then(|v| v.as_str()).unwrap_or(&filename).to_string();
+            let agent_count = item.get("agentCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if !filename.is_empty() {
+                result.push(AgentSystemFile { filename, name, agent_count });
+            }
+        }
+        return Ok(result);
+    }
+
     let dir = crate::server::data::data_dir().join("agents");
     let _ = tokio::fs::create_dir_all(&dir).await;
 

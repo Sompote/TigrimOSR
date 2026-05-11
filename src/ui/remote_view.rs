@@ -12,9 +12,11 @@ use crate::server::data::{get_settings, RemoteInstance};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RemoteTab {
-    Tasks,
-    Files,
     Chat,
+    Files,
+    Terminal,
+    Agents,
+    Tasks,
     Settings,
 }
 
@@ -89,6 +91,14 @@ pub struct RemoteView {
 
     // Remote settings
     remote_settings: AsyncResult<Value>,
+
+    // Remote terminal
+    term_input: String,
+    term_output: Vec<Value>,
+    term_result: AsyncResult<Value>,
+
+    // Remote agents
+    remote_agents: AsyncResult<Vec<Value>>,
 }
 
 impl RemoteView {
@@ -97,7 +107,7 @@ impl RemoteView {
             instances: vec![],
             selected_idx: 0,
             instances_loaded: false,
-            tab: RemoteTab::Tasks,
+            tab: RemoteTab::Chat,
             connected: AsyncResult::new(),
             last_ping: None,
             latency_ms: None,
@@ -113,6 +123,37 @@ impl RemoteView {
             chat_input: String::new(),
             chat_response: AsyncResult::new(),
             remote_settings: AsyncResult::new(),
+            term_input: String::new(),
+            term_output: vec![],
+            term_result: AsyncResult::new(),
+            remote_agents: AsyncResult::new(),
+        }
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.take().unwrap_or(false)
+    }
+
+    pub fn instance_name(&self) -> String {
+        self.selected_instance()
+            .map(|i| i.name.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn has_instances(&self) -> bool {
+        !self.instances.is_empty()
+    }
+
+    pub fn selected_remote_backend(&self) -> Option<crate::server::data::RemoteBackend> {
+        self.selected_instance().map(|i| crate::server::data::RemoteBackend {
+            url: i.url.trim_end_matches('/').to_string(),
+            token: i.token.clone(),
+        })
+    }
+
+    pub fn ensure_loaded(&mut self, runtime: &tokio::runtime::Handle) {
+        if !self.instances_loaded {
+            self.load_instances(runtime);
         }
     }
 
@@ -422,9 +463,11 @@ impl RemoteView {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             for &(tab, label) in &[
-                (RemoteTab::Tasks, "Tasks"),
-                (RemoteTab::Files, "Files"),
                 (RemoteTab::Chat, "Chat"),
+                (RemoteTab::Files, "Files"),
+                (RemoteTab::Terminal, "Terminal"),
+                (RemoteTab::Agents, "Agents"),
+                (RemoteTab::Tasks, "Tasks"),
                 (RemoteTab::Settings, "Settings"),
             ] {
                 let is_active = self.tab == tab;
@@ -452,9 +495,11 @@ impl RemoteView {
             ui.set_min_width(ui.available_width());
 
             match self.tab {
-                RemoteTab::Tasks => self.show_tasks(ui, runtime),
-                RemoteTab::Files => self.show_files(ui, runtime),
                 RemoteTab::Chat => self.show_chat(ui, runtime),
+                RemoteTab::Files => self.show_files(ui, runtime),
+                RemoteTab::Terminal => self.show_terminal(ui, runtime),
+                RemoteTab::Agents => self.show_agents(ui, runtime),
+                RemoteTab::Tasks => self.show_tasks(ui, runtime),
                 RemoteTab::Settings => self.show_settings(ui, runtime),
             }
         });
@@ -1101,5 +1146,285 @@ impl RemoteView {
                 }
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Terminal tab
+    // -----------------------------------------------------------------------
+
+    fn show_terminal(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            ui.label(egui::RichText::new("Remote Terminal").size(15.0).strong());
+        });
+
+        ui.add_space(8.0);
+
+        // Output area
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            let frame = egui::Frame::new()
+                .fill(egui::Color32::from_rgb(13, 27, 42))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(42, 42, 74)))
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::same(8));
+
+            frame.show(ui, |ui| {
+                ui.set_min_width(ui.available_width() - 40.0);
+                egui::ScrollArea::vertical()
+                    .max_height(400.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        if self.term_output.is_empty() {
+                            ui.label(
+                                egui::RichText::new("$ _")
+                                    .size(13.0)
+                                    .color(egui::Color32::from_rgb(74, 222, 128))
+                                    .monospace(),
+                            );
+                        }
+                        for entry in &self.term_output {
+                            let cmd = entry["cmd"].as_str().unwrap_or("");
+                            let stdout = entry["stdout"].as_str().unwrap_or("");
+                            let stderr = entry["stderr"].as_str().unwrap_or("");
+
+                            ui.label(
+                                egui::RichText::new(format!("$ {}", cmd))
+                                    .size(12.0)
+                                    .color(egui::Color32::from_rgb(74, 222, 128))
+                                    .monospace(),
+                            );
+                            if !stdout.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(stdout)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(224, 224, 224))
+                                        .monospace(),
+                                );
+                            }
+                            if !stderr.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(stderr)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(239, 68, 68))
+                                        .monospace(),
+                                );
+                            }
+                            ui.add_space(4.0);
+                        }
+                    });
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Input
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            ui.label(
+                egui::RichText::new("$")
+                    .size(14.0)
+                    .color(egui::Color32::from_rgb(74, 222, 128))
+                    .monospace(),
+            );
+            let input = ui.add(
+                egui::TextEdit::singleline(&mut self.term_input)
+                    .desired_width(ui.available_width() - 100.0)
+                    .font(egui::TextStyle::Monospace)
+                    .hint_text("command..."),
+            );
+
+            let running = self.term_result.is_loading();
+            let run_btn = ui.add_enabled(!running, egui::Button::new("Run"));
+
+            if (run_btn.clicked()
+                || (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
+                && !self.term_input.trim().is_empty()
+                && !running
+            {
+                let cmd = self.term_input.trim().to_string();
+                self.term_input.clear();
+                let Some(base) = self.base_url() else { return };
+                let Some(token) = self.token() else { return };
+                let result = self.term_result.clone();
+                result.set_loading();
+                let cmd_clone = cmd.clone();
+
+                runtime.spawn(async move {
+                    let client = reqwest::Client::new();
+                    let resp = client
+                        .post(format!("{}/api/terminal/exec", base))
+                        .header("Authorization", format!("Bearer {}", token))
+                        .json(&serde_json::json!({ "command": cmd_clone }))
+                        .timeout(Duration::from_secs(60))
+                        .send()
+                        .await;
+                    match resp {
+                        Ok(r) => {
+                            let json = r.json::<Value>().await.unwrap_or(Value::Null);
+                            result.set_done(json);
+                        }
+                        Err(e) => {
+                            result.set_done(serde_json::json!({
+                                "stderr": format!("Error: {}", e)
+                            }));
+                        }
+                    }
+                });
+
+                // Add pending entry
+                self.term_output.push(serde_json::json!({
+                    "cmd": cmd,
+                    "stdout": "",
+                    "stderr": "(running...)"
+                }));
+            }
+
+            if running {
+                ui.spinner();
+            }
+        });
+
+        // Check for completed terminal results
+        if let Some(result) = self.term_result.take() {
+            if !self.term_result.is_loading() {
+                // Update last entry with actual result
+                if let Some(last) = self.term_output.last_mut() {
+                    let stdout = result["stdout"].as_str().unwrap_or("").to_string();
+                    let stderr = result["stderr"].as_str().unwrap_or("").to_string();
+                    *last = serde_json::json!({
+                        "cmd": last["cmd"].as_str().unwrap_or(""),
+                        "stdout": stdout,
+                        "stderr": stderr,
+                    });
+                }
+            }
+        }
+
+        // Clear button
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            if ui.small_button("Clear").clicked() {
+                self.term_output.clear();
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Agents tab
+    // -----------------------------------------------------------------------
+
+    fn show_agents(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            ui.label(egui::RichText::new("Remote Agent Configs").size(15.0).strong());
+            if ui.button("Refresh").clicked() {
+                *self.remote_agents.data.lock().unwrap() = None;
+            }
+            if self.remote_agents.is_loading() {
+                ui.spinner();
+            }
+        });
+
+        // Fetch agents
+        if self.remote_agents.take().is_none() && !self.remote_agents.is_loading() {
+            let Some(base) = self.base_url() else { return };
+            let Some(token) = self.token() else { return };
+            let result = self.remote_agents.clone();
+            result.set_loading();
+            runtime.spawn(async move {
+                let client = reqwest::Client::new();
+                let resp = client
+                    .get(format!("{}/api/agents", base))
+                    .header("Authorization", format!("Bearer {}", token))
+                    .timeout(Duration::from_secs(15))
+                    .send()
+                    .await;
+                match resp {
+                    Ok(r) => {
+                        let json = r.json::<Value>().await.unwrap_or(Value::Null);
+                        let agents = json.as_array().cloned().unwrap_or_default();
+                        result.set_done(agents);
+                    }
+                    Err(_) => result.set_done(vec![]),
+                }
+            });
+        }
+
+        ui.add_space(8.0);
+
+        if let Some(agents) = self.remote_agents.take() {
+            if agents.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    ui.label(egui::RichText::new("No agent configs on remote server").size(13.0).color(egui::Color32::from_rgb(139, 148, 158)));
+                });
+            }
+            for agent in &agents {
+                let name = agent.as_str().unwrap_or(
+                    agent["name"].as_str().unwrap_or("?")
+                );
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    let frame = egui::Frame::new()
+                        .fill(egui::Color32::from_rgb(246, 248, 250))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::same(10));
+
+                    frame.show(ui, |ui| {
+                        ui.set_min_width(ui.available_width() - 40.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("\u{1F4C4}")
+                                    .size(14.0),
+                            );
+                            ui.label(
+                                egui::RichText::new(name)
+                                    .size(13.0)
+                                    .color(egui::Color32::from_rgb(36, 41, 47)),
+                            );
+                        });
+                    });
+                });
+                ui.add_space(2.0);
+            }
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        // Submit task with agent config
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            ui.label(egui::RichText::new("Submit Remote Task").size(15.0).strong());
+        });
+
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            let input = ui.add(
+                egui::TextEdit::singleline(&mut self.task_input)
+                    .desired_width(ui.available_width() - 120.0)
+                    .hint_text("Enter task for remote agent..."),
+            );
+
+            let submit = ui.button("Submit");
+            if (submit.clicked() || (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
+                && !self.task_input.trim().is_empty()
+            {
+                let task = self.task_input.trim().to_string();
+                self.task_input.clear();
+                let result = AsyncResult::<Value>::new();
+                self.remote_post(
+                    runtime,
+                    "/api/remote/task",
+                    serde_json::json!({ "task": task }),
+                    result,
+                );
+            }
+        });
     }
 }

@@ -5,7 +5,7 @@ use axum::{
     extract::{Multipart, Path as AxumPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json},
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use serde::Deserialize;
@@ -128,6 +128,7 @@ struct TigerMdBody {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(list_projects).post(create_project))
+        .route("/bulk", put(put_all_projects))
         .route(
             "/{id}",
             get(get_project).patch(update_project).delete(delete_project),
@@ -149,6 +150,12 @@ pub fn router() -> Router<Arc<AppState>> {
 async fn list_projects() -> Json<Value> {
     let projects = get_projects().await;
     Json(serde_json::to_value(&projects).unwrap_or(json!([])))
+}
+
+/// PUT /bulk - save all projects (for remote sync)
+async fn put_all_projects(Json(projects): Json<Vec<Project>>) -> StatusCode {
+    save_projects(&projects).await;
+    StatusCode::OK
 }
 
 // ---------------------------------------------------------------------------

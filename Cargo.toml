@@ -32,6 +32,7 @@ rand = "0.8"
 cron = "0.15"
 serde_yaml = "0.9"
 url = "2"
+urlencoding = "2"
 tokio-cron-scheduler = "0.13"
 regex = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }

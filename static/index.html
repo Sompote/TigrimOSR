@@ -365,6 +365,16 @@ h4.md-h { font-size: 1em; }
     <h1>TigrimOS</h1>
     <p>Remote Control</p>
     <div id="login-error"></div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:13px;color:var(--fg2)">Backend:</label>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button id="btn-local" onclick="setBackend('local')" style="flex:1;font-size:12px;padding:8px" class="secondary">Local (this server)</button>
+        <button id="btn-remote" onclick="setBackend('remote')" style="flex:1;font-size:12px;padding:8px" class="secondary">Remote server</button>
+      </div>
+    </div>
+    <div id="remote-url-field" style="display:none;margin-bottom:12px">
+      <input type="text" id="remote-url-input" placeholder="http://server-ip:3001" autocomplete="off" style="margin-bottom:8px">
+    </div>
     <input type="password" id="token-input" placeholder="Enter access token" autocomplete="off">
     <br><br>
     <button onclick="doLogin()" style="width:100%">Connect</button>
@@ -383,7 +393,9 @@ h4.md-h { font-size: 1em; }
       <button class="tab" data-tab="tasks">Tasks</button>
       <button class="tab" data-tab="settings">Settings</button>
     </div>
-    <button id="logout-btn" onclick="doLogout()">Logout</button>
+    <span id="backend-badge" style="font-size:11px;padding:4px 8px;border-radius:4px;background:var(--bg3);color:var(--fg2);white-space:nowrap"></span>
+    <button id="switch-btn" onclick="switchBackend()" style="background:var(--bg3);font-size:11px;padding:5px 10px">Switch</button>
+    <button id="logout-btn" onclick="doLogout()" style="background:var(--bg3);font-size:12px;padding:6px 10px">Logout</button>
   </div>
 
   <!-- CHAT PAGE -->
@@ -489,8 +501,42 @@ h4.md-h { font-size: 1em; }
 
 <script>
 // ========== API ==========
-const BASE = location.origin;
+let BASE = localStorage.getItem('tigrimos_backend') || location.origin;
 let TOKEN = localStorage.getItem('tigrimos_token') || '';
+let backendMode = localStorage.getItem('tigrimos_backend_mode') || 'local';
+
+// Backend selector on login page
+function setBackend(mode) {
+  backendMode = mode;
+  document.getElementById('btn-local').style.background = mode === 'local' ? 'var(--accent)' : '';
+  document.getElementById('btn-local').style.color = mode === 'local' ? 'white' : '';
+  document.getElementById('btn-remote').style.background = mode === 'remote' ? 'var(--accent)' : '';
+  document.getElementById('btn-remote').style.color = mode === 'remote' ? 'white' : '';
+  document.getElementById('remote-url-field').style.display = mode === 'remote' ? 'block' : 'none';
+  // Restore saved remote URL
+  if (mode === 'remote') {
+    const saved = localStorage.getItem('tigrimos_remote_url') || '';
+    document.getElementById('remote-url-input').value = saved;
+  }
+}
+
+function updateBackendBadge() {
+  const badge = document.getElementById('backend-badge');
+  if (!badge) return;
+  if (backendMode === 'remote') {
+    const url = BASE.replace(/^https?:\/\//, '');
+    badge.textContent = 'Remote: ' + url;
+    badge.style.background = '#0f3460';
+    badge.style.color = '#4ade80';
+  } else {
+    badge.textContent = 'Local';
+    badge.style.background = 'var(--bg3)';
+    badge.style.color = 'var(--fg2)';
+  }
+}
+
+// Init backend selector state on page load
+setBackend(backendMode);
 
 let authRequired = false;
 function api(path, opts = {}) {
@@ -498,7 +544,7 @@ function api(path, opts = {}) {
   if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
   return fetch(BASE + path, { ...opts, headers: { ...headers, ...(opts.headers||{}) } })
     .then(r => {
-      if ((r.status === 401 || r.status === 403) && authRequired) {
+      if (r.status === 401 && authRequired) {
         doLogout();
         throw new Error('Unauthorized');
       }
@@ -515,6 +561,24 @@ function api(path, opts = {}) {
 function doLogin() {
   const t = document.getElementById('token-input').value.trim();
   if (!t) return;
+
+  // Set backend URL based on selection
+  if (backendMode === 'remote') {
+    const remoteUrl = document.getElementById('remote-url-input').value.trim().replace(/\/+$/, '');
+    if (!remoteUrl) {
+      document.getElementById('login-error').textContent = 'Enter remote server URL';
+      return;
+    }
+    BASE = remoteUrl;
+    localStorage.setItem('tigrimos_backend', remoteUrl);
+    localStorage.setItem('tigrimos_remote_url', remoteUrl);
+    localStorage.setItem('tigrimos_backend_mode', 'remote');
+  } else {
+    BASE = location.origin;
+    localStorage.setItem('tigrimos_backend', location.origin);
+    localStorage.setItem('tigrimos_backend_mode', 'local');
+  }
+
   TOKEN = t;
   authRequired = true;
   fetch(BASE + '/api/auth/verify', {
@@ -548,6 +612,11 @@ function doLogin() {
 function doLogout() {
   TOKEN = '';
   localStorage.removeItem('tigrimos_token');
+  localStorage.removeItem('tigrimos_backend');
+  localStorage.removeItem('tigrimos_backend_mode');
+  backendMode = 'local';
+  BASE = location.origin;
+  setBackend('local');
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-page').style.display = 'flex';
 }
@@ -555,6 +624,7 @@ function doLogout() {
 function showApp() {
   document.getElementById('login-page').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
+  updateBackendBadge();
   loadSessions();
   loadFiles();
   loadAgents();
@@ -659,48 +729,44 @@ let sending = false;
 function sendMessage() {
   const input = document.getElementById('chat-input');
   const msg = input.value.trim();
-  if (!msg || !currentSessionId || sending) return;
+  if (!msg || sending) return;
   sending = true;
   input.value = '';
 
-  // Add user message to UI immediately
-  const el = document.getElementById('messages');
-  el.innerHTML += `<div class="msg user">${esc(msg)}</div>`;
-  el.innerHTML += `<div class="msg assistant"><span class="spinner"></span> Thinking...</div>`;
-  el.scrollTop = el.scrollHeight;
+  // Auto-create session if none selected
+  const doSend = (sessionId) => {
+    const el = document.getElementById('messages');
+    el.innerHTML += `<div class="msg user">${esc(msg)}</div>`;
+    el.innerHTML += `<div class="msg assistant"><span class="spinner"></span> Thinking...</div>`;
+    el.scrollTop = el.scrollHeight;
 
-  // Try remote task first (if enabled), fallback to chat API
-  api('/api/remote/task', {
+    api(`/api/chat/sessions/${sessionId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ task: msg })
+    body: JSON.stringify({ message: msg })
   }).then(data => {
-    if (data.ok === false) throw new Error(data.error || 'Remote not enabled');
-    if (data.id) {
-      pollTask(data.id, (result) => {
-        replaceLastMsg(el, result || 'Done');
-        sending = false;
-        // Save to chat history
-        api(`/api/chat/sessions/${currentSessionId}/messages`, {
-          method: 'POST', body: JSON.stringify({ message: msg })
-        }).catch(() => {});
-      });
-    } else {
-      throw new Error('No task ID');
-    }
-  }).catch(() => {
-    // Fallback: use chat API (placeholder response)
-    api(`/api/chat/sessions/${currentSessionId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ message: msg })
-    }).then(data => {
-      replaceLastMsg(el, data.content || 'No response');
-      sending = false;
-      loadSessions();
+    replaceLastMsg(el, data.content || 'No response');
+    sending = false;
+    loadSessions();
     }).catch(() => {
       replaceLastMsg(el, '[Error] Failed to send message');
       sending = false;
     });
-  });
+  };
+
+  if (currentSessionId) {
+    doSend(currentSessionId);
+  } else {
+    api('/api/chat/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title: msg.slice(0, 60) })
+    }).then(data => {
+      currentSessionId = data.id;
+      loadSessions();
+      doSend(currentSessionId);
+    }).catch(() => {
+      sending = false;
+    });
+  }
 }
 
 function replaceLastMsg(el, text) {

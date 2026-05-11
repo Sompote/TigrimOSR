@@ -528,6 +528,20 @@ impl ChatView {
     }
 
     fn create_session(&mut self, runtime: &tokio::runtime::Handle) {
+        if crate::server::data::get_remote_backend().is_some() {
+            // Remote mode: create session via API
+            let pid = self.selected_project_id.as_deref();
+            let new_id = runtime.block_on(async {
+                crate::server::data::remote_create_chat_session("New Chat", pid).await
+                    .map(|s| s.id)
+            });
+            if let Some(id) = new_id {
+                self.selected_session_id = Some(id);
+                self.needs_refresh = true;
+            }
+            return;
+        }
+
         let now = chrono::Utc::now().to_rfc3339();
         let session = ChatSession {
             id: Uuid::new_v4().to_string(),
@@ -595,25 +609,40 @@ impl ChatView {
 
         // Auto-create session if none selected
         if self.selected_session_id.is_none() {
-            let new_id = Uuid::new_v4().to_string();
-            let now = chrono::Utc::now().to_rfc3339();
-            let new_session = ChatSession {
-                id: new_id.clone(),
-                title: "New Chat".to_string(),
-                messages: Vec::new(),
-                created_at: now.clone(),
-                updated_at: now,
-                skill_candidate: None,
-                skill_feedback: None,
-                project_id: self.selected_project_id.clone(),
-            };
-            runtime.block_on(async {
-                let mut sessions = get_chat_history().await;
-                sessions.insert(0, new_session);
-                save_chat_history(&sessions).await;
-            });
-            self.selected_session_id = Some(new_id);
-            self.needs_refresh = true;
+            if crate::server::data::get_remote_backend().is_some() {
+                // Remote: create via API
+                let pid = self.selected_project_id.as_deref();
+                let new_id = runtime.block_on(async {
+                    crate::server::data::remote_create_chat_session("New Chat", pid).await
+                        .map(|s| s.id)
+                });
+                if let Some(id) = new_id {
+                    self.selected_session_id = Some(id);
+                    self.needs_refresh = true;
+                } else {
+                    return; // failed to create remote session
+                }
+            } else {
+                let new_id = Uuid::new_v4().to_string();
+                let now = chrono::Utc::now().to_rfc3339();
+                let new_session = ChatSession {
+                    id: new_id.clone(),
+                    title: "New Chat".to_string(),
+                    messages: Vec::new(),
+                    created_at: now.clone(),
+                    updated_at: now,
+                    skill_candidate: None,
+                    skill_feedback: None,
+                    project_id: self.selected_project_id.clone(),
+                };
+                runtime.block_on(async {
+                    let mut sessions = get_chat_history().await;
+                    sessions.insert(0, new_session);
+                    save_chat_history(&sessions).await;
+                });
+                self.selected_session_id = Some(new_id);
+                self.needs_refresh = true;
+            }
         }
 
         let sid = self.selected_session_id.clone().unwrap();
@@ -666,7 +695,7 @@ impl ChatView {
         runtime: &tokio::runtime::Handle,
         ctx: &egui::Context,
         session_id: &str,
-        _user_message: &str,
+        user_message: &str,
     ) {
         let settings = runtime.block_on(get_settings());
         let api_key = settings.tiger_bot_api_key.clone();
@@ -1012,6 +1041,84 @@ Provide helpful, detailed responses based on tool results.{}",
         }
 
         let ctx_clone = ctx.clone();
+
+        // ── Remote mode: POST message to remote server ──────────────
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let remote_sid = sid.clone();
+            let remote_state = state.clone();
+            let remote_ctx = ctx_clone.clone();
+            let remote_msg = user_message.to_string();
+            runtime.spawn(async move {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(300))
+                    .build()
+                    .unwrap_or_default();
+
+                let body = serde_json::json!({ "message": remote_msg });
+                let url = format!("{}/api/chat/sessions/{}/messages", rb.url, remote_sid);
+
+                {
+                    let mut text = remote_state.text.lock().unwrap();
+                    *text = "Waiting for remote server...".to_string();
+                }
+                remote_ctx.request_repaint();
+
+                match client
+                    .post(&url)
+                    .bearer_auth(&rb.token)
+                    .json(&body)
+                    .send()
+                    .await
+                {
+                    Ok(resp) => {
+                        if let Ok(val) = resp.json::<serde_json::Value>().await {
+                            let content = val.get("content")
+                                .or_else(|| val.get("message"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("(no response from remote)");
+                            {
+                                let mut text = remote_state.text.lock().unwrap();
+                                *text = content.to_string();
+                            }
+                            // Save assistant message to local history
+                            let mut sessions = get_chat_history().await;
+                            if let Some(s) = sessions.iter_mut().find(|s| s.id == remote_sid) {
+                                s.messages.push(ChatMessage {
+                                    role: "assistant".to_string(),
+                                    content: content.to_string(),
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                    files: None,
+                                    feedback: None,
+                                });
+                                s.updated_at = chrono::Utc::now().to_rfc3339();
+                            }
+                            save_chat_history(&sessions).await;
+                        } else {
+                            let mut text = remote_state.text.lock().unwrap();
+                            *text = "(failed to parse remote response)".to_string();
+                        }
+                    }
+                    Err(e) => {
+                        let mut err = remote_state.error.lock().unwrap();
+                        *err = Some(format!("Remote error: {}", e));
+                    }
+                }
+                {
+                    let mut done = remote_state.done.lock().unwrap();
+                    *done = true;
+                }
+                // Remove from active chats
+                {
+                    let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
+                    if let Some(active) = chats.iter().find(|c| c.session_id == remote_sid).cloned() {
+                        crate::ui::tasks_view::mark_chat_finished(&active);
+                    }
+                    chats.retain(|c| c.session_id != remote_sid);
+                }
+                remote_ctx.request_repaint();
+            });
+            return;
+        }
 
         runtime.spawn(async move {
             let state_text = state.text.clone();

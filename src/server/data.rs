@@ -1,9 +1,178 @@
 use std::path::PathBuf;
+use std::sync::{OnceLock, Mutex};
 
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+
+// ---------------------------------------------------------------------------
+// Remote Backend (transparent proxy for remote mode)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct RemoteBackend {
+    pub url: String,
+    pub token: String,
+}
+
+static REMOTE_BACKEND: OnceLock<Mutex<Option<RemoteBackend>>> = OnceLock::new();
+
+pub fn set_remote_backend(backend: Option<RemoteBackend>) {
+    let lock = REMOTE_BACKEND.get_or_init(|| Mutex::new(None));
+    *lock.lock().unwrap() = backend;
+    // Clear cache when backend changes
+    remote_cache_clear();
+}
+
+pub fn get_remote_backend() -> Option<RemoteBackend> {
+    REMOTE_BACKEND
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|g| g.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Remote cache — avoids repeated HTTP calls on every UI frame
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+
+struct CacheEntry {
+    data: String, // JSON string
+    expires: std::time::Instant,
+}
+
+static REMOTE_CACHE: OnceLock<Mutex<HashMap<String, CacheEntry>>> = OnceLock::new();
+
+fn remote_cache() -> &'static Mutex<HashMap<String, CacheEntry>> {
+    REMOTE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remote_cache_get(key: &str) -> Option<String> {
+    let cache = remote_cache().lock().ok()?;
+    let entry = cache.get(key)?;
+    if entry.expires > std::time::Instant::now() {
+        Some(entry.data.clone())
+    } else {
+        None
+    }
+}
+
+fn remote_cache_set(key: &str, data: String, ttl_secs: u64) {
+    if let Ok(mut cache) = remote_cache().lock() {
+        cache.insert(key.to_string(), CacheEntry {
+            data,
+            expires: std::time::Instant::now() + std::time::Duration::from_secs(ttl_secs),
+        });
+    }
+}
+
+pub fn remote_cache_clear() {
+    if let Some(cache) = REMOTE_CACHE.get() {
+        if let Ok(mut c) = cache.lock() {
+            c.clear();
+        }
+    }
+}
+
+/// Invalidate a specific cache key (call after writes)
+pub fn remote_cache_invalidate(key: &str) {
+    if let Some(cache) = REMOTE_CACHE.get() {
+        if let Ok(mut c) = cache.lock() {
+            c.remove(key);
+        }
+    }
+}
+
+fn remote_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default()
+}
+
+/// Cached GET — returns cached JSON if fresh, otherwise fetches and caches
+async fn remote_get_cached<T: serde::de::DeserializeOwned + Default>(
+    rb: &RemoteBackend,
+    path: &str,
+    ttl_secs: u64,
+) -> T {
+    // Check cache first
+    if let Some(cached) = remote_cache_get(path) {
+        if let Ok(val) = serde_json::from_str::<T>(&cached) {
+            return val;
+        }
+    }
+    // Fetch from remote
+    match remote_client()
+        .get(format!("{}{}", rb.url, path))
+        .bearer_auth(&rb.token)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            if let Ok(text) = resp.text().await {
+                remote_cache_set(path, text.clone(), ttl_secs);
+                serde_json::from_str::<T>(&text).unwrap_or_default()
+            } else {
+                T::default()
+            }
+        }
+        Err(_) => T::default(),
+    }
+}
+
+async fn remote_get_json<T: serde::de::DeserializeOwned + Default>(rb: &RemoteBackend, path: &str) -> T {
+    match remote_client()
+        .get(format!("{}{}", rb.url, path))
+        .bearer_auth(&rb.token)
+        .send()
+        .await
+    {
+        Ok(resp) => resp.json::<T>().await.unwrap_or_default(),
+        Err(_) => T::default(),
+    }
+}
+
+async fn remote_put_json<T: Serialize>(rb: &RemoteBackend, path: &str, body: &T) {
+    let _ = remote_client()
+        .put(format!("{}{}", rb.url, path))
+        .bearer_auth(&rb.token)
+        .json(body)
+        .send()
+        .await;
+}
+
+async fn remote_post_json<T: Serialize>(rb: &RemoteBackend, path: &str, body: &T) {
+    let _ = remote_client()
+        .post(format!("{}{}", rb.url, path))
+        .bearer_auth(&rb.token)
+        .json(body)
+        .send()
+        .await;
+}
+
+async fn remote_delete(rb: &RemoteBackend, path: &str) {
+    let _ = remote_client()
+        .delete(format!("{}{}", rb.url, path))
+        .bearer_auth(&rb.token)
+        .send()
+        .await;
+}
+
+async fn remote_get_result<T: serde::de::DeserializeOwned>(rb: &RemoteBackend, path: &str) -> Result<T, String> {
+    let resp = remote_client()
+        .get(format!("{}{}", rb.url, path))
+        .bearer_auth(&rb.token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.json::<T>().await.map_err(|e| e.to_string())
+}
 
 // ---------------------------------------------------------------------------
 // JSON file helpers
@@ -62,7 +231,7 @@ pub struct ChatMessage {
     pub feedback: Option<ChatMessageFeedback>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatSession {
     pub id: String,
     pub title: String,
@@ -79,11 +248,59 @@ pub struct ChatSession {
     pub project_id: Option<String>,
 }
 
+/// Create a single chat session on the remote server. Returns the created session.
+pub async fn remote_create_chat_session(title: &str, project_id: Option<&str>) -> Option<ChatSession> {
+    let rb = get_remote_backend()?;
+    let mut body = serde_json::json!({ "title": title });
+    if let Some(pid) = project_id {
+        body["projectId"] = serde_json::Value::String(pid.to_string());
+    }
+    let resp = remote_client()
+        .post(format!("{}/api/chat/sessions", rb.url))
+        .bearer_auth(&rb.token)
+        .json(&body)
+        .send()
+        .await
+        .ok()?;
+    resp.json::<ChatSession>().await.ok()
+}
+
 pub async fn get_chat_history() -> Vec<ChatSession> {
+    if let Some(rb) = get_remote_backend() {
+        // Try cached bulk first
+        let bulk: Vec<ChatSession> = remote_get_cached(&rb, "/api/chat/sessions/bulk", 5).await;
+        if !bulk.is_empty() {
+            return bulk;
+        }
+        // Fallback: list summaries (cached) then fetch each session (cached individually)
+        let summaries: Vec<serde_json::Value> = remote_get_cached(&rb, "/api/chat/sessions", 5).await;
+        let mut sessions = Vec::new();
+        for s in &summaries {
+            if let Some(id) = s.get("id").and_then(|v| v.as_str()) {
+                let path = format!("/api/chat/sessions/{}", id);
+                let full: ChatSession = remote_get_cached(&rb, &path, 10).await;
+                if !full.id.is_empty() {
+                    sessions.push(full);
+                }
+            }
+        }
+        return sessions;
+    }
     read_json("chat_history.json").await
 }
 
 pub async fn save_chat_history(sessions: &[ChatSession]) {
+    if let Some(rb) = get_remote_backend() {
+        remote_cache_invalidate("/api/chat/sessions/bulk");
+        remote_cache_invalidate("/api/chat/sessions");
+        let _ = remote_client()
+            .put(format!("{}/api/chat/sessions/bulk", rb.url))
+            .bearer_auth(&rb.token)
+            .json(&sessions.to_vec())
+            .send()
+            .await;
+        return;
+    }
     write_json("chat_history.json", &sessions.to_vec()).await;
 }
 
@@ -107,10 +324,18 @@ pub struct ScheduledTask {
 }
 
 pub async fn get_tasks() -> Vec<ScheduledTask> {
+    if let Some(rb) = get_remote_backend() {
+        return remote_get_cached(&rb, "/api/tasks", 5).await;
+    }
     read_json("tasks.json").await
 }
 
 pub async fn save_tasks(tasks: &[ScheduledTask]) {
+    if let Some(rb) = get_remote_backend() {
+        remote_cache_invalidate("/api/tasks");
+        remote_put_json(&rb, "/api/tasks/bulk", &tasks.to_vec()).await;
+        return;
+    }
     write_json("tasks.json", &tasks.to_vec()).await;
 }
 
@@ -209,6 +434,9 @@ pub struct Settings {
 }
 
 pub async fn get_settings() -> Settings {
+    if let Some(rb) = get_remote_backend() {
+        return remote_get_cached(&rb, "/api/settings", 10).await;
+    }
     let mut settings: Settings = read_json("settings.json").await;
     if settings.skill_auto_update_enabled.is_none() {
         settings.skill_auto_update_enabled = Some(true);
@@ -244,6 +472,11 @@ pub async fn get_settings() -> Settings {
 }
 
 pub async fn save_settings(settings: &Settings) {
+    if let Some(rb) = get_remote_backend() {
+        remote_cache_invalidate("/api/settings");
+        remote_put_json(&rb, "/api/settings", settings).await;
+        return;
+    }
     write_json("settings.json", settings).await;
 }
 
@@ -299,10 +532,18 @@ pub struct Project {
 }
 
 pub async fn get_projects() -> Vec<Project> {
+    if let Some(rb) = get_remote_backend() {
+        return remote_get_cached(&rb, "/api/projects", 5).await;
+    }
     read_json("projects.json").await
 }
 
 pub async fn save_projects(projects: &[Project]) {
+    if let Some(rb) = get_remote_backend() {
+        remote_cache_invalidate("/api/projects");
+        remote_put_json(&rb, "/api/projects/bulk", &projects.to_vec()).await;
+        return;
+    }
     write_json("projects.json", &projects.to_vec()).await;
 }
 
@@ -320,10 +561,18 @@ pub struct FileToken {
 }
 
 pub async fn get_file_tokens() -> Vec<FileToken> {
+    if let Some(rb) = get_remote_backend() {
+        return remote_get_cached(&rb, "/api/settings/file-tokens", 10).await;
+    }
     read_json("file_tokens.json").await
 }
 
 pub async fn save_file_tokens(tokens: &[FileToken]) {
+    if let Some(rb) = get_remote_backend() {
+        remote_cache_invalidate("/api/settings/file-tokens");
+        remote_put_json(&rb, "/api/settings/file-tokens/bulk", &tokens.to_vec()).await;
+        return;
+    }
     write_json("file_tokens.json", &tokens.to_vec()).await;
 }
 
@@ -375,10 +624,18 @@ pub struct Skill {
 }
 
 pub async fn get_skills() -> Vec<Skill> {
+    if let Some(rb) = get_remote_backend() {
+        return remote_get_cached(&rb, "/api/skills", 10).await;
+    }
     read_json("skills.json").await
 }
 
 pub async fn save_skills(skills: &[Skill]) {
+    if let Some(rb) = get_remote_backend() {
+        remote_cache_invalidate("/api/skills");
+        remote_put_json(&rb, "/api/skills/bulk", &skills.to_vec()).await;
+        return;
+    }
     write_json("skills.json", &skills.to_vec()).await;
 }
 
@@ -426,6 +683,9 @@ pub async fn read_agent_history(session_id: &str, file: &str) -> Vec<serde_json:
 }
 
 pub async fn delete_agent_history(session_id: &str) {
+    if get_remote_backend().is_some() {
+        return; // agent history is server-local
+    }
     let dir = data_dir().join("agent_history").join(session_id);
     let _ = fs::remove_dir_all(&dir).await;
 }
@@ -445,6 +705,13 @@ pub fn validate_path(sandbox_dir: &str, requested: &str) -> Result<PathBuf, Stri
 }
 
 pub async fn list_files(sandbox_dir: &str, sub_path: &str) -> Result<Vec<serde_json::Value>, String> {
+    if let Some(rb) = get_remote_backend() {
+        let encoded = urlencoding::encode(sub_path);
+        let path = format!("/api/files?path={}", encoded);
+        let result: Vec<serde_json::Value> = remote_get_cached(&rb, &path, 5).await;
+        return Ok(result);
+    }
+
     let dir = if sub_path.is_empty() {
         PathBuf::from(sandbox_dir)
     } else {
@@ -489,6 +756,10 @@ pub async fn list_files(sandbox_dir: &str, sub_path: &str) -> Result<Vec<serde_j
 }
 
 pub async fn read_file_content(sandbox_dir: &str, file_path: &str) -> Result<String, String> {
+    if let Some(rb) = get_remote_backend() {
+        let encoded = urlencoding::encode(file_path);
+        return remote_get_result(&rb, &format!("/api/files/read?path={}", encoded)).await;
+    }
     let resolved = validate_path(sandbox_dir, file_path)?;
     fs::read_to_string(&resolved)
         .await
@@ -500,6 +771,11 @@ pub async fn write_file_content(
     file_path: &str,
     content: &str,
 ) -> Result<(), String> {
+    if let Some(rb) = get_remote_backend() {
+        let body = serde_json::json!({ "path": file_path, "content": content });
+        remote_post_json(&rb, "/api/files/write", &body).await;
+        return Ok(());
+    }
     let resolved = validate_path(sandbox_dir, file_path)?;
     if let Some(parent) = resolved.parent() {
         let _ = fs::create_dir_all(parent).await;
@@ -510,6 +786,11 @@ pub async fn write_file_content(
 }
 
 pub async fn delete_file_or_dir(sandbox_dir: &str, file_path: &str) -> Result<(), String> {
+    if let Some(rb) = get_remote_backend() {
+        let encoded = urlencoding::encode(file_path);
+        remote_delete(&rb, &format!("/api/files?path={}", encoded)).await;
+        return Ok(());
+    }
     let resolved = validate_path(sandbox_dir, file_path)?;
     let meta = fs::metadata(&resolved)
         .await

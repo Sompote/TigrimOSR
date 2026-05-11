@@ -1,6 +1,7 @@
 use eframe::egui;
 use std::sync::{Arc, Mutex};
 
+use crate::server::data::get_remote_backend;
 use crate::vm::{VmConfig, VmState};
 
 pub struct TerminalView {
@@ -22,6 +23,8 @@ impl TerminalView {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle, vm_state: VmState) {
+        let is_remote = get_remote_backend().is_some();
+
         // ---------- check for async command completion ----------
         {
             let mut guard = self.shared_output.lock().unwrap();
@@ -31,14 +34,14 @@ impl TerminalView {
             }
         }
 
-        let vm_running = vm_state == VmState::Running;
+        let can_use = is_remote || vm_state == VmState::Running;
 
         // ---------- header ----------
         ui.horizontal(|ui| {
-            ui.heading("VM Terminal");
-            if vm_running {
+            ui.heading(if is_remote { "Remote Terminal" } else { "VM Terminal" });
+            if can_use {
                 ui.label(
-                    egui::RichText::new("● Connected")
+                    egui::RichText::new(if is_remote { "● Remote" } else { "● Connected" })
                         .color(egui::Color32::from_rgb(34, 197, 94))
                         .size(12.0),
                 );
@@ -58,10 +61,10 @@ impl TerminalView {
 
         ui.separator();
 
-        // ---------- command input bar (always visible at top) ----------
+        // ---------- command input bar ----------
         let mut run_command = false;
 
-        if !vm_running {
+        if !can_use {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("Start the VM to use the terminal.")
@@ -71,8 +74,9 @@ impl TerminalView {
             });
         } else {
             ui.horizontal(|ui| {
+                let prompt = if is_remote { "remote $" } else { "tigris@vm $" };
                 ui.label(
-                    egui::RichText::new("tigris@vm $")
+                    egui::RichText::new(prompt)
                         .monospace()
                         .color(egui::Color32::from_rgb(34, 197, 94)),
                 );
@@ -101,59 +105,97 @@ impl TerminalView {
 
         if run_command {
             let command = self.command_input.trim().to_string();
+            let prompt = if is_remote { "remote" } else { "tigris@vm" };
             self.output_history
-                .push_str(&format!("\ntigris@vm $ {}\n", command));
+                .push_str(&format!("\n{} $ {}\n", prompt, command));
             self.command_input.clear();
             self.running = true;
 
             let shared = self.shared_output.clone();
-            let ssh_port = VmConfig::SSH_HOST_PORT;
-            runtime.spawn(async move {
-                let port_str = ssh_port.to_string();
-                let output = tokio::process::Command::new("sshpass")
-                    .args([
-                        "-p", "tigris",
-                        "ssh",
-                        "-o", "StrictHostKeyChecking=no",
-                        "-o", "UserKnownHostsFile=/dev/null",
-                        "-o", "ConnectTimeout=5",
-                        "-o", "LogLevel=ERROR",
-                        "-p", &port_str,
-                        "tigris@localhost",
-                        &command,
-                    ])
-                    .output()
-                    .await;
 
-                let result = match output {
-                    Ok(out) => {
-                        let mut buf = String::new();
-                        let stdout = String::from_utf8_lossy(&out.stdout);
-                        let stderr = String::from_utf8_lossy(&out.stderr);
-                        if !stdout.is_empty() {
-                            buf.push_str(&stdout);
+            if let Some(rb) = get_remote_backend() {
+                // Remote mode: POST to /api/terminal/exec
+                runtime.spawn(async move {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(120))
+                        .build()
+                        .unwrap_or_default();
+                    let body = serde_json::json!({ "command": command });
+                    let result = match client
+                        .post(format!("{}/api/terminal/exec", rb.url))
+                        .bearer_auth(&rb.token)
+                        .json(&body)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => {
+                            if let Ok(val) = resp.json::<serde_json::Value>().await {
+                                let stdout = val.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+                                let stderr = val.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+                                let mut buf = String::new();
+                                if !stdout.is_empty() { buf.push_str(stdout); }
+                                if !stderr.is_empty() { buf.push_str(stderr); }
+                                if buf.is_empty() { buf.push_str("(no output)\n"); }
+                                buf
+                            } else {
+                                "(empty response)\n".to_string()
+                            }
                         }
-                        if !stderr.is_empty() {
-                            buf.push_str(&stderr);
-                        }
-                        if buf.is_empty() {
-                            buf.push_str("(no output)\n");
-                        }
-                        buf
-                    }
-                    Err(e) => format!("Error: {}\n", e),
-                };
+                        Err(e) => format!("Error: {}\n", e),
+                    };
+                    let mut guard = shared.lock().unwrap();
+                    *guard = Some(result);
+                });
+            } else {
+                // Local mode: SSH to VM
+                let ssh_port = VmConfig::SSH_HOST_PORT;
+                runtime.spawn(async move {
+                    let port_str = ssh_port.to_string();
+                    let output = tokio::process::Command::new("sshpass")
+                        .args([
+                            "-p", "tigris",
+                            "ssh",
+                            "-o", "StrictHostKeyChecking=no",
+                            "-o", "UserKnownHostsFile=/dev/null",
+                            "-o", "ConnectTimeout=5",
+                            "-o", "LogLevel=ERROR",
+                            "-p", &port_str,
+                            "tigris@localhost",
+                            &command,
+                        ])
+                        .output()
+                        .await;
 
-                let mut guard = shared.lock().unwrap();
-                *guard = Some(result);
-            });
+                    let result = match output {
+                        Ok(out) => {
+                            let mut buf = String::new();
+                            let stdout = String::from_utf8_lossy(&out.stdout);
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            if !stdout.is_empty() {
+                                buf.push_str(&stdout);
+                            }
+                            if !stderr.is_empty() {
+                                buf.push_str(&stderr);
+                            }
+                            if buf.is_empty() {
+                                buf.push_str("(no output)\n");
+                            }
+                            buf
+                        }
+                        Err(e) => format!("Error: {}\n", e),
+                    };
+
+                    let mut guard = shared.lock().unwrap();
+                    *guard = Some(result);
+                });
+            }
         }
 
         ui.add_space(4.0);
 
         // ---------- output area (green-on-black, fills remaining space) ----------
         let text = if self.output_history.is_empty() {
-            if vm_running {
+            if can_use {
                 "Ready. Type a command above and press Run."
             } else {
                 "Start the VM to use the terminal."
