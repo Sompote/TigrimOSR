@@ -20,9 +20,17 @@ static REMOTE_BACKEND: OnceLock<Mutex<Option<RemoteBackend>>> = OnceLock::new();
 
 pub fn set_remote_backend(backend: Option<RemoteBackend>) {
     let lock = REMOTE_BACKEND.get_or_init(|| Mutex::new(None));
-    *lock.lock().unwrap() = backend;
     // Clear cache when backend changes
     remote_cache_clear();
+    // Pre-warm cache for the new backend
+    if let Some(ref rb) = backend {
+        remote_bg_fetch(rb, "/api/chat/sessions/bulk", 10);
+        remote_bg_fetch(rb, "/api/settings", 15);
+        remote_bg_fetch(rb, "/api/projects", 10);
+        remote_bg_fetch(rb, "/api/tasks", 10);
+        remote_bg_fetch(rb, "/api/skills", 15);
+    }
+    *lock.lock().unwrap() = backend;
 }
 
 pub fn get_remote_backend() -> Option<RemoteBackend> {
@@ -92,22 +100,59 @@ fn remote_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
-/// Cached GET — returns cached JSON if fresh, otherwise fetches and caches
+/// Cached GET — returns cached JSON if fresh, otherwise fetches and caches.
+/// Uses a sync fast-path for cache hits to avoid blocking the UI thread.
 async fn remote_get_cached<T: serde::de::DeserializeOwned + Default>(
     rb: &RemoteBackend,
     path: &str,
     ttl_secs: u64,
 ) -> T {
-    // Check cache first
+    // Sync fast-path: return cached data without async overhead
     if let Some(cached) = remote_cache_get(path) {
         if let Ok(val) = serde_json::from_str::<T>(&cached) {
             return val;
         }
     }
-    // Fetch from remote
+    // Cache miss — fetch from remote
+    remote_fetch_and_cache::<T>(rb, path, ttl_secs).await
+}
+
+/// Sync cache check — can be called from UI without block_on().
+/// Returns Some(T) if cached, None if cache miss (caller should trigger background fetch).
+pub fn remote_cache_try_get<T: serde::de::DeserializeOwned>(path: &str) -> Option<T> {
+    let cached = remote_cache_get(path)?;
+    serde_json::from_str::<T>(&cached).ok()
+}
+
+/// Trigger a background fetch for a cache key without blocking.
+/// Spawns a tokio task to fetch and populate the cache.
+pub fn remote_bg_fetch(rb: &RemoteBackend, path: &str, ttl_secs: u64) {
+    let rb = rb.clone();
+    let path = path.to_string();
+    // Use tokio::spawn if we're inside a runtime, otherwise spawn a thread
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(async move {
+            remote_fetch_and_cache::<serde_json::Value>(&rb, &path, ttl_secs).await;
+        });
+    } else {
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                remote_fetch_and_cache::<serde_json::Value>(&rb, &path, ttl_secs).await;
+            });
+        });
+    }
+}
+
+async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
+    rb: &RemoteBackend,
+    path: &str,
+    ttl_secs: u64,
+) -> T {
     match remote_client()
         .get(format!("{}{}", rb.url, path))
         .bearer_auth(&rb.token)
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
     {
@@ -268,18 +313,24 @@ pub async fn remote_create_chat_session(title: &str, project_id: Option<&str>) -
 
 pub async fn get_chat_history() -> Vec<ChatSession> {
     if let Some(rb) = get_remote_backend() {
-        // Try cached bulk first
-        let bulk: Vec<ChatSession> = remote_get_cached(&rb, "/api/chat/sessions/bulk", 5).await;
+        // Sync fast-path: return cached data immediately without HTTP
+        if let Some(bulk) = remote_cache_try_get::<Vec<ChatSession>>("/api/chat/sessions/bulk") {
+            if !bulk.is_empty() {
+                return bulk;
+            }
+        }
+        // Cache miss — fetch (this path is only hit on first load or cache expiry)
+        let bulk: Vec<ChatSession> = remote_get_cached(&rb, "/api/chat/sessions/bulk", 10).await;
         if !bulk.is_empty() {
             return bulk;
         }
-        // Fallback: list summaries (cached) then fetch each session (cached individually)
-        let summaries: Vec<serde_json::Value> = remote_get_cached(&rb, "/api/chat/sessions", 5).await;
+        // Fallback for old servers without bulk endpoint
+        let summaries: Vec<serde_json::Value> = remote_get_cached(&rb, "/api/chat/sessions", 10).await;
         let mut sessions = Vec::new();
         for s in &summaries {
             if let Some(id) = s.get("id").and_then(|v| v.as_str()) {
                 let path = format!("/api/chat/sessions/{}", id);
-                let full: ChatSession = remote_get_cached(&rb, &path, 10).await;
+                let full: ChatSession = remote_get_cached(&rb, &path, 30).await;
                 if !full.id.is_empty() {
                     sessions.push(full);
                 }
@@ -326,7 +377,11 @@ pub struct ScheduledTask {
 
 pub async fn get_tasks() -> Vec<ScheduledTask> {
     if let Some(rb) = get_remote_backend() {
-        return remote_get_cached(&rb, "/api/tasks", 5).await;
+        // Sync fast-path
+        if let Some(cached) = remote_cache_try_get::<Vec<ScheduledTask>>("/api/tasks") {
+            return cached;
+        }
+        return remote_get_cached(&rb, "/api/tasks", 10).await;
     }
     read_json("tasks.json").await
 }
@@ -436,7 +491,11 @@ pub struct Settings {
 
 pub async fn get_settings() -> Settings {
     if let Some(rb) = get_remote_backend() {
-        return remote_get_cached(&rb, "/api/settings", 10).await;
+        // Sync fast-path
+        if let Some(cached) = remote_cache_try_get::<Settings>("/api/settings") {
+            return cached;
+        }
+        return remote_get_cached(&rb, "/api/settings", 15).await;
     }
     let mut settings: Settings = read_json("settings.json").await;
     if settings.skill_auto_update_enabled.is_none() {
@@ -534,7 +593,11 @@ pub struct Project {
 
 pub async fn get_projects() -> Vec<Project> {
     if let Some(rb) = get_remote_backend() {
-        return remote_get_cached(&rb, "/api/projects", 5).await;
+        // Sync fast-path
+        if let Some(cached) = remote_cache_try_get::<Vec<Project>>("/api/projects") {
+            return cached;
+        }
+        return remote_get_cached(&rb, "/api/projects", 10).await;
     }
     read_json("projects.json").await
 }
@@ -563,7 +626,10 @@ pub struct FileToken {
 
 pub async fn get_file_tokens() -> Vec<FileToken> {
     if let Some(rb) = get_remote_backend() {
-        return remote_get_cached(&rb, "/api/settings/file-tokens", 10).await;
+        if let Some(cached) = remote_cache_try_get::<Vec<FileToken>>("/api/settings/file-tokens") {
+            return cached;
+        }
+        return remote_get_cached(&rb, "/api/settings/file-tokens", 15).await;
     }
     read_json("file_tokens.json").await
 }
@@ -626,7 +692,11 @@ pub struct Skill {
 
 pub async fn get_skills() -> Vec<Skill> {
     if let Some(rb) = get_remote_backend() {
-        return remote_get_cached(&rb, "/api/skills", 10).await;
+        // Sync fast-path
+        if let Some(cached) = remote_cache_try_get::<Vec<Skill>>("/api/skills") {
+            return cached;
+        }
+        return remote_get_cached(&rb, "/api/skills", 15).await;
     }
     read_json("skills.json").await
 }
@@ -709,7 +779,10 @@ pub async fn list_files(sandbox_dir: &str, sub_path: &str) -> Result<Vec<serde_j
     if let Some(rb) = get_remote_backend() {
         let encoded = urlencoding::encode(sub_path);
         let path = format!("/api/files?path={}", encoded);
-        let result: Vec<serde_json::Value> = remote_get_cached(&rb, &path, 5).await;
+        if let Some(cached) = remote_cache_try_get::<Vec<serde_json::Value>>(&path) {
+            return Ok(cached);
+        }
+        let result: Vec<serde_json::Value> = remote_get_cached(&rb, &path, 10).await;
         return Ok(result);
     }
 
