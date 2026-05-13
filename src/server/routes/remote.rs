@@ -11,6 +11,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::broadcast;
 use tracing::info;
 use uuid::Uuid;
 
@@ -41,6 +42,32 @@ static REMOTE_TASKS: OnceLock<TokioMutex<HashMap<String, RemoteTaskEntry>>> = On
 
 fn remote_tasks() -> &'static TokioMutex<HashMap<String, RemoteTaskEntry>> {
     REMOTE_TASKS.get_or_init(|| TokioMutex::new(HashMap::new()))
+}
+
+// ---------------------------------------------------------------------------
+// Broadcast channel for instant UI updates (no polling needed)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum TaskEvent {
+    /// A task's progress or status changed — contains the task ID
+    Updated(String),
+}
+
+static TASK_TX: OnceLock<broadcast::Sender<TaskEvent>> = OnceLock::new();
+
+fn task_tx() -> &'static broadcast::Sender<TaskEvent> {
+    TASK_TX.get_or_init(|| broadcast::channel(64).0)
+}
+
+/// Subscribe to real-time task events. UI calls this once and receives
+/// instant notifications instead of polling every 5 seconds.
+pub fn subscribe_task_events() -> broadcast::Receiver<TaskEvent> {
+    task_tx().subscribe()
+}
+
+fn notify_task_updated(task_id: &str) {
+    let _ = task_tx().send(TaskEvent::Updated(task_id.to_string()));
 }
 
 fn now_iso() -> String {
@@ -121,7 +148,7 @@ async fn list_tasks() -> impl IntoResponse {
         .map(|t| {
             json!({
                 "id": t.id,
-                "task": if t.task.len() > 200 { format!("{}...", &t.task[..200]) } else { t.task.clone() },
+                "task": if t.task.len() > 200 { let mut i = 200; while i > 0 && !t.task.is_char_boundary(i) { i -= 1; } format!("{}...", &t.task[..i]) } else { t.task.clone() },
                 "status": t.status,
                 "sessionId": t.session_id,
                 "createdAt": t.created_at,
@@ -219,6 +246,8 @@ async fn add_progress(task_id: &str, msg: &str) {
     if let Some(entry) = tasks.get_mut(task_id) {
         add_progress_inner(entry, msg);
     }
+    drop(tasks);
+    notify_task_updated(task_id);
 }
 
 async fn set_status(task_id: &str, status: &str) {
@@ -229,6 +258,8 @@ async fn set_status(task_id: &str, status: &str) {
             entry.completed_at = Some(now_iso());
         }
     }
+    drop(tasks);
+    notify_task_updated(task_id);
 }
 
 async fn set_result(task_id: &str, result: &str) {
@@ -236,6 +267,8 @@ async fn set_result(task_id: &str, result: &str) {
     if let Some(entry) = tasks.get_mut(task_id) {
         entry.result = Some(result.to_string());
     }
+    drop(tasks);
+    notify_task_updated(task_id);
 }
 
 async fn is_killed(task_id: &str) -> bool {
@@ -481,10 +514,85 @@ pub async fn kill_remote_task(id: &str) -> bool {
     false
 }
 
+// ---------------------------------------------------------------------------
+// WebSocket endpoint — pushes task events to connected clients instantly
+// ---------------------------------------------------------------------------
+
+async fn ws_handler(
+    ws: axum::extract::WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(handle_ws_connection)
+}
+
+async fn handle_ws_connection(mut socket: axum::extract::ws::WebSocket) {
+    use axum::extract::ws::Message;
+
+    // Send initial task list snapshot
+    let snapshot = get_all_remote_tasks().await;
+    let init_msg = json!({ "type": "snapshot", "tasks": snapshot });
+    if socket
+        .send(Message::Text(init_msg.to_string().into()))
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    // Subscribe to broadcast and forward events as JSON
+    let mut rx = subscribe_task_events();
+    loop {
+        match rx.recv().await {
+            Ok(TaskEvent::Updated(task_id)) => {
+                // Send the updated task data
+                let tasks = remote_tasks().lock().await;
+                let payload = if let Some(entry) = tasks.get(&task_id) {
+                    json!({
+                        "type": "task_update",
+                        "task": {
+                            "id": entry.id,
+                            "task": entry.task,
+                            "status": entry.status,
+                            "sessionId": entry.session_id,
+                            "createdAt": entry.created_at,
+                            "completedAt": entry.completed_at,
+                            "progressCount": entry.progress.len(),
+                            "result": entry.result,
+                            "progress": entry.progress,
+                            "progressSeq": entry.progress_seq,
+                        }
+                    })
+                } else {
+                    json!({ "type": "task_removed", "taskId": task_id })
+                };
+                drop(tasks);
+
+                if socket
+                    .send(Message::Text(payload.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    break; // Client disconnected
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                // Missed some events — send full snapshot to resync
+                info!("[WS] Client lagged by {} events, sending snapshot", n);
+                let snapshot = get_all_remote_tasks().await;
+                let msg = json!({ "type": "snapshot", "tasks": snapshot });
+                if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
 pub fn router() -> Router<std::sync::Arc<crate::server::AppState>> {
     Router::new()
         .route("/task", post(submit_task))
         .route("/tasks", get(list_tasks))
         .route("/task/{id}", get(get_task))
         .route("/task/{id}/kill", post(kill_task))
+        .route("/ws", axum::routing::get(ws_handler))
 }

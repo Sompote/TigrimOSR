@@ -13,6 +13,14 @@ use crate::server::services::toolbox::{
 };
 use crate::ui::output_panel::OutputPanel;
 
+/// Return the largest byte index <= `max_bytes` that is on a char boundary.
+fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() { return s.len(); }
+    let mut i = max_bytes;
+    while i > 0 && !s.is_char_boundary(i) { i -= 1; }
+    i
+}
+
 // -------------------------------------------------------------------------
 // Lightweight sidebar summary (avoids cloning all messages for the list)
 // -------------------------------------------------------------------------
@@ -1154,12 +1162,12 @@ Provide helpful, detailed responses based on tool results.{}",
                         let args_preview = if name == "spawn_subagent" {
                             let agent = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("?");
                             let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                            let task_short = if task.len() > 80 { format!("{}...", &task[..80]) } else { task.to_string() };
+                            let task_short = if task.len() > 80 { format!("{}...", &task[..floor_char_boundary(task, 80)]) } else { task.to_string() };
                             format!("\u{2192} {} | {}", agent, task_short)
                         } else if name == "send_task" {
                             let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("?");
                             let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                            let task_short = if task.len() > 80 { format!("{}...", &task[..80]) } else { task.to_string() };
+                            let task_short = if task.len() > 80 { format!("{}...", &task[..floor_char_boundary(task, 80)]) } else { task.to_string() };
                             format!("\u{2192} {} | {}", to, task_short)
                         } else if name == "wait_result" {
                             let from = args.get("from").and_then(|v| v.as_str()).unwrap_or("?");
@@ -1181,7 +1189,7 @@ Provide helpful, detailed responses based on tool results.{}",
                         {
                             let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
                             let full_args = serde_json::to_string(&args).unwrap_or_default();
-                            let args_log = if full_args.len() > 500 { format!("{}...", &full_args[..500]) } else { full_args };
+                            let args_log = if full_args.len() > 500 { format!("{}...", &full_args[..floor_char_boundary(&full_args, 500)]) } else { full_args };
                             state_log_lines.lock().unwrap().push(format!("[{}] TOOL CALL: {}", ts, name));
                             state_log_lines.lock().unwrap().push(format!("  args: {}", args_log));
                         }
@@ -1197,7 +1205,7 @@ Provide helpful, detailed responses based on tool results.{}",
                         {
                             let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
                             let result_str = serde_json::to_string(&result).unwrap_or_default();
-                            let short_r = if result_str.len() > 1000 { format!("{}...", &result_str[..1000]) } else { result_str };
+                            let short_r = if result_str.len() > 1000 { format!("{}...", &result_str[..floor_char_boundary(&result_str, 1000)]) } else { result_str };
                             state_log_lines.lock().unwrap().push(format!("[{}] TOOL RESULT: {}", ts, name));
                             state_log_lines.lock().unwrap().push(format!("  {}", short_r));
                         }
@@ -1213,7 +1221,7 @@ Provide helpful, detailed responses based on tool results.{}",
                                         .and_then(|v| v.as_str())
                                 })
                                 .unwrap_or("");
-                            let short = if preview.len() > 200 { format!("{}...", &preview[..200]) } else { preview.to_string() };
+                            let short = if preview.len() > 200 { format!("{}...", &preview[..floor_char_boundary(preview, 200)]) } else { preview.to_string() };
                             tc.result_preview = short;
                         }
                     }
@@ -1228,7 +1236,7 @@ Provide helpful, detailed responses based on tool results.{}",
                     ToolUpdate::ApprovalRequired { name, args } => {
                         let args_str = serde_json::to_string_pretty(&args).unwrap_or_default();
                         let preview = if args_str.len() > 500 {
-                            format!("{}...", &args_str[..500])
+                            format!("{}...", &args_str[..floor_char_boundary(&args_str, 500)])
                         } else {
                             args_str
                         };
@@ -1438,7 +1446,7 @@ Provide helpful, detailed responses based on tool results.{}",
                             autocreate_log_lines.lock().unwrap().push(
                                 format!("[{}] FULLY_AUTO: send_task → {} : {}", ts, target, &user_msg[..user_msg.len().min(100)])
                             );
-                            let task_preview = if user_msg.len() > 80 { format!("{}...", &user_msg[..80]) } else { user_msg.clone() };
+                            let task_preview = if user_msg.len() > 80 { format!("{}...", &user_msg[..floor_char_boundary(&user_msg, 80)]) } else { user_msg.clone() };
                             fa_add_tool("send_task", "calling...", &format!("→ {} | {}", target, task_preview), &fa_calls);
                             fa_update_text(&format!("**Step 3:** Delegating to **{}**...", target), &fa_text);
                             autocreate_ctx.request_repaint();
@@ -1492,7 +1500,7 @@ Provide helpful, detailed responses based on tool results.{}",
                                             Ok(Ok((sid, agent_id, line))) => {
                                                 if sid == stream_sid {
                                                     // Track latest activity per agent
-                                                    let short_line = if line.len() > 120 { format!("{}...", &line[..120]) } else { line.clone() };
+                                                    let short_line = if line.len() > 120 { format!("{}...", &line[..floor_char_boundary(&line, 120)]) } else { line.clone() };
                                                     agent_lines.insert(agent_id.clone(), short_line);
 
                                                     // Build activity summary
@@ -1739,7 +1747,7 @@ Provide helpful, detailed responses based on tool results.{}",
                         {
                             Ok(Ok((sid, aid, line))) if sid == late_session_id => {
                                 let snippet = if line.len() > 200 {
-                                    &line[..200]
+                                    &line[..floor_char_boundary(&line, 200)]
                                 } else {
                                     &line
                                 };
@@ -2828,7 +2836,7 @@ Provide helpful, detailed responses based on tool results.{}",
                                                     "TOOL_CALL" => {
                                                         let tool = data.and_then(|d| d.get("tool")).and_then(|v| v.as_str()).unwrap_or("?");
                                                         let args = data.and_then(|d| d.get("args_preview")).and_then(|v| v.as_str()).unwrap_or("");
-                                                        let args_short = if args.len() > 120 { &args[..120] } else { args };
+                                                        let args_short = if args.len() > 120 { &args[..floor_char_boundary(args, 120)] } else { args };
                                                         (egui::Color32::from_rgb(59, 130, 246),
                                                          format!("[{}] {} > {} {}", ts_short, agent_id, tool, args_short))
                                                     }
@@ -2836,7 +2844,7 @@ Provide helpful, detailed responses based on tool results.{}",
                                                         let tool = data.and_then(|d| d.get("tool")).and_then(|v| v.as_str()).unwrap_or("?");
                                                         let ok = data.and_then(|d| d.get("ok")).and_then(|v| v.as_bool()).unwrap_or(false);
                                                         let preview = data.and_then(|d| d.get("result_preview")).and_then(|v| v.as_str()).unwrap_or("");
-                                                        let preview_short = if preview.len() > 100 { &preview[..100] } else { preview };
+                                                        let preview_short = if preview.len() > 100 { &preview[..floor_char_boundary(preview, 100)] } else { preview };
                                                         let status = if ok { "ok" } else { "ERR" };
                                                         (if ok { egui::Color32::from_rgb(34, 197, 94) } else { egui::Color32::from_rgb(239, 68, 68) },
                                                          format!("[{}] {} < {} [{}] {}", ts_short, agent_id, tool, status, preview_short))
@@ -2846,7 +2854,7 @@ Provide helpful, detailed responses based on tool results.{}",
                                                         let role = data.and_then(|d| d.get("role")).and_then(|v| v.as_str()).unwrap_or("?");
                                                         let depth = data.and_then(|d| d.get("depth")).and_then(|v| v.as_u64()).unwrap_or(0);
                                                         let task = data.and_then(|d| d.get("task")).and_then(|v| v.as_str()).unwrap_or("");
-                                                        let task_short = if task.len() > 100 { &task[..100] } else { task };
+                                                        let task_short = if task.len() > 100 { &task[..floor_char_boundary(task, 100)] } else { task };
                                                         (egui::Color32::from_rgb(250, 176, 5),
                                                          format!("[{}] SPAWN {} ({}) depth={} | {}", ts_short, agent, role, depth, task_short))
                                                     }
@@ -2855,7 +2863,7 @@ Provide helpful, detailed responses based on tool results.{}",
                                                         let tools = data.and_then(|d| d.get("tool_calls")).and_then(|v| v.as_u64()).unwrap_or(0);
                                                         let files = data.and_then(|d| d.get("files_generated")).and_then(|v| v.as_u64()).unwrap_or(0);
                                                         let preview = data.and_then(|d| d.get("result_preview")).and_then(|v| v.as_str()).unwrap_or("");
-                                                        let preview_short = if preview.len() > 80 { &preview[..80] } else { preview };
+                                                        let preview_short = if preview.len() > 80 { &preview[..floor_char_boundary(preview, 80)] } else { preview };
                                                         (egui::Color32::from_rgb(34, 197, 94),
                                                          format!("[{}] DONE  {} | tools={} files={} | {}", ts_short, agent, tools, files, preview_short))
                                                     }
@@ -2894,7 +2902,11 @@ Provide helpful, detailed responses based on tool results.{}",
         } else {
             32.0
         };
-        let input_bar_height = 60.0 + attachment_height;
+        // Dynamic input height: count newlines, min 2 rows, max 10 rows
+        let line_count = self.input_text.chars().filter(|&c| c == '\n').count() + 1;
+        let input_rows = (line_count.max(2)).min(10);
+        let line_height = 16.0; // approximate per-line height
+        let input_bar_height = (input_rows as f32 * line_height) + 24.0 + attachment_height; // 24 = padding
         let messages_height = ui.available_height() - input_bar_height;
 
         // Clone data needed for feedback actions
@@ -3006,12 +3018,31 @@ Provide helpful, detailed responses based on tool results.{}",
                         self.pick_files();
                     }
 
-                    let text_edit = egui::TextEdit::multiline(&mut self.input_text)
-                        .hint_text("Type a message... (Enter to send, Shift+Enter for newline)")
-                        .desired_rows(2)
-                        .desired_width(ui.available_width() - 80.0)
-                        .frame(false);
-                    let response = ui.add_enabled(!is_streaming, text_edit);
+                    let edit_width = ui.available_width() - 80.0;
+                    let max_input_height = 10.0 * line_height;
+                    let response = if line_count > 10 {
+                        // Wrap in scroll area when exceeding 10 lines
+                        let mut te_response: Option<egui::Response> = None;
+                        egui::ScrollArea::vertical()
+                            .id_salt("chat_input_scroll")
+                            .max_height(max_input_height)
+                            .show(ui, |ui| {
+                                let text_edit = egui::TextEdit::multiline(&mut self.input_text)
+                                    .hint_text("Type a message... (Enter to send, Shift+Enter for newline)")
+                                    .desired_rows(input_rows)
+                                    .desired_width(edit_width)
+                                    .frame(false);
+                                te_response = Some(ui.add_enabled(!is_streaming, text_edit));
+                            });
+                        te_response.unwrap()
+                    } else {
+                        let text_edit = egui::TextEdit::multiline(&mut self.input_text)
+                            .hint_text("Type a message... (Enter to send, Shift+Enter for newline)")
+                            .desired_rows(input_rows)
+                            .desired_width(edit_width)
+                            .frame(false);
+                        ui.add_enabled(!is_streaming, text_edit)
+                    };
 
                     // Enter without Shift sends
                     let enter_pressed = response.has_focus()
@@ -3043,7 +3074,7 @@ Provide helpful, detailed responses based on tool results.{}",
                     } else {
                         // Send button
                         let send_btn = egui::Button::new(
-                            egui::RichText::new("\u{27A4} Send").size(13.0).strong().color(egui::Color32::WHITE),
+                            egui::RichText::new("\u{25B6} Send").size(13.0).strong().color(egui::Color32::WHITE),
                         )
                         .fill(if can_send {
                             egui::Color32::from_rgb(88, 166, 255)
@@ -4064,7 +4095,7 @@ Provide helpful, detailed responses based on tool results.{}",
                 agent.status.clone()
             };
             let status_display = if status_text.len() > 20 {
-                format!("{}..", &status_text[..18])
+                format!("{}..", &status_text[..floor_char_boundary(&status_text, 18)])
             } else {
                 status_text
             };
@@ -4190,7 +4221,7 @@ Provide helpful, detailed responses based on tool results.{}",
                     .collect();
                 let tools_str = tool_parts.join(", ");
                 if tools_str.len() > 50 {
-                    line.push_str(&format!("  {}..", &tools_str[..48]));
+                    line.push_str(&format!("  {}..", &tools_str[..floor_char_boundary(&tools_str, 48)]));
                 } else {
                     line.push_str(&format!("  {}", tools_str));
                 }
@@ -4543,7 +4574,7 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        format!("{}...", &s[..floor_char_boundary(s, max_len)])
     }
 }
 

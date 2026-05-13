@@ -4,6 +4,13 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use serde_json::Value;
 
+fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() { return s.len(); }
+    let mut i = max_bytes;
+    while i > 0 && !s.is_char_boundary(i) { i -= 1; }
+    i
+}
+
 use crate::server::data::{get_settings, RemoteInstance};
 
 // ---------------------------------------------------------------------------
@@ -77,6 +84,11 @@ pub struct RemoteView {
     task_input: String,
     expanded_task_id: Option<String>,
 
+    // WebSocket live updates for tasks
+    ws_tasks: Arc<Mutex<Vec<Value>>>,
+    ws_connected: Arc<std::sync::atomic::AtomicBool>,
+    ws_url_connected: Mutex<String>,  // track which URL the WS is connected to
+
     // Remote files
     remote_files: AsyncResult<Vec<Value>>,
     remote_file_path: String,
@@ -114,6 +126,9 @@ impl RemoteView {
             remote_tasks: AsyncResult::new(),
             task_input: String::new(),
             expanded_task_id: None,
+            ws_tasks: Arc::new(Mutex::new(vec![])),
+            ws_connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            ws_url_connected: Mutex::new(String::new()),
             remote_files: AsyncResult::new(),
             remote_file_path: String::new(),
             remote_file_content: AsyncResult::new(),
@@ -302,6 +317,94 @@ impl RemoteView {
                 }
                 Err(_) => result.set_done(vec![]),
             }
+        });
+    }
+
+    // Connect WebSocket for live task updates
+    fn connect_task_ws(&self, runtime: &tokio::runtime::Handle, ctx: &egui::Context) {
+        let Some(base) = self.base_url() else { return };
+        let Some(token) = self.token() else { return };
+
+        // Already connected to this URL?
+        {
+            let connected_url = self.ws_url_connected.lock().unwrap();
+            if *connected_url == base && self.ws_connected.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+        }
+
+        // Mark as connecting
+        {
+            let mut connected_url = self.ws_url_connected.lock().unwrap();
+            *connected_url = base.clone();
+        }
+
+        let ws_url = base
+            .replace("http://", "ws://")
+            .replace("https://", "wss://");
+        let ws_url = format!("{}/api/remote/ws?token={}", ws_url, urlencoding::encode(&token));
+        let ws_tasks = self.ws_tasks.clone();
+        let ws_connected = self.ws_connected.clone();
+        let ctx = ctx.clone();
+
+        runtime.spawn(async move {
+            use futures_util::StreamExt;
+
+            let connect_result = tokio_tungstenite::connect_async(&ws_url).await;
+            let (ws_stream, _) = match connect_result {
+                Ok(pair) => pair,
+                Err(e) => {
+                    tracing::warn!("[WS] Failed to connect to {}: {}", ws_url, e);
+                    ws_connected.store(false, std::sync::atomic::Ordering::Relaxed);
+                    return;
+                }
+            };
+
+            ws_connected.store(true, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!("[WS] Connected to {}", ws_url);
+
+            let (_write, mut read) = ws_stream.split();
+
+            while let Some(msg) = read.next().await {
+                let msg = match msg {
+                    Ok(m) => m,
+                    Err(_) => break,
+                };
+
+                if let tokio_tungstenite::tungstenite::Message::Text(text) = msg {
+                    if let Ok(json) = serde_json::from_str::<Value>(&text) {
+                        let msg_type = json["type"].as_str().unwrap_or("");
+                        match msg_type {
+                            "snapshot" => {
+                                // Full task list replacement
+                                if let Some(tasks) = json["tasks"].as_array() {
+                                    let mut guard = ws_tasks.lock().unwrap();
+                                    *guard = tasks.clone();
+                                    ctx.request_repaint();
+                                }
+                            }
+                            "task_update" => {
+                                // Upsert a single task
+                                if let Some(task) = json.get("task") {
+                                    let tid = task["id"].as_str().unwrap_or("");
+                                    let mut guard = ws_tasks.lock().unwrap();
+                                    if let Some(existing) = guard.iter_mut().find(|t| t["id"].as_str() == Some(tid)) {
+                                        *existing = task.clone();
+                                    } else {
+                                        guard.insert(0, task.clone());
+                                    }
+                                    ctx.request_repaint();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            ws_connected.store(false, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!("[WS] Disconnected from {}", ws_url);
+            ctx.request_repaint(); // Trigger UI to reconnect on next frame
         });
     }
 
@@ -505,8 +608,13 @@ impl RemoteView {
             }
         });
 
-        // Auto-refresh every 5s
-        ui.ctx().request_repaint_after(Duration::from_secs(5));
+        // Connect WebSocket for live task updates (replaces 5s polling)
+        self.connect_task_ws(runtime, ui.ctx());
+
+        // Fallback: only poll every 30s if WebSocket is not connected
+        if !self.ws_connected.load(std::sync::atomic::Ordering::Relaxed) {
+            ui.ctx().request_repaint_after(Duration::from_secs(5));
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -547,16 +655,24 @@ impl RemoteView {
 
         ui.add_space(12.0);
 
-        // Fetch tasks if not loaded
-        if self.remote_tasks.take().is_none() && !self.remote_tasks.is_loading() {
-            self.fetch_tasks(runtime);
-        }
-
-        // Auto-refresh tasks
-        if let Some(ping) = self.last_ping {
-            if ping.elapsed() > Duration::from_secs(5) && !self.remote_tasks.is_loading() {
+        // Use WebSocket data if available, otherwise fallback to HTTP polling
+        let ws_active = self.ws_connected.load(std::sync::atomic::Ordering::Relaxed);
+        if ws_active {
+            // WebSocket is live — push ws_tasks into remote_tasks for the renderer
+            let ws_data = self.ws_tasks.lock().unwrap().clone();
+            if !ws_data.is_empty() {
+                self.remote_tasks.set_done(ws_data);
+            }
+        } else {
+            // Fallback: HTTP polling
+            if self.remote_tasks.take().is_none() && !self.remote_tasks.is_loading() {
                 self.fetch_tasks(runtime);
-                self.last_ping = Some(Instant::now());
+            }
+            if let Some(ping) = self.last_ping {
+                if ping.elapsed() > Duration::from_secs(5) && !self.remote_tasks.is_loading() {
+                    self.fetch_tasks(runtime);
+                    self.last_ping = Some(Instant::now());
+                }
             }
         }
 
@@ -621,7 +737,7 @@ impl RemoteView {
 
                             ui.label(
                                 egui::RichText::new(if task_text.len() > 80 {
-                                    format!("{}...", &task_text[..80])
+                                    format!("{}...", &task_text[..floor_char_boundary(&task_text, 80)])
                                 } else {
                                     task_text.to_string()
                                 })

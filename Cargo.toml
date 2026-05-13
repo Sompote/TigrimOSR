@@ -21,6 +21,7 @@ open = "5"
 num_cpus = "1"
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 
 # Server dependencies (tiger_cowork replacement)
 axum = { version = "0.8", features = ["multipart", "ws"] }
