@@ -525,9 +525,11 @@ impl ChatView {
         self.sessions
             .sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-        // Refresh selected session data
+        // Refresh selected session data (skip while streaming to preserve in-memory user message)
         if let Some(ref sel_id) = self.selected_session_id {
-            self.selected_session = all_sessions.into_iter().find(|s| &s.id == sel_id);
+            if !self.active_streams.contains_key(sel_id) {
+                self.selected_session = all_sessions.into_iter().find(|s| &s.id == sel_id);
+            }
         } else {
             self.selected_session = None;
         }
@@ -615,46 +617,6 @@ impl ChatView {
             return;
         }
 
-        // Auto-create session if none selected
-        if self.selected_session_id.is_none() {
-            if crate::server::data::get_remote_backend().is_some() {
-                // Remote: create via API
-                let pid = self.selected_project_id.as_deref();
-                let new_id = runtime.block_on(async {
-                    crate::server::data::remote_create_chat_session("New Chat", pid).await
-                        .map(|s| s.id)
-                });
-                if let Some(id) = new_id {
-                    self.selected_session_id = Some(id);
-                    self.needs_refresh = true;
-                } else {
-                    return; // failed to create remote session
-                }
-            } else {
-                let new_id = Uuid::new_v4().to_string();
-                let now = chrono::Utc::now().to_rfc3339();
-                let new_session = ChatSession {
-                    id: new_id.clone(),
-                    title: "New Chat".to_string(),
-                    messages: Vec::new(),
-                    created_at: now.clone(),
-                    updated_at: now,
-                    skill_candidate: None,
-                    skill_feedback: None,
-                    project_id: self.selected_project_id.clone(),
-                };
-                runtime.block_on(async {
-                    let mut sessions = get_chat_history().await;
-                    sessions.insert(0, new_session);
-                    save_chat_history(&sessions).await;
-                });
-                self.selected_session_id = Some(new_id);
-                self.needs_refresh = true;
-            }
-        }
-
-        let sid = self.selected_session_id.clone().unwrap();
-
         // Build content with file attachments
         let mut full_content = text.clone();
         let mut file_names: Vec<String> = Vec::new();
@@ -665,34 +627,61 @@ impl ChatView {
                 file.name, file.content, file.name
             ));
         }
+        let file_names_opt = if file_names.is_empty() { None } else { Some(file_names) };
 
-        let file_names_opt = if file_names.is_empty() {
-            None
+        // Auto-create remote session if needed (separate API call)
+        if self.selected_session_id.is_none() && crate::server::data::get_remote_backend().is_some() {
+            let pid = self.selected_project_id.as_deref();
+            let new_id = runtime.block_on(async {
+                crate::server::data::remote_create_chat_session("New Chat", pid).await
+                    .map(|s| s.id)
+            });
+            if let Some(id) = new_id {
+                self.selected_session_id = Some(id);
+                self.needs_refresh = true;
+            } else {
+                return;
+            }
+        }
+
+        // Create local session in memory if needed
+        let need_new = self.selected_session_id.is_none();
+        let sid = if need_new {
+            let new_id = Uuid::new_v4().to_string();
+            let now = chrono::Utc::now().to_rfc3339();
+            self.selected_session = Some(ChatSession {
+                id: new_id.clone(),
+                title: "New Chat".to_string(),
+                messages: Vec::new(),
+                created_at: now.clone(),
+                updated_at: now,
+                skill_candidate: None,
+                skill_feedback: None,
+                project_id: self.selected_project_id.clone(),
+            });
+            self.selected_session_id = Some(new_id.clone());
+            new_id
         } else {
-            Some(file_names)
+            self.selected_session_id.clone().unwrap()
         };
 
-        // Save user message
-        runtime.block_on(async {
-            let mut sessions = get_chat_history().await;
-            if let Some(s) = sessions.iter_mut().find(|s| s.id == sid) {
-                let now = chrono::Utc::now().to_rfc3339();
-                s.messages.push(ChatMessage {
-                    role: "user".to_string(),
-                    content: full_content.clone(),
-                    timestamp: now.clone(),
-                    files: file_names_opt,
-                    feedback: None,
-                });
-                s.updated_at = chrono::Utc::now().to_rfc3339();
-            }
-            save_chat_history(&sessions).await;
-        });
+        // Update in-memory session with user message (no disk write — saved when stream finishes)
+        if let Some(ref mut session) = self.selected_session {
+            session.messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: full_content.clone(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                files: file_names_opt,
+                feedback: None,
+            });
+            session.updated_at = chrono::Utc::now().to_rfc3339();
+        }
 
         self.input_text.clear();
         self.attached_files.clear();
         self.scroll_to_bottom = true;
-        self.needs_refresh = true;
+        // Don't set needs_refresh here — avoid disk read that would overwrite in-memory session.
+        // Sidebar + disk persistence happen when stream finishes in poll_streaming.
 
         // Start streaming API call
         self.start_streaming(runtime, ctx, &sid, &full_content);
@@ -705,7 +694,12 @@ impl ChatView {
         session_id: &str,
         user_message: &str,
     ) {
-        let settings = runtime.block_on(get_settings());
+        // Batch-load settings + projects in one block_on (small files, fast)
+        let (settings, cached_projects) = runtime.block_on(async {
+            let s = get_settings().await;
+            let p = get_projects().await;
+            (s, p)
+        });
         let api_key = settings.tiger_bot_api_key.clone();
         let model = if settings.tiger_bot_model.is_empty() {
             "deepseek-chat".to_string()
@@ -734,11 +728,11 @@ impl ChatView {
             let active_project_id = self.selected_project_id.clone()
                 .or_else(|| self.selected_session.as_ref().and_then(|s| s.project_id.clone()));
 
-            // Backfill: if we have a project_id but the session doesn't, save it
+            // Backfill: if we have a project_id but the session doesn't (non-blocking)
             if let Some(ref pid) = active_project_id {
                 let sid = session_id.to_string();
                 let pid2 = pid.clone();
-                runtime.block_on(async {
+                runtime.spawn(async move {
                     let mut sessions = get_chat_history().await;
                     if let Some(s) = sessions.iter_mut().find(|s| s.id == sid) {
                         if s.project_id.is_none() {
@@ -750,8 +744,7 @@ impl ChatView {
             }
 
             let project_folder = active_project_id.as_ref().and_then(|pid| {
-                let projects = runtime.block_on(get_projects());
-                projects.iter()
+                cached_projects.iter()
                     .find(|p| &p.id == pid)
                     .map(|p| p.working_folder.clone())
             }).filter(|f| !f.is_empty());
@@ -798,12 +791,11 @@ impl ChatView {
             return;
         }
 
-        // Build messages array from session history
+        // Build messages array from in-memory session (no disk read needed)
         let sid = session_id.to_string();
-        let all_sessions = runtime.block_on(get_chat_history());
-        let messages: Vec<serde_json::Value> = all_sessions
-            .iter()
-            .find(|s| s.id == sid)
+        let messages: Vec<serde_json::Value> = self.selected_session
+            .as_ref()
+            .filter(|s| s.id == sid)
             .map(|s| {
                 s.messages
                     .iter()
@@ -830,8 +822,7 @@ impl ChatView {
                 .selected_project_id
                 .as_ref()
                 .and_then(|pid| {
-                    let projects = runtime.block_on(get_projects());
-                    projects.iter().find(|p| p.id == *pid).and_then(|p| {
+                    cached_projects.iter().find(|p| p.id == *pid).and_then(|p| {
                         p.agent_override.as_ref().and_then(|ov| {
                             if ov.enabled.unwrap_or(false) {
                                 ov.sub_agent_config_file.clone()
@@ -1869,11 +1860,23 @@ Provide helpful, detailed responses based on tool results.{}",
                 format!("[Used tools: {}]\n\n{}", unique_labels.join(", "), base_content)
             };
 
-            // Save assistant message
+            // Save assistant message + merge in-memory session (user msgs may not be on disk yet)
             let sid_clone = sid.clone();
+            let mem_session = self.selected_session.clone();
             runtime.block_on(async {
                 let mut sessions = get_chat_history().await;
-                if let Some(s) = sessions.iter_mut().find(|s| s.id == sid_clone) {
+
+                // If session exists on disk, replace with in-memory version (has user msgs)
+                // If not (new session), insert it
+                let session_on_disk = sessions.iter_mut().find(|s| s.id == sid_clone);
+                if let Some(s) = session_on_disk {
+                    if let Some(ref ms) = mem_session {
+                        if ms.id == sid_clone {
+                            s.messages = ms.messages.clone();
+                            s.title = ms.title.clone();
+                            s.project_id = ms.project_id.clone();
+                        }
+                    }
                     s.messages.push(ChatMessage {
                         role: "assistant".to_string(),
                         content: final_content,
@@ -1890,6 +1893,26 @@ Provide helpful, detailed responses based on tool results.{}",
                             let title_source = raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
                             s.title = truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
                         }
+                    }
+                } else if let Some(ref ms) = mem_session {
+                    if ms.id == sid_clone {
+                        let mut new_s = ms.clone();
+                        new_s.messages.push(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: final_content,
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                            files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
+                            feedback: None,
+                        });
+                        new_s.updated_at = chrono::Utc::now().to_rfc3339();
+                        if new_s.title == "New Chat" {
+                            if let Some(first_user) = new_s.messages.iter().find(|m| m.role == "user") {
+                                let raw = &first_user.content;
+                                let title_source = raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
+                                new_s.title = truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
+                            }
+                        }
+                        sessions.push(new_s);
                     }
                 }
                 save_chat_history(&sessions).await;
