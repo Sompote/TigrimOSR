@@ -433,6 +433,10 @@ pub struct ChatView {
 struct AttachedFile {
     name: String,
     content: String,
+    /// Path inside sandbox/uploads/ where the file was copied
+    sandbox_path: String,
+    /// True if the file is binary (image, etc.) and content couldn't be read as text
+    is_binary: bool,
 }
 
 impl Default for ChatView {
@@ -622,10 +626,25 @@ impl ChatView {
         let mut file_names: Vec<String> = Vec::new();
         for file in &self.attached_files {
             file_names.push(file.name.clone());
-            full_content.push_str(&format!(
-                "\n\n--- Attached file: {} ---\n{}\n--- End of {} ---",
-                file.name, file.content, file.name
-            ));
+            if file.is_binary {
+                // Binary files: just tell the agent where the file is
+                full_content.push_str(&format!(
+                    "\n\n[Attached file: {} — saved at: {}]\nUse the read_file tool to access this file.",
+                    file.name, file.sandbox_path
+                ));
+            } else if !file.sandbox_path.is_empty() {
+                // Text files: inline content + provide path for tool access
+                full_content.push_str(&format!(
+                    "\n\n--- Attached file: {} (saved at: {}) ---\n{}\n--- End of {} ---",
+                    file.name, file.sandbox_path, file.content, file.name
+                ));
+            } else {
+                // Fallback: inline only
+                full_content.push_str(&format!(
+                    "\n\n--- Attached file: {} ---\n{}\n--- End of {} ---",
+                    file.name, file.content, file.name
+                ));
+            }
         }
         let file_names_opt = if file_names.is_empty() { None } else { Some(file_names) };
 
@@ -1806,6 +1825,13 @@ Provide helpful, detailed responses based on tool results.{}",
             return;
         }
 
+        // Cancel streams killed from the Tasks view
+        for kid in crate::ui::tasks_view::take_killed_chat_ids() {
+            if let Some(state) = self.active_streams.get(&kid) {
+                state.cancel();
+            }
+        }
+
         // Update tool call counts for still-running streams
         for (sid, state) in &self.active_streams {
             if !state.is_done() {
@@ -1985,15 +2011,48 @@ Provide helpful, detailed responses based on tool results.{}",
             .set_title("Attach files")
             .pick_files()
         {
+            // Create uploads dir inside sandbox
+            let sandbox = crate::server::data::get_sandbox_dir_sync();
+            let uploads_dir = std::path::PathBuf::from(&sandbox).join("uploads");
+            let _ = std::fs::create_dir_all(&uploads_dir);
+
             for path in paths {
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "unknown".to_string());
-                let content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
-                    format!("[Could not read file: {}]", path.display())
-                });
-                self.attached_files.push(AttachedFile { name, content });
+
+                // Copy file to sandbox/uploads/ (with timestamp to avoid collisions)
+                let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+                let dest_name = format!("{}_{}", ts, name);
+                let dest_path = uploads_dir.join(&dest_name);
+                let sandbox_path = if std::fs::copy(&path, &dest_path).is_ok() {
+                    dest_path.to_string_lossy().to_string()
+                } else {
+                    String::new()
+                };
+
+                // Determine if binary by checking extension
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                let binary_exts = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg",
+                    "mp3", "mp4", "wav", "ogg", "avi", "mov", "mkv",
+                    "zip", "tar", "gz", "bz2", "xz", "7z", "rar",
+                    "exe", "dll", "so", "dylib", "bin", "dat",
+                    "doc", "docx", "xls", "xlsx", "ppt", "pptx"];
+                let is_binary = binary_exts.contains(&ext.as_str());
+
+                let content = if is_binary {
+                    format!("[Binary file: {}]", name)
+                } else if ext == "pdf" {
+                    pdf_extract::extract_text(&path).unwrap_or_else(|e| {
+                        format!("[Could not extract PDF text: {}]", e)
+                    })
+                } else {
+                    std::fs::read_to_string(&path).unwrap_or_else(|_| {
+                        format!("[Could not read file: {}]", path.display())
+                    })
+                };
+                self.attached_files.push(AttachedFile { name, content, sandbox_path, is_binary });
             }
         }
     }

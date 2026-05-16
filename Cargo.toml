@@ -39,3 +39,5 @@ regex = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 egui_plot = "0.31"
 egui_extras = { version = "0.31", features = ["all_loaders"] }
+pdf-extract = "0.10"
+calamine = "0.26"

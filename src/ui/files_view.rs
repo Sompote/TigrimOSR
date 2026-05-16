@@ -100,8 +100,8 @@ pub struct FilesView {
 
 impl Default for FilesView {
     fn default() -> Self {
-        let sandbox_dir =
-            std::env::var("TIGRIMOS_SANDBOX_DIR").unwrap_or_else(|_| "sandbox".to_string());
+        let sandbox_dir = std::env::var("TIGRIMOS_SANDBOX_DIR")
+            .unwrap_or_else(|_| crate::server::data::get_sandbox_dir_sync());
         // Ensure the sandbox directory exists
         let _ = std::fs::create_dir_all(&sandbox_dir);
         Self {

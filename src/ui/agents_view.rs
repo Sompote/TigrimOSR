@@ -1502,10 +1502,26 @@ Rules:
                     return Err(format!("API error: {}", err));
                 }
 
+                // Support both OpenAI and Anthropic response formats
                 let raw = resp_json["choices"][0]["message"]["content"]
                     .as_str()
+                    .or_else(|| {
+                        // Anthropic format: content[0].text
+                        resp_json["content"][0]["text"].as_str()
+                    })
                     .unwrap_or("")
                     .to_string();
+
+                if raw.is_empty() {
+                    return Err(format!(
+                        "Empty LLM response. API returned: {}",
+                        serde_json::to_string(&resp_json)
+                            .unwrap_or_default()
+                            .chars()
+                            .take(500)
+                            .collect::<String>()
+                    ));
+                }
 
                 // Strip <think> tags
                 let mut s = raw;
@@ -1516,7 +1532,21 @@ Rules:
                         break;
                     }
                 }
+
+                // Strip markdown code fences (```json ... ``` or ``` ... ```)
                 let s = s.trim();
+                let s = if s.starts_with("```") {
+                    let inner = if let Some(rest) = s.strip_prefix("```json") {
+                        rest
+                    } else if let Some(rest) = s.strip_prefix("```") {
+                        rest
+                    } else {
+                        s
+                    };
+                    inner.trim_end_matches("```").trim()
+                } else {
+                    s
+                };
 
                 // Extract JSON object
                 let parsed: Value = if let Ok(v) = serde_json::from_str(s) {
@@ -1525,7 +1555,10 @@ Rules:
                     serde_json::from_str(&s[start..=end])
                         .map_err(|e| format!("JSON parse error: {e}"))?
                 } else {
-                    return Err("No JSON found in LLM response".to_string());
+                    return Err(format!(
+                        "No JSON found in LLM response. Raw: {}",
+                        s.chars().take(300).collect::<String>()
+                    ));
                 };
 
                 if parsed.get("system").is_none() || parsed.get("agents").is_none() {

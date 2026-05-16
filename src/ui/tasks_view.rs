@@ -25,6 +25,29 @@ pub fn active_chats() -> &'static Arc<Mutex<Vec<ActiveChatSession>>> {
 }
 
 // ---------------------------------------------------------------------------
+// Killed chat session IDs (set by TasksView, read by ChatView to cancel streams)
+// ---------------------------------------------------------------------------
+
+static KILLED_CHAT_IDS: std::sync::OnceLock<Arc<Mutex<Vec<String>>>> =
+    std::sync::OnceLock::new();
+
+pub fn take_killed_chat_ids() -> Vec<String> {
+    let mut ids = KILLED_CHAT_IDS
+        .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .lock()
+        .unwrap();
+    std::mem::take(&mut *ids)
+}
+
+fn push_killed_chat_id(id: &str) {
+    KILLED_CHAT_IDS
+        .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .lock()
+        .unwrap()
+        .push(id.to_string());
+}
+
+// ---------------------------------------------------------------------------
 // Finished chat session tracking
 // ---------------------------------------------------------------------------
 
@@ -976,6 +999,8 @@ impl TasksView {
             }
             // Handle kill chat session
             if let Some(ref kid) = kill_chat_id {
+                // Signal ChatView to cancel the stream
+                push_killed_chat_id(kid);
                 // Move to finished before removing
                 {
                     let chats = active_chats().lock().unwrap();

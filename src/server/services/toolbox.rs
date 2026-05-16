@@ -2944,6 +2944,27 @@ async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
     let path = args["path"].as_str().unwrap_or("");
     let resolved = resolve_path(sandbox_dir, path);
 
+    // Handle PDF files — extract text instead of reading as raw string
+    if resolved.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("pdf")).unwrap_or(false) {
+        let resolved_clone = resolved.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            pdf_extract::extract_text(&resolved_clone)
+        }).await;
+        return match result {
+            Ok(Ok(text)) => {
+                compact::track_file_read(&resolved.display().to_string(), &text);
+                json!({
+                    "ok": true,
+                    "content": truncate(&text, MAX_CONTENT_LEN),
+                    "path": resolved.display().to_string(),
+                    "format": "pdf",
+                })
+            }
+            Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to extract PDF text: {e}") }),
+            Err(e) => json!({ "ok": false, "error": format!("PDF extraction task failed: {e}") }),
+        };
+    }
+
     match fs::read_to_string(&resolved).await {
         Ok(content) => {
             // Track file read for post-compact context restoration

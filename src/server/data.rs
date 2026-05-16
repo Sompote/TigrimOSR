@@ -542,15 +542,26 @@ pub async fn save_settings(settings: &Settings) {
 
 /// Synchronous sandbox dir accessor for UI code.
 pub fn get_sandbox_dir_sync() -> String {
-    let path = std::path::Path::new("data/settings.json");
-    if let Ok(content) = std::fs::read_to_string(path) {
+    // Read settings from the correct data_dir (works from .app bundle too)
+    let settings_path = data_dir().join("settings.json");
+    if let Ok(content) = std::fs::read_to_string(&settings_path) {
         if let Ok(settings) = serde_json::from_str::<Settings>(&content) {
             if !settings.sandbox_dir.is_empty() {
-                return settings.sandbox_dir;
+                // Resolve relative sandbox_dir to absolute under app data
+                let raw = &settings.sandbox_dir;
+                if std::path::Path::new(raw).is_absolute() {
+                    return raw.clone();
+                }
             }
         }
     }
-    "sandbox".to_string()
+    // Default: sandbox dir next to data dir (e.g. ~/Library/Application Support/TigrimOS/sandbox)
+    let sandbox = data_dir()
+        .parent()
+        .unwrap_or(&std::path::PathBuf::from("."))
+        .join("sandbox");
+    let _ = std::fs::create_dir_all(&sandbox);
+    sandbox.to_string_lossy().to_string()
 }
 
 // ---------------------------------------------------------------------------

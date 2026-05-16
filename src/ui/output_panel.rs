@@ -50,6 +50,12 @@ pub struct OutputPanel {
     chart_cache: HashMap<String, ChartCache>,
     /// Track which React card is expanded
     expanded_react: Option<String>,
+    /// Cached extracted PDF text keyed by file path
+    pdf_cache: HashMap<String, String>,
+    /// Cached Excel sheet data: path -> vec of (sheet_name, rows)
+    excel_cache: HashMap<String, Vec<(String, Vec<Vec<String>>)>>,
+    /// Track which doc card is expanded
+    expanded_doc: Option<String>,
 }
 
 impl Default for OutputPanel {
@@ -63,6 +69,9 @@ impl Default for OutputPanel {
             expanded_text: None,
             chart_cache: HashMap::new(),
             expanded_react: None,
+            pdf_cache: HashMap::new(),
+            excel_cache: HashMap::new(),
+            expanded_doc: None,
         }
     }
 }
@@ -108,6 +117,10 @@ impl OutputPanel {
 
     fn is_word(path: &str) -> bool {
         matches!(Self::ext(path).to_lowercase().as_str(), "doc" | "docx")
+    }
+
+    fn is_excel(path: &str) -> bool {
+        matches!(Self::ext(path).to_lowercase().as_str(), "xls" | "xlsx" | "xlsm" | "xlsb" | "ods")
     }
 
     fn is_markdown(path: &str) -> bool {
@@ -268,7 +281,9 @@ impl OutputPanel {
                         ui.set_width(ui.available_width());
 
                         let images: Vec<&String> = files.iter().filter(|f| Self::is_image(f)).collect();
-                        let docs: Vec<&String>   = files.iter().filter(|f| Self::is_pdf(f) || Self::is_word(f)).collect();
+                        let pdfs: Vec<&String>   = files.iter().filter(|f| Self::is_pdf(f)).collect();
+                        let excels: Vec<&String> = files.iter().filter(|f| Self::is_excel(f)).collect();
+                        let docs: Vec<&String>   = files.iter().filter(|f| Self::is_word(f)).collect();
                         let mds: Vec<&String>    = files.iter().filter(|f| Self::is_markdown(f)).collect();
                         let csvs: Vec<&String>   = files.iter().filter(|f| Self::is_csv(f)).collect();
                         let jsons: Vec<&String>  = files.iter().filter(|f| Self::is_json(f)).collect();
@@ -277,6 +292,7 @@ impl OutputPanel {
                         let texts: Vec<&String>  = files.iter().filter(|f| Self::is_text(f)).collect();
                         let others: Vec<&String> = files.iter().filter(|f| {
                             !Self::is_image(f) && !Self::is_pdf(f) && !Self::is_word(f)
+                            && !Self::is_excel(f)
                             && !Self::is_markdown(f) && !Self::is_html(f)
                             && !Self::is_csv(f) && !Self::is_json(f) && !Self::is_text(f)
                             && !Self::is_react(f)
@@ -327,8 +343,26 @@ impl OutputPanel {
                             ui.add_space(4.0);
                         }
 
+                        if !pdfs.is_empty() {
+                            Self::section_label(ui, "\u{1F4C4} PDF Documents", accent);
+                            for f in &pdfs {
+                                self.render_pdf_card(ui, f, border);
+                                ui.add_space(6.0);
+                            }
+                            ui.add_space(4.0);
+                        }
+
+                        if !excels.is_empty() {
+                            Self::section_label(ui, "\u{1F4CA} Spreadsheets", accent);
+                            for f in &excels {
+                                self.render_excel_card(ui, f, border);
+                                ui.add_space(6.0);
+                            }
+                            ui.add_space(4.0);
+                        }
+
                         if !docs.is_empty() {
-                            Self::section_label(ui, "\u{1F4C4} Documents", accent);
+                            Self::section_label(ui, "\u{1F4DD} Word Documents", accent);
                             for f in &docs {
                                 Self::render_doc_card(ui, f, border);
                                 ui.add_space(6.0);
@@ -1505,7 +1539,306 @@ impl OutputPanel {
     }
 
     // -----------------------------------------------------------------------
-    // Document card (PDF / Word)
+    // PDF card — inline text preview
+    // -----------------------------------------------------------------------
+
+    fn render_pdf_card(&mut self, ui: &mut egui::Ui, rel_path: &str, border: egui::Color32) {
+        let full = Self::full_path(rel_path);
+        let filename = Self::filename(rel_path);
+        let is_expanded = self.expanded_doc.as_deref() == Some(rel_path);
+
+        // Extract and cache PDF text
+        if !self.pdf_cache.contains_key(rel_path) && full.exists() {
+            let text = pdf_extract::extract_text(&full)
+                .unwrap_or_else(|e| format!("[Could not extract PDF text: {}]", e));
+            self.pdf_cache.insert(rel_path.to_string(), text);
+        }
+
+        egui::Frame::new()
+            .fill(egui::Color32::WHITE)
+            .corner_radius(8.0)
+            .stroke(egui::Stroke::new(1.0, border))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgba_premultiplied(220, 50, 50, 25))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::symmetric(6, 4))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("\u{1F4C4} PDF")
+                                    .size(11.0)
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(200, 50, 50)),
+                            );
+                        });
+                    ui.label(
+                        egui::RichText::new(filename)
+                            .size(13.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Open").clicked() {
+                            let _ = open::that(&full);
+                        }
+                        let expand_label = if is_expanded { "\u{25B2}" } else { "\u{25BC}" };
+                        if ui.small_button(expand_label).clicked() {
+                            if is_expanded {
+                                self.expanded_doc = None;
+                            } else {
+                                self.expanded_doc = Some(rel_path.to_string());
+                            }
+                        }
+                    });
+                });
+
+                // Show file size
+                if full.exists() {
+                    if let Ok(meta) = std::fs::metadata(&full) {
+                        let kb = meta.len() / 1024;
+                        ui.label(
+                            egui::RichText::new(format!("{} KB", kb))
+                                .size(10.0)
+                                .color(egui::Color32::from_rgb(150, 160, 170)),
+                        );
+                    }
+                }
+
+                // Inline text preview
+                if let Some(text) = self.pdf_cache.get(rel_path) {
+                    ui.add_space(6.0);
+                    let preview = if is_expanded {
+                        text.clone()
+                    } else {
+                        // Show first ~800 chars
+                        let limit = text.char_indices().nth(800).map(|(i, _)| i).unwrap_or(text.len());
+                        let mut preview = text[..limit].to_string();
+                        if limit < text.len() {
+                            preview.push_str("\n\n... (click \u{25BC} to expand)");
+                        }
+                        preview
+                    };
+
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgb(250, 250, 252))
+                        .corner_radius(4.0)
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            let max_h = if is_expanded { 600.0 } else { 200.0 };
+                            egui::ScrollArea::vertical()
+                                .max_height(max_h)
+                                .id_salt(format!("pdf_scroll_{}", rel_path))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(&preview)
+                                            .size(11.5)
+                                            .color(egui::Color32::from_rgb(40, 44, 52))
+                                    );
+                                });
+                        });
+                }
+            });
+    }
+
+    // -----------------------------------------------------------------------
+    // Excel card — inline table preview
+    // -----------------------------------------------------------------------
+
+    fn render_excel_card(&mut self, ui: &mut egui::Ui, rel_path: &str, border: egui::Color32) {
+        use calamine::{Reader, open_workbook_auto};
+
+        let full = Self::full_path(rel_path);
+        let filename = Self::filename(rel_path);
+        let is_expanded = self.expanded_doc.as_deref() == Some(rel_path);
+
+        // Parse and cache Excel data
+        if !self.excel_cache.contains_key(rel_path) && full.exists() {
+            let mut sheets_data: Vec<(String, Vec<Vec<String>>)> = Vec::new();
+            if let Ok(mut workbook) = open_workbook_auto(&full) {
+                let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
+                for name in &sheet_names {
+                    if let Ok(range) = workbook.worksheet_range(name) {
+                        let mut rows: Vec<Vec<String>> = Vec::new();
+                        for row in range.rows() {
+                            let cells: Vec<String> = row.iter().map(|c| {
+                                match c {
+                                    calamine::Data::Empty => String::new(),
+                                    calamine::Data::String(s) => s.clone(),
+                                    calamine::Data::Float(f) => {
+                                        if *f == (*f as i64) as f64 {
+                                            format!("{}", *f as i64)
+                                        } else {
+                                            format!("{:.4}", f).trim_end_matches('0').trim_end_matches('.').to_string()
+                                        }
+                                    }
+                                    calamine::Data::Int(i) => i.to_string(),
+                                    calamine::Data::Bool(b) => b.to_string(),
+                                    calamine::Data::Error(e) => format!("{:?}", e),
+                                    calamine::Data::DateTime(dt) => format!("{}", dt),
+                                    calamine::Data::DateTimeIso(s) => s.clone(),
+                                    calamine::Data::DurationIso(s) => s.clone(),
+                                }
+                            }).collect();
+                            rows.push(cells);
+                            // Limit rows to prevent huge memory use
+                            if rows.len() >= 500 { break; }
+                        }
+                        sheets_data.push((name.clone(), rows));
+                    }
+                }
+            } else {
+                sheets_data.push(("Error".to_string(), vec![vec!["Could not open file".to_string()]]));
+            }
+            self.excel_cache.insert(rel_path.to_string(), sheets_data);
+        }
+
+        egui::Frame::new()
+            .fill(egui::Color32::WHITE)
+            .corner_radius(8.0)
+            .stroke(egui::Stroke::new(1.0, border))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgba_premultiplied(34, 139, 34, 25))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::symmetric(6, 4))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("\u{1F4CA} XLSX")
+                                    .size(11.0)
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(34, 139, 34)),
+                            );
+                        });
+                    ui.label(
+                        egui::RichText::new(filename)
+                            .size(13.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Open").clicked() {
+                            let _ = open::that(&full);
+                        }
+                        let expand_label = if is_expanded { "\u{25B2}" } else { "\u{25BC}" };
+                        if ui.small_button(expand_label).clicked() {
+                            if is_expanded {
+                                self.expanded_doc = None;
+                            } else {
+                                self.expanded_doc = Some(rel_path.to_string());
+                            }
+                        }
+                    });
+                });
+
+                // Show file size and sheet count
+                if let Some(sheets) = self.excel_cache.get(rel_path) {
+                    let sheet_count = sheets.len();
+                    let total_rows: usize = sheets.iter().map(|(_, rows)| rows.len()).sum();
+                    let mut info = format!("{} sheet{}", sheet_count, if sheet_count != 1 { "s" } else { "" });
+                    if total_rows > 0 {
+                        info.push_str(&format!(", {} rows", total_rows));
+                    }
+                    ui.label(
+                        egui::RichText::new(info)
+                            .size(10.0)
+                            .color(egui::Color32::from_rgb(150, 160, 170)),
+                    );
+                }
+
+                // Render table preview
+                if let Some(sheets) = self.excel_cache.get(rel_path).cloned() {
+                    ui.add_space(6.0);
+                    let max_h = if is_expanded { 600.0 } else { 220.0 };
+                    let max_rows = if is_expanded { 500 } else { 20 };
+
+                    egui::Frame::new()
+                        .fill(egui::Color32::from_rgb(250, 250, 252))
+                        .corner_radius(4.0)
+                        .inner_margin(egui::Margin::same(6))
+                        .show(ui, |ui| {
+                            egui::ScrollArea::both()
+                                .max_height(max_h)
+                                .id_salt(format!("excel_scroll_{}", rel_path))
+                                .show(ui, |ui| {
+                                    for (sheet_name, rows) in &sheets {
+                                        if sheets.len() > 1 {
+                                            ui.label(
+                                                egui::RichText::new(format!("\u{1F4CB} {}", sheet_name))
+                                                    .size(11.0)
+                                                    .strong()
+                                                    .color(egui::Color32::from_rgb(34, 139, 34)),
+                                            );
+                                            ui.add_space(4.0);
+                                        }
+
+                                        if rows.is_empty() {
+                                            ui.label(
+                                                egui::RichText::new("(empty sheet)")
+                                                    .size(11.0)
+                                                    .color(egui::Color32::from_rgb(150, 160, 170)),
+                                            );
+                                        } else {
+                                            let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+                                            egui_extras::TableBuilder::new(ui)
+                                                .striped(true)
+                                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                                .columns(egui_extras::Column::auto().at_least(40.0).clip(true), col_count)
+                                                .header(18.0, |mut header| {
+                                                    if let Some(first_row) = rows.first() {
+                                                        for cell in first_row {
+                                                            header.col(|ui| {
+                                                                ui.label(
+                                                                    egui::RichText::new(cell)
+                                                                        .size(11.0)
+                                                                        .strong()
+                                                                        .color(egui::Color32::from_rgb(31, 35, 40)),
+                                                                );
+                                                            });
+                                                        }
+                                                    }
+                                                })
+                                                .body(|body| {
+                                                    let data_rows: Vec<&Vec<String>> = rows.iter().skip(1).take(max_rows).collect();
+                                                    body.rows(16.0, data_rows.len(), |mut row| {
+                                                        let idx = row.index();
+                                                        if let Some(cells) = data_rows.get(idx) {
+                                                            for c in 0..col_count {
+                                                                row.col(|ui| {
+                                                                    let val = cells.get(c).map(|s| s.as_str()).unwrap_or("");
+                                                                    ui.label(
+                                                                        egui::RichText::new(val)
+                                                                            .size(10.5)
+                                                                            .color(egui::Color32::from_rgb(50, 60, 70)),
+                                                                    );
+                                                                });
+                                                            }
+                                                        }
+                                                    });
+                                                });
+
+                                            if rows.len() > max_rows + 1 {
+                                                ui.add_space(4.0);
+                                                ui.label(
+                                                    egui::RichText::new(format!("... {} more rows (click \u{25BC} to expand)", rows.len() - max_rows - 1))
+                                                        .size(10.0)
+                                                        .color(egui::Color32::from_rgb(150, 160, 170)),
+                                                );
+                                            }
+                                        }
+                                        ui.add_space(8.0);
+                                    }
+                                });
+                        });
+                }
+            });
+    }
+
+    // -----------------------------------------------------------------------
+    // Document card (Word)
     // -----------------------------------------------------------------------
 
     fn render_doc_card(ui: &mut egui::Ui, rel_path: &str, border: egui::Color32) {
