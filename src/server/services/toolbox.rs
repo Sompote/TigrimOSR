@@ -693,8 +693,9 @@ const SUBAGENT_SKILLS_PERSONA: &str =
 /// and realtime-agent prompts so they can discover available skills without
 /// having to call `list_skills` first.  Mirrors TS `buildEnabledSkillsBlock`.
 async fn build_enabled_skills_block(persona: Option<&str>) -> String {
-    let skills_path = std::path::Path::new("data/skills.json");
-    let registry: Vec<Value> = match tokio::fs::read_to_string(skills_path).await {
+    let data = crate::server::data::data_dir();
+    let skills_path = data.join("skills.json");
+    let registry: Vec<Value> = match tokio::fs::read_to_string(&skills_path).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => vec![],
     };
@@ -704,9 +705,10 @@ async fn build_enabled_skills_block(persona: Option<&str>) -> String {
         .filter(|s| s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true))
         .collect();
 
-    // Also scan skills/ directory for custom skills with SKILL.md
-    let mut custom_skills: Vec<String> = Vec::new();
-    if let Ok(mut entries) = tokio::fs::read_dir("skills").await {
+    // Also scan data/skills/ directory for custom skills with SKILL.md
+    let skills_dir = data.join("skills");
+    let mut custom_skills: Vec<(String, String, Vec<String>)> = Vec::new(); // (name, description, files)
+    if let Ok(mut entries) = tokio::fs::read_dir(&skills_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
                 let skill_md = entry.path().join("SKILL.md");
@@ -714,11 +716,28 @@ async fn build_enabled_skills_block(persona: Option<&str>) -> String {
                     let name = entry.file_name().to_string_lossy().to_string();
                     // Don't double-list skills already in registry
                     let already = enabled.iter().any(|s| {
-                        s.get("name").and_then(|n| n.as_str()) == Some(&name)
+                        let sn = s.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        sn == name || slugify_skill_name(sn) == slugify_skill_name(&name)
                     });
-                    if !already {
-                        custom_skills.push(name);
+                    if already { continue; }
+                    // Read description from SKILL.md frontmatter
+                    let desc = if let Ok(content) = tokio::fs::read_to_string(&skill_md).await {
+                        content.lines()
+                            .find(|l| l.starts_with("description:"))
+                            .map(|l| l.trim_start_matches("description:").trim().trim_matches('"').to_string())
+                            .unwrap_or_default()
+                    } else { String::new() };
+                    // List supporting files
+                    let mut files = Vec::new();
+                    if let Ok(mut fentries) = tokio::fs::read_dir(entry.path()).await {
+                        while let Ok(Some(f)) = fentries.next_entry().await {
+                            let fname = f.file_name().to_string_lossy().to_string();
+                            if fname != "SKILL.md" && !fname.starts_with('.') && fname != "__MACOSX" {
+                                files.push(fname);
+                            }
+                        }
                     }
+                    custom_skills.push((name, desc, files));
                 }
             }
         }
@@ -732,15 +751,21 @@ async fn build_enabled_skills_block(persona: Option<&str>) -> String {
         "IMPORTANT: BEFORE answering any user request, scan the skill list below. \
          If a skill's description matches the user's task, you MUST load and use that \
          skill FIRST by calling load_skill(\"<skill-name>\"), then follow its SKILL.md \
-         instructions. Do NOT write your own code from scratch when a matching skill exists."
+         instructions. Do NOT write your own code from scratch when a matching skill exists. \
+         Skills contain tested implementations and supporting files (like Python engines) that should be used."
     );
 
     let mut block = format!("\n\n=== INSTALLED SKILLS ===\n{}", lead);
 
     if !custom_skills.is_empty() {
         block.push_str("\n\nCustom skills (priority — always prefer these):");
-        for name in &custom_skills {
-            block.push_str(&format!("\n  - {}", name));
+        for (name, desc, files) in &custom_skills {
+            let files_str = if files.is_empty() { String::new() } else { format!(" [files: {}]", files.join(", ")) };
+            if desc.is_empty() {
+                block.push_str(&format!("\n  - \"{}\"{}", name, files_str));
+            } else {
+                block.push_str(&format!("\n  - \"{}\": {}{}", name, desc, files_str));
+            }
         }
     }
 
@@ -748,8 +773,17 @@ async fn build_enabled_skills_block(persona: Option<&str>) -> String {
         block.push_str("\n\nRegistered skills:");
         for s in &enabled {
             let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+            let desc = s.get("description").and_then(|d| d.as_str()).unwrap_or("");
             let source = s.get("source").and_then(|n| n.as_str()).unwrap_or("unknown");
-            block.push_str(&format!("\n  - {} ({})", name, source));
+            // Check if this skill has files on disk
+            let has_files = resolve_skill_dir(name, Some(s)).is_some();
+            let files_flag = if has_files { " [has SKILL.md]" } else { "" };
+            if desc.is_empty() {
+                block.push_str(&format!("\n  - {} ({}){}", name, source, files_flag));
+            } else {
+                let short_desc = if desc.len() > 150 { &desc[..150] } else { desc };
+                block.push_str(&format!("\n  - {} ({}) — {}{}", name, source, short_desc, files_flag));
+            }
         }
     }
 
@@ -758,6 +792,11 @@ async fn build_enabled_skills_block(persona: Option<&str>) -> String {
         load them, 3) use run_python or run_shell to execute following the skill instructions.");
 
     block
+}
+
+/// Public wrapper for chat.rs to inject skills into the main agent prompt.
+pub async fn build_enabled_skills_block_pub() -> String {
+    build_enabled_skills_block(None).await
 }
 
 /// Build the system prompt for a realtime agent — mode-aware (tiger_cowork clone).
@@ -2264,6 +2303,12 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
     if !sub_agent.enabled || sub_agent.depth >= 3 {
         return tools;
     }
+    // Remove CLI agent tools from swarm modes — agents should use send_task/spawn_subagent,
+    // not spawn external CLI processes that aren't part of the architecture.
+    tools.retain(|t| {
+        let name = t["function"]["name"].as_str().unwrap_or("");
+        !matches!(name, "claude_code_agent" | "gemini_cli_agent")
+    });
     // For fully_auto/auto_swarm, agent_ids might be empty before architecture is created
     // — that's OK, the mode logic handles it
     if sub_agent.agent_ids.is_empty()
@@ -2307,7 +2352,16 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
         }
         "manual" => {
             // Manual: user pre-selected YAML, agents boot immediately
-            tools.extend(realtime_tools(&agent_list));
+            // Only give coordination tools — agents handle research/execution.
+            // Keep write_file, run_python, read_file, list_files for output formatting.
+            let mut rt_tools = realtime_tools(&agent_list);
+            for t in &tools {
+                let name = t["function"]["name"].as_str().unwrap_or("");
+                if matches!(name, "write_file" | "run_python" | "read_file" | "list_files") {
+                    rt_tools.push(t.clone());
+                }
+            }
+            return rt_tools;
         }
         _ => {
             // "auto" mode: spawn_subagent (depth-limited)
@@ -2405,18 +2459,21 @@ async fn exec_web_search(args: &Value) -> Value {
 
     // Primary: DuckDuckGo Python library (same as original TigrimOS)
     // This returns actual web search results with titles, URLs, and snippets
-    let safe_query = query.replace('\'', "\\'");
+    let safe_query = query.replace('\'', "\\'").replace('\\', "\\\\");
     let py_script = format!(
-        r#"import json
+        r#"import json, sys
 try:
-    from ddgs import DDGS
-    r = list(DDGS().text('{}', max_results=8))
+    try:
+        from ddgs import DDGS
+        r = list(DDGS().text('{}', max_results=8))
+    except ImportError:
+        from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            r = list(ddgs.text('{}', max_results=8))
     print(json.dumps(r))
-except ImportError:
-    from duckduckgo_search import DDGS
-    with DDGS() as ddgs:
-        r = list(ddgs.text('{}', max_results=8))
-        print(json.dumps(r))
+except Exception as e:
+    print(json.dumps([]))
+    print(str(e), file=sys.stderr)
 "#,
         safe_query, safe_query
     );
@@ -2493,6 +2550,38 @@ except ImportError:
         }
     }
 
+    // If Google Custom Search is configured, also try Google
+    if !ddg_ok {
+        let settings_path = crate::server::data::data_dir().join("settings.json");
+        if let Ok(settings_str) = tokio::fs::read_to_string(&settings_path).await {
+            if let Ok(settings) = serde_json::from_str::<Value>(&settings_str) {
+                let engine = settings["webSearchEngine"].as_str().unwrap_or("");
+                let api_key = settings["webSearchApiKey"].as_str().unwrap_or("");
+                let cx = settings["googleSearchCx"].as_str().unwrap_or("");
+                if engine == "google" && !api_key.is_empty() {
+                    let google_url = format!(
+                        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}",
+                        api_key, cx, urlencoding::encode(query)
+                    );
+                    if let Ok(resp) = client.get(&google_url).send().await {
+                        if let Ok(data) = resp.json::<Value>().await {
+                            if let Some(items) = data["items"].as_array() {
+                                for item in items.iter().take(5) {
+                                    all_results.push(json!({
+                                        "source": "google",
+                                        "title": item["title"].as_str().unwrap_or(""),
+                                        "url": item["link"].as_str().unwrap_or(""),
+                                        "text": item["snippet"].as_str().unwrap_or("")
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Also try Wikipedia search (reliable for knowledge queries)
     let wiki_url = format!(
         "https://en.wikipedia.org/w/api.php?action=query&format=json&list=search&srsearch={}&srlimit=3",
@@ -2519,6 +2608,39 @@ except ImportError:
                         "title": title,
                         "url": format!("https://en.wikipedia.org/wiki/{}", title.replace(' ', "_")),
                         "text": snippet
+                    }));
+                }
+            }
+        }
+    }
+
+    // If still no web results (only Wikipedia), try OpenRouter web search as last resort
+    let has_web_results = all_results.iter().any(|r| {
+        let src = r["source"].as_str().unwrap_or("");
+        src == "web" || src == "google"
+    });
+    if !has_web_results {
+        let or_result = exec_openrouter_web_search(&json!({ "query": query })).await;
+        if or_result["ok"].as_bool() == Some(true) {
+            if let Some(text) = or_result["text"].as_str() {
+                if !text.is_empty() {
+                    // Add OpenRouter citations as results
+                    if let Some(citations) = or_result["citations"].as_array() {
+                        for cite in citations.iter().take(8) {
+                            all_results.push(json!({
+                                "source": "web",
+                                "title": cite["title"].as_str().unwrap_or(""),
+                                "url": cite["url"].as_str().unwrap_or(""),
+                                "text": ""
+                            }));
+                        }
+                    }
+                    // Add summarized text as top result
+                    all_results.insert(0, json!({
+                        "source": "web_summary",
+                        "title": "AI-Summarized Web Results",
+                        "text": &text[..text.len().min(3000)],
+                        "url": ""
                     }));
                 }
             }
@@ -2598,12 +2720,18 @@ fn check_dangerous(code: &str) -> Option<String> {
     }
 
     // Block access to paths outside sandbox (absolute paths to sensitive dirs)
+    // But allow the app's own data/sandbox paths (e.g. ~/Library/Application Support/TigrimOS/)
+    let app_data_path = crate::server::data::data_dir().display().to_string().to_lowercase();
+    let app_support_path = app_data_path.replace("/data", "");
     let sensitive_dirs = ["/etc/", "/var/", "/usr/", "/System/", "/Library/",
                           "/Applications/", "/Users/*/.", "/private/"];
     for dir in &sensitive_dirs {
         if lower.contains(&dir.to_lowercase()) {
-            // Allow /tmp/ and the sandbox itself
-            if !lower.contains("/tmp/") {
+            // Allow /tmp/, the sandbox itself, and app's own data directory
+            if !lower.contains("/tmp/")
+                && !lower.contains(&app_data_path)
+                && !lower.contains(&app_support_path)
+            {
                 return Some(format!("Blocked access to system path: {}", dir));
             }
         }
@@ -3117,28 +3245,35 @@ fn skill_candidates(skill_name: &str, registry_entry: Option<&Value>) -> Vec<Str
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     let mut push = |v: &str| {
-        if !v.is_empty() && seen.insert(v.to_string()) {
+        if !v.is_empty() && v.len() < 200 && seen.insert(v.to_string()) {
             out.push(v.to_string());
         }
     };
     push(skill_name);
     if let Some(entry) = registry_entry {
+        // Only use "script" as candidate if it looks like a filename (not content)
         if let Some(script) = entry.get("script").and_then(|s| s.as_str()) {
-            push(script);
+            if !script.contains('\n') && script.len() < 200 {
+                push(script);
+            }
         }
     }
     push(&slugify_skill_name(skill_name));
     out
 }
 
-const SKILLS_SEARCH_DIRS: &[(&str, &str)] = &[
-    ("Tiger_bot/skills", "clawhub"),
-    ("skills", "custom"),
-];
+fn skills_search_dirs() -> Vec<(std::path::PathBuf, &'static str)> {
+    let data = crate::server::data::data_dir();
+    vec![
+        (data.join("skills"), "custom"),
+        (std::path::PathBuf::from("Tiger_bot/skills"), "clawhub"),
+        (std::path::PathBuf::from("skills"), "custom"),
+    ]
+}
 
 fn read_skills_registry() -> Vec<Value> {
-    let path = std::path::Path::new("data/skills.json");
-    match std::fs::read_to_string(path) {
+    let path = crate::server::data::data_dir().join("skills.json");
+    match std::fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => vec![],
     }
@@ -3146,8 +3281,8 @@ fn read_skills_registry() -> Vec<Value> {
 
 fn resolve_skill_dir(skill_name: &str, registry_entry: Option<&Value>) -> Option<(std::path::PathBuf, String)> {
     for cand in skill_candidates(skill_name, registry_entry) {
-        for &(dir, label) in SKILLS_SEARCH_DIRS {
-            let base = std::path::Path::new(dir).join(&cand);
+        for (dir, label) in skills_search_dirs() {
+            let base = dir.join(&cand);
             if base.join("SKILL.md").exists() {
                 return Some((base, label.to_string()));
             }
@@ -3182,9 +3317,10 @@ async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
         .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
         .collect();
 
-    // Also check skills/ directory for SKILL.md files
+    // Also check data/skills/ directory for SKILL.md files
     let mut dir_skills = vec![];
-    if let Ok(mut entries) = tokio::fs::read_dir("skills").await {
+    let skills_scan_dir = crate::server::data::data_dir().join("skills");
+    if let Ok(mut entries) = tokio::fs::read_dir(&skills_scan_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             if entry
                 .file_type()
@@ -3271,13 +3407,40 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
         }
     }
 
+    // Not found — try self-healing: if script field contains SKILL.md content, write it to disk
+    if let Some(entry) = registry_entry {
+        if let Some(script) = entry.get("script").and_then(|s| s.as_str()) {
+            if script.contains('\n') && script.len() > 50 {
+                // script field contains the actual SKILL.md content — save it to disk
+                let slug = slugify_skill_name(skill_name);
+                let skill_dir = crate::server::data::data_dir().join("skills").join(&slug);
+                let _ = std::fs::create_dir_all(&skill_dir);
+                let skill_file = skill_dir.join("SKILL.md");
+                if std::fs::write(&skill_file, script).is_ok() {
+                    info!("[Skills] Self-healed: wrote SKILL.md for {} to {}", skill_name, skill_file.display());
+                    // Retry the load now that the file exists
+                    let content = script.replace("{baseDir}", &skill_dir.display().to_string());
+                    let truncated = content.len() > 15000;
+                    let content = if truncated { content[..15000].to_string() } else { content };
+                    return json!({
+                        "ok": true,
+                        "skill": skill_name,
+                        "source": "self-healed",
+                        "content": content,
+                        "truncated": truncated,
+                    });
+                }
+            }
+        }
+    }
+
     // Not found — provide helpful error
     let tried = skill_candidates(skill_name, registry_entry);
-    let dirs_str = SKILLS_SEARCH_DIRS.iter().map(|(d, _)| *d).collect::<Vec<_>>().join(" and ");
+    let dirs_str = skills_search_dirs().iter().map(|(d, _)| d.display().to_string()).collect::<Vec<_>>().join(" and ");
     if registry_entry.is_some() {
         return json!({
             "ok": false,
-            "error": format!("Skill \"{}\" is registered in data/skills.json but no SKILL.md was found on disk. Tried folder names [{}] under {}. Create SKILL.md at one of these paths, or re-install the skill so its files are unpacked.", skill_name, tried.join(", "), dirs_str),
+            "error": format!("Skill \"{}\" is registered but no SKILL.md was found on disk. Tried folder names [{}] under {}.", skill_name, tried.join(", "), dirs_str),
             "registered": true,
             "triedCandidates": tried,
         });
@@ -3319,8 +3482,8 @@ async fn exec_delete_file(args: &Value, sandbox_dir: &str) -> Value {
 
 /// list_local_mounts — returns configured local mount points from settings
 async fn exec_list_local_mounts(_args: &Value) -> Value {
-    let settings_path = "data/settings.json";
-    let settings: Value = match tokio::fs::read_to_string(settings_path).await {
+    let settings_path = crate::server::data::data_dir().join("settings.json");
+    let settings: Value = match tokio::fs::read_to_string(&settings_path).await {
         Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
         Err(_) => json!({}),
     };
@@ -3503,7 +3666,7 @@ async fn exec_remote_task(args: &Value) -> Value {
         return json!({ "ok": false, "error": "task is required" });
     }
 
-    let settings: Value = match tokio::fs::read_to_string("data/settings.json").await {
+    let settings: Value = match tokio::fs::read_to_string(crate::server::data::data_dir().join("settings.json")).await {
         Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
         Err(_) => json!({}),
     };
@@ -4026,7 +4189,8 @@ async fn exec_openrouter_web_search(args: &Value) -> Value {
     let query = args["query"].as_str().unwrap_or("");
 
     // Load settings to get API key
-    let settings: Value = match tokio::fs::read_to_string("data/settings.json").await {
+    let settings_path = crate::server::data::data_dir().join("settings.json");
+    let settings: Value = match tokio::fs::read_to_string(&settings_path).await {
         Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
         Err(_) => return json!({ "ok": false, "error": "Could not read settings.json" }),
     };
@@ -4698,9 +4862,9 @@ const ARG_TRUNCATE_THRESHOLD: usize = 4000;
 const ARG_VALUE_TRUNCATE: usize = 500;
 const CHECKPOINT_INTERVAL: usize = 5;
 
-/// Load agent loop settings from data/settings.json (cached per call)
+/// Load agent loop settings from settings.json (cached per call)
 fn load_agent_settings() -> Value {
-    std::fs::read_to_string("data/settings.json")
+    std::fs::read_to_string(crate::server::data::data_dir().join("settings.json"))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(json!({}))
@@ -5546,6 +5710,147 @@ async fn llm_call_codex_cli(
     }
 }
 
+/// Sanitize messages before sending to LLM API (ported from tiger_cowork sanitizeMessages).
+/// Handles: null content, orphaned tool pairs, mid-conversation system messages,
+/// consecutive user messages, missing user before assistant, reasoning_content stripping.
+fn sanitize_messages(messages: &[Value]) -> Vec<Value> {
+    // 1. Collect valid tool_call IDs and tool result IDs
+    let mut valid_tc_ids = std::collections::HashSet::new();
+    let mut tool_result_ids = std::collections::HashSet::new();
+    for msg in messages {
+        if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+            for tc in tcs {
+                if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                    valid_tc_ids.insert(id.to_string());
+                }
+            }
+        }
+        if msg["role"].as_str() == Some("tool") {
+            if let Some(id) = msg.get("tool_call_id").and_then(|v| v.as_str()) {
+                tool_result_ids.insert(id.to_string());
+            }
+        }
+    }
+
+    // 2. Filter and fix messages
+    let mut filtered: Vec<Value> = Vec::new();
+    for msg in messages {
+        let mut m = msg.clone();
+        let role = m["role"].as_str().unwrap_or("").to_string();
+
+        // Remove tool results referencing non-existent tool calls
+        if role == "tool" {
+            if let Some(id) = m.get("tool_call_id").and_then(|v| v.as_str()) {
+                if !valid_tc_ids.contains(id) { continue; }
+            }
+        }
+
+        // Remove orphaned assistant tool_calls (no matching results)
+        if role == "assistant" {
+            if let Some(tcs) = m.get("tool_calls").and_then(|v| v.as_array()) {
+                if !tcs.is_empty() {
+                    let tc_ids: Vec<String> = tcs.iter()
+                        .filter_map(|tc| tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                        .collect();
+                    let has_any_result = tc_ids.iter().any(|id| tool_result_ids.contains(id));
+                    if !tc_ids.is_empty() && !has_any_result {
+                        // Strip tool_calls, keep as plain assistant message
+                        m.as_object_mut().map(|o| o.remove("tool_calls"));
+                    } else {
+                        // Ensure every tool_call has type: "function"
+                        if let Some(tcs) = m.get_mut("tool_calls").and_then(|v| v.as_array_mut()) {
+                            for tc in tcs {
+                                if tc.get("type").is_none() {
+                                    tc["type"] = json!("function");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ensure content is never null/empty for assistant messages
+        if role == "assistant" {
+            let content_empty = match &m["content"] {
+                Value::Null => true,
+                Value::String(s) => s.is_empty(),
+                _ => false,
+            };
+            if content_empty {
+                m["content"] = json!("(thinking...)");
+            }
+            // Strip reasoning_content
+            m.as_object_mut().map(|o| o.remove("reasoning_content"));
+        }
+
+        // Ensure content is never null for other roles
+        if m["content"].is_null() && role != "assistant" {
+            m["content"] = json!("");
+        }
+
+        filtered.push(m);
+    }
+
+    // 3. Merge consecutive system messages
+    let mut merged: Vec<Value> = Vec::new();
+    for msg in filtered {
+        if msg["role"].as_str() == Some("system") {
+            if let Some(last) = merged.last_mut() {
+                if last["role"].as_str() == Some("system") {
+                    let prev = last["content"].as_str().unwrap_or("");
+                    let cur = msg["content"].as_str().unwrap_or("");
+                    last["content"] = json!(format!("{}\n\n{}", prev, cur));
+                    continue;
+                }
+            }
+        }
+        merged.push(msg);
+    }
+
+    // 4. Convert mid-conversation system messages to user role
+    let mut seen_first_system = false;
+    for msg in merged.iter_mut() {
+        if msg["role"].as_str() == Some("system") {
+            if seen_first_system {
+                msg["role"] = json!("user");
+                let content = msg["content"].as_str().unwrap_or("").to_string();
+                msg["content"] = json!(format!("[System Instructions]\n{}", content));
+            }
+            seen_first_system = true;
+        }
+    }
+
+    // 5. Merge consecutive user messages
+    let mut deduped: Vec<Value> = Vec::new();
+    for msg in merged {
+        if msg["role"].as_str() == Some("user") {
+            if let Some(last) = deduped.last_mut() {
+                if last["role"].as_str() == Some("user")
+                    && last["content"].is_string()
+                    && msg["content"].is_string()
+                {
+                    let prev = last["content"].as_str().unwrap_or("");
+                    let cur = msg["content"].as_str().unwrap_or("");
+                    last["content"] = json!(format!("{}\n\n{}", prev, cur));
+                    continue;
+                }
+            }
+        }
+        deduped.push(msg);
+    }
+
+    // 6. Ensure a user message exists before the first assistant message
+    let first_non_system = deduped.iter().position(|m| m["role"].as_str() != Some("system"));
+    if let Some(idx) = first_non_system {
+        if deduped[idx]["role"].as_str() != Some("user") {
+            deduped.insert(idx, json!({"role": "user", "content": "Continue with the task."}));
+        }
+    }
+
+    deduped
+}
+
 async fn llm_call(
     client: &Client,
     api_key: &str,
@@ -5567,10 +5872,13 @@ async fn llm_call(
         return llm_call_codex_cli(model, messages, tools, max_tokens).await;
     }
 
+    // Sanitize messages before sending (tiger_cowork: sanitizeMessages)
+    let messages = sanitize_messages(messages);
+
     let is_anthropic = is_anthropic_api(api_url);
 
     let (body, url, headers) = if is_anthropic {
-        let (system, anthropic_msgs) = to_anthropic_messages(messages);
+        let (system, anthropic_msgs) = to_anthropic_messages(&messages);
         let mut body = json!({
             "model": model,
             "messages": anthropic_msgs,
@@ -6086,6 +6394,7 @@ async fn call_with_tools_inner(
         }
 
         // --- LLM call with retry logic (tiger_cowork: 3 retries + overload backoff) ---
+        // Note: sanitize_messages() is called inside llm_call() before sending to API
         let mut data: Option<Value> = None;
         let mut overload_retry_count: usize = 0;
 
@@ -6226,6 +6535,20 @@ async fn call_with_tools_inner(
                 }
             }
 
+            // "content is empty" error (MiniMax 2013) — re-sanitize and retry
+            if (err_msg.contains("content is empty") || err_msg.contains("2013"))
+                && all_messages.len() > 2
+            {
+                info!("[ToolLoop] Empty content error — re-sanitizing messages and retrying...");
+                all_messages = sanitize_messages(&all_messages);
+                // Also trim if too long
+                let trimmed = compact::trim_conversation_context(&all_messages, 6_000_000);
+                if trimmed.len() < all_messages.len() {
+                    all_messages = compact::validate_message_structure(&trimmed).messages;
+                }
+                continue;
+            }
+
             on_update(ToolUpdate::Error(format!("API error: {}", err_msg)));
             return ToolLoopResult {
                 content: format!("Error: API error: {}", err_msg),
@@ -6291,7 +6614,23 @@ async fn call_with_tools_inner(
         if let Some(reasoning) = message.get("reasoning_content") {
             if reasoning.is_string() && !reasoning.as_str().unwrap_or("").is_empty() {
                 truncated_message["reasoning_content"] = reasoning.clone();
+                // Kimi API rejects empty content — fill from reasoning if content is empty
+                if truncated_message["content"].as_str().unwrap_or("").is_empty() {
+                    let r = reasoning.as_str().unwrap_or("");
+                    truncated_message["content"] = json!(r[..r.len().min(200)]);
+                }
             }
+        }
+
+        // Ensure content is never empty (MiniMax/Kimi APIs reject "chat content is empty")
+        // This applies even when tool_calls are present — some APIs require non-empty content always
+        if truncated_message["content"].as_str().unwrap_or("").is_empty() {
+            truncated_message["content"] = json!("(thinking...)");
+        }
+
+        // Strip reasoning_content before appending — some APIs reject unknown fields
+        if truncated_message.get("reasoning_content").is_some() {
+            truncated_message.as_object_mut().map(|m| m.remove("reasoning_content"));
         }
 
         // Append the assistant message (with truncated args) to the conversation

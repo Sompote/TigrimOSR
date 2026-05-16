@@ -1012,28 +1012,42 @@ Only use your own tools (web_search, run_python, etc.) for quick lookups or task
                 }
             }
         } else {
-            (String::new(), "Always use web_search when the user asks for research, information lookup, or current events.")
+            (String::new(), "For research and web searches, check if a matching skill is installed (e.g. web-search) and load it first with load_skill. Otherwise use web_search directly.")
         };
 
         let tool_list = match sub_agent_mode.as_str() {
             "fully_auto" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
             "auto_swarm" => "select_swarm, send_task, wait_result, check_agents, run_python, write_file",
-            "manual" => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, send_task, wait_result, check_agents",
+            "manual" => "send_task, wait_result, check_agents, run_python, write_file, read_file, list_files",
             _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
         };
 
         let base_system = format!(
-            "You are TigrimOS, an AI assistant with tool-calling capabilities. \
-You have access to these tools: {}. \
-{} \
-IMPORTANT: Your working directory is the sandbox folder '{}'. All file operations (read_file, write_file, list_files, run_python, run_shell) use this directory as the root. \
-When a user asks about files, ALWAYS use list_files first to see what's available in the sandbox. Files uploaded by the user are placed here. \
-Use relative paths (e.g. 'score_midterm.xlsx') — they resolve to the sandbox automatically. \
-Use run_python for data analysis, charts, and calculations. \
-Use run_shell for system commands. \
-Provide helpful, detailed responses based on tool results.{}",
-            tool_list, research_instruction, sandbox_dir, sub_agent_prompt
+            "You are TigrimOS, an AI assistant with tools for search, code execution, files, and skills.\n\
+Rules:\n\
+- Always use tools to produce real results — never just describe what you would do.\n\
+- If a tool call fails, analyze the error, fix it, and retry. Try a different approach after two failures.\n\
+- Do not call the same tool with identical arguments repeatedly.\n\
+- Before writing code, check if an installed skill matches the task. If so, call load_skill first and use its implementation.\n\
+- For web search, prefer installed search skills (e.g. web-search, duckduckgo-search) via load_skill + run_python over the built-in web_search tool. If results are limited, follow up with fetch_url.\n\
+- {}\n\
+- Your working directory is the sandbox folder '{}'. All file operations use this directory as the root.\n\
+- When a user asks about files, use list_files first to see what's available.\n\
+- Use run_python for data analysis, charts, and calculations.\n\
+- Use run_shell for system commands.\n\
+You have access to these tools: {}.{}",
+            research_instruction, sandbox_dir, tool_list, sub_agent_prompt
         );
+        // Inject installed skills block so the agent knows what skills are available
+        let skills_block = runtime.block_on(
+            crate::server::services::toolbox::build_enabled_skills_block_pub()
+        );
+        let base_system = if skills_block.is_empty() {
+            base_system
+        } else {
+            format!("{}{}", base_system, skills_block)
+        };
+
         let system_prompt = match self.build_project_system_prompt(runtime) {
             Some(project_prompt) => Some(format!("{}\n\n{}", base_system, project_prompt)),
             None => Some(base_system),
@@ -2577,25 +2591,35 @@ Provide helpful, detailed responses based on tool results.{}",
                         "Explain this code",
                         "Report from file and data analysis",
                     ];
-                    // Center suggestion chips by indenting with same margin as input card
-                    let chip_area_w = ui.available_width().min(750.0);
-                    let chip_margin = ((ui.available_width() - chip_area_w) / 2.0).max(0.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_space(chip_margin);
-                        for suggestion in &suggestions {
-                            let btn = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(*suggestion)
-                                        .size(13.0)
-                                        .color(egui::Color32::from_rgb(31, 35, 40)),
-                                )
-                                .fill(egui::Color32::from_rgb(240, 242, 245))
-                                .corner_radius(8.0),
-                            );
-                            if btn.clicked() {
-                                suggestion_clicked = Some(suggestion.to_string());
-                            }
-                        }
+                    // Center suggestion chips inside the input card width
+                    let card_w = ui.available_width().min(750.0);
+                    ui.allocate_ui(egui::vec2(card_w, 30.0), |ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                // Calculate total width of all chips for centering
+                                let spacing = ui.spacing().item_spacing.x;
+                                let font_id = egui::TextStyle::Button.resolve(ui.style());
+                                let total_w: f32 = suggestions.iter().map(|s| {
+                                    ui.fonts(|f| f.layout_no_wrap(s.to_string(), font_id.clone(), egui::Color32::BLACK).size().x) + 16.0 + spacing
+                                }).sum::<f32>() - spacing;
+                                let indent = ((ui.available_width() - total_w) / 2.0).max(0.0);
+                                ui.add_space(indent);
+                                for suggestion in &suggestions {
+                                    let btn = ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new(*suggestion)
+                                                .size(13.0)
+                                                .color(egui::Color32::from_rgb(31, 35, 40)),
+                                        )
+                                        .fill(egui::Color32::from_rgb(240, 242, 245))
+                                        .corner_radius(8.0),
+                                    );
+                                    if btn.clicked() {
+                                        suggestion_clicked = Some(suggestion.to_string());
+                                    }
+                                }
+                            });
+                        });
                     });
                 });
             });
@@ -4033,284 +4057,7 @@ Provide helpful, detailed responses based on tool results.{}",
             return;
         }
 
-        // Controls
-        ui.horizontal(|ui| {
-            if ui.small_button("\u{1F504} Reload").clicked() {
-                let sid = self.graphic_loaded_config.clone();
-                self.load_graphic_data(&sid);
-            }
-            ui.separator();
-            if ui.small_button("Zoom +").clicked() {
-                self.graphic_zoom = (self.graphic_zoom + 0.1).min(3.0);
-            }
-            if ui.small_button("Zoom -").clicked() {
-                self.graphic_zoom = (self.graphic_zoom - 0.1).max(0.3);
-            }
-            if ui.small_button("Reset View").clicked() {
-                self.graphic_zoom = 1.0;
-                self.graphic_pan = egui::Vec2::ZERO;
-            }
-            ui.separator();
-            // Legend
-            let legend = [
-                ("Orchestrator", egui::Color32::from_rgb(99, 102, 241)),
-                ("Working", egui::Color32::from_rgb(34, 197, 94)),
-                ("Done", egui::Color32::from_rgb(156, 163, 175)),
-                ("Idle", egui::Color32::from_rgb(75, 85, 99)),
-            ];
-            for (label, color) in legend {
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(8.0, 8.0),
-                    egui::Sense::hover(),
-                );
-                ui.painter().circle_filled(rect.center(), 4.0, color);
-                ui.label(egui::RichText::new(label).size(10.0).color(egui::Color32::GRAY));
-            }
-        });
-        ui.separator();
-
-        // Canvas area
-        let available = ui.available_size();
-        let canvas_size = egui::vec2(available.x.max(200.0), available.y.max(200.0));
-        let (response, painter) =
-            ui.allocate_painter(canvas_size, egui::Sense::click_and_drag());
-        let canvas_rect = response.rect;
-
-        // Handle pan via drag
-        if response.dragged() {
-            self.graphic_pan += response.drag_delta();
-        }
-
-        // Background
-        painter.rect_filled(
-            canvas_rect,
-            4.0,
-            egui::Color32::from_rgb(15, 20, 30),
-        );
-
-        let zoom = self.graphic_zoom;
-        let pan = self.graphic_pan;
-        let origin = canvas_rect.min.to_vec2() + pan;
-
-        // Build position lookup
-        let positions: std::collections::HashMap<String, egui::Pos2> = self
-            .graphic_agents
-            .iter()
-            .map(|a| {
-                let pos = egui::pos2(
-                    origin.x + a.x * zoom,
-                    origin.y + a.y * zoom,
-                );
-                (a.id.clone(), pos)
-            })
-            .collect();
-
-        // Build node rects lookup for edge clipping
-        let node_w = 100.0 * zoom;
-        let node_h = 60.0 * zoom;
-        let node_rects: std::collections::HashMap<String, egui::Rect> = positions
-            .iter()
-            .map(|(id, &pos)| {
-                (id.clone(), egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h)))
-            })
-            .collect();
-
-        // Helper: compute connection point on node rect border toward a target point
-        let edge_point = |rect: &egui::Rect, target: egui::Pos2| -> egui::Pos2 {
-            let center = rect.center();
-            let dx = target.x - center.x;
-            let dy = target.y - center.y;
-            if dx.abs() < 0.001 && dy.abs() < 0.001 {
-                return center;
-            }
-            let hw = rect.width() / 2.0;
-            let hh = rect.height() / 2.0;
-            // Scale to hit the border
-            let sx = if dx.abs() > 0.001 { hw / dx.abs() } else { f32::MAX };
-            let sy = if dy.abs() > 0.001 { hh / dy.abs() } else { f32::MAX };
-            let s = sx.min(sy);
-            egui::pos2(center.x + dx * s, center.y + dy * s)
-        };
-
-        // Draw edges
-        for edge in &self.graphic_edges {
-            let Some(from_rect) = node_rects.get(&edge.from) else { continue };
-            let Some(to_rect) = node_rects.get(&edge.to) else { continue };
-
-            let from_pt = edge_point(from_rect, to_rect.center());
-            let to_pt = edge_point(to_rect, from_rect.center());
-
-            let edge_color = link_kind_color(&edge.protocol);
-            let stroke = egui::Stroke::new(1.5 * zoom, edge_color.gamma_multiply(0.7));
-            painter.line_segment([from_pt, to_pt], stroke);
-
-            // Arrow head at to_pt
-            let dir = (to_pt - from_pt).normalized();
-            let perp = egui::vec2(-dir.y, dir.x);
-            let arrow_size = 7.0 * zoom;
-            let tip = to_pt;
-            let left = tip - dir * arrow_size + perp * arrow_size * 0.4;
-            let right = tip - dir * arrow_size - perp * arrow_size * 0.4;
-            painter.add(egui::Shape::convex_polygon(
-                vec![tip, left, right],
-                edge_color.gamma_multiply(0.8),
-                egui::Stroke::NONE,
-            ));
-        }
-
-        // Draw animated signal dots along edges
         let time = ui.input(|i| i.time);
-        // Convert epoch-based signal timestamps to egui-relative time
-        let epoch_offset = if let Some(first_sig) = self.graphic_signals.first() {
-            first_sig.started_at - time
-        } else {
-            0.0
-        };
-        for signal in &self.graphic_signals {
-            if signal.from.is_empty() || signal.to.is_empty() {
-                continue;
-            }
-            let Some(from_rect) = node_rects.get(&signal.from) else { continue };
-            let Some(to_rect) = node_rects.get(&signal.to) else { continue };
-
-            let from_pt = edge_point(from_rect, to_rect.center());
-            let to_pt = edge_point(to_rect, from_rect.center());
-
-            // Draw a faint line for signals that don't have a visible edge
-            let has_edge = self.graphic_edges.iter().any(|e|
-                (e.from == signal.from && e.to == signal.to) ||
-                (e.from == signal.to && e.to == signal.from)
-            );
-            if !has_edge {
-                let faint_stroke = egui::Stroke::new(1.0 * zoom, link_kind_color(&signal.kind).gamma_multiply(0.25));
-                painter.line_segment([from_pt, to_pt], faint_stroke);
-            }
-
-            // Animate: cycle every 4 seconds, using corrected relative time
-            let relative_t = time - (signal.started_at - epoch_offset);
-            let t = ((relative_t % 4.0 + 4.0) % 4.0 / 4.0) as f32; // ensure positive modulo
-            let dot_pos = from_pt + (to_pt - from_pt) * t;
-            let color = link_kind_color(&signal.kind);
-            painter.circle_filled(dot_pos, 3.5 * zoom, color);
-        }
-
-        // Draw agent nodes
-        for agent in &self.graphic_agents {
-            let Some(&pos) = positions.get(&agent.id) else { continue };
-
-            let node_rect = egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h));
-
-            // Clip check
-            if !canvas_rect.intersects(node_rect) {
-                continue;
-            }
-
-            // Node background
-            let bg_color = match agent.status.as_str() {
-                "working" => agent.color.gamma_multiply(0.3),
-                "done" => egui::Color32::from_rgb(30, 40, 30),
-                _ => egui::Color32::from_rgb(25, 30, 45),
-            };
-            painter.rect_filled(node_rect, 6.0 * zoom, bg_color);
-            painter.rect_stroke(
-                node_rect,
-                6.0 * zoom,
-                egui::Stroke::new(
-                    if agent.status == "working" { 2.0 } else { 1.0 } * zoom,
-                    if agent.status == "working" {
-                        agent.color
-                    } else if agent.status == "done" {
-                        egui::Color32::from_rgb(34, 197, 94)
-                    } else {
-                        egui::Color32::from_rgb(75, 85, 99)
-                    },
-                ),
-                egui::epaint::StrokeKind::Middle,
-            );
-
-            // Working glow pulse
-            if agent.status == "working" {
-                let pulse = (0.15 + 0.1 * (time * 2.0).sin() as f32).max(0.0);
-                painter.rect_stroke(
-                    node_rect.expand(2.0 * zoom),
-                    8.0 * zoom,
-                    egui::Stroke::new(
-                        1.5 * zoom,
-                        agent.color.gamma_multiply(pulse),
-                    ),
-                    egui::epaint::StrokeKind::Outside,
-                );
-            }
-
-            // Role icon (use text symbols that egui can render)
-            let icon = match agent.role.as_str() {
-                "orchestrator" => "\u{2605}", // star
-                "worker" => "\u{25A0}",       // filled square
-                "peer" => "\u{25C6}",         // diamond
-                "human" => "\u{25CF}",        // filled circle
-                _ => "\u{25CB}",              // open circle
-            };
-            let icon_pos = pos + egui::vec2(6.0 * zoom, 6.0 * zoom);
-            painter.text(
-                icon_pos,
-                egui::Align2::LEFT_TOP,
-                icon,
-                egui::FontId::proportional(12.0 * zoom),
-                egui::Color32::WHITE,
-            );
-
-            // Agent name
-            let name_pos = pos + egui::vec2(22.0 * zoom, 6.0 * zoom);
-            let display_name = if agent.name.len() > 14 {
-                format!("{}..", &agent.name[..12])
-            } else {
-                agent.name.clone()
-            };
-            painter.text(
-                name_pos,
-                egui::Align2::LEFT_TOP,
-                &display_name,
-                egui::FontId::monospace(10.0 * zoom),
-                egui::Color32::WHITE,
-            );
-
-            // Status + last tool
-            let status_color = match agent.status.as_str() {
-                "working" => egui::Color32::from_rgb(34, 197, 94),
-                "done" => egui::Color32::from_rgb(156, 163, 175),
-                _ => egui::Color32::from_rgb(75, 85, 99),
-            };
-            let status_text = if !agent.last_tool.is_empty() {
-                format!("{} > {}", agent.status, agent.last_tool)
-            } else {
-                agent.status.clone()
-            };
-            let status_display = if status_text.len() > 20 {
-                format!("{}..", &status_text[..floor_char_boundary(&status_text, 18)])
-            } else {
-                status_text
-            };
-            painter.text(
-                pos + egui::vec2(6.0 * zoom, 32.0 * zoom),
-                egui::Align2::LEFT_TOP,
-                &status_display,
-                egui::FontId::monospace(8.5 * zoom),
-                status_color,
-            );
-
-            // Done checkmark
-            if agent.status == "done" {
-                painter.text(
-                    pos + egui::vec2(node_w - 14.0 * zoom, 6.0 * zoom),
-                    egui::Align2::LEFT_TOP,
-                    "\u{2713}",
-                    egui::FontId::proportional(14.0 * zoom),
-                    egui::Color32::from_rgb(34, 197, 94),
-                );
-            }
-        }
-
-        // ── All text painted on canvas (scoreboard + agent summary) ──
 
         // Collect tool counts and connections for summary
         let mut tool_counts: std::collections::HashMap<String, std::collections::HashMap<String, usize>> =
@@ -4331,105 +4078,373 @@ Provide helpful, detailed responses based on tool results.{}",
             }
         }
 
-        // Scoreboard (top-left)
         let total = self.graphic_agents.len();
         let working = self.graphic_agents.iter().filter(|a| a.status == "working").count();
         let done = self.graphic_agents.iter().filter(|a| a.status == "done").count();
         let idle = total - working - done;
-        let score_text = format!(
-            "Agents: {}  |  Working: {}  |  Done: {}  |  Idle: {}  |  Edges: {}",
-            total, working, done, idle, self.graphic_edges.len()
-        );
-        painter.text(
-            canvas_rect.min + egui::vec2(8.0, 8.0),
-            egui::Align2::LEFT_TOP,
-            &score_text,
-            egui::FontId::monospace(10.0),
-            egui::Color32::from_rgb(156, 163, 175),
-        );
 
-        // Agent summary (bottom of canvas)
-        let line_h = 14.0;
-        let summary_h = line_h * self.graphic_agents.len() as f32 + 20.0;
-        let summary_top = canvas_rect.bottom() - summary_h;
-
-        // Summary background bar
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                egui::pos2(canvas_rect.left(), summary_top),
-                canvas_rect.max,
-            ),
-            0.0,
-            egui::Color32::from_rgba_premultiplied(10, 14, 25, 220),
-        );
-
-        // Divider line
-        painter.line_segment(
-            [
-                egui::pos2(canvas_rect.left(), summary_top),
-                egui::pos2(canvas_rect.right(), summary_top),
-            ],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 65, 80)),
-        );
-
-        // "Summary" label
-        painter.text(
-            egui::pos2(canvas_rect.left() + 8.0, summary_top + 3.0),
-            egui::Align2::LEFT_TOP,
-            "Agent Summary",
-            egui::FontId::monospace(10.0),
-            egui::Color32::from_rgb(180, 180, 190),
-        );
-
-        // Each agent on one line
-        let font = egui::FontId::monospace(9.5);
-        for (i, agent) in self.graphic_agents.iter().enumerate() {
-            let y = summary_top + 18.0 + i as f32 * line_h;
-            let x = canvas_rect.left() + 10.0;
-
-            // Status dot
-            let dot_color = match agent.status.as_str() {
-                "working" => egui::Color32::from_rgb(34, 197, 94),
-                "done" => egui::Color32::from_rgb(156, 163, 175),
-                _ => egui::Color32::from_rgb(75, 85, 99),
+        // ── Top toolbar ──
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if ui.add(egui::Button::new(
+                egui::RichText::new("\u{21BB} Reload").size(11.0)
+            ).corner_radius(4.0).fill(egui::Color32::from_rgb(245, 247, 250))).clicked() {
+                let sid = self.graphic_loaded_config.clone();
+                self.load_graphic_data(&sid);
+            }
+            ui.separator();
+            if ui.add(egui::Button::new(egui::RichText::new("+").size(12.0).strong())
+                .corner_radius(4.0).fill(egui::Color32::from_rgb(245, 247, 250)).min_size(egui::vec2(24.0, 20.0))).clicked() {
+                self.graphic_zoom = (self.graphic_zoom + 0.15).min(3.0);
+            }
+            if ui.add(egui::Button::new(egui::RichText::new("\u{2212}").size(12.0).strong())
+                .corner_radius(4.0).fill(egui::Color32::from_rgb(245, 247, 250)).min_size(egui::vec2(24.0, 20.0))).clicked() {
+                self.graphic_zoom = (self.graphic_zoom - 0.15).max(0.3);
+            }
+            ui.separator();
+            // Status pills
+            let pill = |ui: &mut egui::Ui, label: &str, count: usize, color: egui::Color32| {
+                let text = format!("{} {}", count, label);
+                ui.add(egui::Label::new(
+                    egui::RichText::new(text).size(10.5).color(color)
+                ));
             };
-            painter.circle_filled(egui::pos2(x + 4.0, y + 5.0), 3.0, dot_color);
+            pill(ui, "Working", working, egui::Color32::from_rgb(34, 197, 94));
+            pill(ui, "Done", done, egui::Color32::from_rgb(156, 163, 175));
+            pill(ui, "Idle", idle, egui::Color32::from_rgb(120, 130, 140));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(egui::RichText::new(format!("{} agents", total)).size(10.5).color(egui::Color32::from_rgb(100, 110, 120)));
+            });
+        });
+        ui.add_space(2.0);
 
-            // Role icon
-            let icon = match agent.role.as_str() {
-                "orchestrator" => "\u{2605}",
-                "worker" => "\u{25A0}",
-                _ => "\u{25CB}",
-            };
+        // ── Diagram area (light background, scrollable) ──
+        let diagram_height = (ui.available_height() - 160.0).max(180.0);
 
-            // Build summary line: icon name [status] tools → targets
-            let mut line = format!("{} {} [{}]", icon, agent.name, agent.status);
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgb(250, 251, 253))
+            .corner_radius(8.0)
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(228, 232, 238)))
+            .inner_margin(0.0)
+            .show(ui, |ui| {
+                let canvas_size = egui::vec2(ui.available_width().max(200.0), diagram_height);
+                let (response, painter) =
+                    ui.allocate_painter(canvas_size, egui::Sense::click_and_drag());
+                let canvas_rect = response.rect;
 
-            if let Some(tools) = tool_counts.get(&agent.id) {
-                let tool_parts: Vec<String> = tools
-                    .iter()
-                    .map(|(t, c)| format!("{}({})", t, c))
-                    .collect();
-                let tools_str = tool_parts.join(", ");
-                if tools_str.len() > 50 {
-                    line.push_str(&format!("  {}..", &tools_str[..floor_char_boundary(&tools_str, 48)]));
-                } else {
-                    line.push_str(&format!("  {}", tools_str));
+                if response.dragged() {
+                    self.graphic_pan += response.drag_delta();
                 }
-            }
 
-            if let Some(conns) = connections.get(&agent.id) {
-                line.push_str(&format!("  \u{2192} {}", conns.join(", ")));
-            }
+                let zoom = self.graphic_zoom;
+                let pan = self.graphic_pan;
+                let origin = canvas_rect.min.to_vec2() + pan;
 
-            painter.text(
-                egui::pos2(x + 12.0, y),
-                egui::Align2::LEFT_TOP,
-                &line,
-                font.clone(),
-                agent.color,
-            );
-        }
+                // Node dimensions — wider, rounded cards
+                let node_w = 140.0 * zoom;
+                let node_h = 52.0 * zoom;
+
+                // Build position lookup
+                let positions: std::collections::HashMap<String, egui::Pos2> = self
+                    .graphic_agents.iter()
+                    .map(|a| {
+                        let pos = egui::pos2(origin.x + a.x * zoom, origin.y + a.y * zoom);
+                        (a.id.clone(), pos)
+                    })
+                    .collect();
+
+                let node_rects: std::collections::HashMap<String, egui::Rect> = positions.iter()
+                    .map(|(id, &pos)| {
+                        (id.clone(), egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h)))
+                    })
+                    .collect();
+
+                let edge_point = |rect: &egui::Rect, target: egui::Pos2| -> egui::Pos2 {
+                    let center = rect.center();
+                    let dx = target.x - center.x;
+                    let dy = target.y - center.y;
+                    if dx.abs() < 0.001 && dy.abs() < 0.001 { return center; }
+                    let hw = rect.width() / 2.0;
+                    let hh = rect.height() / 2.0;
+                    let sx = if dx.abs() > 0.001 { hw / dx.abs() } else { f32::MAX };
+                    let sy = if dy.abs() > 0.001 { hh / dy.abs() } else { f32::MAX };
+                    let s = sx.min(sy);
+                    egui::pos2(center.x + dx * s, center.y + dy * s)
+                };
+
+                // ── Determine active edges (delegation in progress) ──
+                // An edge is "active" if the source agent is currently "working"
+                let active_agent_ids: std::collections::HashSet<&str> = self.graphic_agents.iter()
+                    .filter(|a| a.status == "working")
+                    .map(|a| a.id.as_str())
+                    .collect();
+
+                // ── Draw edges — color changes based on delegation state ──
+                for edge in &self.graphic_edges {
+                    let Some(from_rect) = node_rects.get(&edge.from) else { continue };
+                    let Some(to_rect) = node_rects.get(&edge.to) else { continue };
+                    let from_pt = edge_point(from_rect, to_rect.center());
+                    let to_pt = edge_point(to_rect, from_rect.center());
+
+                    // Active = source is working (delegating)
+                    let is_active = active_agent_ids.contains(edge.from.as_str());
+                    let (edge_color, thickness) = if is_active {
+                        (egui::Color32::from_rgb(99, 102, 241), 2.5 * zoom) // indigo, thicker
+                    } else {
+                        (egui::Color32::from_rgb(210, 215, 225), 1.2 * zoom) // light gray
+                    };
+
+                    let stroke = egui::Stroke::new(thickness, edge_color);
+                    painter.line_segment([from_pt, to_pt], stroke);
+
+                    // Arrow head
+                    let dir = (to_pt - from_pt).normalized();
+                    let perp = egui::vec2(-dir.y, dir.x);
+                    let arrow_size = 6.0 * zoom;
+                    let tip = to_pt;
+                    let left = tip - dir * arrow_size + perp * arrow_size * 0.4;
+                    let right = tip - dir * arrow_size - perp * arrow_size * 0.4;
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![tip, left, right],
+                        edge_color,
+                        egui::Stroke::NONE,
+                    ));
+                }
+
+                // Draw faint lines for signals without explicit edges
+                for signal in &self.graphic_signals {
+                    if signal.from.is_empty() || signal.to.is_empty() { continue; }
+                    let has_edge = self.graphic_edges.iter().any(|e|
+                        (e.from == signal.from && e.to == signal.to) ||
+                        (e.from == signal.to && e.to == signal.from)
+                    );
+                    if !has_edge {
+                        let Some(from_rect) = node_rects.get(&signal.from) else { continue };
+                        let Some(to_rect) = node_rects.get(&signal.to) else { continue };
+                        let from_pt = edge_point(from_rect, to_rect.center());
+                        let to_pt = edge_point(to_rect, from_rect.center());
+                        let is_active = active_agent_ids.contains(signal.from.as_str());
+                        let color = if is_active {
+                            egui::Color32::from_rgb(150, 155, 220)
+                        } else {
+                            egui::Color32::from_rgb(220, 225, 235)
+                        };
+                        painter.line_segment([from_pt, to_pt], egui::Stroke::new(1.0 * zoom, color));
+                    }
+                }
+
+                // ── Draw agent node cards ──
+                for agent in &self.graphic_agents {
+                    let Some(&pos) = positions.get(&agent.id) else { continue };
+                    let node_rect = egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h));
+                    if !canvas_rect.intersects(node_rect) { continue; }
+
+                    // Card shadow
+                    painter.rect_filled(
+                        node_rect.translate(egui::vec2(1.0, 2.0)),
+                        10.0 * zoom,
+                        egui::Color32::from_rgba_premultiplied(0, 0, 0, 12),
+                    );
+
+                    // Card background
+                    painter.rect_filled(node_rect, 10.0 * zoom, egui::Color32::WHITE);
+
+                    // Left accent strip (3px wide, colored by agent)
+                    let accent_color = match agent.status.as_str() {
+                        "working" => agent.color,
+                        "done" => egui::Color32::from_rgb(34, 197, 94),
+                        _ => egui::Color32::from_rgb(200, 205, 215),
+                    };
+                    let accent_rect = egui::Rect::from_min_size(
+                        node_rect.min,
+                        egui::vec2(3.5 * zoom, node_h),
+                    );
+                    painter.rect_filled(accent_rect, egui::Rounding {
+                        nw: (10.0 * zoom) as u8, sw: (10.0 * zoom) as u8, ne: 0, se: 0,
+                    }, accent_color);
+
+                    // Card border
+                    let border_color = if agent.status == "working" {
+                        agent.color.gamma_multiply(0.4)
+                    } else {
+                        egui::Color32::from_rgb(228, 232, 238)
+                    };
+                    painter.rect_stroke(
+                        node_rect, 10.0 * zoom,
+                        egui::Stroke::new(1.0, border_color),
+                        egui::epaint::StrokeKind::Middle,
+                    );
+
+                    // Status indicator dot (top-right)
+                    let dot_color = match agent.status.as_str() {
+                        "working" => egui::Color32::from_rgb(34, 197, 94),
+                        "done" => egui::Color32::from_rgb(156, 163, 175),
+                        _ => egui::Color32::from_rgb(200, 205, 215),
+                    };
+                    let dot_pos = egui::pos2(
+                        node_rect.right() - 10.0 * zoom,
+                        node_rect.top() + 10.0 * zoom,
+                    );
+                    painter.circle_filled(dot_pos, 4.0 * zoom, dot_color);
+                    // Pulse ring for working agents
+                    if agent.status == "working" {
+                        let pulse = (0.3 + 0.3 * (time * 2.5).sin() as f32).max(0.0);
+                        painter.circle_stroke(dot_pos, 6.0 * zoom,
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(34, 197, 94).gamma_multiply(pulse)));
+                    }
+
+                    // Agent name
+                    let name_x = node_rect.left() + 10.0 * zoom;
+                    let display_name = if agent.name.len() > 16 {
+                        format!("{}..", &agent.name[..floor_char_boundary(&agent.name, 14)])
+                    } else {
+                        agent.name.clone()
+                    };
+                    painter.text(
+                        egui::pos2(name_x, node_rect.top() + 8.0 * zoom),
+                        egui::Align2::LEFT_TOP,
+                        &display_name,
+                        egui::FontId::proportional(11.0 * zoom),
+                        egui::Color32::from_rgb(31, 35, 40),
+                    );
+
+                    // Role badge
+                    let role_label = match agent.role.as_str() {
+                        "orchestrator" => "Orchestrator",
+                        "worker" => "Worker",
+                        "peer" => "Peer",
+                        "human" => "Human",
+                        _ => "Agent",
+                    };
+                    painter.text(
+                        egui::pos2(name_x, node_rect.top() + 24.0 * zoom),
+                        egui::Align2::LEFT_TOP,
+                        role_label,
+                        egui::FontId::proportional(8.5 * zoom),
+                        egui::Color32::from_rgb(130, 140, 155),
+                    );
+
+                    // Last tool (bottom-right, small)
+                    if !agent.last_tool.is_empty() {
+                        let tool_display = if agent.last_tool.len() > 14 {
+                            format!("{}..", &agent.last_tool[..floor_char_boundary(&agent.last_tool, 12)])
+                        } else {
+                            agent.last_tool.clone()
+                        };
+                        painter.text(
+                            egui::pos2(node_rect.right() - 8.0 * zoom, node_rect.bottom() - 12.0 * zoom),
+                            egui::Align2::RIGHT_TOP,
+                            &tool_display,
+                            egui::FontId::proportional(7.5 * zoom),
+                            egui::Color32::from_rgb(160, 170, 185),
+                        );
+                    }
+
+                    // Done checkmark
+                    if agent.status == "done" {
+                        painter.text(
+                            egui::pos2(node_rect.right() - 10.0 * zoom, node_rect.bottom() - 14.0 * zoom),
+                            egui::Align2::RIGHT_TOP,
+                            "\u{2713}",
+                            egui::FontId::proportional(12.0 * zoom),
+                            egui::Color32::from_rgb(34, 197, 94),
+                        );
+                    }
+                }
+            });
+
+        ui.add_space(4.0);
+
+        // ── Agent Summary panel (stable summary of what each agent is doing) ──
+        egui::Frame::new()
+            .fill(egui::Color32::from_rgb(248, 249, 252))
+            .corner_radius(8.0)
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(228, 232, 238)))
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Agent Activity")
+                        .size(12.0)
+                        .strong()
+                        .color(egui::Color32::from_rgb(31, 35, 40)),
+                );
+                ui.add_space(4.0);
+
+                egui::ScrollArea::vertical()
+                    .max_height(140.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for agent in &self.graphic_agents {
+                            // Build a stable summary description
+                            let tool_summary = tool_counts.get(&agent.id).map(|tools| {
+                                let total: usize = tools.values().sum();
+                                let unique = tools.len();
+                                // Show top 3 most-used tools
+                                let mut sorted_tools: Vec<(&String, &usize)> = tools.iter().collect();
+                                sorted_tools.sort_by(|a, b| b.1.cmp(a.1));
+                                let top: Vec<String> = sorted_tools.iter().take(3)
+                                    .map(|(t, c)| if **c > 1 { format!("{} \u{00D7}{}", t, c) } else { (*t).clone() })
+                                    .collect();
+                                (total, unique, top.join(", "))
+                            });
+
+                            let conns = connections.get(&agent.id);
+
+                            // Build description
+                            let description = match agent.status.as_str() {
+                                "working" => {
+                                    if let Some((total, _, ref top_tools)) = tool_summary {
+                                        if let Some(c) = conns {
+                                            format!("Running {} tools ({}) — delegating to {}", total, top_tools, c.join(", "))
+                                        } else {
+                                            format!("Running {} tools ({})", total, top_tools)
+                                        }
+                                    } else if let Some(c) = conns {
+                                        format!("Delegating work to {}", c.join(", "))
+                                    } else {
+                                        "Processing...".to_string()
+                                    }
+                                }
+                                "done" => {
+                                    if let Some((total, unique, _)) = tool_summary {
+                                        format!("Completed — used {} tools ({} unique)", total, unique)
+                                    } else {
+                                        "Completed".to_string()
+                                    }
+                                }
+                                _ => "Waiting for task".to_string(),
+                            };
+
+                            // Render row
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                // Status dot
+                                let dot_color = match agent.status.as_str() {
+                                    "working" => egui::Color32::from_rgb(34, 197, 94),
+                                    "done" => egui::Color32::from_rgb(156, 163, 175),
+                                    _ => egui::Color32::from_rgb(200, 205, 215),
+                                };
+                                let (dot_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                ui.painter().circle_filled(dot_rect.center(), 3.5, dot_color);
+
+                                // Name
+                                let role_icon = match agent.role.as_str() {
+                                    "orchestrator" => "\u{2605} ",
+                                    _ => "",
+                                };
+                                ui.label(egui::RichText::new(format!("{}{}", role_icon, agent.name))
+                                    .size(11.0).strong().color(egui::Color32::from_rgb(31, 35, 40)));
+                            });
+                            // Description on next line, indented
+                            ui.horizontal(|ui| {
+                                ui.add_space(20.0);
+                                ui.label(egui::RichText::new(&description)
+                                    .size(10.5).color(egui::Color32::from_rgb(100, 110, 125)));
+                            });
+                        }
+                    });
+            });
 
         // Request repaint for animation
         if working > 0 || !self.graphic_signals.is_empty() {

@@ -298,7 +298,7 @@ impl SkillsView {
                 if ui
                     .add(
                         egui::Button::new(
-                            egui::RichText::new("Upload SKILL.md")
+                            egui::RichText::new("Upload Skill")
                                 .color(egui::Color32::WHITE),
                         )
                         .fill(egui::Color32::from_rgb(59, 130, 246)),
@@ -306,10 +306,55 @@ impl SkillsView {
                     .clicked()
                 {
                     if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Markdown", &["md"])
+                        .add_filter("Skill files", &["md", "zip"])
                         .pick_file()
                     {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
+                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                        if ext == "zip" {
+                            // Handle ZIP: extract SKILL.md from inside
+                            if let Ok(bytes) = std::fs::read(&path) {
+                                let cursor = std::io::Cursor::new(&bytes);
+                                if let Ok(mut archive) = zip::ZipArchive::new(cursor) {
+                                    let mut skill_content = String::new();
+                                    for i in 0..archive.len() {
+                                        if let Ok(mut file) = archive.by_index(i) {
+                                            let fname = file.name().to_string();
+                                            if fname.ends_with("SKILL.md") || fname.ends_with("skill.md") {
+                                                use std::io::Read;
+                                                let _ = file.read_to_string(&mut skill_content);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if skill_content.is_empty() {
+                                        tracing::warn!("ZIP does not contain SKILL.md");
+                                    } else {
+                                        let (name, description, version, author, allowed_tools, body) =
+                                            Self::parse_md_frontmatter(&skill_content);
+                                        let file_name = if name.is_empty() {
+                                            path.file_stem()
+                                                .map(|s| s.to_string_lossy().to_string())
+                                                .unwrap_or_else(|| "uploaded-skill".to_string())
+                                        } else {
+                                            name
+                                        };
+                                        self.upload_preview = Some(UploadPreview {
+                                            name: file_name,
+                                            description: if description.is_empty() {
+                                                format!("Uploaded from {}", path.display())
+                                            } else {
+                                                description
+                                            },
+                                            version,
+                                            author,
+                                            allowed_tools,
+                                            content: body,
+                                            file_path: path.display().to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                        } else if let Ok(content) = std::fs::read_to_string(&path) {
                             let (name, description, version, author, allowed_tools, body) =
                                 Self::parse_md_frontmatter(&content);
 
@@ -1020,12 +1065,64 @@ impl SkillsView {
 
         if do_install {
             if let Some(preview) = self.upload_preview.take() {
+                let slug = preview.name.to_lowercase()
+                    .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
+                let slug = slug.trim_matches('-').to_string();
+
+                // Save SKILL.md and supporting files to data/skills/<slug>/
+                let skill_dir = data::data_dir().join("skills").join(&slug);
+                let content_for_disk = preview.content.clone();
+                let file_path = preview.file_path.clone();
+                let skill_dir_clone = skill_dir.clone();
+                runtime.spawn(async move {
+                    let _ = tokio::fs::create_dir_all(&skill_dir_clone).await;
+                    // Write SKILL.md
+                    let _ = tokio::fs::write(skill_dir_clone.join("SKILL.md"), &content_for_disk).await;
+                    // If source was a ZIP, also extract supporting files
+                    if file_path.ends_with(".zip") {
+                        if let Ok(bytes) = tokio::fs::read(&file_path).await {
+                            let cursor = std::io::Cursor::new(&bytes);
+                            if let Ok(mut archive) = zip::ZipArchive::new(cursor) {
+                                // Find root prefix
+                                let mut root_prefix = String::new();
+                                for i in 0..archive.len() {
+                                    if let Ok(f) = archive.by_index(i) {
+                                        let n = f.name().to_string();
+                                        if n.ends_with("SKILL.md") || n.ends_with("skill.md") {
+                                            if let Some(pos) = n.rfind('/') {
+                                                root_prefix = n[..=pos].to_string();
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                for i in 0..archive.len() {
+                                    if let Ok(mut f) = archive.by_index(i) {
+                                        if f.is_dir() { continue; }
+                                        let raw = f.name().to_string();
+                                        let rel = raw.strip_prefix(&root_prefix).unwrap_or(&raw);
+                                        if rel.is_empty() || rel == "SKILL.md" { continue; }
+                                        let dest = skill_dir_clone.join(rel);
+                                        if let Some(parent) = dest.parent() {
+                                            let _ = std::fs::create_dir_all(parent);
+                                        }
+                                        use std::io::Read;
+                                        let mut buf = Vec::new();
+                                        let _ = f.read_to_end(&mut buf);
+                                        let _ = std::fs::write(&dest, &buf);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
                 let skill = Skill {
                     id: uuid::Uuid::new_v4().to_string(),
                     name: preview.name,
                     description: preview.description,
                     source: "upload".to_string(),
-                    script: preview.content,
+                    script: slug.clone(),
                     enabled: true,
                     installed_at: chrono::Utc::now().to_rfc3339(),
                     review_status: Some("pending".to_string()),
@@ -1549,64 +1646,58 @@ impl SkillsView {
         ui.add_space(16.0);
 
         // --- Action buttons ---
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            // Delete button
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new("Delete Skill")
-                            .color(egui::Color32::from_rgb(239, 68, 68)),
-                    ),
-                )
-                .clicked()
-            {
-                self.confirm_delete_id = Some(sel_id.clone());
+            if self.confirm_delete_id.as_deref() == Some(&sel_id) {
+                // Confirmation inline
+                ui.label(
+                    egui::RichText::new("Delete this skill?")
+                        .color(egui::Color32::from_rgb(220, 38, 38)),
+                );
+                if ui.button("Cancel").clicked() {
+                    self.confirm_delete_id = None;
+                }
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Yes, Delete")
+                                .color(egui::Color32::WHITE),
+                        )
+                        .fill(egui::Color32::from_rgb(220, 38, 38)),
+                    )
+                    .clicked()
+                {
+                    // Also delete skill files from disk
+                    let skill_name = self.skills.iter().find(|s| s.id == sel_id)
+                        .map(|s| s.name.clone()).unwrap_or_default();
+                    let slug = skill_name.to_lowercase()
+                        .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
+                    let skill_dir = data::data_dir().join("skills").join(slug.trim_matches('-'));
+                    let _ = std::fs::remove_dir_all(&skill_dir);
+
+                    self.skills.retain(|s| s.id != sel_id);
+                    let skills = self.skills.clone();
+                    runtime.spawn(async move {
+                        data::save_skills(&skills).await;
+                    });
+                    self.selected_skill_id = None;
+                    self.confirm_delete_id = None;
+                    self.editing_content = false;
+                    self.editing_description = false;
+                }
+            } else {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Delete Skill")
+                                .color(egui::Color32::from_rgb(239, 68, 68)),
+                        ),
+                    )
+                    .clicked()
+                {
+                    self.confirm_delete_id = Some(sel_id.clone());
+                }
             }
         });
-
-        // --- Delete confirmation ---
-        if self.confirm_delete_id.as_deref() == Some(&sel_id) {
-            ui.add_space(8.0);
-            egui::Frame::new()
-                .inner_margin(egui::Margin::same(10))
-                .corner_radius(6.0)
-                .fill(egui::Color32::from_rgb(50, 20, 20))
-                .stroke(egui::Stroke::new(
-                    1.0,
-                    egui::Color32::from_rgb(239, 68, 68),
-                ))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new("Are you sure you want to delete this skill?")
-                            .color(egui::Color32::from_rgb(239, 68, 68)),
-                    );
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
-                            self.confirm_delete_id = None;
-                        }
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new("Confirm Delete")
-                                        .color(egui::Color32::WHITE),
-                                )
-                                .fill(egui::Color32::from_rgb(220, 38, 38)),
-                            )
-                            .clicked()
-                        {
-                            self.skills.retain(|s| s.id != sel_id);
-                            let skills = self.skills.clone();
-                            runtime.spawn(async move {
-                                data::save_skills(&skills).await;
-                            });
-                            self.selected_skill_id = None;
-                            self.confirm_delete_id = None;
-                            self.editing_content = false;
-                            self.editing_description = false;
-                        }
-                    });
-                });
-        }
     }
 }

@@ -123,7 +123,7 @@ fn find_skill_file(skill: &Skill) -> Option<PathBuf> {
     };
 
     let candidates = [
-        PathBuf::from("skills").join(&slug).join("SKILL.md"),
+        crate::server::data::data_dir().join("skills").join(&slug).join("SKILL.md"),
         PathBuf::from("Tiger_bot")
             .join("skills")
             .join(&slug)
@@ -140,7 +140,7 @@ fn find_skill_file(skill: &Skill) -> Option<PathBuf> {
     let name_slug = slugify(&skill.name);
     if name_slug != slug {
         let candidates2 = [
-            PathBuf::from("skills").join(&name_slug).join("SKILL.md"),
+            crate::server::data::data_dir().join("skills").join(&name_slug).join("SKILL.md"),
             PathBuf::from("Tiger_bot")
                 .join("skills")
                 .join(&name_slug)
@@ -297,11 +297,117 @@ async fn upload_skill(mut multipart: Multipart) -> impl IntoResponse {
         .to_lowercase();
 
     if ext == "zip" {
-        // ZIP upload support requires the `zip` crate; return a stub for now.
-        return (
-            StatusCode::NOT_IMPLEMENTED,
-            Json(json!({"error": "ZIP upload not yet implemented in Rust backend. Upload a single SKILL.md instead."})),
-        );
+        // Extract ZIP: find SKILL.md inside, extract all files to skill directory
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut archive = match zip::ZipArchive::new(cursor) {
+            Ok(a) => a,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": format!("Invalid ZIP file: {e}")})),
+                );
+            }
+        };
+
+        // Find SKILL.md in the archive
+        let mut skill_content = String::new();
+        let mut zip_root_prefix = String::new();
+        for i in 0..archive.len() {
+            if let Ok(file) = archive.by_index(i) {
+                let name = file.name().to_string();
+                if name.ends_with("SKILL.md") || name.ends_with("skill.md") {
+                    // Determine the root prefix (e.g. "my_skill/" if file is "my_skill/SKILL.md")
+                    if let Some(pos) = name.rfind('/') {
+                        zip_root_prefix = name[..=pos].to_string();
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Re-read SKILL.md content
+        for i in 0..archive.len() {
+            if let Ok(mut file) = archive.by_index(i) {
+                let name = file.name().to_string();
+                if name.ends_with("SKILL.md") || name.ends_with("skill.md") {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = file.read_to_string(&mut buf);
+                    skill_content = buf;
+                    break;
+                }
+            }
+        }
+
+        if skill_content.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "ZIP does not contain a SKILL.md file"})),
+            );
+        }
+
+        let (mut name, description) = parse_frontmatter(&skill_content);
+        if name.is_empty() {
+            name = original_name.trim_end_matches(".zip").to_string();
+        }
+        let sanitized = slugify(&name);
+        let skill_dir = crate::server::data::data_dir().join("skills").join(&sanitized);
+        let _ = tokio::fs::create_dir_all(&skill_dir).await;
+
+        // Extract all files from the ZIP into the skill directory
+        for i in 0..archive.len() {
+            if let Ok(mut file) = archive.by_index(i) {
+                let raw_name = file.name().to_string();
+                if file.is_dir() {
+                    continue;
+                }
+                // Strip the common root prefix
+                let relative = raw_name.strip_prefix(&zip_root_prefix).unwrap_or(&raw_name);
+                if relative.is_empty() {
+                    continue;
+                }
+                let dest = skill_dir.join(relative);
+                if let Some(parent) = dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                use std::io::Read;
+                let mut buf = Vec::new();
+                let _ = file.read_to_end(&mut buf);
+                let _ = std::fs::write(&dest, &buf);
+            }
+        }
+
+        // Register in skills.json
+        let mut skills = get_skills().await;
+        if let Some(idx) = skills.iter().position(|s| s.name == name && s.source == "custom") {
+            skills[idx].script = name.clone();
+            if !description.is_empty() {
+                skills[idx].description = description;
+            }
+            let result = serde_json::to_value(&skills[idx]).unwrap();
+            save_skills(&skills).await;
+            return (StatusCode::OK, Json(result));
+        }
+
+        let skill = Skill {
+            id: Uuid::new_v4().to_string(),
+            name: name.clone(),
+            description: if description.is_empty() {
+                format!("Custom skill from {}", original_name)
+            } else {
+                description
+            },
+            source: "custom".to_string(),
+            script: name.clone(),
+            enabled: true,
+            installed_at: chrono::Utc::now().to_rfc3339(),
+            review_status: None,
+            auto_meta: None,
+        };
+        let result = serde_json::to_value(&skill).unwrap();
+        skills.push(skill);
+        save_skills(&skills).await;
+        return (StatusCode::OK, Json(result));
     }
 
     // --- Single SKILL.md file upload ---
@@ -321,7 +427,7 @@ async fn upload_skill(mut multipart: Multipart) -> impl IntoResponse {
     }
 
     let sanitized = slugify(&name);
-    let skill_dir = PathBuf::from("skills").join(&sanitized);
+    let skill_dir = crate::server::data::data_dir().join("skills").join(&sanitized);
     let _ = tokio::fs::create_dir_all(&skill_dir).await;
     let skill_file = skill_dir.join("SKILL.md");
     let _ = tokio::fs::write(&skill_file, &content).await;

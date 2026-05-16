@@ -148,6 +148,9 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         }
     }
 
+    // Pre-install bundled skills (web-search)
+    install_bundled_skills(&data_dir).await;
+
     // Auto-generate default file token
     let tokens = get_file_tokens().await;
     if tokens.is_empty() {
@@ -219,4 +222,52 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     tracing::info!("Sandbox directory: {}", sandbox_dir);
 
     axum::serve(listener, app).await.expect("Server error");
+}
+
+/// Install bundled skills on first run (embedded in the binary via include_str!/include_bytes!)
+async fn install_bundled_skills(data_dir: &str) {
+    let skills_dir = format!("{}/skills/web-search", data_dir);
+    let skill_md_path = format!("{}/SKILL.md", skills_dir);
+
+    // Skip if already installed on disk
+    if fs::metadata(&skill_md_path).await.is_ok() {
+        return;
+    }
+
+    tracing::info!("[init] Installing bundled skill: web-search");
+
+    // Create directories
+    let _ = fs::create_dir_all(format!("{}/scripts", skills_dir)).await;
+
+    // Write bundled files
+    let skill_md = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/SKILL.md"));
+    let search_py = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/scripts/search.py"));
+    let meta_json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/_meta.json"));
+
+    let _ = fs::write(&skill_md_path, skill_md).await;
+    let _ = fs::write(format!("{}/scripts/search.py", skills_dir), search_py).await;
+    let _ = fs::write(format!("{}/{}", skills_dir, "_meta.json"), meta_json).await;
+
+    // Register in skills.json if not already present
+    let skills_json_path = format!("{}/skills.json", data_dir);
+    let mut skills: Vec<serde_json::Value> = fs::read_to_string(&skills_json_path)
+        .await
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    let already_registered = skills.iter().any(|s| s["name"].as_str() == Some("web-search"));
+    if !already_registered {
+        skills.push(json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "name": "web-search",
+            "description": "Search the web using DuckDuckGo — text, news, images, videos with filtering options",
+            "source": "bundled",
+            "script": "web-search",
+            "enabled": true,
+            "installedAt": chrono::Utc::now().to_rfc3339()
+        }));
+        let _ = fs::write(&skills_json_path, serde_json::to_string_pretty(&skills).unwrap_or_default()).await;
+        tracing::info!("[init] Registered web-search skill in skills.json");
+    }
 }
