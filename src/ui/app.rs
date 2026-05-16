@@ -244,7 +244,7 @@ impl TigrimOSApp {
             remote_view: RemoteView::new(),
             remote_mode: false,
             logo_texture: None,
-            sidebar_open: true,
+            sidebar_open: false,
             chat_history_expanded: false,
         }
     }
@@ -456,6 +456,7 @@ impl eframe::App for TigrimOSApp {
                             .max_height(300.0)
                             .show(ui, |ui| {
                                 let mut clicked_id: Option<String> = None;
+                                let mut delete_id: Option<String> = None;
                                 let selected_id = self.chat_view.selected_session_id.clone();
                                 for (id, title, streaming) in &sessions {
                                     let is_sel = selected_id.as_deref() == Some(id.as_str());
@@ -480,13 +481,30 @@ impl eframe::App for TigrimOSApp {
                                     .fill(bg)
                                     .corner_radius(4.0)
                                     .min_size(egui::vec2(ui.available_width(), 24.0));
-                                    if ui.add(btn).clicked() {
+                                    let resp = ui.add(btn);
+                                    if resp.clicked() {
                                         clicked_id = Some(id.clone());
                                     }
+                                    // Right-click context menu
+                                    let ctx_id = ui.id().with("chat_ctx").with(id.as_str());
+                                    if resp.secondary_clicked() {
+                                        ui.memory_mut(|mem| mem.toggle_popup(ctx_id));
+                                    }
+                                    egui::popup_below_widget(ui, ctx_id, &resp, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                                        ui.set_min_width(120.0);
+                                        if ui.add(egui::Button::new(
+                                            egui::RichText::new("\u{1F5D1} Delete Chat").size(12.0).color(egui::Color32::from_rgb(220, 38, 38)),
+                                        ).fill(egui::Color32::TRANSPARENT).min_size(egui::vec2(110.0, 26.0))).clicked() {
+                                            delete_id = Some(id.clone());
+                                        }
+                                    });
                                 }
                                 if let Some(id) = clicked_id {
                                     self.chat_view.select_session_from_sidebar(id);
                                     self.selected_tab = Tab::Chat;
+                                }
+                                if let Some(id) = delete_id {
+                                    self.chat_view.delete_session_from_sidebar(&self.runtime, &id);
                                 }
                             });
                     }

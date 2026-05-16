@@ -1538,7 +1538,7 @@ Rules:
                     {"role": "user", "content": user_msg}
                 ],
                 "temperature": 0.3,
-                "max_tokens": 4096,
+                "max_tokens": 16384,
             });
 
             let result = async {
@@ -1567,9 +1567,14 @@ Rules:
                     return Err(format!("API error: {}", err));
                 }
 
-                // Support both OpenAI and Anthropic response formats
+                // Support OpenAI, Anthropic, and reasoning model response formats
                 let raw = resp_json["choices"][0]["message"]["content"]
                     .as_str()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        // Reasoning models (Kimi, DeepSeek): content may be empty, actual output in reasoning_content
+                        resp_json["choices"][0]["message"]["reasoning_content"].as_str()
+                    })
                     .or_else(|| {
                         // Anthropic format: content[0].text
                         resp_json["content"][0]["text"].as_str()

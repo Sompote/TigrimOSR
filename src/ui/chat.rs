@@ -2572,12 +2572,16 @@ Provide helpful, detailed responses based on tool results.{}",
                     ui.add_space(24.0);
 
                     let suggestions = [
-                        "Write a Python script to analyze data",
-                        "Help me with a CSV file",
-                        "Search the web for information",
+                        "Design engineering system",
+                        "Marketing research",
                         "Explain this code",
+                        "Report from file and data analysis",
                     ];
+                    // Center suggestion chips by indenting with same margin as input card
+                    let chip_area_w = ui.available_width().min(750.0);
+                    let chip_margin = ((ui.available_width() - chip_area_w) / 2.0).max(0.0);
                     ui.horizontal_wrapped(|ui| {
+                        ui.add_space(chip_margin);
                         for suggestion in &suggestions {
                             let btn = ui.add(
                                 egui::Button::new(
@@ -2608,6 +2612,15 @@ Provide helpful, detailed responses based on tool results.{}",
 
         // Clone session id before entering closures to avoid borrow conflict
         let session_id_for_gfx = session.id.clone();
+
+        // Compute input dimensions (needed both by messages area and input card)
+        let line_count = self.input_text.chars().filter(|&c| c == '\n').count() + 1;
+        let input_rows = (line_count.max(2)).min(10);
+        let line_height = 16.0;
+        let input_bar_height = (input_rows as f32 * line_height) + 80.0;
+
+        // Only show session header, messages, etc. when a session is active (not start page)
+        if has_session {
 
         // Session header with project info
         ui.horizontal(|ui| {
@@ -3000,11 +3013,6 @@ Provide helpful, detailed responses based on tool results.{}",
         ui.separator();
 
         // Messages area - reserve space for Kimi-style input card
-        // Card layout: outer margin(10) + card padding(20) + text rows + separator(8) + toolbar(32) + bottom margin(8)
-        let line_count = self.input_text.chars().filter(|&c| c == '\n').count() + 1;
-        let input_rows = (line_count.max(2)).min(10);
-        let line_height = 16.0;
-        let input_bar_height = (input_rows as f32 * line_height) + 80.0; // 80 = card chrome + toolbar + margins
         let messages_height = (ui.available_height() - input_bar_height).max(100.0);
 
         // Clone data needed for feedback actions
@@ -3060,6 +3068,8 @@ Provide helpful, detailed responses based on tool results.{}",
         self.scroll_to_bottom = false;
 
         ui.add_space(4.0);
+
+        } // end if has_session — start page skips header/messages
 
         // ── Kimi-style input card ──────────────────────────────────
         let is_streaming = self.active_streams.contains_key(&session.id);
@@ -3133,39 +3143,62 @@ Provide helpful, detailed responses based on tool results.{}",
                                 self.pick_files();
                             }
 
-                            // Agent mode pill — shows Single Agent or Swarm type
+                            // Agent mode pill — clickable to switch mode
                             {
                                 let settings = runtime.block_on(crate::server::data::get_settings());
                                 let sub_enabled = settings.sub_agent_enabled.unwrap_or(false);
                                 let mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "single".to_string());
-                                let swarm_label = if !sub_enabled {
-                                    "Single Agent"
-                                } else {
-                                    match mode.as_str() {
-                                        "fully_auto" => "Fully Auto",
-                                        "auto" => "Auto",
-                                        "auto_swarm" => "Auto Swarm",
-                                        "manual" => "Manual",
-                                        _ => "Swarm",
-                                    }
+                                let current_mode = if !sub_enabled { "single" } else { mode.as_str() };
+                                let swarm_label = match current_mode {
+                                    "fully_auto" => "Fully Auto",
+                                    "auto" => "Auto",
+                                    "auto_swarm" => "Auto Swarm",
+                                    "manual" => "Manual",
+                                    _ => "Single Agent",
                                 };
-                                let mode_color = if !sub_enabled {
-                                    egui::Color32::from_rgb(107, 114, 128)
-                                } else {
-                                    match mode.as_str() {
-                                        "fully_auto" => egui::Color32::from_rgb(59, 130, 246),
-                                        "auto" => egui::Color32::from_rgb(34, 197, 94),
-                                        "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),
-                                        "manual" => egui::Color32::from_rgb(239, 68, 68),
-                                        _ => egui::Color32::from_rgb(59, 130, 246),
-                                    }
+                                let mode_color = match current_mode {
+                                    "fully_auto" => egui::Color32::from_rgb(59, 130, 246),
+                                    "auto" => egui::Color32::from_rgb(34, 197, 94),
+                                    "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),
+                                    "manual" => egui::Color32::from_rgb(239, 68, 68),
+                                    _ => egui::Color32::from_rgb(107, 114, 128),
                                 };
                                 let pill = egui::Button::new(
-                                    egui::RichText::new(swarm_label).size(11.0).color(egui::Color32::WHITE).strong(),
+                                    egui::RichText::new(format!("{} \u{25BE}", swarm_label)).size(11.0).color(egui::Color32::WHITE).strong(),
                                 )
                                 .fill(mode_color)
                                 .corner_radius(12.0);
-                                ui.add(pill).on_hover_text("Agent mode (configure in Settings > Agent)");
+                                let pill_resp = ui.add(pill);
+                                let popup_id = ui.id().with("agent_mode_popup");
+                                if pill_resp.clicked() {
+                                    ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+                                }
+                                egui::popup_below_widget(ui, popup_id, &pill_resp, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                                    ui.set_min_width(140.0);
+                                    let modes: &[(&str, &str, egui::Color32)] = &[
+                                        ("single", "Single Agent", egui::Color32::from_rgb(107, 114, 128)),
+                                        ("fully_auto", "Fully Auto", egui::Color32::from_rgb(59, 130, 246)),
+                                        ("auto", "Auto", egui::Color32::from_rgb(34, 197, 94)),
+                                        ("auto_swarm", "Auto Swarm", egui::Color32::from_rgb(168, 85, 247)),
+                                        ("manual", "Manual", egui::Color32::from_rgb(239, 68, 68)),
+                                    ];
+                                    for &(mode_key, label, color) in modes {
+                                        let is_selected = current_mode == mode_key;
+                                        let text = egui::RichText::new(if is_selected { format!("\u{2713} {}", label) } else { label.to_string() })
+                                            .size(12.0)
+                                            .color(color);
+                                        if ui.add(egui::Button::new(text).fill(egui::Color32::TRANSPARENT).min_size(egui::vec2(130.0, 26.0))).clicked() {
+                                            let mut new_settings = settings.clone();
+                                            if mode_key == "single" {
+                                                new_settings.sub_agent_enabled = Some(false);
+                                            } else {
+                                                new_settings.sub_agent_enabled = Some(true);
+                                                new_settings.sub_agent_mode = Some(mode_key.to_string());
+                                            }
+                                            runtime.block_on(crate::server::data::save_settings(&new_settings));
+                                        }
+                                    }
+                                });
                             }
 
                             // Attached file chips

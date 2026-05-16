@@ -4235,7 +4235,7 @@ RULES:
 
     let resp_body = match llm_call(
         &client, &sub_agent.api_key, &sub_agent.api_url, &sub_agent.model,
-        &messages, None, 0.7, 4096,
+        &messages, None, 0.7, 16384,
     ).await {
         Ok(v) => v,
         Err(e) => return json!({ "ok": false, "error": format!("API request failed: {e}") }),
@@ -4244,7 +4244,11 @@ RULES:
     let content_text = resp_body["choices"]
         .as_array()
         .and_then(|arr| arr.first())
-        .and_then(|c| c["message"]["content"].as_str())
+        .and_then(|c| {
+            let msg = &c["message"];
+            msg["content"].as_str().filter(|s| !s.is_empty())
+                .or_else(|| msg["reasoning_content"].as_str())
+        })
         .unwrap_or("");
 
     if content_text.is_empty() {
