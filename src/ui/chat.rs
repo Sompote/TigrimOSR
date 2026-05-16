@@ -26,14 +26,14 @@ fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
 // -------------------------------------------------------------------------
 
 #[allow(dead_code)]
-struct ChatSessionSummary {
-    id: String,
-    title: String,
-    message_count: usize,
-    updated_at: String,
-    project_id: Option<String>,
-    last_message_preview: String,   // last AI or user message snippet
-    last_message_role: String,      // "user" or "assistant"
+pub struct ChatSessionSummary {
+    pub id: String,
+    pub title: String,
+    pub message_count: usize,
+    pub updated_at: String,
+    pub project_id: Option<String>,
+    pub last_message_preview: String,   // last AI or user message snippet
+    pub last_message_role: String,      // "user" or "assistant"
 }
 
 // -------------------------------------------------------------------------
@@ -2058,6 +2058,39 @@ Provide helpful, detailed responses based on tool results.{}",
     }
 
     // ---------------------------------------------------------------------
+    // Public accessors for app-level sidebar
+    // ---------------------------------------------------------------------
+
+    pub fn session_summaries(&self) -> &[ChatSessionSummary] {
+        &self.sessions
+    }
+
+    pub fn is_session_streaming(&self, session_id: &str) -> bool {
+        self.active_streams.contains_key(session_id)
+    }
+
+    pub fn select_session_from_sidebar(&mut self, session_id: String) {
+        self.selected_session_id = Some(session_id);
+        self.scroll_to_bottom = true;
+        self.needs_refresh = true;
+    }
+
+    pub fn create_new_chat_from_sidebar(&mut self, runtime: &tokio::runtime::Handle) {
+        self.create_session(runtime);
+    }
+
+    pub fn delete_session_from_sidebar(&mut self, runtime: &tokio::runtime::Handle, session_id: &str) {
+        self.delete_session(runtime, session_id);
+    }
+
+    /// Ensure sessions are loaded (for app sidebar rendering) without rendering anything
+    pub fn ensure_sessions_loaded(&mut self, runtime: &tokio::runtime::Handle) {
+        if self.needs_refresh {
+            self.refresh(runtime);
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // Main entry-point called by the parent UI
     // ---------------------------------------------------------------------
 
@@ -2069,8 +2102,7 @@ Provide helpful, detailed responses based on tool results.{}",
             self.refresh(runtime);
         }
 
-        let sidebar_bg     = egui::Color32::from_rgb(248, 249, 250);
-        let border_color   = egui::Color32::from_rgb(225, 228, 232);
+        let _border_color   = egui::Color32::from_rgb(225, 228, 232);
 
         // Collect all output files from current session messages
         // Also include files from streaming state
@@ -2105,24 +2137,13 @@ Provide helpful, detailed responses based on tool results.{}",
 
         let full_rect = ui.available_rect_before_wrap();
 
-        // ── Column rects ────────────────────────────────────────────
-        let sidebar_drag_w = 6.0;
+        // ── Column rects (two-column: chat | output) ─────────────────
         let output_drag_w  = if self.output_panel.open { 6.0 } else { 0.0 };
-        let left_w  = self.sidebar_width;
         let right_w = if self.output_panel.open { self.output_panel.width } else { 0.0 };
-        let mid_w   = (full_rect.width() - left_w - sidebar_drag_w - right_w - output_drag_w).max(200.0);
+        let mid_w   = (full_rect.width() - right_w - output_drag_w).max(200.0);
 
-        let left_rect = egui::Rect::from_min_size(
-            full_rect.min,
-            egui::vec2(left_w, full_rect.height()),
-        );
-        // Drag handle between sidebar and chat
-        let sidebar_drag_rect = egui::Rect::from_min_size(
-            egui::pos2(full_rect.min.x + left_w, full_rect.min.y),
-            egui::vec2(sidebar_drag_w, full_rect.height()),
-        );
         let mid_rect = egui::Rect::from_min_size(
-            egui::pos2(sidebar_drag_rect.max.x, full_rect.min.y),
+            full_rect.min,
             egui::vec2(mid_w, full_rect.height()),
         );
         // Drag handle between chat and output panel
@@ -2134,38 +2155,6 @@ Provide helpful, detailed responses based on tool results.{}",
             egui::pos2(drag_rect.max.x, full_rect.min.y),
             egui::vec2(right_w, full_rect.height()),
         );
-
-        // ── Sidebar ──────────────────────────────────────────────────
-        let mut left_ui = ui.new_child(egui::UiBuilder::new().max_rect(left_rect));
-        egui::Frame::new()
-            .fill(sidebar_bg)
-            .inner_margin(egui::Margin::symmetric(10, 10))
-            .stroke(egui::Stroke::new(0.5, border_color))
-            .show(&mut left_ui, |ui| {
-                ui.set_min_size(egui::vec2(self.sidebar_width, full_rect.height()));
-                self.sidebar(ui, runtime);
-            });
-
-        // ── Sidebar drag handle ───────────────────────────────────────
-        {
-            let sdrag_id = ui.id().with("sidebar_drag_handle");
-            let sdrag_resp = ui.interact(sidebar_drag_rect, sdrag_id, egui::Sense::drag());
-            let handle_color = if sdrag_resp.hovered() || sdrag_resp.dragged() {
-                egui::Color32::from_rgb(88, 166, 255)
-            } else {
-                egui::Color32::from_rgb(225, 228, 232)
-            };
-            ui.painter().rect_filled(sidebar_drag_rect, 0.0, handle_color);
-            if sdrag_resp.dragged() {
-                self.sidebar_width = (self.sidebar_width + sdrag_resp.drag_delta().x)
-                    .clamp(160.0, full_rect.width() - right_w - output_drag_w - 300.0);
-            }
-            ui.ctx().set_cursor_icon(if sdrag_resp.hovered() || sdrag_resp.dragged() {
-                egui::CursorIcon::ResizeHorizontal
-            } else {
-                egui::CursorIcon::Default
-            });
-        }
 
         // ── Chat panel ───────────────────────────────────────────────
         let mut mid_ui = ui.new_child(egui::UiBuilder::new().max_rect(mid_rect));
@@ -2198,7 +2187,7 @@ Provide helpful, detailed responses based on tool results.{}",
             if drag_response.dragged() {
                 // Dragging left increases panel width, right decreases
                 let delta = -drag_response.drag_delta().x;
-                self.output_panel.width = (self.output_panel.width + delta).clamp(260.0, full_rect.width() - self.sidebar_width - 300.0);
+                self.output_panel.width = (self.output_panel.width + delta).clamp(260.0, full_rect.width() - 300.0);
             }
             ui.ctx().set_cursor_icon(if drag_response.hovered() || drag_response.dragged() {
                 egui::CursorIcon::ResizeHorizontal
@@ -2533,45 +2522,67 @@ Provide helpful, detailed responses based on tool results.{}",
         // Handle delete confirmation
         self.delete_dialog(ui, runtime);
 
-        let Some(session) = self.selected_session.clone() else {
-            let mut suggestion_clicked: Option<String> = None;
-            ui.vertical_centered(|ui| {
-                ui.add_space(60.0);
-                ui.heading(
-                    egui::RichText::new("TigrimOS")
-                        .size(28.0)
-                        .strong()
-                        .color(egui::Color32::from_rgb(31, 35, 40)),
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new("How can I help you today?")
-                        .size(16.0)
-                        .color(egui::Color32::from_rgb(101, 109, 118)),
-                );
-                ui.add_space(24.0);
+        let has_session = self.selected_session.is_some();
+        let session = self.selected_session.clone().unwrap_or_else(|| {
+            // Dummy session for the empty/new-chat state
+            ChatSession {
+                id: "__new__".to_string(),
+                title: "New Chat".to_string(),
+                messages: Vec::new(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                skill_candidate: None,
+                skill_feedback: None,
+                project_id: None,
+            }
+        });
 
-                let suggestions = [
-                    "Write a Python script to analyze data",
-                    "Help me with a CSV file",
-                    "Search the web for information",
-                    "Explain this code",
-                ];
-                ui.horizontal_wrapped(|ui| {
-                    for suggestion in &suggestions {
-                        let btn = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(*suggestion)
-                                    .size(13.0)
-                                    .color(egui::Color32::from_rgb(31, 35, 40)),
-                            )
-                            .fill(egui::Color32::from_rgb(240, 242, 245))
-                            .corner_radius(8.0),
-                        );
-                        if btn.clicked() {
-                            suggestion_clicked = Some(suggestion.to_string());
+        // Show welcome landing when no session is selected (not a new chat)
+        if !has_session {
+            let mut suggestion_clicked: Option<String> = None;
+
+            // Use remaining space above the input card for welcome content
+            let welcome_height = (ui.available_height() - 120.0).max(100.0);
+            ui.allocate_ui(egui::vec2(ui.available_width(), welcome_height), |ui| {
+                ui.vertical_centered(|ui| {
+                    let top_pad = (welcome_height / 2.0 - 60.0).max(20.0);
+                    ui.add_space(top_pad);
+                    ui.heading(
+                        egui::RichText::new("TigrimOS")
+                            .size(28.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("How can I help you today?")
+                            .size(16.0)
+                            .color(egui::Color32::from_rgb(101, 109, 118)),
+                    );
+                    ui.add_space(24.0);
+
+                    let suggestions = [
+                        "Write a Python script to analyze data",
+                        "Help me with a CSV file",
+                        "Search the web for information",
+                        "Explain this code",
+                    ];
+                    ui.horizontal_wrapped(|ui| {
+                        for suggestion in &suggestions {
+                            let btn = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(*suggestion)
+                                        .size(13.0)
+                                        .color(egui::Color32::from_rgb(31, 35, 40)),
+                                )
+                                .fill(egui::Color32::from_rgb(240, 242, 245))
+                                .corner_radius(8.0),
+                            );
+                            if btn.clicked() {
+                                suggestion_clicked = Some(suggestion.to_string());
+                            }
                         }
-                    }
+                    });
                 });
             });
 
@@ -2582,8 +2593,8 @@ Provide helpful, detailed responses based on tool results.{}",
                 self.send_message(runtime, &ctx);
             }
 
-            return;
-        };
+            // Fall through to render the input card below
+        }
 
         // Clone session id before entering closures to avoid borrow conflict
         let session_id_for_gfx = session.id.clone();
@@ -2657,8 +2668,8 @@ Provide helpful, detailed responses based on tool results.{}",
             );
         });
 
-        // Architecture / Swarm info card
-        {
+        // Architecture / Swarm info — moved to input card toolbar
+        if false {
             let settings = runtime.block_on(get_settings());
             let sub_enabled = settings.sub_agent_enabled.unwrap_or(false);
             let mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "single".to_string());
@@ -2978,18 +2989,13 @@ Provide helpful, detailed responses based on tool results.{}",
 
         ui.separator();
 
-        // Messages area - reserve space for attachment bar + input bar
-        let attachment_height = if self.attached_files.is_empty() {
-            0.0
-        } else {
-            32.0
-        };
-        // Dynamic input height: count newlines, min 2 rows, max 10 rows
+        // Messages area - reserve space for Kimi-style input card
+        // Card layout: outer margin(10) + card padding(20) + text rows + separator(8) + toolbar(32) + bottom margin(8)
         let line_count = self.input_text.chars().filter(|&c| c == '\n').count() + 1;
         let input_rows = (line_count.max(2)).min(10);
-        let line_height = 16.0; // approximate per-line height
-        let input_bar_height = (input_rows as f32 * line_height) + 24.0 + attachment_height; // 24 = padding
-        let messages_height = ui.available_height() - input_bar_height;
+        let line_height = 16.0;
+        let input_bar_height = (input_rows as f32 * line_height) + 80.0; // 80 = card chrome + toolbar + margins
+        let messages_height = (ui.available_height() - input_bar_height).max(100.0);
 
         // Clone data needed for feedback actions
         let _session_messages_len = session.messages.len();
@@ -3045,137 +3051,197 @@ Provide helpful, detailed responses based on tool results.{}",
 
         ui.add_space(4.0);
 
-        // Attached files chips
-        if !self.attached_files.is_empty() {
-            ui.horizontal_wrapped(|ui| {
-                let mut remove_idx: Option<usize> = None;
-                for (i, file) in self.attached_files.iter().enumerate() {
-                    egui::Frame::new()
-                        .fill(egui::Color32::from_rgb(240, 242, 245))
-                        .corner_radius(12.0)
-                        .inner_margin(egui::Margin::symmetric(8, 3))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(&file.name)
-                                        .size(12.0)
-                                        .color(egui::Color32::from_rgb(31, 35, 40)),
-                                );
-                                if ui
-                                    .small_button("x")
-                                    .clicked()
-                                {
-                                    remove_idx = Some(i);
-                                }
-                            });
-                        });
-                }
-                if let Some(idx) = remove_idx {
-                    self.attached_files.remove(idx);
-                }
-            });
-            ui.add_space(2.0);
-        }
-
-        // Input bar — styled card
+        // ── Kimi-style input card ──────────────────────────────────
         let is_streaming = self.active_streams.contains_key(&session.id);
-        egui::Frame::new()
-            .fill(egui::Color32::from_rgb(248, 249, 250))
-            .corner_radius(12.0)
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(225, 228, 232)))
-            .inner_margin(egui::Margin::symmetric(12, 8))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // Attach button
-                    let attach_btn = egui::Button::new(
-                        egui::RichText::new("\u{1F4CE}").size(15.0),
-                    )
-                    .fill(egui::Color32::TRANSPARENT)
-                    .corner_radius(6.0);
-                    if ui
-                        .add_enabled(!is_streaming, attach_btn)
-                        .on_hover_text("Attach files")
-                        .clicked()
-                    {
-                        self.pick_files();
-                    }
+        let card_max_w = ui.available_width().min(750.0);
+        let card_margin = ((ui.available_width() - card_max_w) / 2.0).max(0.0);
 
-                    let edit_width = ui.available_width() - 80.0;
-                    let max_input_height = 10.0 * line_height;
-                    let response = if line_count > 10 {
-                        // Wrap in scroll area when exceeding 10 lines
-                        let mut te_response: Option<egui::Response> = None;
-                        egui::ScrollArea::vertical()
-                            .id_salt("chat_input_scroll")
-                            .max_height(max_input_height)
-                            .show(ui, |ui| {
-                                let text_edit = egui::TextEdit::multiline(&mut self.input_text)
-                                    .hint_text("Type a message... (Enter to send, Shift+Enter for newline)")
-                                    .desired_rows(input_rows)
-                                    .desired_width(edit_width)
-                                    .frame(false);
-                                te_response = Some(ui.add_enabled(!is_streaming, text_edit));
-                            });
-                        te_response.unwrap()
-                    } else {
-                        let text_edit = egui::TextEdit::multiline(&mut self.input_text)
-                            .hint_text("Type a message... (Enter to send, Shift+Enter for newline)")
-                            .desired_rows(input_rows)
-                            .desired_width(edit_width)
-                            .frame(false);
-                        ui.add_enabled(!is_streaming, text_edit)
-                    };
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.add_space(card_margin);
+            ui.vertical(|ui| {
+                ui.set_max_width(card_max_w);
+                egui::Frame::new()
+                    .fill(egui::Color32::WHITE)
+                    .corner_radius(16.0)
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(225, 228, 232)))
+                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        // ── Text area (top part) ──
+                        let edit_width = ui.available_width();
+                        let max_input_height = 10.0 * line_height;
+                        let response = if line_count > 10 {
+                            let mut te_response: Option<egui::Response> = None;
+                            egui::ScrollArea::vertical()
+                                .id_salt("chat_input_scroll")
+                                .max_height(max_input_height)
+                                .show(ui, |ui| {
+                                    let text_edit = egui::TextEdit::multiline(&mut self.input_text)
+                                        .hint_text("Type \"/\" to quickly access skills")
+                                        .desired_rows(input_rows.max(2))
+                                        .desired_width(edit_width)
+                                        .frame(false);
+                                    te_response = Some(ui.add_enabled(!is_streaming, text_edit));
+                                });
+                            te_response.unwrap()
+                        } else {
+                            let text_edit = egui::TextEdit::multiline(&mut self.input_text)
+                                .hint_text("Type \"/\" to quickly access skills")
+                                .desired_rows(input_rows.max(2))
+                                .desired_width(edit_width)
+                                .frame(false);
+                            ui.add_enabled(!is_streaming, text_edit)
+                        };
 
-                    // Enter without Shift sends
-                    let enter_pressed = response.has_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-                    if enter_pressed {
-                        if self.input_text.ends_with('\n') {
-                            self.input_text.pop();
-                        }
-                    }
-
-                    let can_send =
-                        (!self.input_text.trim().is_empty() || !self.attached_files.is_empty())
-                            && !is_streaming;
-
-                    if is_streaming {
-                        // Stop button — red, always enabled during streaming
-                        let stop_btn = egui::Button::new(
-                            egui::RichText::new("\u{25A0} Stop").size(13.0).strong().color(egui::Color32::WHITE),
-                        )
-                        .fill(egui::Color32::from_rgb(220, 38, 38))
-                        .corner_radius(8.0)
-                        .min_size(egui::vec2(60.0, 36.0));
-
-                        if ui.add(stop_btn).clicked() {
-                            if let Some(state) = self.active_streams.get(&session.id) {
-                                state.cancel();
+                        // Enter without Shift sends
+                        let enter_pressed = response.has_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+                        if enter_pressed {
+                            if self.input_text.ends_with('\n') {
+                                self.input_text.pop();
                             }
                         }
-                    } else {
-                        // Send button
-                        let send_btn = egui::Button::new(
-                            egui::RichText::new("\u{25B6} Send").size(13.0).strong().color(egui::Color32::WHITE),
-                        )
-                        .fill(if can_send {
-                            egui::Color32::from_rgb(88, 166, 255)
-                        } else {
-                            egui::Color32::from_rgb(210, 215, 220)
-                        })
-                        .corner_radius(8.0)
-                        .min_size(egui::vec2(60.0, 36.0));
 
-                        if ui.add_enabled(can_send, send_btn).clicked()
-                            || (enter_pressed && can_send)
-                        {
-                            let ctx = ui.ctx().clone();
-                            self.send_message(runtime, &ctx);
-                            response.request_focus();
-                        }
-                    }
-                });
+                        let can_send =
+                            (!self.input_text.trim().is_empty() || !self.attached_files.is_empty())
+                                && !is_streaming;
+
+                        // ── Toolbar row (bottom part) ──
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+
+                            // (+) Attach button — circular
+                            let attach_btn = egui::Button::new(
+                                egui::RichText::new("+").size(16.0).color(egui::Color32::from_rgb(101, 109, 118)),
+                            )
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 215, 220)))
+                            .corner_radius(14.0)
+                            .min_size(egui::vec2(28.0, 28.0));
+                            if ui.add_enabled(!is_streaming, attach_btn).on_hover_text("Attach files").clicked() {
+                                self.pick_files();
+                            }
+
+                            // Agent mode pill — shows Single Agent or Swarm type
+                            {
+                                let settings = runtime.block_on(crate::server::data::get_settings());
+                                let sub_enabled = settings.sub_agent_enabled.unwrap_or(false);
+                                let mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "single".to_string());
+                                let swarm_label = if !sub_enabled {
+                                    "Single Agent"
+                                } else {
+                                    match mode.as_str() {
+                                        "fully_auto" => "Fully Auto",
+                                        "auto" => "Auto",
+                                        "auto_swarm" => "Auto Swarm",
+                                        "manual" => "Manual",
+                                        _ => "Swarm",
+                                    }
+                                };
+                                let mode_color = if !sub_enabled {
+                                    egui::Color32::from_rgb(107, 114, 128)
+                                } else {
+                                    match mode.as_str() {
+                                        "fully_auto" => egui::Color32::from_rgb(59, 130, 246),
+                                        "auto" => egui::Color32::from_rgb(34, 197, 94),
+                                        "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),
+                                        "manual" => egui::Color32::from_rgb(239, 68, 68),
+                                        _ => egui::Color32::from_rgb(59, 130, 246),
+                                    }
+                                };
+                                let pill = egui::Button::new(
+                                    egui::RichText::new(swarm_label).size(11.0).color(egui::Color32::WHITE).strong(),
+                                )
+                                .fill(mode_color)
+                                .corner_radius(12.0);
+                                ui.add(pill).on_hover_text("Agent mode (configure in Settings > Agent)");
+                            }
+
+                            // Attached file chips
+                            if !self.attached_files.is_empty() {
+                                let mut remove_idx: Option<usize> = None;
+                                for (i, file) in self.attached_files.iter().enumerate() {
+                                    egui::Frame::new()
+                                        .fill(egui::Color32::from_rgb(240, 242, 245))
+                                        .corner_radius(10.0)
+                                        .inner_margin(egui::Margin::symmetric(6, 2))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 2.0;
+                                                ui.label(egui::RichText::new(&file.name).size(11.0).color(egui::Color32::from_rgb(31, 35, 40)));
+                                                if ui.small_button("x").clicked() {
+                                                    remove_idx = Some(i);
+                                                }
+                                            });
+                                        });
+                                }
+                                if let Some(idx) = remove_idx {
+                                    self.attached_files.remove(idx);
+                                }
+                            }
+
+                            // Right side: model name + send/stop button
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+
+                                // Send/Stop button — circular
+                                if is_streaming {
+                                    let stop_btn = egui::Button::new(
+                                        egui::RichText::new("\u{25A0}").size(14.0).color(egui::Color32::WHITE),
+                                    )
+                                    .fill(egui::Color32::from_rgb(220, 38, 38))
+                                    .corner_radius(16.0)
+                                    .min_size(egui::vec2(32.0, 32.0));
+                                    if ui.add(stop_btn).on_hover_text("Stop").clicked() {
+                                        if let Some(state) = self.active_streams.get(&session.id) {
+                                            state.cancel();
+                                        }
+                                    }
+                                } else {
+                                    let send_color = if can_send {
+                                        egui::Color32::from_rgb(88, 166, 255)
+                                    } else {
+                                        egui::Color32::from_rgb(210, 215, 220)
+                                    };
+                                    let send_btn = egui::Button::new(
+                                        egui::RichText::new("\u{2191}").size(16.0).strong().color(egui::Color32::WHITE), // ↑
+                                    )
+                                    .fill(send_color)
+                                    .corner_radius(16.0)
+                                    .min_size(egui::vec2(32.0, 32.0));
+                                    if ui.add_enabled(can_send, send_btn).on_hover_text("Send").clicked()
+                                        || (enter_pressed && can_send)
+                                    {
+                                        let ctx = ui.ctx().clone();
+                                        self.send_message(runtime, &ctx);
+                                        response.request_focus();
+                                    }
+                                }
+
+                                // Model name label
+                                let settings = runtime.block_on(crate::server::data::get_settings());
+                                let model_name = if settings.tiger_bot_model.is_empty() {
+                                    "gpt-4o-mini"
+                                } else {
+                                    &settings.tiger_bot_model
+                                };
+                                // Truncate long model names
+                                let display_model = if model_name.len() > 20 {
+                                    format!("{}...", &model_name[..model_name.char_indices().nth(20).map(|(i,_)|i).unwrap_or(model_name.len())])
+                                } else {
+                                    model_name.to_string()
+                                };
+                                ui.label(
+                                    egui::RichText::new(&display_model)
+                                        .size(11.5)
+                                        .color(egui::Color32::from_rgb(101, 109, 118)),
+                                );
+                            });
+                        });
+                    });
             });
+        });
     }
 
     // ---------------------------------------------------------------------

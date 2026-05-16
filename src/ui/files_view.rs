@@ -29,11 +29,8 @@ fn classify_file(name: &str) -> FileType {
         | "graphql" | "wasm" | "zig" | "nim" | "v" | "d" | "ex" | "exs" | "erl" | "hrl"
         | "clj" | "cljs" | "hs" | "ml" | "mli" | "fs" | "fsx" | "el" | "vim" => FileType::Code,
         "txt" | "log" | "env" | "gitignore" | "editorconfig" | "lock" => FileType::Text,
-        "" => FileType::Text, // no extension, assume text
-        _ => {
-            // Try to detect text vs binary by name heuristics
-            FileType::Binary
-        }
+        "" => FileType::Text,
+        _ => FileType::Binary,
     }
 }
 
@@ -56,6 +53,15 @@ enum SortDirection {
     Descending,
 }
 
+// ── Library section ──
+
+#[derive(Debug, Clone, PartialEq)]
+enum LibrarySection {
+    AllFiles,
+    Recent,
+    Place(String), // directory name
+}
+
 // ── File entry ──
 
 struct FileEntry {
@@ -64,10 +70,61 @@ struct FileEntry {
     is_directory: bool,
     size: u64,
     modified: String,
+    item_count: Option<usize>, // for directories
+}
+
+// ── Extension badge ──
+
+fn extension_badge(name: &str) -> Option<(&'static str, egui::Color32)> {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    let (label, color) = match ext.as_str() {
+        "pdf" => ("PDF", egui::Color32::from_rgb(220, 53, 69)),
+        "doc" | "docx" => ("DOCX", egui::Color32::from_rgb(43, 87, 154)),
+        "xls" | "xlsx" => ("XLSX", egui::Color32::from_rgb(33, 115, 70)),
+        "ppt" | "pptx" => ("PPTX", egui::Color32::from_rgb(197, 90, 17)),
+        "png" => ("PNG", egui::Color32::from_rgb(194, 100, 39)),
+        "jpg" | "jpeg" => ("JPG", egui::Color32::from_rgb(194, 100, 39)),
+        "gif" => ("GIF", egui::Color32::from_rgb(194, 100, 39)),
+        "webp" => ("WEBP", egui::Color32::from_rgb(194, 100, 39)),
+        "svg" => ("SVG", egui::Color32::from_rgb(194, 100, 39)),
+        "bmp" => ("BMP", egui::Color32::from_rgb(194, 100, 39)),
+        "mp4" | "mov" | "avi" | "mkv" => ("VID", egui::Color32::from_rgb(128, 0, 128)),
+        "mp3" | "wav" | "flac" | "ogg" => ("AUD", egui::Color32::from_rgb(128, 0, 128)),
+        "zip" | "tar" | "gz" | "7z" | "rar" => ("ZIP", egui::Color32::from_rgb(108, 117, 125)),
+        "py" => ("PY", egui::Color32::from_rgb(55, 118, 171)),
+        "rs" => ("RS", egui::Color32::from_rgb(183, 65, 14)),
+        "js" | "jsx" => ("JS", egui::Color32::from_rgb(247, 223, 30)),
+        "ts" | "tsx" => ("TS", egui::Color32::from_rgb(49, 120, 198)),
+        "html" | "htm" => ("HTML", egui::Color32::from_rgb(228, 77, 38)),
+        "css" | "scss" | "sass" => ("CSS", egui::Color32::from_rgb(86, 61, 124)),
+        "json" => ("JSON", egui::Color32::from_rgb(108, 117, 125)),
+        "yaml" | "yml" => ("YAML", egui::Color32::from_rgb(108, 117, 125)),
+        "toml" => ("TOML", egui::Color32::from_rgb(108, 117, 125)),
+        "xml" => ("XML", egui::Color32::from_rgb(108, 117, 125)),
+        "md" | "markdown" => ("MD", egui::Color32::from_rgb(86, 61, 124)),
+        "txt" => ("TXT", egui::Color32::from_rgb(108, 117, 125)),
+        "log" => ("LOG", egui::Color32::from_rgb(108, 117, 125)),
+        "csv" => ("CSV", egui::Color32::from_rgb(33, 115, 70)),
+        "sql" => ("SQL", egui::Color32::from_rgb(0, 114, 198)),
+        "sh" | "bash" | "zsh" => ("SH", egui::Color32::from_rgb(60, 60, 60)),
+        "java" => ("JAVA", egui::Color32::from_rgb(176, 114, 25)),
+        "c" => ("C", egui::Color32::from_rgb(85, 85, 85)),
+        "cpp" | "cc" | "cxx" => ("CPP", egui::Color32::from_rgb(0, 89, 156)),
+        "h" | "hpp" => ("H", egui::Color32::from_rgb(85, 85, 85)),
+        "go" => ("GO", egui::Color32::from_rgb(0, 173, 216)),
+        "rb" => ("RB", egui::Color32::from_rgb(204, 52, 45)),
+        "php" => ("PHP", egui::Color32::from_rgb(119, 123, 180)),
+        "swift" => ("SWIFT", egui::Color32::from_rgb(240, 81, 56)),
+        "r" => ("R", egui::Color32::from_rgb(39, 104, 177)),
+        "bib" => ("BIB", egui::Color32::from_rgb(120, 94, 70)),
+        "tex" | "latex" => ("TEX", egui::Color32::from_rgb(0, 128, 128)),
+        "ini" | "cfg" | "conf" => ("CFG", egui::Color32::from_rgb(108, 117, 125)),
+        _ => return None,
+    };
+    Some((label, color))
 }
 
 /// Native egui file browser for the TigrimOS sandbox directory.
-/// Replaces the React FilesPage with a direct data-layer integration.
 pub struct FilesView {
     sandbox_dir: String,
     current_path: String,
@@ -75,13 +132,13 @@ pub struct FilesView {
     selected_file: Option<String>,
     file_content: String,
     editing: bool,
-    edit_backup: String, // backup content for cancel
+    edit_backup: String,
     new_dir_name: String,
     show_new_dir: bool,
     new_file_name: String,
     show_new_file: bool,
     needs_refresh: bool,
-    status_message: Option<(String, bool)>, // (message, is_error)
+    status_message: Option<(String, bool)>,
 
     // Search / filter
     search_query: String,
@@ -96,13 +153,19 @@ pub struct FilesView {
 
     // Drag-drop status
     drop_status: Option<String>,
+
+    // Sidebar
+    active_section: LibrarySection,
+    places: Vec<(String, usize)>, // (dir_name, item_count)
+
+    // File viewer overlay
+    show_viewer: bool,
 }
 
 impl Default for FilesView {
     fn default() -> Self {
         let sandbox_dir = std::env::var("TIGRIMOS_SANDBOX_DIR")
             .unwrap_or_else(|_| crate::server::data::get_sandbox_dir_sync());
-        // Ensure the sandbox directory exists
         let _ = std::fs::create_dir_all(&sandbox_dir);
         Self {
             sandbox_dir,
@@ -124,6 +187,9 @@ impl Default for FilesView {
             selected_set: HashSet::new(),
             show_delete_confirm: false,
             drop_status: None,
+            active_section: LibrarySection::AllFiles,
+            places: Vec::new(),
+            show_viewer: false,
         }
     }
 }
@@ -153,9 +219,21 @@ impl FilesView {
                                 .and_then(|m| m.as_str())
                                 .unwrap_or("")
                                 .to_string(),
+                            item_count: None,
                         })
                     })
                     .collect();
+
+                // Count items inside directories
+                for entry in &mut self.files {
+                    if entry.is_directory {
+                        let dir_path = std::path::Path::new(&sandbox).join(&entry.path);
+                        if let Ok(rd) = std::fs::read_dir(&dir_path) {
+                            entry.item_count = Some(rd.count());
+                        }
+                    }
+                }
+
                 self.sort_files();
                 self.status_message = None;
             }
@@ -164,6 +242,20 @@ impl FilesView {
                 self.files.clear();
             }
         }
+
+        // Refresh places (top-level directories) if we're at root
+        if self.current_path.is_empty() {
+            self.places = self
+                .files
+                .iter()
+                .filter(|f| f.is_directory)
+                .map(|f| {
+                    let count = f.item_count.unwrap_or(0);
+                    (f.name.clone(), count)
+                })
+                .collect();
+        }
+
         self.needs_refresh = false;
     }
 
@@ -191,7 +283,6 @@ impl FilesView {
     fn load_file_content(&mut self, runtime: &tokio::runtime::Handle, file_path: &str) {
         let file_type = classify_file(file_path);
 
-        // Images are rendered directly by egui::Image from file URI — no content to load
         if file_type == FileType::Image {
             self.file_content.clear();
             self.editing = false;
@@ -200,7 +291,6 @@ impl FilesView {
         }
 
         if !is_text_like(&file_type) {
-            // Binary file - read raw bytes for size info, show placeholder
             let sandbox = self.sandbox_dir.clone();
             match data::validate_path(&sandbox, file_path) {
                 Ok(full_path) => {
@@ -213,7 +303,8 @@ impl FilesView {
                             );
                         }
                         Err(_) => {
-                            self.file_content = "[Binary file - unable to read metadata]".to_string();
+                            self.file_content =
+                                "[Binary file - unable to read metadata]".to_string();
                         }
                     }
                 }
@@ -264,6 +355,7 @@ impl FilesView {
                     self.selected_file = None;
                     self.file_content.clear();
                     self.editing = false;
+                    self.show_viewer = false;
                     self.needs_refresh = true;
                     self.status_message = Some(("Deleted.".to_string(), false));
                 }
@@ -283,11 +375,11 @@ impl FilesView {
             match runtime.block_on(data::delete_file_or_dir(&sandbox, p)) {
                 Ok(()) => {
                     ok_count += 1;
-                    // If the currently viewed file was deleted, clear it
                     if self.selected_file.as_deref() == Some(p.as_str()) {
                         self.selected_file = None;
                         self.file_content.clear();
                         self.editing = false;
+                        self.show_viewer = false;
                     }
                 }
                 Err(_) => {
@@ -388,7 +480,7 @@ impl FilesView {
                     }
                 }
                 Err(_) => {
-                    // Binary file: read as bytes and write directly
+                    // Binary file
                     match std::fs::read(&src) {
                         Ok(bytes) => {
                             let sandbox = self.sandbox_dir.clone();
@@ -467,8 +559,7 @@ impl FilesView {
     }
 
     fn handle_dropped_files(&mut self, ctx: &egui::Context, runtime: &tokio::runtime::Handle) {
-        let dropped: Vec<egui::DroppedFile> =
-            ctx.input(|i| i.raw.dropped_files.clone());
+        let dropped: Vec<egui::DroppedFile> = ctx.input(|i| i.raw.dropped_files.clone());
         if dropped.is_empty() {
             return;
         }
@@ -484,7 +575,6 @@ impl FilesView {
                 } else {
                     format!("{}/{}", self.current_path, file_name)
                 };
-                // Try text first, fallback to binary
                 let sandbox = self.sandbox_dir.clone();
                 if let Ok(content) = std::fs::read_to_string(path) {
                     if runtime
@@ -517,6 +607,7 @@ impl FilesView {
         self.selected_file = None;
         self.file_content.clear();
         self.editing = false;
+        self.show_viewer = false;
         self.needs_refresh = true;
     }
 
@@ -529,6 +620,7 @@ impl FilesView {
         self.selected_file = None;
         self.file_content.clear();
         self.editing = false;
+        self.show_viewer = false;
         self.needs_refresh = true;
     }
 
@@ -544,19 +636,36 @@ impl FilesView {
         }
     }
 
-    fn format_modified(modified: &str) -> String {
+    fn format_relative_date(modified: &str) -> String {
         if modified.is_empty() {
             return String::new();
         }
-        // Try to parse RFC3339 and display a friendlier format
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(modified) {
-            dt.format("%Y-%m-%d %H:%M").to_string()
+            let now = chrono::Utc::now();
+            let file_date = dt.with_timezone(&chrono::Utc).date_naive();
+            let today = now.date_naive();
+            let diff_days = (today - file_date).num_days();
+
+            if diff_days == 0 {
+                // Today — show time
+                format!("Today, {}", dt.format("%H:%M"))
+            } else if diff_days == 1 {
+                "Yesterday".to_string()
+            } else if diff_days < 7 {
+                format!("{} days ago", diff_days)
+            } else if diff_days < 14 {
+                "1 week ago".to_string()
+            } else if diff_days < 30 {
+                format!("{} weeks ago", diff_days / 7)
+            } else {
+                // Show month + day
+                dt.format("%b %d").to_string()
+            }
         } else {
             modified.to_string()
         }
     }
 
-    /// Get filtered files based on search query
     fn filtered_files(&self) -> Vec<usize> {
         let query = self.search_query.to_lowercase();
         self.files
@@ -573,7 +682,77 @@ impl FilesView {
             .collect()
     }
 
+    fn total_file_count(&self) -> usize {
+        self.files.len()
+    }
+
+    /// Calculate storage used in sandbox
+    fn calculate_storage(&self) -> u64 {
+        fn dir_size(path: &std::path::Path) -> u64 {
+            let mut total = 0u64;
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        total += dir_size(&p);
+                    } else if let Ok(meta) = p.metadata() {
+                        total += meta.len();
+                    }
+                }
+            }
+            total
+        }
+        dir_size(std::path::Path::new(&self.sandbox_dir))
+    }
+
     // ── Rendering helpers ──
+
+    fn render_extension_badge(ui: &mut egui::Ui, name: &str) {
+        if let Some((label, color)) = extension_badge(name) {
+            let badge_rect = ui.allocate_space(egui::vec2(36.0, 20.0));
+            let rect = badge_rect.1;
+            ui.painter().rect_filled(rect, 3.0, color);
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::proportional(9.0),
+                egui::Color32::WHITE,
+            );
+        } else {
+            // Generic file badge
+            let badge_rect = ui.allocate_space(egui::vec2(36.0, 20.0));
+            let rect = badge_rect.1;
+            ui.painter()
+                .rect_filled(rect, 3.0, egui::Color32::from_rgb(108, 117, 125));
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "FILE",
+                egui::FontId::proportional(9.0),
+                egui::Color32::WHITE,
+            );
+        }
+    }
+
+    fn render_folder_icon(ui: &mut egui::Ui) {
+        let (_, rect) = ui.allocate_space(egui::vec2(24.0, 20.0));
+        // Simple folder shape using painter
+        let c = rect.center();
+        let folder_color = egui::Color32::from_rgb(164, 156, 144);
+        // Folder body
+        let body = egui::Rect::from_min_size(
+            egui::pos2(c.x - 10.0, c.y - 5.0),
+            egui::vec2(20.0, 14.0),
+        );
+        ui.painter().rect_filled(body, 2.0, folder_color);
+        // Folder tab
+        let tab = egui::Rect::from_min_size(
+            egui::pos2(c.x - 10.0, c.y - 8.0),
+            egui::vec2(10.0, 4.0),
+        );
+        ui.painter().rect_filled(tab, 1.5, folder_color);
+    }
 
     fn render_markdown(ui: &mut egui::Ui, text: &str) {
         for line in text.lines() {
@@ -596,7 +775,7 @@ impl FilesView {
                         .size(20.0)
                         .strong(),
                 );
-            } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            } else if trimmed.starts_with("- ") {
                 ui.horizontal(|ui| {
                     ui.label("  \u{2022} ");
                     Self::render_inline_markdown(ui, &trimmed[2..]);
@@ -604,7 +783,10 @@ impl FilesView {
             } else if trimmed.starts_with("> ") {
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(8, 2))
-                    .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 100, 100)))
+                    .stroke(egui::Stroke::new(
+                        2.0,
+                        egui::Color32::from_rgb(100, 100, 100),
+                    ))
                     .show(ui, |ui| {
                         ui.label(
                             egui::RichText::new(&trimmed[2..])
@@ -613,7 +795,6 @@ impl FilesView {
                         );
                     });
             } else if trimmed.starts_with("```") {
-                // Simple code fence indicator (content handled line-by-line)
                 ui.label(
                     egui::RichText::new(trimmed)
                         .monospace()
@@ -628,9 +809,7 @@ impl FilesView {
     }
 
     fn render_inline_markdown(ui: &mut egui::Ui, text: &str) {
-        // Simple bold/italic detection
         if text.contains("**") {
-            // Split around bold markers
             let parts: Vec<&str> = text.split("**").collect();
             ui.horizontal_wrapped(|ui| {
                 for (i, part) in parts.iter().enumerate() {
@@ -684,13 +863,11 @@ impl FilesView {
                     .striped(true)
                     .min_col_width(60.0)
                     .show(ui, |ui| {
-                        // Header row
                         for cell in &header_cells {
                             ui.label(egui::RichText::new(cell.trim()).strong());
                         }
                         ui.end_row();
 
-                        // Data rows (limit to 500 for performance)
                         for line in lines.iter().skip(1).take(500) {
                             let cells: Vec<&str> = line.split(',').collect();
                             for i in 0..col_count {
@@ -704,14 +881,396 @@ impl FilesView {
                 if lines.len() > 501 {
                     ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new(format!(
-                            "... and {} more rows",
-                            lines.len() - 501
-                        ))
-                        .color(egui::Color32::GRAY),
+                        egui::RichText::new(format!("... and {} more rows", lines.len() - 501))
+                            .color(egui::Color32::GRAY),
                     );
                 }
             });
+    }
+
+    // ── Sidebar rendering ──
+
+    fn render_sidebar(&mut self, ui: &mut egui::Ui) {
+        let sidebar_bg = egui::Color32::from_rgb(247, 247, 248);
+        let text_dim = egui::Color32::from_rgb(100, 100, 105);
+        let text_normal = egui::Color32::from_rgb(30, 30, 32);
+        let accent = egui::Color32::from_rgb(59, 130, 246);
+
+        ui.painter().rect_filled(
+            ui.available_rect_before_wrap(),
+            0.0,
+            sidebar_bg,
+        );
+
+        ui.add_space(12.0);
+
+        // Files header
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new("Files")
+                    .size(16.0)
+                    .strong()
+                    .color(text_normal),
+            );
+        });
+
+        ui.add_space(8.0);
+
+        // + New file button
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            let btn = egui::Button::new(
+                egui::RichText::new("+ New file")
+                    .size(13.0)
+                    .color(text_normal),
+            )
+            .frame(false);
+            if ui.add(btn).clicked() {
+                self.show_new_file = !self.show_new_file;
+                self.show_new_dir = false;
+                self.new_file_name.clear();
+            }
+        });
+
+        ui.add_space(12.0);
+
+        // LIBRARY section
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new("LIBRARY")
+                    .size(10.0)
+                    .color(text_dim),
+            );
+        });
+        ui.add_space(4.0);
+
+        // Library items
+        let all_count = self.total_file_count();
+        let lib_items: Vec<(&str, LibrarySection, Option<usize>)> = vec![
+            ("All files", LibrarySection::AllFiles, Some(all_count)),
+            ("Recent", LibrarySection::Recent, None),
+        ];
+
+        let mut nav_action: Option<LibrarySection> = None;
+
+        for (label, section, count) in &lib_items {
+            let is_active = self.active_section == *section;
+            let bg = if is_active {
+                egui::Color32::from_rgb(232, 232, 235)
+            } else {
+                egui::Color32::TRANSPARENT
+            };
+            let text_color = if is_active { accent } else { text_normal };
+
+            let resp = ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                egui::Frame::NONE
+                    .fill(bg)
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width() - 16.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(*label)
+                                    .size(13.0)
+                                    .color(text_color),
+                            );
+                            if let Some(c) = count {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!("{}", c))
+                                                .size(11.0)
+                                                .color(text_dim),
+                                        );
+                                    },
+                                );
+                            }
+                        });
+                    });
+            });
+            if resp.response.interact(egui::Sense::click()).clicked() {
+                nav_action = Some(section.clone());
+            }
+        }
+
+        ui.add_space(16.0);
+
+        // PLACES section
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new("PLACES")
+                    .size(10.0)
+                    .color(text_dim),
+            );
+        });
+        ui.add_space(4.0);
+
+        let places_clone = self.places.clone();
+        for (dir_name, count) in &places_clone {
+            let is_active = self.active_section == LibrarySection::Place(dir_name.clone());
+            let bg = if is_active {
+                egui::Color32::from_rgb(232, 232, 235)
+            } else {
+                egui::Color32::TRANSPARENT
+            };
+            let text_color = if is_active { accent } else { text_normal };
+
+            let resp = ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                egui::Frame::NONE
+                    .fill(bg)
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width() - 16.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(dir_name)
+                                    .size(13.0)
+                                    .color(text_color),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", count))
+                                            .size(11.0)
+                                            .color(text_dim),
+                                    );
+                                },
+                            );
+                        });
+                    });
+            });
+            if resp.response.interact(egui::Sense::click()).clicked() {
+                nav_action = Some(LibrarySection::Place(dir_name.clone()));
+            }
+        }
+
+        // Apply navigation
+        if let Some(section) = nav_action {
+            self.active_section = section.clone();
+            match section {
+                LibrarySection::AllFiles => {
+                    self.current_path.clear();
+                    self.needs_refresh = true;
+                }
+                LibrarySection::Recent => {
+                    // Stay in current view but sort by modified descending
+                    self.current_path.clear();
+                    self.sort_field = SortField::Modified;
+                    self.sort_direction = SortDirection::Descending;
+                    self.needs_refresh = true;
+                }
+                LibrarySection::Place(ref dir) => {
+                    self.current_path = dir.clone();
+                    self.needs_refresh = true;
+                }
+            }
+        }
+
+        // Push storage to bottom
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                let used = self.calculate_storage();
+                let used_str = Self::format_size(used);
+                ui.label(
+                    egui::RichText::new(format!("Storage  {}", used_str))
+                        .size(11.0)
+                        .color(text_dim),
+                );
+            });
+            // Storage bar
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                let available_w = (ui.available_width() - 24.0).max(40.0);
+                let used = self.calculate_storage() as f64;
+                let max_storage = 10.0 * 1024.0 * 1024.0 * 1024.0; // 10 GB
+                let ratio = (used / max_storage).min(1.0) as f32;
+                let (_, bar_rect) = ui.allocate_space(egui::vec2(available_w, 4.0));
+                ui.painter().rect_filled(
+                    bar_rect,
+                    2.0,
+                    egui::Color32::from_rgb(210, 210, 215),
+                );
+                let filled = egui::Rect::from_min_size(
+                    bar_rect.min,
+                    egui::vec2(bar_rect.width() * ratio, 4.0),
+                );
+                ui.painter().rect_filled(filled, 2.0, accent);
+            });
+            ui.add_space(4.0);
+        });
+    }
+
+    // ── File viewer overlay ──
+
+    fn render_viewer_window(
+        &mut self,
+        ctx: &egui::Context,
+        runtime: &tokio::runtime::Handle,
+    ) {
+        if !self.show_viewer {
+            return;
+        }
+        let Some(ref selected) = self.selected_file.clone() else {
+            return;
+        };
+
+        let file_name = selected
+            .rsplit('/')
+            .next()
+            .unwrap_or(selected)
+            .to_string();
+        let file_type = classify_file(&file_name);
+
+        let mut open = self.show_viewer;
+        egui::Window::new(&file_name)
+            .open(&mut open)
+            .resizable(true)
+            .default_width(700.0)
+            .default_height(500.0)
+            .show(ctx, |ui| {
+                // Toolbar
+                ui.horizontal(|ui| {
+                    // Edit toggle (only for text-like files)
+                    if is_text_like(&file_type) {
+                        let edit_label = if self.editing { "View" } else { "Edit" };
+                        if ui.button(edit_label).clicked() {
+                            if !self.editing {
+                                self.edit_backup = self.file_content.clone();
+                            }
+                            self.editing = !self.editing;
+                        }
+                    }
+
+                    if self.editing {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Save")
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .fill(egui::Color32::from_rgb(34, 197, 94)),
+                            )
+                            .clicked()
+                        {
+                            self.save_file_content(runtime);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.file_content = self.edit_backup.clone();
+                            self.editing = false;
+                        }
+                    }
+
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new("Delete")
+                                        .color(egui::Color32::from_rgb(239, 68, 68)),
+                                ))
+                                .clicked()
+                            {
+                                self.delete_selected(runtime);
+                            }
+                            if ui.button("Download").clicked() {
+                                self.download_file();
+                            }
+                        },
+                    );
+                });
+
+                ui.separator();
+
+                // Content
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if self.editing && is_text_like(&file_type) {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.file_content)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY)
+                                    .desired_rows(25)
+                                    .code_editor(),
+                            );
+                        } else {
+                            match file_type {
+                                FileType::Image => {
+                                    let sandbox_c = self.sandbox_dir.clone();
+                                    let selected_c = selected.clone();
+                                    if let Ok(full_path) =
+                                        data::validate_path(&sandbox_c, &selected_c)
+                                    {
+                                        let uri =
+                                            format!("file://{}", full_path.display());
+                                        let image = egui::Image::new(&uri)
+                                            .max_width(ui.available_width() - 20.0)
+                                            .max_height(ui.available_height() - 20.0)
+                                            .corner_radius(4.0);
+                                        ui.add(image);
+                                    }
+                                }
+                                FileType::Markdown => {
+                                    let content = self.file_content.clone();
+                                    Self::render_markdown(ui, &content);
+                                }
+                                FileType::Csv => {
+                                    let content = self.file_content.clone();
+                                    Self::render_csv_table(ui, &content);
+                                }
+                                FileType::Code => {
+                                    egui::Frame::NONE
+                                        .fill(egui::Color32::from_rgb(30, 30, 30))
+                                        .inner_margin(egui::Margin::same(8))
+                                        .corner_radius(4.0)
+                                        .show(ui, |ui| {
+                                            ui.add(
+                                                egui::TextEdit::multiline(
+                                                    &mut self.file_content.as_str(),
+                                                )
+                                                .font(egui::TextStyle::Monospace)
+                                                .desired_width(f32::INFINITY)
+                                                .desired_rows(25)
+                                                .code_editor(),
+                                            );
+                                        });
+                                }
+                                FileType::Text => {
+                                    ui.add(
+                                        egui::TextEdit::multiline(
+                                            &mut self.file_content.as_str(),
+                                        )
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(25),
+                                    );
+                                }
+                                FileType::Binary => {
+                                    ui.label(
+                                        egui::RichText::new(&self.file_content)
+                                            .monospace()
+                                            .size(13.0),
+                                    );
+                                }
+                            }
+                        }
+                    });
+            });
+        self.show_viewer = open;
+        if !open {
+            self.editing = false;
+        }
     }
 
     // ── Main entry point ──
@@ -719,250 +1278,13 @@ impl FilesView {
     pub fn show(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         let ctx = ui.ctx().clone();
 
-        // Handle drag-drop
         self.handle_dropped_files(&ctx, runtime);
 
         if self.needs_refresh {
             self.refresh(runtime);
         }
 
-        // ── Top bar: breadcrumbs + actions ──
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Files").size(18.0).strong());
-            ui.separator();
-
-            // Root breadcrumb — show mounted folder name
-            let root_label = std::path::Path::new(&self.sandbox_dir)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("sandbox");
-            if ui
-                .add(
-                    egui::Button::new(egui::RichText::new(root_label).size(13.0)).frame(false),
-                )
-                .on_hover_text(&self.sandbox_dir)
-                .clicked()
-            {
-                self.navigate_to("");
-            }
-
-            if !self.current_path.is_empty() {
-                let path_clone = self.current_path.clone();
-                let segments: Vec<&str> = path_clone.split('/').collect();
-                let mut nav_target: Option<String> = None;
-                for (i, seg) in segments.iter().enumerate() {
-                    ui.label(
-                        egui::RichText::new("/")
-                            .size(13.0)
-                            .color(egui::Color32::GRAY),
-                    );
-                    let partial: String = segments[..=i].join("/");
-                    if ui
-                        .add(
-                            egui::Button::new(egui::RichText::new(*seg).size(13.0)).frame(false),
-                        )
-                        .clicked()
-                    {
-                        nav_target = Some(partial);
-                    }
-                }
-                if let Some(target) = nav_target {
-                    self.navigate_to(&target);
-                }
-            }
-
-            // Right-aligned action buttons
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Upload button
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("\u{2B06} Upload").color(egui::Color32::WHITE),
-                        )
-                        .fill(egui::Color32::from_rgb(59, 130, 246)),
-                    )
-                    .clicked()
-                {
-                    self.upload_file(runtime);
-                }
-
-                // New Folder button
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("\u{1F4C1} New Folder")
-                                .color(egui::Color32::WHITE),
-                        )
-                        .fill(egui::Color32::from_rgb(34, 197, 94)),
-                    )
-                    .clicked()
-                {
-                    self.show_new_dir = !self.show_new_dir;
-                    self.show_new_file = false;
-                    self.new_dir_name.clear();
-                }
-
-                // Mount Folder button
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("\u{1F4C2} Mount Folder")
-                                .color(egui::Color32::WHITE),
-                        )
-                        .fill(egui::Color32::from_rgb(234, 179, 8)),
-                    )
-                    .clicked()
-                {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_title("Select folder to mount")
-                        .pick_folder()
-                    {
-                        self.sandbox_dir = path.to_string_lossy().to_string();
-                        self.current_path.clear();
-                        self.selected_file = None;
-                        self.file_content.clear();
-                        self.needs_refresh = true;
-                    }
-                }
-
-                // New File button
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("\u{1F4C4} New File")
-                                .color(egui::Color32::WHITE),
-                        )
-                        .fill(egui::Color32::from_rgb(139, 92, 246)),
-                    )
-                    .clicked()
-                {
-                    self.show_new_file = !self.show_new_file;
-                    self.show_new_dir = false;
-                    self.new_file_name.clear();
-                }
-            });
-        });
-
-        // ── New folder input row ──
-        if self.show_new_dir {
-            ui.horizontal(|ui| {
-                ui.label("Folder name:");
-                let response = ui.text_edit_singleline(&mut self.new_dir_name);
-                if ui.button("Create").clicked()
-                    || (response.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                {
-                    self.create_directory(runtime);
-                }
-                if ui.button("Cancel").clicked() {
-                    self.show_new_dir = false;
-                    self.new_dir_name.clear();
-                }
-            });
-        }
-
-        // ── New file input row ──
-        if self.show_new_file {
-            ui.horizontal(|ui| {
-                ui.label("File name:");
-                let response = ui.text_edit_singleline(&mut self.new_file_name);
-                if ui.button("Create").clicked()
-                    || (response.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                {
-                    self.create_file(runtime);
-                }
-                if ui.button("Cancel").clicked() {
-                    self.show_new_file = false;
-                    self.new_file_name.clear();
-                }
-            });
-        }
-
-        // ── Search bar + Sort options + Multi-select actions ──
-        ui.horizontal(|ui| {
-            // Search
-            ui.label("\u{1F50D}");
-            let search_width = 200.0_f32.min(ui.available_width() * 0.3);
-            ui.add_sized(
-                [search_width, 20.0],
-                egui::TextEdit::singleline(&mut self.search_query)
-                    .hint_text("Filter files..."),
-            );
-
-            ui.separator();
-
-            // Sort controls
-            ui.label("Sort:");
-            let sort_labels = [
-                (SortField::Name, "Name"),
-                (SortField::Size, "Size"),
-                (SortField::Modified, "Date"),
-            ];
-            for (field, label) in &sort_labels {
-                let is_active = self.sort_field == *field;
-                let text = if is_active {
-                    let arrow = match self.sort_direction {
-                        SortDirection::Ascending => "\u{25B2}",
-                        SortDirection::Descending => "\u{25BC}",
-                    };
-                    format!("{} {}", label, arrow)
-                } else {
-                    label.to_string()
-                };
-                let btn = if is_active {
-                    egui::Button::new(egui::RichText::new(&text).strong())
-                } else {
-                    egui::Button::new(&text)
-                };
-                if ui.add(btn).clicked() {
-                    if self.sort_field == *field {
-                        self.sort_direction = match self.sort_direction {
-                            SortDirection::Ascending => SortDirection::Descending,
-                            SortDirection::Descending => SortDirection::Ascending,
-                        };
-                    } else {
-                        self.sort_field = *field;
-                        self.sort_direction = SortDirection::Ascending;
-                    }
-                    self.sort_files();
-                }
-            }
-
-            ui.separator();
-
-            // Multi-select actions
-            if !self.selected_set.is_empty() {
-                ui.label(
-                    egui::RichText::new(format!("{} selected", self.selected_set.len()))
-                        .color(egui::Color32::from_rgb(59, 130, 246)),
-                );
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("Delete Selected")
-                                .color(egui::Color32::from_rgb(239, 68, 68)),
-                        ),
-                    )
-                    .clicked()
-                {
-                    self.show_delete_confirm = true;
-                }
-                if ui.button("Deselect All").clicked() {
-                    self.selected_set.clear();
-                }
-            }
-
-            // Select All button
-            let filtered = self.filtered_files();
-            if ui.button("Select All").clicked() {
-                for &idx in &filtered {
-                    self.selected_set.insert(self.files[idx].path.clone());
-                }
-            }
-        });
-
-        // ── Bulk delete confirmation dialog ──
+        // Bulk delete confirmation dialog
         if self.show_delete_confirm {
             egui::Window::new("Confirm Delete")
                 .collapsible(false)
@@ -994,586 +1316,738 @@ impl FilesView {
                 });
         }
 
-        // ── Status message ──
+        // File viewer overlay window
+        self.render_viewer_window(&ctx, runtime);
+
+        let full_rect = ui.available_rect_before_wrap();
+        let sidebar_w = 180.0_f32;
+
+        // ── Left Sidebar ──
+        let sidebar_rect =
+            egui::Rect::from_min_size(full_rect.min, egui::vec2(sidebar_w, full_rect.height()));
+
+        let mut sidebar_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(sidebar_rect)
+                .layout(egui::Layout::top_down(egui::Align::LEFT)),
+        );
+        self.render_sidebar(&mut sidebar_ui);
+
+        // ── Main content area ──
+        let main_rect = egui::Rect::from_min_max(
+            egui::pos2(full_rect.min.x + sidebar_w + 1.0, full_rect.min.y),
+            full_rect.max,
+        );
+
+        // Separator line
+        ui.painter().line_segment(
+            [
+                egui::pos2(full_rect.min.x + sidebar_w, full_rect.min.y),
+                egui::pos2(full_rect.min.x + sidebar_w, full_rect.max.y),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 230, 232)),
+        );
+
+        let mut main_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(main_rect)
+                .layout(egui::Layout::top_down(egui::Align::LEFT)),
+        );
+
+        self.render_main_area(&mut main_ui, runtime);
+    }
+
+    fn render_main_area(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        let text_dim = egui::Color32::from_rgb(134, 134, 139);
+        let text_normal = egui::Color32::from_rgb(29, 29, 31);
+        let accent = egui::Color32::from_rgb(59, 130, 246);
+
+        // White background
+        ui.painter().rect_filled(
+            ui.available_rect_before_wrap(),
+            0.0,
+            egui::Color32::WHITE,
+        );
+
+        ui.add_space(8.0);
+
+        // ── Header: breadcrumb + search + actions ──
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+
+            // Breadcrumb
+            let root_label = std::path::Path::new(&self.sandbox_dir)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("sandbox")
+                .to_string();
+
+            // "Library" root
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("Library")
+                            .size(14.0)
+                            .color(text_dim),
+                    )
+                    .frame(false),
+                )
+                .clicked()
+            {
+                self.navigate_to("");
+                self.active_section = LibrarySection::AllFiles;
+            }
+
+            if !self.current_path.is_empty() || true {
+                ui.label(
+                    egui::RichText::new("/")
+                        .size(14.0)
+                        .color(text_dim),
+                );
+
+                if self.current_path.is_empty() {
+                    ui.label(
+                        egui::RichText::new(&root_label)
+                            .size(14.0)
+                            .strong()
+                            .color(text_normal),
+                    );
+                } else {
+                    // Show sandbox root as clickable
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(&root_label)
+                                    .size(14.0)
+                                    .color(text_dim),
+                            )
+                            .frame(false),
+                        )
+                        .clicked()
+                    {
+                        self.navigate_to("");
+                    }
+
+                    let path_clone = self.current_path.clone();
+                    let segments: Vec<&str> = path_clone.split('/').collect();
+                    let mut nav_target: Option<String> = None;
+                    for (i, seg) in segments.iter().enumerate() {
+                        ui.label(
+                            egui::RichText::new("/")
+                                .size(14.0)
+                                .color(text_dim),
+                        );
+                        let partial: String = segments[..=i].join("/");
+                        let is_last = i == segments.len() - 1;
+                        if is_last {
+                            ui.label(
+                                egui::RichText::new(*seg)
+                                    .size(14.0)
+                                    .strong()
+                                    .color(text_normal),
+                            );
+                        } else if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(*seg)
+                                        .size(14.0)
+                                        .color(text_dim),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
+                            nav_target = Some(partial);
+                        }
+                    }
+                    if let Some(target) = nav_target {
+                        self.navigate_to(&target);
+                    }
+                }
+
+                // File count
+                ui.label(
+                    egui::RichText::new(format!("  {}", self.files.len()))
+                        .size(12.0)
+                        .color(text_dim),
+                );
+            }
+
+            // Right-aligned: search + actions
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(8.0);
+
+                // + New button
+                let new_menu_id = ui.id().with("new_menu");
+                let new_btn = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new("+ New")
+                            .size(12.0)
+                            .color(egui::Color32::WHITE),
+                    )
+                    .fill(egui::Color32::from_rgb(230, 230, 232))
+                    .corner_radius(6.0),
+                );
+                if new_btn.clicked() {
+                    ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
+                }
+                egui::popup_below_widget(ui, new_menu_id, &new_btn, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                    ui.set_min_width(120.0);
+                    if ui.button("New File").clicked() {
+                        self.show_new_file = true;
+                        self.show_new_dir = false;
+                        self.new_file_name.clear();
+                        ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
+                    }
+                    if ui.button("New Folder").clicked() {
+                        self.show_new_dir = true;
+                        self.show_new_file = false;
+                        self.new_dir_name.clear();
+                        ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
+                    }
+                    if ui.button("Mount Folder").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Select folder to mount")
+                            .pick_folder()
+                        {
+                            self.sandbox_dir = path.to_string_lossy().to_string();
+                            self.current_path.clear();
+                            self.selected_file = None;
+                            self.file_content.clear();
+                            self.needs_refresh = true;
+                        }
+                        ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
+                    }
+                });
+
+                // Upload button
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Upload")
+                                .size(12.0)
+                                .color(text_normal),
+                        )
+                        .corner_radius(6.0),
+                    )
+                    .clicked()
+                {
+                    self.upload_file(runtime);
+                }
+
+                ui.add_space(8.0);
+            });
+        });
+
+        // Search bar (functional)
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            let search_w = 200.0_f32.min(ui.available_width() * 0.3);
+            egui::Frame::NONE
+                .fill(egui::Color32::from_rgb(240, 240, 242))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .show(ui, |ui| {
+                    ui.add_sized(
+                        [search_w, 18.0],
+                        egui::TextEdit::singleline(&mut self.search_query)
+                            .hint_text("Search files...")
+                            .frame(false)
+                            .text_color(text_normal)
+                            .font(egui::FontId::proportional(12.0)),
+                    );
+                });
+        });
+
+        // ── New file/folder input rows ──
+        if self.show_new_file {
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new("File name:")
+                        .size(12.0)
+                        .color(text_normal),
+                );
+                let response = ui.add_sized(
+                    [200.0, 20.0],
+                    egui::TextEdit::singleline(&mut self.new_file_name),
+                );
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Create")
+                                .size(12.0)
+                                .color(egui::Color32::WHITE),
+                        )
+                        .fill(accent),
+                    )
+                    .clicked()
+                    || (response.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                {
+                    self.create_file(runtime);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.show_new_file = false;
+                    self.new_file_name.clear();
+                }
+            });
+        }
+
+        if self.show_new_dir {
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new("Folder name:")
+                        .size(12.0)
+                        .color(text_normal),
+                );
+                let response = ui.add_sized(
+                    [200.0, 20.0],
+                    egui::TextEdit::singleline(&mut self.new_dir_name),
+                );
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Create")
+                                .size(12.0)
+                                .color(egui::Color32::WHITE),
+                        )
+                        .fill(accent),
+                    )
+                    .clicked()
+                    || (response.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                {
+                    self.create_directory(runtime);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.show_new_dir = false;
+                    self.new_dir_name.clear();
+                }
+            });
+        }
+
+        ui.add_space(4.0);
+
+        // ── Sort bar ──
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new("SORT")
+                    .size(10.0)
+                    .color(text_dim),
+            );
+            ui.add_space(8.0);
+
+            let sort_labels = [
+                (SortField::Name, "Name"),
+                (SortField::Size, "Size"),
+                (SortField::Modified, "Modified"),
+            ];
+            for (field, label) in &sort_labels {
+                let is_active = self.sort_field == *field;
+                let arrow = if is_active {
+                    match self.sort_direction {
+                        SortDirection::Ascending => " ^",
+                        SortDirection::Descending => " v",
+                    }
+                } else {
+                    ""
+                };
+                let text_color = if is_active { accent } else { text_dim };
+                let btn = egui::Button::new(
+                    egui::RichText::new(format!("{}{}", label, arrow))
+                        .size(12.0)
+                        .color(text_color),
+                )
+                .frame(false);
+                if ui.add(btn).clicked() {
+                    if self.sort_field == *field {
+                        self.sort_direction = match self.sort_direction {
+                            SortDirection::Ascending => SortDirection::Descending,
+                            SortDirection::Descending => SortDirection::Ascending,
+                        };
+                    } else {
+                        self.sort_field = *field;
+                        self.sort_direction = SortDirection::Ascending;
+                    }
+                    self.sort_files();
+                }
+            }
+
+            ui.add_space(12.0);
+
+        });
+
+        // ── Selection action bar ──
+        if !self.selected_set.is_empty() {
+            ui.add_space(4.0);
+            egui::Frame::NONE
+                .fill(egui::Color32::from_rgb(240, 245, 255))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::symmetric(12, 6))
+                .outer_margin(egui::Margin::symmetric(12, 0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} selected", self.selected_set.len()))
+                                .size(13.0)
+                                .strong()
+                                .color(accent),
+                        );
+
+                        ui.add_space(16.0);
+
+                        // Download button
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Download")
+                                        .size(12.0)
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .fill(egui::Color32::from_rgb(107, 114, 128))
+                                .corner_radius(6.0),
+                            )
+                            .clicked()
+                        {
+                            // Download first selected file
+                            if let Some(first) = self.selected_set.iter().next().cloned() {
+                                self.selected_file = Some(first);
+                                self.download_file();
+                            }
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Delete button
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Delete")
+                                        .size(12.0)
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .fill(egui::Color32::from_rgb(239, 68, 68))
+                                .corner_radius(6.0),
+                            )
+                            .clicked()
+                        {
+                            self.show_delete_confirm = true;
+                        }
+
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("Deselect all")
+                                                .size(11.0)
+                                                .color(text_dim),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .clicked()
+                                {
+                                    self.selected_set.clear();
+                                }
+                            },
+                        );
+                    });
+                });
+        }
+
+        // Status message
         if let Some((ref msg, is_err)) = self.status_message {
             let color = if is_err {
                 egui::Color32::from_rgb(239, 68, 68)
             } else {
                 egui::Color32::from_rgb(34, 197, 94)
             };
-            ui.label(egui::RichText::new(msg).size(12.0).color(color));
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new(msg).size(11.0).color(color));
+            });
         }
 
-        // Drop status
         if let Some(ref msg) = self.drop_status.clone() {
-            ui.label(
-                egui::RichText::new(msg)
-                    .size(11.0)
-                    .color(egui::Color32::from_rgb(59, 130, 246)),
-            );
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new(msg)
+                        .size(11.0)
+                        .color(accent),
+                );
+            });
         }
 
-        ui.separator();
+        ui.add_space(2.0);
 
-        // ── Main content: left file list + right file viewer ──
-        let available = ui.available_size();
-        let left_width = (available.x * 0.35).max(200.0);
-        let filtered_indices = self.filtered_files();
+        // ── Column headers ──
+        let avail_w = ui.available_width();
+        let name_w = avail_w - 180.0; // Reserve space for SIZE and MODIFIED columns
 
         ui.horizontal(|ui| {
-            // ── Left panel: file list ──
-            ui.vertical(|ui| {
-                ui.set_width(left_width);
-                ui.set_min_height(available.y - 8.0);
-
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        // ".." go-back entry
-                        if !self.current_path.is_empty() {
-                            let resp = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new("\u{1F4C2} ..")
-                                        .size(14.0)
-                                        .color(egui::Color32::from_rgb(156, 163, 175)),
-                                )
-                                .frame(false),
-                            );
-                            if resp.clicked() || resp.double_clicked() {
-                                self.navigate_up();
-                            }
-                            ui.separator();
-                        }
-
-                        let mut nav_target: Option<String> = None;
-                        let mut select_target: Option<String> = None;
-                        let mut toggle_checks: Vec<(String, bool)> = Vec::new();
-
-                        for &idx in &filtered_indices {
-                            let entry = &self.files[idx];
-                            let entry_path = entry.path.clone();
-                            let entry_name = entry.name.clone();
-                            let entry_is_dir = entry.is_directory;
-                            let entry_size = entry.size;
-                            let entry_modified = entry.modified.clone();
-
-                            let is_selected = self
-                                .selected_file
-                                .as_ref()
-                                .map(|s| s == &entry_path)
-                                .unwrap_or(false);
-
-                            let is_checked = self.selected_set.contains(&entry_path);
-
-                            ui.horizontal(|ui| {
-                                // Checkbox for multi-select
-                                let mut checked = is_checked;
-                                if ui.checkbox(&mut checked, "").changed() {
-                                    toggle_checks.push((entry_path.clone(), checked));
-                                }
-
-                                let icon = if entry_is_dir {
-                                    "\u{1F4C1}"
-                                } else {
-                                    "\u{1F4C4}"
-                                };
-
-                                let label_text = if entry_is_dir {
-                                    format!("{} {}", icon, entry_name)
-                                } else {
-                                    format!(
-                                        "{} {}  ({})",
-                                        icon,
-                                        entry_name,
-                                        Self::format_size(entry_size)
-                                    )
-                                };
-
-                                let text = if is_selected {
-                                    egui::RichText::new(&label_text)
-                                        .size(13.0)
-                                        .color(egui::Color32::WHITE)
-                                } else {
-                                    egui::RichText::new(&label_text).size(13.0)
-                                };
-
-                                let btn = if is_selected {
-                                    egui::Button::new(text)
-                                        .fill(egui::Color32::from_rgb(59, 130, 246))
-                                } else {
-                                    egui::Button::new(text).frame(false)
-                                };
-
-                                let resp =
-                                    ui.add_sized([left_width - 40.0, 24.0], btn);
-
-                                // Tooltip with modified date
-                                let resp = if !entry_modified.is_empty() {
-                                    resp.on_hover_text(format!(
-                                        "Modified: {}",
-                                        Self::format_modified(&entry_modified)
-                                    ))
-                                } else {
-                                    resp
-                                };
-
-                                if resp.double_clicked() && entry_is_dir {
-                                    nav_target = Some(entry_path.clone());
-                                } else if resp.clicked() {
-                                    if entry_is_dir {
-                                        nav_target = Some(entry_path.clone());
-                                    } else {
-                                        select_target = Some(entry_path.clone());
-                                    }
-                                }
-                            });
-                        }
-
-                        // Apply checkbox toggles
-                        for (path, checked) in toggle_checks {
-                            if checked {
-                                self.selected_set.insert(path);
-                            } else {
-                                self.selected_set.remove(&path);
-                            }
-                        }
-
-                        // Apply deferred actions
-                        if let Some(path) = nav_target {
-                            self.navigate_to(&path);
-                        } else if let Some(path) = select_target {
-                            let p = path.clone();
-                            self.selected_file = Some(path);
-                            self.load_file_content(runtime, &p);
-                        }
-
-                        if self.files.is_empty() && self.current_path.is_empty() {
-                            ui.add_space(40.0);
-                            ui.vertical_centered(|ui| {
-                                ui.label(
-                                    egui::RichText::new("\u{1F4C2}")
-                                        .size(48.0)
-                                        .color(egui::Color32::GRAY),
-                                );
-                                ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new("Empty directory")
-                                        .size(14.0)
-                                        .color(egui::Color32::GRAY),
-                                );
-                                ui.label(
-                                    egui::RichText::new(
-                                        "Upload files or create a folder to get started.\nYou can also drag & drop files here.",
-                                    )
-                                    .size(12.0)
-                                    .color(egui::Color32::GRAY),
-                                );
-                            });
-                        } else if filtered_indices.is_empty() && !self.search_query.is_empty() {
-                            ui.add_space(20.0);
-                            ui.vertical_centered(|ui| {
-                                ui.label(
-                                    egui::RichText::new("No files match the filter.")
-                                        .size(13.0)
-                                        .color(egui::Color32::GRAY),
-                                );
-                            });
-                        }
-                    });
+            ui.add_space(12.0);
+            // Checkbox spacer
+            ui.add_space(24.0);
+            // Icon/badge spacer
+            ui.add_space(40.0);
+            ui.add_sized([name_w - 80.0, 16.0], egui::Label::new(
+                egui::RichText::new("NAME")
+                    .size(10.0)
+                    .color(text_dim),
+            ));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(16.0);
+                ui.add_sized([80.0, 16.0], egui::Label::new(
+                    egui::RichText::new("MODIFIED")
+                        .size(10.0)
+                        .color(text_dim),
+                ));
+                ui.add_sized([60.0, 16.0], egui::Label::new(
+                    egui::RichText::new("SIZE")
+                        .size(10.0)
+                        .color(text_dim),
+                ));
             });
+        });
 
-            ui.separator();
+        // Thin separator
+        ui.painter().line_segment(
+            [
+                egui::pos2(ui.min_rect().min.x + 12.0, ui.cursor().min.y),
+                egui::pos2(ui.min_rect().max.x - 8.0, ui.cursor().min.y),
+            ],
+            egui::Stroke::new(0.5, egui::Color32::from_rgb(230, 230, 232)),
+        );
+        ui.add_space(2.0);
 
-            // ── Right panel: file viewer / editor / info ──
-            ui.vertical(|ui| {
-                ui.set_min_width(available.x - left_width - 20.0);
+        // ── File list ──
+        let filtered_indices = self.filtered_files();
 
-                if let Some(ref selected) = self.selected_file.clone() {
-                    let file_name = selected
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(selected)
-                        .to_string();
-                    let file_type = classify_file(&file_name);
-
-                    // Toolbar
-                    ui.horizontal(|ui| {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // ".." go-back entry
+                if !self.current_path.is_empty() {
+                    let resp = ui.horizontal(|ui| {
+                        ui.add_space(12.0);
+                        ui.add_space(24.0); // checkbox space
+                        Self::render_folder_icon(ui);
+                        ui.add_space(4.0);
                         ui.label(
-                            egui::RichText::new(&file_name).size(15.0).strong(),
-                        );
-
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                // Delete button
-                                if ui
-                                    .add(egui::Button::new(
-                                        egui::RichText::new("\u{1F5D1} Delete")
-                                            .color(egui::Color32::from_rgb(239, 68, 68)),
-                                    ))
-                                    .clicked()
-                                {
-                                    self.delete_selected(runtime);
-                                }
-
-                                // Download button
-                                if ui
-                                    .add(
-                                        egui::Button::new(
-                                            egui::RichText::new("\u{2B07} Download")
-                                                .color(egui::Color32::WHITE),
-                                        )
-                                        .fill(egui::Color32::from_rgb(107, 114, 128)),
-                                    )
-                                    .clicked()
-                                {
-                                    self.download_file();
-                                }
-
-                                // Save / Cancel buttons (only when editing)
-                                if self.editing {
-                                    if ui
-                                        .add(
-                                            egui::Button::new(
-                                                egui::RichText::new("Cancel")
-                                                    .color(egui::Color32::WHITE),
-                                            )
-                                            .fill(egui::Color32::from_rgb(107, 114, 128)),
-                                        )
-                                        .clicked()
-                                    {
-                                        self.file_content = self.edit_backup.clone();
-                                        self.editing = false;
-                                    }
-
-                                    if ui
-                                        .add(
-                                            egui::Button::new(
-                                                egui::RichText::new("\u{1F4BE} Save")
-                                                    .color(egui::Color32::WHITE),
-                                            )
-                                            .fill(egui::Color32::from_rgb(34, 197, 94)),
-                                        )
-                                        .clicked()
-                                    {
-                                        self.save_file_content(runtime);
-                                    }
-                                }
-
-                                // Edit toggle (only for text-like files)
-                                if is_text_like(&file_type) {
-                                    let edit_label = if self.editing {
-                                        "\u{1F512} View"
-                                    } else {
-                                        "\u{270F} Edit"
-                                    };
-                                    if ui.button(edit_label).clicked() {
-                                        if !self.editing {
-                                            self.edit_backup = self.file_content.clone();
-                                        }
-                                        self.editing = !self.editing;
-                                    }
-                                }
-                            },
+                            egui::RichText::new("..")
+                                .size(13.0)
+                                .color(text_dim),
                         );
                     });
+                    if resp.response.interact(egui::Sense::click()).clicked() {
+                        self.navigate_up();
+                    }
+                }
 
-                    ui.separator();
+                let mut nav_target: Option<String> = None;
+                let mut select_target: Option<String> = None;
+                let mut toggle_checks: Vec<(String, bool)> = Vec::new();
 
-                    // ── File Info Panel ──
-                    let sandbox = self.sandbox_dir.clone();
-                    let selected_clone = selected.clone();
-                    egui::CollapsingHeader::new(
-                        egui::RichText::new("File Info").size(12.0),
-                    )
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        if let Ok(full_path) = data::validate_path(&sandbox, &selected_clone) {
-                            let full_path_str = full_path.display().to_string();
-                            if let Ok(meta) = std::fs::metadata(&full_path) {
-                                egui::Grid::new("file_info_grid")
-                                    .num_columns(2)
-                                    .spacing([8.0, 4.0])
-                                    .show(ui, |ui| {
-                                        ui.label(
-                                            egui::RichText::new("Size:")
-                                                .strong()
-                                                .size(12.0),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(Self::format_size(meta.len()))
-                                                .size(12.0),
-                                        );
-                                        ui.end_row();
+                let row_height = 32.0;
 
-                                        ui.label(
-                                            egui::RichText::new("Modified:")
-                                                .strong()
-                                                .size(12.0),
-                                        );
-                                        let mod_str = meta
-                                            .modified()
-                                            .ok()
-                                            .map(|t| {
-                                                let dt: chrono::DateTime<chrono::Utc> = t.into();
-                                                dt.format("%Y-%m-%d %H:%M:%S").to_string()
-                                            })
-                                            .unwrap_or_else(|| "N/A".to_string());
-                                        ui.label(egui::RichText::new(&mod_str).size(12.0));
-                                        ui.end_row();
+                for &idx in &filtered_indices {
+                    let entry = &self.files[idx];
+                    let entry_path = entry.path.clone();
+                    let entry_name = entry.name.clone();
+                    let entry_is_dir = entry.is_directory;
+                    let entry_size = entry.size;
+                    let entry_modified = entry.modified.clone();
+                    let entry_item_count = entry.item_count;
 
-                                        ui.label(
-                                            egui::RichText::new("Permissions:")
-                                                .strong()
-                                                .size(12.0),
-                                        );
-                                        let perm_str = if meta.permissions().readonly() {
-                                            "Read-only"
-                                        } else {
-                                            "Read-write"
-                                        };
-                                        ui.label(egui::RichText::new(perm_str).size(12.0));
-                                        ui.end_row();
+                    let is_selected = self
+                        .selected_file
+                        .as_ref()
+                        .map(|s| s == &entry_path)
+                        .unwrap_or(false);
+                    let is_checked = self.selected_set.contains(&entry_path);
 
-                                        ui.label(
-                                            egui::RichText::new("Path:")
-                                                .strong()
-                                                .size(12.0),
-                                        );
-                                        ui.horizontal(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(&full_path_str)
-                                                    .size(11.0)
-                                                    .monospace(),
-                                            );
-                                            if ui
-                                                .small_button("\u{1F4CB} Copy")
-                                                .clicked()
-                                            {
-                                                ui.ctx().copy_text(full_path_str.clone());
-                                                self.status_message = Some((
-                                                    "Path copied to clipboard.".to_string(),
-                                                    false,
-                                                ));
-                                            }
-                                        });
-                                        ui.end_row();
+                    // Row background
+                    let row_rect = egui::Rect::from_min_size(
+                        ui.cursor().min,
+                        egui::vec2(ui.available_width(), row_height),
+                    );
 
-                                        ui.label(
-                                            egui::RichText::new("Type:")
-                                                .strong()
-                                                .size(12.0),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(format!("{:?}", file_type))
-                                                .size(12.0),
-                                        );
-                                        ui.end_row();
-                                    });
+                    // Hover highlight
+                    let resp = ui.allocate_rect(row_rect, egui::Sense::click());
+                    let hovered = resp.hovered();
+
+                    if is_selected {
+                        ui.painter().rect_filled(
+                            row_rect,
+                            0.0,
+                            egui::Color32::from_rgb(219, 234, 254),
+                        );
+                    } else if hovered {
+                        ui.painter().rect_filled(
+                            row_rect,
+                            0.0,
+                            egui::Color32::from_rgb(245, 245, 247),
+                        );
+                    }
+
+                    // Render row content
+                    let mut row_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(row_rect)
+                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    );
+
+                    row_ui.add_space(12.0);
+
+                    // Checkbox
+                    let mut checked = is_checked;
+                    if row_ui.checkbox(&mut checked, "").changed() {
+                        toggle_checks.push((entry_path.clone(), checked));
+                    }
+
+                    // Icon / Badge
+                    if entry_is_dir {
+                        Self::render_folder_icon(&mut row_ui);
+                    } else {
+                        Self::render_extension_badge(&mut row_ui, &entry_name);
+                    }
+
+                    row_ui.add_space(8.0);
+
+                    // Name
+                    row_ui.label(
+                        egui::RichText::new(&entry_name)
+                            .size(13.0)
+                            .color(text_normal),
+                    );
+
+                    // Right-aligned: size + modified
+                    let right_area = egui::Rect::from_min_max(
+                        egui::pos2(row_rect.max.x - 170.0, row_rect.min.y),
+                        row_rect.max,
+                    );
+                    let mut right_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(right_area)
+                            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    );
+
+                    right_ui.add_space(16.0);
+
+                    // Modified date
+                    let date_str = Self::format_relative_date(&entry_modified);
+                    right_ui.label(
+                        egui::RichText::new(&date_str)
+                            .size(12.0)
+                            .color(text_dim),
+                    );
+
+                    // Size
+                    let size_str = if entry_is_dir {
+                        format!(
+                            "{} items",
+                            entry_item_count.unwrap_or(0)
+                        )
+                    } else {
+                        Self::format_size(entry_size)
+                    };
+                    right_ui.add_space(8.0);
+                    right_ui.label(
+                        egui::RichText::new(&size_str)
+                            .size(12.0)
+                            .color(text_dim),
+                    );
+
+                    // Handle clicks
+                    if resp.double_clicked() {
+                        if entry_is_dir {
+                            nav_target = Some(entry_path.clone());
+                        } else {
+                            // Open viewer
+                            select_target = Some(entry_path.clone());
+                            self.show_viewer = true;
+                        }
+                    } else if resp.clicked() {
+                        if entry_is_dir {
+                            nav_target = Some(entry_path.clone());
+                        } else {
+                            select_target = Some(entry_path.clone());
+                        }
+                    }
+
+                    // Context menu
+                    resp.context_menu(|ui| {
+                        if !entry_is_dir {
+                            if ui.button("Open").clicked() {
+                                select_target = Some(entry_path.clone());
+                                self.show_viewer = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("Download").clicked() {
+                                self.selected_file = Some(entry_path.clone());
+                                self.download_file();
+                                ui.close_menu();
                             }
                         }
+                        if ui.button("Delete").clicked() {
+                            self.selected_file = Some(entry_path.clone());
+                            // Will be deleted after menu closes
+                            ui.close_menu();
+                        }
                     });
+                }
 
-                    ui.separator();
+                // Apply checkbox toggles
+                for (path, checked) in toggle_checks {
+                    if checked {
+                        self.selected_set.insert(path);
+                    } else {
+                        self.selected_set.remove(&path);
+                    }
+                }
 
-                    // ── File content area with rich preview ──
-                    egui::ScrollArea::both()
-                        .id_salt("file_content_preview")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            if self.editing && is_text_like(&file_type) {
-                                // Line count
-                                let line_count = self.file_content.lines().count();
-                                ui.label(
-                                    egui::RichText::new(format!("{} lines", line_count))
-                                        .size(11.0)
-                                        .color(egui::Color32::GRAY),
-                                );
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut self.file_content)
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(f32::INFINITY)
-                                        .desired_rows(30)
-                                        .code_editor(),
-                                );
-                            } else {
-                                // Read-only preview based on file type
-                                match file_type {
-                                    FileType::Image => {
-                                        // Show image path info - egui can load images
-                                        // via URI if egui_extras image loaders are set up.
-                                        // Attempt to display using egui::Image with file URI.
-                                        let sandbox_c = self.sandbox_dir.clone();
-                                        let selected_c = selected.clone();
-                                        if let Ok(full_path) =
-                                            data::validate_path(&sandbox_c, &selected_c)
-                                        {
-                                            let uri = format!("file://{}", full_path.display());
-                                            // Try to show via egui::Image (requires image loaders)
-                                            let image = egui::Image::new(&uri)
-                                                .max_width(ui.available_width() - 20.0)
-                                                .max_height(ui.available_height() - 20.0)
-                                                .corner_radius(4.0);
-                                            let resp = ui.add(image);
-                                            if resp.hovered() {
-                                                resp.on_hover_text(&file_name);
-                                            }
-                                        } else {
-                                            ui.label("Unable to resolve image path.");
-                                        }
-                                    }
-                                    FileType::Markdown => {
-                                        // Render markdown with basic formatting
-                                        let line_count = self.file_content.lines().count();
-                                        ui.label(
-                                            egui::RichText::new(format!("{} lines", line_count))
-                                                .size(11.0)
-                                                .color(egui::Color32::GRAY),
-                                        );
-                                        ui.add_space(4.0);
-                                        let content = self.file_content.clone();
-                                        Self::render_markdown(ui, &content);
-                                    }
-                                    FileType::Csv => {
-                                        let row_count = self.file_content.lines().count().saturating_sub(1);
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{} data rows",
-                                                row_count
-                                            ))
-                                            .size(11.0)
-                                            .color(egui::Color32::GRAY),
-                                        );
-                                        ui.add_space(4.0);
-                                        let content = self.file_content.clone();
-                                        Self::render_csv_table(ui, &content);
-                                    }
-                                    FileType::Code => {
-                                        let line_count = self.file_content.lines().count();
-                                        ui.label(
-                                            egui::RichText::new(format!("{} lines", line_count))
-                                                .size(11.0)
-                                                .color(egui::Color32::GRAY),
-                                        );
-                                        // Dark background code view
-                                        egui::Frame::NONE
-                                            .fill(egui::Color32::from_rgb(30, 30, 30))
-                                            .inner_margin(egui::Margin::same(8))
-                                            .corner_radius(4.0)
-                                            .show(ui, |ui| {
-                                                ui.add(
-                                                    egui::TextEdit::multiline(
-                                                        &mut self.file_content.as_str(),
-                                                    )
-                                                    .font(egui::TextStyle::Monospace)
-                                                    .desired_width(f32::INFINITY)
-                                                    .desired_rows(30)
-                                                    .code_editor(),
-                                                );
-                                            });
-                                    }
-                                    FileType::Text => {
-                                        let line_count = self.file_content.lines().count();
-                                        ui.label(
-                                            egui::RichText::new(format!("{} lines", line_count))
-                                                .size(11.0)
-                                                .color(egui::Color32::GRAY),
-                                        );
-                                        ui.add(
-                                            egui::TextEdit::multiline(
-                                                &mut self.file_content.as_str(),
-                                            )
-                                            .font(egui::TextStyle::Monospace)
-                                            .desired_width(f32::INFINITY)
-                                            .desired_rows(30),
-                                        );
-                                    }
-                                    FileType::Binary => {
-                                        ui.label(
-                                            egui::RichText::new("Binary File")
-                                                .size(16.0)
-                                                .strong(),
-                                        );
-                                        ui.add_space(8.0);
-                                        // Show the info we loaded
-                                        ui.label(
-                                            egui::RichText::new(&self.file_content)
-                                                .monospace()
-                                                .size(13.0),
-                                        );
-                                        ui.add_space(8.0);
+                // Apply deferred actions
+                if let Some(path) = nav_target {
+                    self.navigate_to(&path);
+                } else if let Some(path) = select_target {
+                    let p = path.clone();
+                    self.selected_file = Some(path);
+                    self.load_file_content(runtime, &p);
+                }
 
-                                        // Show hex dump of first bytes
-                                        let sandbox_c = self.sandbox_dir.clone();
-                                        let selected_c = selected.clone();
-                                        if let Ok(full_path) =
-                                            data::validate_path(&sandbox_c, &selected_c)
-                                        {
-                                            if let Ok(bytes) = std::fs::read(&full_path) {
-                                                let preview_len = bytes.len().min(256);
-                                                ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "Hex dump (first {} bytes):",
-                                                        preview_len
-                                                    ))
-                                                    .size(12.0)
-                                                    .color(egui::Color32::GRAY),
-                                                );
-                                                let mut hex = String::new();
-                                                for (i, byte) in
-                                                    bytes.iter().take(preview_len).enumerate()
-                                                {
-                                                    if i > 0 && i % 16 == 0 {
-                                                        hex.push('\n');
-                                                    } else if i > 0 && i % 2 == 0 {
-                                                        hex.push(' ');
-                                                    }
-                                                    hex.push_str(&format!("{:02X}", byte));
-                                                }
-                                                egui::Frame::NONE
-                                                    .fill(egui::Color32::from_rgb(30, 30, 30))
-                                                    .inner_margin(egui::Margin::same(8))
-                                                    .corner_radius(4.0)
-                                                    .show(ui, |ui| {
-                                                        ui.label(
-                                                            egui::RichText::new(&hex)
-                                                                .monospace()
-                                                                .size(12.0)
-                                                                .color(egui::Color32::from_rgb(
-                                                                    180, 180, 180,
-                                                                )),
-                                                        );
-                                                    });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                } else {
-                    // No file selected placeholder
+                // Empty state
+                if self.files.is_empty() && self.current_path.is_empty() {
+                    ui.add_space(60.0);
                     ui.vertical_centered(|ui| {
-                        ui.add_space(80.0);
                         ui.label(
-                            egui::RichText::new("\u{1F4C4}")
-                                .size(48.0)
-                                .color(egui::Color32::GRAY),
-                        );
-                        ui.add_space(12.0);
-                        ui.label(
-                            egui::RichText::new("Select a file to view its contents")
-                                .size(14.0)
-                                .color(egui::Color32::GRAY),
+                            egui::RichText::new("Empty directory")
+                                .size(16.0)
+                                .color(text_dim),
                         );
                         ui.add_space(8.0);
                         ui.label(
-                            egui::RichText::new("Drag & drop files here to upload")
-                                .size(12.0)
-                                .color(egui::Color32::from_rgb(120, 120, 120)),
+                            egui::RichText::new(
+                                "Upload files or create a folder to get started.\nDrag & drop files here.",
+                            )
+                            .size(12.0)
+                            .color(text_dim),
+                        );
+                    });
+                } else if filtered_indices.is_empty() && !self.search_query.is_empty() {
+                    ui.add_space(40.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            egui::RichText::new("No files match the search.")
+                                .size(13.0)
+                                .color(text_dim),
                         );
                     });
                 }
             });
-        });
     }
 }

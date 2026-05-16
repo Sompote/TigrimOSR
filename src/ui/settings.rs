@@ -7,7 +7,7 @@ use crate::server::data::{
     generate_token, get_file_tokens, get_settings, save_file_tokens, save_settings, FileToken,
     LocalFileMount, McpTool, RemoteInstance,
 };
-use crate::vm::{VmConfig, VmManager};
+use crate::vm::{VmConfig, VmManager, VmState};
 
 // ---------------------------------------------------------------------------
 // Section enum
@@ -350,7 +350,7 @@ impl SettingsView {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         match self.selected_section {
-                            SettingsSection::General => self.section_general(ui),
+                            SettingsSection::General => self.section_general(ui, vm_manager, runtime),
                             SettingsSection::AI => self.section_ai(ui, ctx, runtime),
                             SettingsSection::SubAgent => self.section_sub_agent(ui, runtime),
                             SettingsSection::McpTools => self.section_mcp_tools(ui, runtime),
@@ -619,11 +619,68 @@ impl SettingsView {
     //  1. General
     // ==================================================================
 
-    fn section_general(&mut self, ui: &mut egui::Ui) {
+    fn section_general(&mut self, ui: &mut egui::Ui, vm_manager: &Arc<VmManager>, runtime: &tokio::runtime::Handle) {
         let storage_path = VmConfig::app_support_dir().to_string_lossy().to_string();
         let disk_usage = VmConfig::disk_usage();
         let disk_size_gb = VmConfig::DISK_SIZE_GB;
 
+        // VM Control
+        ui.add_space(8.0);
+        ui.heading("VM Control");
+        ui.add_space(4.0);
+        {
+            let vm = vm_manager.clone();
+            let state = runtime.block_on(vm.state());
+            let service_ready = runtime.block_on(vm.service_ready());
+            let vm_color = match state {
+                VmState::Running if service_ready => egui::Color32::from_rgb(34, 197, 94),
+                VmState::Running => egui::Color32::from_rgb(250, 204, 21),
+                VmState::Error => egui::Color32::from_rgb(239, 68, 68),
+                VmState::Stopped => egui::Color32::from_rgb(156, 163, 175),
+                _ => egui::Color32::from_rgb(59, 130, 246),
+            };
+            ui.horizontal(|ui| {
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                ui.painter().circle_filled(dot.center(), 5.0, vm_color);
+                ui.label(egui::RichText::new(format!("Status: {}", state.label())).size(13.0));
+            });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if state == VmState::Stopped || state == VmState::Error {
+                    let btn = egui::Button::new(egui::RichText::new("\u{25B6} Start VM").color(egui::Color32::WHITE))
+                        .fill(egui::Color32::from_rgb(34, 197, 94)).corner_radius(6.0);
+                    if ui.add(btn).clicked() {
+                        let mgr = vm_manager.clone();
+                        runtime.spawn(async move { let _ = mgr.start_vm().await; });
+                    }
+                } else if state == VmState::Running {
+                    let btn = egui::Button::new(egui::RichText::new("\u{25A0} Stop VM").color(egui::Color32::WHITE))
+                        .fill(egui::Color32::from_rgb(239, 68, 68)).corner_radius(6.0);
+                    if ui.add(btn).clicked() {
+                        let mgr = vm_manager.clone();
+                        runtime.spawn(async move { mgr.stop_vm().await; });
+                    }
+                } else {
+                    ui.spinner();
+                    ui.label(egui::RichText::new(state.label()).size(12.0).color(egui::Color32::GRAY));
+                }
+                ui.add_space(8.0);
+                let reset_btn = egui::Button::new(egui::RichText::new("Reset VM").size(12.0))
+                    .fill(egui::Color32::from_rgb(250, 240, 240)).corner_radius(6.0);
+                if ui.add(reset_btn).on_hover_text("Stop and delete VM disk. Will re-download on next start.").clicked() {
+                    let mgr = vm_manager.clone();
+                    runtime.spawn(async move { mgr.reset_vm().await; });
+                }
+            });
+            if state == VmState::Downloading {
+                ui.add_space(4.0);
+                let progress = runtime.block_on(vm_manager.progress());
+                ui.add(egui::ProgressBar::new(progress as f32).show_percentage().animate(true));
+            }
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
         ui.add_space(8.0);
         ui.heading("VM Resources");
         ui.add_space(4.0);
@@ -957,15 +1014,15 @@ impl SettingsView {
                         format!("{}/chat/completions", raw_url.trim_end_matches('/'))
                     };
                     runtime.block_on(async {
-                        let mut builder = reqwest::Client::new()
+                        let builder = reqwest::Client::new()
                             .post(&api_url)
                             .header("Authorization", format!("Bearer {}", api_key))
-                            .header("content-type", "application/json");
-                        if api_url.contains("api.kimi.com") {
-                            builder = builder
-                                .header("User-Agent", "claude-code/1.0")
-                                .header("X-Client-Name", "claude-code");
-                        }
+                            .header("content-type", "application/json")
+                            .header("User-Agent", "claude-code/1.0.6")
+                            .header("X-Client-Name", "claude-code")
+                            .header("X-Client-Version", "1.0.6")
+                            .header("HTTP-Referer", "https://claude.ai")
+                            .header("X-Traffic-Source", "claude-code");
                         let resp = builder
                             .json(&serde_json::json!({
                                 "model": model,

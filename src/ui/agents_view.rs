@@ -191,17 +191,35 @@ impl AgentsView {
             }
         }
 
+        // Kimi-style light background
+        ui.painter().rect_filled(
+            ui.available_rect_before_wrap(),
+            0.0,
+            Color32::WHITE,
+        );
+
+        let text_normal = Color32::from_rgb(29, 29, 31);
+        let text_dim = Color32::from_rgb(134, 134, 139);
+        let _accent = Color32::from_rgb(59, 130, 246);
+
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.heading("Agent System Editor");
-            ui.separator();
-            if ui.button("New System").clicked() {
+            ui.add_space(12.0);
+            ui.label(RichText::new("Agent Swarm").size(18.0).strong().color(text_normal));
+            ui.add_space(16.0);
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("+ New System").size(12.0).color(text_normal))
+                        .corner_radius(6.0),
+                )
+                .clicked()
+            {
                 self.nodes.clear();
                 self.connections.clear();
                 self.system_name = "New Agent System".to_string();
                 self.orchestration_mode = "hierarchical".to_string();
                 self.selected_file = None;
                 self.selected_node_idx = None;
-                // Add default human node
                 self.nodes.push(AgentNode {
                     id: "human".to_string(),
                     name: "Human User".to_string(),
@@ -214,7 +232,13 @@ impl AgentsView {
                     pos: Pos2::new(100.0, 200.0),
                 });
             }
-            if ui.button("YAML").clicked() {
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("YAML").size(12.0).color(text_dim))
+                        .corner_radius(6.0),
+                )
+                .clicked()
+            {
                 self.yaml_content = self.generate_yaml();
                 self.show_yaml_editor = !self.show_yaml_editor;
             }
@@ -226,219 +250,171 @@ impl AgentsView {
         let available = ui.available_size();
 
         ui.horizontal_top(|ui| {
-            // --- Left sidebar: file list + auto architecture ---
+            // --- Left sidebar ---
+            let sidebar_w = 180.0_f32;
             ui.vertical(|ui| {
-                ui.set_width(200.0);
+                ui.set_width(sidebar_w);
+                ui.set_max_width(sidebar_w);
                 ui.set_min_height(available.y - 10.0);
+                let sidebar_rect = egui::Rect::from_min_size(ui.min_rect().min, egui::Vec2::new(sidebar_w, available.y - 10.0));
+                ui.painter().rect_filled(sidebar_rect, 0.0, Color32::from_rgb(247, 247, 248));
+                ui.add_space(4.0);
 
-                // File list
-                ui.label(RichText::new("Agent Systems").strong());
+                // File list header
+                ui.label(RichText::new("  Agent Systems").size(12.0).strong().color(text_normal));
+                ui.add_space(2.0);
+
                 egui::ScrollArea::vertical()
                     .id_salt("agent_files_list")
-                    .max_height(180.0)
+                    .max_height(160.0)
                     .show(ui, |ui| {
                         let files = self.agent_files.clone();
+                        let mut load_file: Option<String> = None;
                         for f in &files {
                             let selected = self.selected_file.as_deref() == Some(&f.filename);
-                            let label = format!("{} ({})", f.name, f.agent_count);
-                            if ui.selectable_label(selected, &label).clicked() {
-                                self.load_agent_file(&f.filename, rt);
+                            let mut label = format!("{} ({})", f.name, f.agent_count);
+                            if label.len() > 28 {
+                                label = format!("{}... ({})", &f.name[..24.min(f.name.len())], f.agent_count);
+                            }
+                            if ui.selectable_label(selected, RichText::new(&label).size(11.0)).clicked() {
+                                load_file = Some(f.filename.clone());
                             }
                         }
+                        if let Some(fname) = load_file {
+                            self.load_agent_file(&fname, rt);
+                        }
                         if self.agent_files.is_empty() {
-                            ui.label(RichText::new("No agent systems yet").weak());
+                            ui.label(RichText::new("  No agent systems yet").size(11.0).color(text_dim));
                         }
                     });
 
-                ui.add_space(8.0);
+                ui.add_space(4.0);
                 ui.separator();
-
-                // Auto Architecture section
-                ui.label(RichText::new("Auto Architecture").strong());
                 ui.add_space(4.0);
 
-                ui.label("Describe your system:");
+                // Auto Architecture
+                ui.label(RichText::new("  Auto Architecture").size(12.0).strong().color(text_normal));
+                ui.add_space(2.0);
+                ui.label(RichText::new("  Describe your system:").size(11.0).color(text_dim));
                 ui.add(
                     egui::TextEdit::multiline(&mut self.auto_arch_description)
                         .desired_rows(3)
-                        .desired_width(190.0)
-                        .hint_text("e.g., A web research team with 3 researchers and a synthesizer"),
+                        .desired_width(168.0)
+                        .hint_text("e.g., A web research team..."),
                 );
 
+                ui.add_space(2.0);
                 ui.horizontal(|ui| {
-                    ui.label("Type:");
+                    ui.label(RichText::new("Type:").size(11.0).color(text_dim));
                     egui::ComboBox::from_id_salt("arch_type")
-                        .width(100.0)
+                        .width(85.0)
                         .selected_text(&self.auto_arch_type)
                         .show_ui(ui, |ui| {
-                            for t in &[
-                                "hierarchical",
-                                "flat",
-                                "mesh",
-                                "hybrid",
-                                "pipeline",
-                                "p2p",
-                            ] {
-                                ui.selectable_value(
-                                    &mut self.auto_arch_type,
-                                    t.to_string(),
-                                    *t,
-                                );
+                            for t in &["hierarchical", "flat", "mesh", "hybrid", "pipeline", "p2p"] {
+                                ui.selectable_value(&mut self.auto_arch_type, t.to_string(), *t);
                             }
                         });
                 });
-
                 ui.horizontal(|ui| {
-                    ui.label("Agents:");
+                    ui.label(RichText::new("Agents:").size(11.0).color(text_dim));
                     egui::ComboBox::from_id_salt("arch_count")
-                        .width(80.0)
+                        .width(65.0)
                         .selected_text(&self.auto_arch_count)
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.auto_arch_count,
-                                "auto".to_string(),
-                                "Auto",
-                            );
+                            ui.selectable_value(&mut self.auto_arch_count, "auto".to_string(), "Auto");
                             for n in 3..=8 {
-                                ui.selectable_value(
-                                    &mut self.auto_arch_count,
-                                    n.to_string(),
-                                    format!("{}", n),
-                                );
+                                ui.selectable_value(&mut self.auto_arch_count, n.to_string(), format!("{}", n));
                             }
                         });
                 });
 
                 ui.add_space(4.0);
-
-                let generate_btn = ui.add_enabled(
-                    !self.auto_arch_loading && !self.auto_arch_description.is_empty(),
-                    egui::Button::new(
-                        RichText::new(if self.auto_arch_loading {
-                            "Generating..."
-                        } else {
-                            "Generate System"
-                        })
-                        .color(Color32::WHITE),
-                    )
-                    .fill(Color32::from_rgb(59, 130, 246)),
-                );
-
-                if generate_btn.clicked() {
+                let gen_enabled = !self.auto_arch_loading && !self.auto_arch_description.is_empty();
+                if ui.add_enabled(gen_enabled,
+                    egui::Button::new(RichText::new(if self.auto_arch_loading { "Generating..." } else { "Generate" }).size(12.0).color(Color32::WHITE))
+                        .fill(Color32::from_rgb(59, 130, 246)).corner_radius(6.0),
+                ).clicked() {
                     self.run_auto_architecture(rt);
                 }
 
                 if let Some((msg, is_err)) = &self.auto_arch_status {
-                    let color = if *is_err {
-                        Color32::from_rgb(220, 50, 50)
-                    } else {
-                        Color32::from_rgb(50, 180, 50)
-                    };
-                    ui.colored_label(color, msg);
+                    let color = if *is_err { Color32::from_rgb(220, 50, 50) } else { Color32::from_rgb(50, 180, 50) };
+                    ui.label(RichText::new(msg).size(10.0).color(color));
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(4.0);
                 ui.separator();
+                ui.add_space(4.0);
 
-                // Add node button
-                if ui.button("+ Add Agent Node").clicked() {
+                // Add agent + Save + Apply
+                if ui.add(egui::Button::new(RichText::new("+ Add Agent").size(12.0).color(text_normal)).corner_radius(6.0)).clicked() {
                     self.show_add_node = true;
                     self.new_node_name.clear();
                     self.new_node_role = "worker".to_string();
                 }
-
-                // Save button
-                ui.add_space(8.0);
-                let save_btn = ui.add(
-                    egui::Button::new(RichText::new("Save System").color(Color32::WHITE))
-                        .fill(Color32::from_rgb(34, 197, 94)),
-                );
-                if save_btn.clicked() {
-                    self.save_current_system(rt);
-                }
-
-                if let Some((msg, is_err)) = &self.save_status {
-                    let color = if *is_err {
-                        Color32::from_rgb(220, 50, 50)
-                    } else {
-                        Color32::from_rgb(50, 180, 50)
-                    };
-                    ui.colored_label(color, msg);
-                }
-
-                // "Apply to System" button — only enabled in manual mode
-                ui.add_space(8.0);
-                let settings = rt.block_on(crate::server::data::get_settings());
-                let current_mode = settings.sub_agent_mode.clone().unwrap_or_default();
-                let is_manual = current_mode == "manual";
-                let apply_btn = egui::Button::new(
-                    RichText::new("Apply to Chat").color(Color32::WHITE).size(12.0),
-                )
-                .fill(if is_manual {
-                    Color32::from_rgb(59, 130, 246) // blue
-                } else {
-                    Color32::from_rgb(120, 130, 140) // gray
-                });
-                let apply_resp = ui.add_enabled(is_manual, apply_btn);
-                if !is_manual {
-                    apply_resp.clone().on_disabled_hover_text("Only available in Manual mode");
-                }
-                if apply_resp.clicked() {
-                    if let Some(ref filename) = self.selected_file {
-                        let mut s = settings.clone();
-                        s.sub_agent_enabled = Some(true);
-                        s.sub_agent_config_file = Some(filename.clone());
-                        rt.block_on(crate::server::data::save_settings(&s));
-                        self.save_status = Some((format!("Applied: {}", filename), false));
-                    } else {
-                        self.save_status = Some(("Save the system first".to_string(), true));
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.add(egui::Button::new(RichText::new("Save").size(11.0).color(Color32::WHITE)).fill(Color32::from_rgb(34, 197, 94)).corner_radius(6.0)).clicked() {
+                        self.save_current_system(rt);
                     }
+                    let settings = rt.block_on(crate::server::data::get_settings());
+                    let current_mode = settings.sub_agent_mode.clone().unwrap_or_default();
+                    let is_manual = current_mode == "manual";
+                    let fill = if is_manual { Color32::from_rgb(59, 130, 246) } else { Color32::from_rgb(180, 180, 185) };
+                    let apply_resp = ui.add_enabled(is_manual,
+                        egui::Button::new(RichText::new("Apply to Chat").size(11.0).color(Color32::WHITE)).fill(fill).corner_radius(6.0),
+                    );
+                    if !is_manual { apply_resp.clone().on_disabled_hover_text("Only available in Manual mode"); }
+                    if apply_resp.clicked() {
+                        if let Some(ref filename) = self.selected_file {
+                            let mut s = settings.clone();
+                            s.sub_agent_enabled = Some(true);
+                            s.sub_agent_config_file = Some(filename.clone());
+                            rt.block_on(crate::server::data::save_settings(&s));
+                            self.save_status = Some((format!("Applied: {}", filename), false));
+                        } else {
+                            self.save_status = Some(("Save the system first".to_string(), true));
+                        }
+                    }
+                });
+                if let Some((msg, is_err)) = &self.save_status {
+                    let color = if *is_err { Color32::from_rgb(220, 50, 50) } else { Color32::from_rgb(50, 180, 50) };
+                    ui.label(RichText::new(msg).size(10.0).color(color));
                 }
             });
 
             ui.separator();
 
-            // --- Center: Graph Canvas ---
-            let has_right_panel = self.selected_node_idx.is_some()
-                || self.selected_connection_idx.is_some();
-            let canvas_width = if has_right_panel {
-                available.x - 200.0 - 240.0 - 20.0
-            } else {
-                available.x - 200.0 - 20.0
-            };
+            // --- Center: Graph Canvas (full remaining width) ---
+            let canvas_width = available.x - sidebar_w - 20.0;
             let canvas_height = available.y - 40.0;
 
             ui.vertical(|ui| {
                 ui.set_width(canvas_width.max(300.0));
 
-                // System name
+                // System name bar
                 ui.horizontal(|ui| {
-                    ui.label("System:");
-                    ui.text_edit_singleline(&mut self.system_name);
-                    ui.label("Mode:");
+                    ui.label(RichText::new("System:").size(12.0).color(text_dim));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.system_name)
+                            .font(egui::FontId::proportional(12.0)),
+                    );
+                    ui.label(RichText::new("Mode:").size(12.0).color(text_dim));
                     egui::ComboBox::from_id_salt("orch_mode")
                         .width(100.0)
                         .selected_text(&self.orchestration_mode)
                         .show_ui(ui, |ui| {
                             for m in &[
-                                "hierarchical",
-                                "flat",
-                                "mesh",
-                                "hybrid",
-                                "pipeline",
-                                "p2p",
+                                "hierarchical", "flat", "mesh", "hybrid", "pipeline", "p2p",
                             ] {
-                                ui.selectable_value(
-                                    &mut self.orchestration_mode,
-                                    m.to_string(),
-                                    *m,
-                                );
+                                ui.selectable_value(&mut self.orchestration_mode, m.to_string(), *m);
                             }
                         });
                     if self.connecting_from.is_some() {
-                        ui.colored_label(
-                            Color32::from_rgb(59, 130, 246),
-                            "Click target node to connect (Esc to cancel)",
+                        ui.label(
+                            RichText::new("Click target node to connect (Esc to cancel)")
+                                .size(11.0)
+                                .color(Color32::from_rgb(59, 130, 246)),
                         );
                     }
                 });
@@ -451,16 +427,22 @@ impl AgentsView {
 
                 let canvas_rect = response.rect;
 
-                // Background
+                // Background — light canvas
                 painter.rect_filled(
                     canvas_rect,
-                    CornerRadius::same(4),
-                    Color32::from_rgb(30, 30, 40),
+                    CornerRadius::same(8),
+                    Color32::from_rgb(248, 248, 250),
+                );
+                painter.rect_stroke(
+                    canvas_rect,
+                    CornerRadius::same(8),
+                    Stroke::new(1.0, Color32::from_rgb(225, 228, 232)),
+                    StrokeKind::Outside,
                 );
 
-                // Grid
-                let grid_size = 30.0;
-                let grid_color = Color32::from_rgba_premultiplied(60, 60, 80, 40);
+                // Grid — subtle dots pattern
+                let grid_size = 24.0;
+                let grid_color = Color32::from_rgba_premultiplied(180, 185, 195, 50);
                 let min = canvas_rect.min;
                 let max = canvas_rect.max;
                 let mut x = min.x;
@@ -534,9 +516,9 @@ impl AgentsView {
                             &label,
                             FontId::proportional(10.0),
                             if is_selected_conn {
-                                Color32::WHITE
+                                Color32::from_rgb(29, 29, 31)
                             } else {
-                                Color32::from_rgb(180, 180, 200)
+                                Color32::from_rgb(100, 100, 110)
                             },
                         );
 
@@ -578,11 +560,29 @@ impl AgentsView {
 
                     let role_color = role_color(&node.role);
                     let is_selected = self.selected_node_idx == Some(idx);
+                    let is_hovered = ui.ctx().pointer_latest_pos()
+                        .map(|p| node_rect.contains(p))
+                        .unwrap_or(false);
+
+                    // Hover shadow/glow
+                    if is_hovered && !is_selected {
+                        painter.rect_filled(
+                            node_rect.expand(4.0),
+                            CornerRadius::same(12),
+                            Color32::from_rgba_premultiplied(59, 130, 246, 30),
+                        );
+                        painter.rect_stroke(
+                            node_rect.expand(2.0),
+                            CornerRadius::same(10),
+                            Stroke::new(1.5, Color32::from_rgba_premultiplied(59, 130, 246, 100)),
+                            StrokeKind::Outside,
+                        );
+                    }
 
                     // Node background
                     painter.rect_filled(
                         node_rect,
-                        CornerRadius::same(8),
+                        CornerRadius::same(10),
                         role_color,
                     );
 
@@ -590,8 +590,8 @@ impl AgentsView {
                     if is_selected {
                         painter.rect_stroke(
                             node_rect.expand(2.0),
-                            CornerRadius::same(10),
-                            Stroke::new(3.0, Color32::WHITE),
+                            CornerRadius::same(12),
+                            Stroke::new(3.0, Color32::from_rgb(59, 130, 246)),
                             StrokeKind::Outside,
                         );
                     }
@@ -660,6 +660,39 @@ impl AgentsView {
                             FontId::proportional(9.0),
                             Color32::from_rgb(34, 211, 238),
                         );
+                    }
+
+                    // Hover tooltip — paint a card next to the node
+                    if is_hovered {
+                        let tip_x = node_rect.right() + 8.0;
+                        let tip_y = node_rect.min.y;
+                        let tip_w = 200.0_f32;
+                        let persona_preview = if node.persona.len() > 60 {
+                            format!("{}...", &node.persona[..60])
+                        } else {
+                            node.persona.clone()
+                        };
+                        let line_count = 2 + if persona_preview.is_empty() { 0 } else { 1 } + if node.bus_enabled { 1 } else { 0 };
+                        let tip_h = line_count as f32 * 16.0 + 16.0;
+                        let tip_rect = Rect::from_min_size(Pos2::new(tip_x, tip_y), Vec2::new(tip_w, tip_h));
+
+                        // Shadow
+                        painter.rect_filled(tip_rect.expand(2.0), CornerRadius::same(10), Color32::from_rgba_premultiplied(0, 0, 0, 20));
+                        // Card background
+                        painter.rect_filled(tip_rect, CornerRadius::same(8), Color32::WHITE);
+                        painter.rect_stroke(tip_rect, CornerRadius::same(8), Stroke::new(0.5, Color32::from_rgb(220, 220, 225)), StrokeKind::Outside);
+
+                        let mut ty = tip_y + 10.0;
+                        painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &node.name, FontId::proportional(12.0), Color32::from_rgb(29, 29, 31));
+                        ty += 16.0;
+                        painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &format!("Role: {}", node.role), FontId::proportional(10.0), Color32::from_rgb(134, 134, 139));
+                        ty += 16.0;
+                        if !persona_preview.is_empty() {
+                            painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &persona_preview, FontId::proportional(10.0), Color32::from_rgb(100, 100, 105));
+                            // ty += 16.0;
+                        }
+
+                        ui.ctx().request_repaint();
                     }
 
                     // Check click/drag on this node
@@ -754,25 +787,53 @@ impl AgentsView {
                 }
             });
 
-            // --- Right panel: Node or Connection properties ---
-            if let Some(idx) = self.selected_node_idx {
-                if idx < self.nodes.len() {
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        ui.set_width(230.0);
-                        self.show_node_properties(ui, idx);
+        });
+
+        // --- Node Properties floating window ---
+        if let Some(idx) = self.selected_node_idx {
+            if idx < self.nodes.len() {
+                let mut open = true;
+                egui::Window::new("Node Properties")
+                    .open(&mut open)
+                    .resizable(true)
+                    .default_width(280.0)
+                    .default_height(400.0)
+                    .anchor(egui::Align2::RIGHT_TOP, [-12.0, 60.0])
+                    .show(ui.ctx(), |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                self.show_node_properties(ui, idx);
+                            });
                     });
-                }
-            } else if let Some(ci) = self.selected_connection_idx {
-                if ci < self.connections.len() {
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        ui.set_width(230.0);
-                        self.show_connection_properties(ui, ci);
-                    });
+                if !open {
+                    self.selected_node_idx = None;
                 }
             }
-        });
+        }
+
+        // --- Connection Properties floating window ---
+        if let Some(ci) = self.selected_connection_idx {
+            if ci < self.connections.len() {
+                let mut open = true;
+                egui::Window::new("Connection Properties")
+                    .open(&mut open)
+                    .resizable(true)
+                    .default_width(260.0)
+                    .default_height(300.0)
+                    .anchor(egui::Align2::RIGHT_TOP, [-12.0, 60.0])
+                    .show(ui.ctx(), |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                self.show_connection_properties(ui, ci);
+                            });
+                    });
+                if !open {
+                    self.selected_connection_idx = None;
+                }
+            }
+        }
 
         // --- Add node dialog ---
         if self.show_add_node {
@@ -786,7 +847,9 @@ impl AgentsView {
     }
 
     fn show_node_properties(&mut self, ui: &mut egui::Ui, idx: usize) {
-        ui.label(RichText::new("Node Properties").strong());
+        let text_normal = Color32::from_rgb(29, 29, 31);
+        let text_dim = Color32::from_rgb(134, 134, 139);
+        ui.label(RichText::new("Node Properties").size(14.0).strong().color(text_normal));
         ui.add_space(4.0);
 
         let node = &mut self.nodes[idx];
@@ -924,7 +987,9 @@ impl AgentsView {
     }
 
     fn show_connection_properties(&mut self, ui: &mut egui::Ui, ci: usize) {
-        ui.label(RichText::new("Connection Properties").strong());
+        let text_normal = Color32::from_rgb(29, 29, 31);
+        let _text_dim = Color32::from_rgb(134, 134, 139);
+        ui.label(RichText::new("Connection Properties").size(14.0).strong().color(text_normal));
         ui.add_space(4.0);
 
         let conn = &mut self.connections[ci];

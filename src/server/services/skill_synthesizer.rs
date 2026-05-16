@@ -1086,6 +1086,11 @@ async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value
         .post(api_url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
+        .header("User-Agent", "claude-code/1.0.6")
+        .header("X-Client-Name", "claude-code")
+        .header("X-Client-Version", "1.0.6")
+        .header("HTTP-Referer", "https://claude.ai")
+        .header("X-Traffic-Source", "claude-code")
         .json(&body)
         .send()
         .await
