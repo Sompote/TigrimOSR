@@ -2436,11 +2436,19 @@ impl SettingsView {
     fn section_about(ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.add_space(24.0);
-            ui.label(egui::RichText::new("\u{1F42F}").size(64.0));
+            // Logo image
+            let logo_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon.png");
+            let logo_uri = format!("file://{}", logo_path.display());
+            ui.add(
+                egui::Image::new(&logo_uri)
+                    .max_width(80.0)
+                    .max_height(80.0)
+                    .corner_radius(12.0),
+            );
             ui.add_space(8.0);
             ui.label(egui::RichText::new("TigrimOS").size(28.0).strong());
             ui.label(
-                egui::RichText::new("v0.3.0")
+                egui::RichText::new("v0.5.0")
                     .size(14.0)
                     .color(egui::Color32::GRAY),
             );
@@ -2449,7 +2457,7 @@ impl SettingsView {
             ui.separator();
             ui.add_space(12.0);
             for line in [
-                "TigrimOS v0.3.0 (Rust/egui edition)",
+                "TigrimOS v0.5.0 (Rust/egui edition)",
                 "Ubuntu 22.04 VM via QEMU",
                 "Node.js 20 + Python 3 + Fastify",
             ] {

@@ -1,4 +1,4 @@
-# TigrimOSR v0.4.1
+# TigrimOSR v0.5.0
 
 **TigrimOSR** is the Rust version of [TigrimOS](https://github.com/Sompote/TigerCowork) — a high-performance native desktop rewrite of the original Python/Node.js AI assistant. Built entirely in Rust using egui for the UI, TigrimOSR delivers faster startup, lower memory usage, and a single self-contained binary with no Node.js or Python runtime required to run the app itself.
 
@@ -27,7 +27,20 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 
 ![Live Agent Monitoring](assets/screenshot_agents.png)
 
-## What's New in v0.4.1
+## What's New in v0.5.0
+
+- **Kimi-style Files browser** — Complete redesign of the Files tab with a left sidebar (Library / Places), white background, colored extension badges (DOCX=blue, XLSX=green, PNG=orange, etc.), breadcrumb navigation, relative dates ("Today", "Yesterday", "3 days ago"), and a selection action bar with Download/Delete buttons.
+- **Agent Swarm light theme** — Agent Swarm view redesigned with white canvas, light sidebar, floating Node Properties and Connection Properties windows, blue selection borders, and hover glow effects with tooltip cards showing agent name/role/persona.
+- **Claude Code identity headers** — All LLM call sites now send full Claude Code identity headers (User-Agent, X-Client-Name, X-Client-Version, HTTP-Referer, X-Traffic-Source) for Kimi API compatibility. Applied across toolbox, skill synthesizer, compact, settings validation, and MCP services.
+- **Logo image in About & Chat** — About section and chat welcome screen now display the TigrimOS logo as a rendered image instead of text emoji.
+- **Zero-lag chat send** — In-memory messages with atomic save on stream complete for instant chat responsiveness.
+- **WebSocket live updates** — Remote tasks now receive live updates via WebSocket, plus UTF-8 crash fix and improved chat input.
+- **Fast remote sync** — Sync cache fast-path with background fetch and pre-warming for snappy remote mode.
+
+### Previous Releases
+
+<details>
+<summary>v0.4.1 — Transparent remote toggle, remote caching, live web progress</summary>
 
 - **Transparent Local/Remote toggle** — Switch between Local and Remote mode from the topbar. When Remote is active, all tabs (Chat, Projects, Agents, Files, Tasks, Terminal, Settings) transparently work against the remote server — same familiar UI, no separate "Remote" view needed.
 - **Remote caching** — In-memory cache with TTL avoids repeated HTTP calls on every UI frame, making remote mode fast and responsive.
@@ -37,7 +50,7 @@ Real-time graphic view showing agent orchestration, delegation edges, and per-ag
 - **Remote-aware views** — Chat, Agents, Projects, Terminal, and Files views all route through the data layer proxy when remote mode is active.
 - **Zero compiler warnings** — All platform-conditional code properly gated with `#[cfg]`.
 
-### Previous Releases
+</details>
 
 <details>
 <summary>v0.4.0 — Headless mode, remote web UI, remote server dashboard, auth security</summary>
@@ -130,8 +143,6 @@ Add HTTPS with Let's Encrypt: `sudo certbot --nginx -d your-domain.com`
 | Remote Token (Settings) | Settings → Remote Instances → set token + enable | When "Enable remote agent access" is checked |
 | `--headless` prompt | Interactive prompt on startup | Always in headless mode |
 | No token set | — | No auth (local desktop use only) |
-
-### Previous Releases
 
 <details>
 <summary>v0.3.0 — Pipeline architecture, checkpoint/resume, 9-step compression</summary>

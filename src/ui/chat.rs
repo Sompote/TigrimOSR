@@ -2545,8 +2545,18 @@ Provide helpful, detailed responses based on tool results.{}",
             let welcome_height = (ui.available_height() - 120.0).max(100.0);
             ui.allocate_ui(egui::vec2(ui.available_width(), welcome_height), |ui| {
                 ui.vertical_centered(|ui| {
-                    let top_pad = (welcome_height / 2.0 - 60.0).max(20.0);
+                    let top_pad = (welcome_height / 2.0 - 80.0).max(20.0);
                     ui.add_space(top_pad);
+                    // Logo image
+                    let logo_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon.png");
+                    let logo_uri = format!("file://{}", logo_path.display());
+                    ui.add(
+                        egui::Image::new(&logo_uri)
+                            .max_width(64.0)
+                            .max_height(64.0)
+                            .corner_radius(10.0),
+                    );
+                    ui.add_space(8.0);
                     ui.heading(
                         egui::RichText::new("TigrimOS")
                             .size(28.0)
