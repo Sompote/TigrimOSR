@@ -21,11 +21,11 @@ TigrimOSR runs as a **local desktop app** on macOS or as a **headless server** o
 
 ![AI Provider Settings](assets/screenshot_providers.png)
 
-### Live Agent Monitoring
+### Agent Swarm Editor
 
-Real-time graphic view showing agent orchestration, delegation edges, and per-agent status during multi-agent execution.
+Design multi-agent systems visually — create architectures manually or generate them automatically with AI. Supports hierarchical, hybrid, mesh, pipeline, and P2P orchestration modes.
 
-![Live Agent Monitoring](assets/screenshot_agents.png)
+![Agent Swarm Editor](assets/screenshot_agents.png)
 
 ## What's New in v0.5.0
 
