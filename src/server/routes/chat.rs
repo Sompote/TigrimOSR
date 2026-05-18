@@ -406,11 +406,21 @@ async fn send_message(
         .unwrap_or_default();
 
     let config_file = settings.sub_agent_config_file.clone().unwrap_or_default();
-    let sub_agent_enabled = settings.sub_agent_enabled.unwrap_or(false) && !config_file.is_empty();
+    // Per-request agent_mode overrides settings: "single" disables sub-agents,
+    // "auto"/"manual"/"fully_auto" enable them (requires config file).
+    let request_mode = body.get("agent_mode").and_then(|v| v.as_str()).unwrap_or("single");
+    let sub_agent_enabled = match request_mode {
+        "single" => false,
+        _ => !config_file.is_empty(),
+    };
+    let effective_mode = match request_mode {
+        "single" => settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string()),
+        m => m.to_string(),
+    };
 
     let sub_agent = SubAgentConfig {
         enabled: sub_agent_enabled,
-        mode: settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string()),
+        mode: effective_mode,
         session_id: id.clone(),
         agent_id: "web".to_string(),
         agent_ids: vec![],

@@ -5780,8 +5780,6 @@ fn sanitize_messages(messages: &[Value]) -> Vec<Value> {
             if content_empty {
                 m["content"] = json!("(thinking...)");
             }
-            // Strip reasoning_content
-            m.as_object_mut().map(|o| o.remove("reasoning_content"));
         }
 
         // Ensure content is never null for other roles
@@ -6221,6 +6219,25 @@ async fn call_with_tools_inner(
     let client = Client::new();
     // Track whether a swarm/architecture has been activated this session
     let mut session_activated = realtime; // realtime mode is pre-activated
+
+    // Manual mode: load agent_ids from config_file and boot realtime session up-front.
+    // Without this, agent_ids is empty and tool_definitions_for_mode returns early.
+    let mut sub_agent = sub_agent;
+    if sub_agent.enabled && sub_agent.mode == "manual" && !sub_agent.config_file.is_empty() && sub_agent.agent_ids.is_empty() {
+        if let Some((_yaml, ids)) = load_agent_yaml(&sub_agent.config_file) {
+            sub_agent.agent_ids = ids;
+            boot_realtime_session_deferred(
+                sub_agent.session_id.clone(),
+                sub_agent.config_file.clone(),
+                sub_agent.api_key.clone(),
+                sub_agent.api_url.clone(),
+                sub_agent.model.clone(),
+            );
+            session_activated = true;
+            info!("[call_with_tools] manual mode: booted realtime session, agents={:?}", sub_agent.agent_ids);
+        }
+    }
+
     let mut tools = if sub_agent.enabled {
         let t = tool_definitions_for_mode(&sub_agent, realtime, session_activated);
         info!("[call_with_tools] mode={}, enabled={}, agents={:?}, tools={}", sub_agent.mode, sub_agent.enabled, sub_agent.agent_ids, t.iter().filter_map(|td| td["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
@@ -6626,11 +6643,6 @@ async fn call_with_tools_inner(
         // This applies even when tool_calls are present — some APIs require non-empty content always
         if truncated_message["content"].as_str().unwrap_or("").is_empty() {
             truncated_message["content"] = json!("(thinking...)");
-        }
-
-        // Strip reasoning_content before appending — some APIs reject unknown fields
-        if truncated_message.get("reasoning_content").is_some() {
-            truncated_message.as_object_mut().map(|m| m.remove("reasoning_content"));
         }
 
         // Append the assistant message (with truncated args) to the conversation

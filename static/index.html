@@ -462,6 +462,13 @@ h4.md-h { font-size: 1em; }
         <select id="agent-config-select" onchange="selectAgentConfig()" style="flex:1;min-width:200px;max-width:400px">
           <option value="">None (single agent)</option>
         </select>
+        <label style="font-size:13px;color:var(--fg2);white-space:nowrap">Mode:</label>
+        <select id="agents-mode-select" onchange="selectAgentMode()" style="font-size:13px;padding:6px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg3);color:var(--fg);cursor:pointer">
+          <option value="single">Single</option>
+          <option value="auto">Auto</option>
+          <option value="manual">Manual</option>
+          <option value="fully_auto">Fully Auto</option>
+        </select>
         <label class="secondary" style="padding:8px 14px;background:var(--bg3);border-radius:var(--radius);cursor:pointer;font-size:13px;display:inline-block">
           Upload YAML
           <input type="file" accept=".yaml,.yml" onchange="uploadAgentConfig(this)" style="display:none">
@@ -641,6 +648,10 @@ function showApp() {
   loadSessions();
   loadFiles();
   loadAgents();
+  // Restore saved agent mode on agents page selector
+  const savedMode = localStorage.getItem('tigrimos_agent_mode') || 'single';
+  const modeEl = document.getElementById('agents-mode-select');
+  if (modeEl) modeEl.value = savedMode;
 }
 
 // Auto-login: try without token first (no auth mode), then with saved token
@@ -716,6 +727,7 @@ function toggleSidebar() {
 
 function selectSession(id) {
   currentSessionId = id;
+  sending = false;
   renderSessions();
   // Fetch full session with messages
   api('/api/chat/sessions/' + id).then(data => {
@@ -744,6 +756,7 @@ function newSession() {
     body: JSON.stringify({ title: 'New Chat' })
   }).then(data => {
     currentSessionId = data.id;
+    sending = false;
     loadSessions();
     renderMessages([]);
     creatingSession = false;
@@ -751,6 +764,9 @@ function newSession() {
 }
 
 let sending = false;
+function getAgentMode() {
+  return localStorage.getItem('tigrimos_agent_mode') || 'single';
+}
 function sendMessage() {
   const input = document.getElementById('chat-input');
   const msg = input.value.trim();
@@ -785,7 +801,7 @@ function sendMessage() {
 
     api(`/api/chat/sessions/${sessionId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ message: msg })
+      body: JSON.stringify({ message: msg, agent_mode: getAgentMode() })
     }).then(data => {
       clearInterval(progressPoll);
       replaceLastMsg(el, data.content || 'No response');
@@ -960,6 +976,10 @@ function updateAgentSelect() {
       const count = c.agentCount ? ` — ${c.agentCount} agents` : '';
       return `<option value="${esc(fn)}" ${fn === prev ? 'selected' : ''}>${esc(label + count)}</option>`;
     }).join('');
+  // Restore saved mode on agents page selector
+  const savedMode = localStorage.getItem('tigrimos_agent_mode') || 'single';
+  const modeSel = document.getElementById('agents-mode-select');
+  if (modeSel) modeSel.value = savedMode;
   // Show preview
   const preview = document.getElementById('agent-config-preview');
   const info = document.getElementById('agent-config-info');
@@ -972,15 +992,37 @@ function updateAgentSelect() {
   }
 }
 
+function selectAgentMode() {
+  const mode = document.getElementById('agents-mode-select').value;
+  localStorage.setItem('tigrimos_agent_mode', mode);
+  // Persist mode to settings
+  api('/api/settings').then(data => {
+    data.subAgentMode = mode === 'single' ? 'auto' : mode;
+    data.subAgentEnabled = mode !== 'single';
+    return api('/api/settings', { method: 'PUT', body: JSON.stringify(data) });
+  }).then(() => {
+    const status = document.getElementById('agent-config-status');
+    status.textContent = 'Mode: ' + mode;
+    setTimeout(() => status.textContent = '', 2000);
+  }).catch(() => {});
+}
+
 function selectAgentConfig() {
   const sel = document.getElementById('agent-config-select');
   const val = sel.value;
   currentAgentConfig = val;
+  // If a config is selected but mode is still single, switch to auto
+  const modeSel = document.getElementById('agents-mode-select');
+  if (val && modeSel && modeSel.value === 'single') {
+    modeSel.value = 'auto';
+    localStorage.setItem('tigrimos_agent_mode', 'auto');
+  }
+  const mode = modeSel ? modeSel.value : 'auto';
   // Save to settings
   api('/api/settings').then(data => {
     data.subAgentConfigFile = val || null;
-    data.subAgentEnabled = !!val;
-    if (val) data.subAgentMode = data.subAgentMode || 'auto';
+    data.subAgentEnabled = !!val && mode !== 'single';
+    data.subAgentMode = mode === 'single' ? 'auto' : mode;
     return api('/api/settings', {
       method: 'PUT',
       body: JSON.stringify(data)
