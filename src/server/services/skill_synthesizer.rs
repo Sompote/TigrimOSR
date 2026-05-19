@@ -1082,19 +1082,26 @@ async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value
         "temperature": 0.3,
     });
 
-    let resp = client
+    let mut req = client
         .post(api_url)
         .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .header("User-Agent", "claude-code/1.0.6")
-        .header("X-Client-Name", "claude-code")
-        .header("X-Client-Version", "1.0.6")
-        .header("HTTP-Referer", "https://claude.ai")
-        .header("X-Traffic-Source", "claude-code")
+        .header("Content-Type", "application/json");
+
+    // Only add Kimi-specific identity headers for Kimi API
+    if api_url.contains("api.kimi.com") {
+        req = req
+            .header("User-Agent", "claude-code/1.0.6")
+            .header("X-Client-Name", "claude-code")
+            .header("X-Client-Version", "1.0.6")
+            .header("HTTP-Referer", "https://claude.ai")
+            .header("X-Traffic-Source", "claude-code");
+    }
+
+    let resp = req
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("API request failed: {e}"))?;
+        .map_err(|e| format!("API request failed (url={}, model={}): {e}", api_url, model))?;
 
     let resp_json: Value = resp
         .json()
@@ -1493,6 +1500,13 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     } else {
         settings.tiger_bot_model.clone()
     };
+
+    // CLI providers (claude-code, gemini-cli, codex-cli) are not supported for skill synthesis
+    if api_url_raw.starts_with("claude-code") || api_url_raw.starts_with("gemini-cli") || api_url_raw.starts_with("codex-cli") {
+        let mut status = synth_status().lock().await;
+        status.running = false;
+        return Err(format!("Skill auto-update requires an API provider (not {}). Please set an API URL in Settings (e.g. OpenAI, DeepSeek, MiniMax).", api_url_raw));
+    }
 
     if api_key.is_empty() {
         let mut status = synth_status().lock().await;

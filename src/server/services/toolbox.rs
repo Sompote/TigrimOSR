@@ -2692,7 +2692,7 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "sudo ", "su -", "doas ",
     // Credential/key theft
     ".ssh/", "id_rsa", "id_ed25519", ".aws/credentials", ".netrc",
-    ".env", "keychain", "login.keychain",
+    "keychain", "login.keychain",
     // System modification
     "chmod 777 /", "chown root", "/etc/passwd", "/etc/shadow",
     "launchctl", "crontab",
@@ -2717,6 +2717,14 @@ fn check_dangerous(code: &str) -> Option<String> {
         if lower.contains(&p) {
             return Some(format!("Blocked dangerous pattern: {}", pattern));
         }
+    }
+
+    // Block .env file access — but allow os.environ, os.getenv, printenv, etc.
+    // Match ".env" only when it looks like a file reference, not a Python API call
+    if lower.contains(".env") && !lower.contains(".environ") && !lower.contains(".getenv")
+        && !lower.contains("printenv") && !lower.contains(".env_")
+    {
+        return Some("Blocked dangerous pattern: .env".to_string());
     }
 
     // Block access to paths outside sandbox (absolute paths to sensitive dirs)
@@ -3404,12 +3412,24 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
                 }
                 walk_skill_dir(&skill_base_dir, "", &mut supporting_files);
 
+                // Replace relative paths in content with absolute paths so agent can find files
+                let mut full_content = content;
+                if !supporting_files.is_empty() {
+                    for f in &supporting_files {
+                        // Replace ./scripts/file.py and scripts/file.py with absolute path
+                        let abs = format!("{}/{}", base_dir_str, f);
+                        let rel_dot = format!("./{}", f);
+                        full_content = full_content.replace(&rel_dot, &abs);
+                        full_content = full_content.replace(f, &abs);
+                    }
+                }
+
                 return json!({
                     "ok": true,
                     "skill": skill_name,
                     "source": source,
                     "skillDir": base_dir_str,
-                    "content": content,
+                    "content": full_content,
                     "meta": meta,
                     "supportingFiles": supporting_files,
                     "truncated": truncated,
