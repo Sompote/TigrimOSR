@@ -1549,17 +1549,35 @@ impl SkillsView {
         }
 
         // --- SKILL.md Content viewer ---
-        // Try to load SKILL.md from data/skills/{name}/ for auto/folder-based skills
+        // Try to load SKILL.md from data/skills/{name}/ for folder-based skills
         let skill_name = self.skills[idx].name.clone();
         let skill_source = self.skills[idx].source.clone();
-        let skill_md_path = format!("data/skills/{}/SKILL.md", skill_name);
-        let skill_md_content = if skill_source == "auto" || skill_source == "clawhub" || skill_source == "openclaw" {
-            runtime
-                .block_on(async {
-                    tokio::fs::read_to_string(&skill_md_path).await.ok()
-                })
+        let slug = skill_name.to_lowercase()
+            .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
+        let skill_dir = data::data_dir().join("skills").join(slug.trim_matches('-'));
+        let skill_md_path = skill_dir.join("SKILL.md");
+        let skill_md_content = if skill_source != "built-in" {
+            std::fs::read_to_string(&skill_md_path).ok()
         } else {
             None
+        };
+        // Collect all files in the skill subfolder
+        let skill_files: Vec<(String, String)> = if skill_source != "built-in" && skill_dir.is_dir() {
+            let mut files = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&skill_dir) {
+                for entry in entries.flatten() {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    if fname == "SKILL.md" { continue; } // shown above already
+                    let fpath = entry.path();
+                    if fpath.is_file() {
+                        files.push((fname, fpath.display().to_string()));
+                    }
+                }
+            }
+            files.sort_by(|a, b| a.0.cmp(&b.0));
+            files
+        } else {
+            Vec::new()
         };
 
         let display_content = skill_md_content
@@ -1570,7 +1588,7 @@ impl SkillsView {
             ui.strong("SKILL.md Content");
             if skill_md_content.is_some() {
                 ui.label(
-                    egui::RichText::new(format!("({})", skill_md_path))
+                    egui::RichText::new(format!("({})", skill_md_path.display()))
                         .size(10.0)
                         .color(egui::Color32::GRAY),
                 );
@@ -1585,7 +1603,7 @@ impl SkillsView {
                         let path = skill_md_path.clone();
                         let content = self.skills[idx].script.clone();
                         runtime.spawn(async move {
-                            let _ = tokio::fs::write(&path, content).await;
+                            let _ = tokio::fs::write(path, content).await;
                         });
                     }
                     let skills = self.skills.clone();
@@ -1641,6 +1659,59 @@ impl SkillsView {
                             }
                         });
                 });
+        }
+
+        // --- Skill Files listing ---
+        if !skill_files.is_empty() {
+            ui.add_space(12.0);
+            ui.strong(format!("\u{1F4C2} Skill Files ({})", skill_files.len()));
+            ui.add_space(4.0);
+            for (fname, fpath) in &skill_files {
+                let is_md = fname.ends_with(".md");
+                egui::Frame::new()
+                    .fill(ui.visuals().faint_bg_color)
+                    .inner_margin(egui::Margin::same(8))
+                    .corner_radius(4.0)
+                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(200, 205, 210)))
+                    .show(ui, |ui| {
+                        let icon = if is_md { "\u{1F4CB}" }
+                            else if fname.ends_with(".py") { "\u{1F40D}" }
+                            else if fname.ends_with(".json") { "\u{1F4BE}" }
+                            else { "\u{1F4C4}" };
+                        let header_id = ui.make_persistent_id(format!("skill_file_{}", fname));
+                        egui::collapsing_header::CollapsingState::load_with_default_open(
+                            ui.ctx(), header_id, false,
+                        ).show_header(ui, |ui| {
+                            ui.label(egui::RichText::new(format!("{} {}", icon, fname)).size(12.0).strong());
+                        }).body(|ui| {
+                            if let Ok(content) = std::fs::read_to_string(fpath) {
+                                egui::ScrollArea::vertical()
+                                    .id_salt(format!("skill_file_scroll_{}", fname))
+                                    .max_height(300.0)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(&content)
+                                                    .size(11.0)
+                                                    .monospace()
+                                                    .color(egui::Color32::from_rgb(180, 185, 195)),
+                                            )
+                                            .wrap()
+                                            .selectable(true),
+                                        );
+                                    });
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("(unable to read file)")
+                                        .small()
+                                        .weak(),
+                                );
+                            }
+                        });
+                    });
+                ui.add_space(4.0);
+            }
         }
 
         ui.add_space(16.0);

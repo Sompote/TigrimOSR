@@ -2740,6 +2740,39 @@ fn check_dangerous(code: &str) -> Option<String> {
     None
 }
 
+/// Scan a directory (and output_file subdirectory) for recently created output files.
+async fn scan_output_files(sandbox_dir: &str) -> Vec<String> {
+    let mut output_files = vec![];
+    let scan_dirs = [
+        std::path::PathBuf::from(sandbox_dir),
+        std::path::Path::new(sandbox_dir).join("output_file"),
+    ];
+    for scan_dir in &scan_dirs {
+        if let Ok(mut entries) = tokio::fs::read_dir(scan_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if let Ok(meta) = entry.metadata().await {
+                    if !meta.is_file() { continue; }
+                    if let Ok(modified) = meta.modified() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+                        if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf"
+                            | "html" | "csv" | "md" | "txt" | "json" | "xlsx" | "docx"
+                            | "py" | "rs" | "js" | "ts" | "yaml" | "yml") {
+                            if modified.elapsed().unwrap_or_default().as_secs() < 120 {
+                                let rel = format!("{}/{}", scan_dir.display(), name);
+                                if !output_files.contains(&rel) {
+                                    output_files.push(rel);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    output_files
+}
+
 async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
     let code = args["code"].as_str().unwrap_or("");
 
@@ -2892,32 +2925,7 @@ except ImportError:
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-            // Scan sandbox_dir for output files created in last 30 seconds
-            let mut output_files = vec![];
-            let scan_dirs = [
-                std::path::Path::new(sandbox_dir).to_path_buf(),
-                output_dir.clone(),
-            ];
-            for scan_dir in &scan_dirs {
-                if let Ok(mut entries) = tokio::fs::read_dir(scan_dir).await {
-                    while let Ok(Some(entry)) = entries.next_entry().await {
-                        if let Ok(meta) = entry.metadata().await {
-                            if let Ok(modified) = meta.modified() {
-                                let name = entry.file_name().to_string_lossy().to_string();
-                                let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-                                if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "html" | "csv" | "md" | "txt" | "json" | "xlsx" | "docx") {
-                                    if modified.elapsed().unwrap_or_default().as_secs() < 30 {
-                                        let rel = format!("{}/{}", scan_dir.display(), name);
-                                        if !output_files.contains(&rel) {
-                                            output_files.push(rel);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let output_files = scan_output_files(sandbox_dir).await;
 
             json!({
                 "ok": output.status.success(),
@@ -3137,11 +3145,15 @@ async fn exec_write_file(args: &Value, sandbox_dir: &str) -> Value {
     };
 
     match result {
-        Ok(()) => json!({
-            "ok": true,
-            "path": resolved.display().to_string(),
-            "bytes_written": content.len(),
-        }),
+        Ok(()) => {
+            let full = resolved.display().to_string();
+            json!({
+                "ok": true,
+                "path": full,
+                "bytes_written": content.len(),
+                "output_files": [full],
+            })
+        }
         Err(e) => json!({ "ok": false, "error": format!("Failed to write file: {e}") }),
     }
 }
@@ -3814,7 +3826,8 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return json!({ "ok": false, "error": format!("claude exited {:?}: {}", output.status.code(), &stderr[..stderr.len().min(1000)]) });
             }
-            json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls })
+            let output_files = scan_output_files(sandbox_dir).await;
+            json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls, "output_files": output_files })
         }
         Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn claude: {e}. Is 'claude' in PATH?") }),
         Err(_) => json!({ "ok": false, "error": format!("Claude Code timed out after {}s", timeout_secs) }),
@@ -3894,7 +3907,8 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return json!({ "ok": false, "error": format!("gemini exited {:?}: {}", output.status.code(), &stderr[..stderr.len().min(1000)]) });
             }
-            json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls })
+            let output_files = scan_output_files(sandbox_dir).await;
+            json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls, "output_files": output_files })
         }
         Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn gemini: {e}. Is 'gemini' in PATH?") }),
         Err(_) => json!({ "ok": false, "error": format!("Gemini CLI timed out after {}s", timeout_secs) }),

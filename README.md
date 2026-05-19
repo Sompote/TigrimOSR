@@ -1,15 +1,14 @@
 # TigrimOSR v0.5.0
 
-**TigrimOSR** is the Rust version of [TigrimOS](https://github.com/Sompote/TigerCowork) — a high-performance native desktop rewrite of the original Python/Node.js AI assistant. Built entirely in Rust using egui for the UI, TigrimOSR delivers faster startup, lower memory usage, and a single self-contained binary with no Node.js or Python runtime required to run the app itself.
+**TigrimOSR** is a native desktop AI agent platform that lets you orchestrate teams of specialist AI agents — all from a single, self-contained binary. Define agent swarms in simple YAML, connect them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously to solve complex tasks.
 
-TigrimOSR is a native desktop AI assistant with multi-agent collaboration, tool calling, and file output. It connects to any OpenAI-compatible API (OpenAI, Anthropic via proxy, DeepSeek, Kimi, local Ollama, etc.) and lets you orchestrate teams of specialist AI agents defined in simple YAML files.
+### Why TigrimOSR?
 
-### Run Locally or Remotely — Control from Anywhere
-
-TigrimOSR runs as a **local desktop app** on macOS or as a **headless server** on remote Linux machines. When running remotely, you can control it from:
-
-- **Native Mac app** — Toggle Local/Remote in the topbar. All tabs (Chat, Projects, Agents, Files, Tasks, Terminal, Settings) transparently switch to controlling the remote server using the same familiar UI.
-- **Web browser** — Open `http://<server-ip>:3001/web/` from any device (desktop, tablet, phone). Full web UI with chat, files, terminal, agents, tasks, and settings — with live progress updates while the AI is thinking.
+- **Multi-agent orchestration** — Build teams of AI agents with 6 orchestration modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator). Agents communicate through real protocols and coordinate via a shared blackboard.
+- **Any LLM, any provider** — Works with OpenAI, Anthropic, DeepSeek, Kimi, Google Gemini, local Ollama, or any OpenAI-compatible API. Also supports 3 local CLI agents (Claude Code, Gemini CLI, Codex) with zero API keys.
+- **Full tool calling** — Web search, Python execution, file read/write, shell commands, MCP tool servers, and a skill marketplace (ClawHub). Output panel renders images, markdown, CSV, PDF, charts, and more inline.
+- **Run anywhere** — Native macOS desktop app, headless Linux server, or access from any browser via the built-in web UI. Toggle Local/Remote seamlessly from the same interface.
+- **Built in Rust** — Fast startup, low memory, single binary. No Node.js or Python runtime needed to run the app itself. Rewritten from the original [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
 
 ![TigrimOSR Architecture](assets/architecture.png)
 
