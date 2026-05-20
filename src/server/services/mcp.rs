@@ -143,7 +143,7 @@ async fn connect_stdio(name: &str, config: &Value) -> Value {
                     "params": {
                         "protocolVersion": "2024-11-05",
                         "capabilities": {},
-                        "clientInfo": { "name": "TigrimOS", "version": "0.5.0" }
+                        "clientInfo": { "name": "TigrimOS", "version": "0.5.1" }
                     }
                 });
                 let msg = format!("{}\n", serde_json::to_string(&init_req).unwrap());
@@ -284,7 +284,7 @@ async fn connect_http(name: &str, transport: &str, config: &Value) -> Value {
         "params": {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": { "name": "TigrimOS", "version": "0.5.0" }
+            "clientInfo": { "name": "TigrimOS", "version": "0.5.1" }
         }
     });
 
@@ -468,7 +468,7 @@ async fn call_stdio_tool(conn: &McpConnection, tool_name: &str, args: &Value) ->
         "params": {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": { "name": "TigrimOS", "version": "0.5.0" }
+            "clientInfo": { "name": "TigrimOS", "version": "0.5.1" }
         }
     });
     let _ = stdin

@@ -1,4 +1,4 @@
-# TigrimOSR v0.5.0
+# TigrimOSR v0.5.1
 
 **TigrimOSR** is a native desktop AI agent platform that lets you orchestrate teams of specialist AI agents — all from a single, self-contained binary. Define agent swarms in simple YAML, connect them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously to solve complex tasks.
 
@@ -26,7 +26,20 @@ Design multi-agent systems visually — create architectures manually or generat
 
 ![Agent Swarm Editor](assets/screenshot_agents.png)
 
-## What's New in v0.5.0
+## What's New in v0.5.1
+
+- **Orchestrator Soul & Identity** — New Settings section to define the orchestrator's internal cognition (SOUL.md) and external presentation (IDENTITY.md). Saved as standalone markdown files, injected into the system prompt. No character limits — write as much behavioral context as needed.
+- **Output panel for agent-created files** — Files created via `write_file` now automatically appear in the output panel with inline rendering (markdown, images, CSV, PDF, etc.). Previously only `run_python` output files were detected.
+- **Skill file browser** — Skill detail view now shows all files in the skill's subfolder with collapsible preview cards. See scripts, references, and supporting files without leaving the app.
+- **Skill script path resolution** — `load_skill` now replaces relative paths (e.g. `scripts/run_search.sh`) with absolute paths to the skill install directory, so agents can find and execute skill scripts directly.
+- **CLI agent output file scanning** — `claude_code_agent` and `gemini_cli_agent` now scan the sandbox for output files after execution, so files created by CLI agents appear in the output panel.
+- **Skill synthesizer CLI provider guard** — Skill auto-update now returns a clear error when using CLI providers (Claude Code, Gemini CLI, Codex) instead of crashing with "builder error".
+- **Security: .env false positive fix** — The `.env` file security check no longer blocks legitimate Python calls like `os.environ` or `printenv`.
+
+### Previous Releases
+
+<details>
+<summary>v0.5.0 — Kimi-style files, agent swarm light theme, zero-lag chat</summary>
 
 - **Kimi-style Files browser** — Complete redesign of the Files tab with a left sidebar (Library / Places), white background, colored extension badges (DOCX=blue, XLSX=green, PNG=orange, etc.), breadcrumb navigation, relative dates ("Today", "Yesterday", "3 days ago"), and a selection action bar with Download/Delete buttons.
 - **Agent Swarm light theme** — Agent Swarm view redesigned with white canvas, light sidebar, floating Node Properties and Connection Properties windows, blue selection borders, and hover glow effects with tooltip cards showing agent name/role/persona.
@@ -36,7 +49,7 @@ Design multi-agent systems visually — create architectures manually or generat
 - **WebSocket live updates** — Remote tasks now receive live updates via WebSocket, plus UTF-8 crash fix and improved chat input.
 - **Fast remote sync** — Sync cache fast-path with background fetch and pre-warming for snappy remote mode.
 
-### Previous Releases
+</details>
 
 <details>
 <summary>v0.4.1 — Transparent remote toggle, remote caching, live web progress</summary>
