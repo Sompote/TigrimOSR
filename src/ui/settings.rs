@@ -189,6 +189,11 @@ pub struct SettingsView {
     agent_reflection_enabled: bool,
     agent_tool_result_max_len: u64,
 
+    // --- Soul & Identity ---
+    orchestrator_soul: String,
+    orchestrator_identity: String,
+    soul_section_open: bool,
+
     // --- Skill Auto-Update ---
     skill_auto_update_enabled: bool,
     skill_auto_update_interval_minutes: u64,
@@ -268,6 +273,10 @@ impl Default for SettingsView {
             agent_compression_interval: 5,
             agent_reflection_enabled: false,
             agent_tool_result_max_len: 6000,
+
+            orchestrator_soul: String::new(),
+            orchestrator_identity: String::new(),
+            soul_section_open: false,
 
             skill_auto_update_enabled: true,
             skill_auto_update_interval_minutes: 5,
@@ -465,6 +474,11 @@ impl SettingsView {
         self.agent_tool_result_max_len = settings.extra.get("agentToolResultMaxLen")
             .and_then(|v| v.as_u64()).unwrap_or(6000);
 
+        // Soul & Identity (stored in SOUL.md / IDENTITY.md files)
+        let data_dir = crate::server::data::data_dir();
+        self.orchestrator_soul = std::fs::read_to_string(data_dir.join("SOUL.md")).unwrap_or_default();
+        self.orchestrator_identity = std::fs::read_to_string(data_dir.join("IDENTITY.md")).unwrap_or_default();
+
         // Skill Auto-Update
         self.skill_auto_update_enabled = settings.skill_auto_update_enabled.unwrap_or(true);
         self.skill_auto_update_interval_minutes =
@@ -562,6 +576,19 @@ impl SettingsView {
         settings.extra.insert("agentCompressionInterval".into(), serde_json::json!(self.agent_compression_interval));
         settings.extra.insert("agentReflectionEnabled".into(), serde_json::json!(self.agent_reflection_enabled));
         settings.extra.insert("agentToolResultMaxLen".into(), serde_json::json!(self.agent_tool_result_max_len));
+
+        // Soul & Identity (saved to SOUL.md / IDENTITY.md files)
+        let data_dir = crate::server::data::data_dir();
+        if self.orchestrator_soul.is_empty() {
+            let _ = std::fs::remove_file(data_dir.join("SOUL.md"));
+        } else {
+            let _ = std::fs::write(data_dir.join("SOUL.md"), &self.orchestrator_soul);
+        }
+        if self.orchestrator_identity.is_empty() {
+            let _ = std::fs::remove_file(data_dir.join("IDENTITY.md"));
+        } else {
+            let _ = std::fs::write(data_dir.join("IDENTITY.md"), &self.orchestrator_identity);
+        }
 
         // Skill Auto-Update
         settings.skill_auto_update_enabled = Some(self.skill_auto_update_enabled);
@@ -1091,6 +1118,87 @@ impl SettingsView {
                         .desired_width(260.0),
                 );
             });
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
+
+        // --- Soul & Identity ---
+        let soul_header = if !self.orchestrator_soul.is_empty() || !self.orchestrator_identity.is_empty() {
+            "Orchestrator Soul & Identity  (configured)"
+        } else {
+            "Orchestrator Soul & Identity"
+        };
+        if ui.add(egui::Label::new(
+            egui::RichText::new(format!("{} {}", if self.soul_section_open { "\u{25BC}" } else { "\u{25B6}" }, soul_header))
+                .heading()
+        ).sense(egui::Sense::click())).clicked() {
+            self.soul_section_open = !self.soul_section_open;
+        }
+
+        if !self.soul_section_open {
+            ui.label(
+                egui::RichText::new("Configure the orchestrator's internal cognition (SOUL.md) and external presentation (IDENTITY.md). Injected into the system prompt.")
+                    .size(11.0).color(egui::Color32::GRAY),
+            );
+        }
+
+        if self.soul_section_open {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("SOUL.md — Internal Cognition, Values & Behavior").strong());
+            ui.add(
+                egui::TextEdit::multiline(&mut self.orchestrator_soul)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(8)
+                    .font(egui::TextStyle::Monospace)
+                    .hint_text("Define the orchestrator's internal cognition:\n- Core values and principles\n- Decision-making heuristics\n- Behavioral priors and communication style\n- Ethical boundaries\n- How to handle ambiguity\n\nThis is injected as a behavioral prior — it directly shapes model outputs."),
+            );
+            ui.label(
+                egui::RichText::new(format!("{} chars — Directly affects model outputs.", self.orchestrator_soul.len()))
+                    .size(10.0).color(egui::Color32::GRAY),
+            );
+
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("IDENTITY.md — External Presentation").strong());
+            ui.add(
+                egui::TextEdit::multiline(&mut self.orchestrator_identity)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3)
+                    .font(egui::TextStyle::Monospace)
+                    .hint_text("Display name, avatar description, external persona.\nTypically static — used for image generation and display."),
+            );
+            ui.label(
+                egui::RichText::new(format!("{} chars — Affects display name, avatar, image generation.", self.orchestrator_identity.len()))
+                    .size(10.0).color(egui::Color32::GRAY),
+            );
+
+            ui.add_space(4.0);
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgb(240, 242, 245))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    let tc = egui::Color32::from_rgb(50, 55, 65);
+                    ui.label(egui::RichText::new("Key Distinction:").strong().size(11.0).color(tc));
+                    ui.add_space(4.0);
+                    egui::Grid::new("soul_identity_table")
+                        .num_columns(3)
+                        .spacing([12.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("Dimension").strong().size(11.0).color(tc));
+                            ui.label(egui::RichText::new("SOUL.md").strong().size(11.0).color(tc));
+                            ui.label(egui::RichText::new("IDENTITY.md").strong().size(11.0).color(tc));
+                            ui.end_row();
+                            ui.label(egui::RichText::new("Concern").size(11.0).color(tc));
+                            ui.label(egui::RichText::new("Internal cognition, values").size(11.0).color(tc));
+                            ui.label(egui::RichText::new("External name, avatar").size(11.0).color(tc));
+                            ui.end_row();
+                            ui.label(egui::RichText::new("Affects outputs").size(11.0).color(tc));
+                            ui.label(egui::RichText::new("Directly (behavioral prior)").size(11.0).color(tc));
+                            ui.label(egui::RichText::new("Indirectly (display)").size(11.0).color(tc));
+                            ui.end_row();
+                        });
+                });
         }
 
         ui.add_space(16.0);

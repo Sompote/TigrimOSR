@@ -1048,6 +1048,25 @@ You have access to these tools: {}.{}",
             format!("{}{}", base_system, skills_block)
         };
 
+        // Inject Soul & Identity from files
+        let data_dir = crate::server::data::data_dir();
+        let mut soul_block = String::new();
+        if let Ok(soul) = std::fs::read_to_string(data_dir.join("SOUL.md")) {
+            if !soul.trim().is_empty() {
+                soul_block.push_str(&format!("\n\n=== SOUL.md (Internal Cognition & Behavioral Prior) ===\n{}", soul));
+            }
+        }
+        if let Ok(identity) = std::fs::read_to_string(data_dir.join("IDENTITY.md")) {
+            if !identity.trim().is_empty() {
+                soul_block.push_str(&format!("\n\n=== IDENTITY.md (External Presentation) ===\n{}", identity));
+            }
+        }
+        let base_system = if soul_block.is_empty() {
+            base_system
+        } else {
+            format!("{}{}", base_system, soul_block)
+        };
+
         let system_prompt = match self.build_project_system_prompt(runtime) {
             Some(project_prompt) => Some(format!("{}\n\n{}", base_system, project_prompt)),
             None => Some(base_system),
