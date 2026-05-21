@@ -214,14 +214,20 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3001);
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
-        .await
-        .expect("Failed to bind port");
+    let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("Failed to bind port {}: {} — server not started", port, e);
+            return;
+        }
+    };
 
     tracing::info!("TigrimOS server running on http://localhost:{}", port);
     tracing::info!("Sandbox directory: {}", sandbox_dir);
 
-    axum::serve(listener, app).await.expect("Server error");
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("Server error: {}", e);
+    }
 }
 
 /// Bundled skill definition: name, description, SKILL.md content, optional extra files

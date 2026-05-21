@@ -2077,9 +2077,14 @@ You have access to these tools: {}.{}",
                 let content = if is_binary {
                     format!("[Binary file: {}]", name)
                 } else if ext == "pdf" {
-                    pdf_extract::extract_text(&path).unwrap_or_else(|e| {
-                        format!("[Could not extract PDF text: {}]", e)
-                    })
+                    // pdf_extract can panic on malformed PDFs — catch_unwind
+                    // prevents the panic from propagating through winit's FFI
+                    // boundary (which would cause SIGABRT).
+                    match std::panic::catch_unwind(|| pdf_extract::extract_text(&path)) {
+                        Ok(Ok(text)) => text,
+                        Ok(Err(e)) => format!("[Could not extract PDF text: {}]", e),
+                        Err(_) => format!("[PDF extraction crashed for: {}]", name),
+                    }
                 } else {
                     std::fs::read_to_string(&path).unwrap_or_else(|_| {
                         format!("[Could not read file: {}]", path.display())

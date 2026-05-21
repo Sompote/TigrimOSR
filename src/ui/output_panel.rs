@@ -1575,23 +1575,35 @@ impl OutputPanel {
         ctx: egui::Context,
         pdf_path: PathBuf,
         page: usize,
-        rel_path: String,
+        _rel_path: String,
     ) {
         std::thread::spawn(move || {
             let out_png = Self::render_pdf_page_path(&pdf_path, page);
             if out_png.exists() {
-                // Already rendered — just repaint to pick it up
                 ctx.request_repaint();
                 return;
             }
-            let script = format!(
-                r#"
-import Quartz, CoreFoundation
-url = CoreFoundation.CFURLCreateFromFileSystemRepresentation(None, b"{pdf}", len(b"{pdf}"), False)
+            // Pass paths via sys.argv to avoid escaping issues with spaces/special chars
+            let script = r#"
+import sys
+pdf_path = sys.argv[1]
+page_num = int(sys.argv[2])
+out_path = sys.argv[3]
+
+try:
+    import Quartz, CoreFoundation
+except ImportError:
+    # Fallback: try to install pyobjc-framework-Quartz
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyobjc-framework-Quartz"])
+    import Quartz, CoreFoundation
+
+pdf_bytes = pdf_path.encode("utf-8")
+url = CoreFoundation.CFURLCreateFromFileSystemRepresentation(None, pdf_bytes, len(pdf_bytes), False)
 doc = Quartz.CGPDFDocumentCreateWithURL(url)
 if doc:
     n = Quartz.CGPDFDocumentGetNumberOfPages(doc)
-    pg = {page} + 1
+    pg = page_num + 1
     if pg <= n:
         page_ref = Quartz.CGPDFDocumentGetPage(doc, pg)
         rect = Quartz.CGPDFPageGetBoxRect(page_ref, Quartz.kCGPDFMediaBox)
@@ -1605,22 +1617,37 @@ if doc:
         Quartz.CGContextScaleCTM(ctx, scale, scale)
         Quartz.CGContextDrawPDFPage(ctx, page_ref)
         img = Quartz.CGBitmapContextCreateImage(ctx)
-        out_url = CoreFoundation.CFURLCreateFromFileSystemRepresentation(None, b"{out}", len(b"{out}"), False)
+        out_bytes = out_path.encode("utf-8")
+        out_url = CoreFoundation.CFURLCreateFromFileSystemRepresentation(None, out_bytes, len(out_bytes), False)
         dest = Quartz.CGImageDestinationCreateWithURL(out_url, "public.png", 1, None)
         Quartz.CGImageDestinationAddImage(dest, img, None)
         Quartz.CGImageDestinationFinalize(dest)
-    # Write page count marker
-    with open("{out}.count", "w") as f:
+    with open(out_path + ".count", "w") as f:
         f.write(str(n))
-"#,
-                pdf = pdf_path.display().to_string().replace('\\', "\\\\").replace('"', "\\\""),
-                page = page,
-                out = out_png.display().to_string().replace('\\', "\\\\").replace('"', "\\\""),
-            );
-            let _ = std::process::Command::new("python3")
+"#;
+            let result = std::process::Command::new("python3")
                 .arg("-c")
-                .arg(&script)
+                .arg(script)
+                .arg(pdf_path.to_str().unwrap_or(""))
+                .arg(page.to_string())
+                .arg(out_png.to_str().unwrap_or(""))
                 .output();
+            match result {
+                Ok(output) => {
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        eprintln!("[PDF render] python3 failed: {}", stderr);
+                        // Write error marker so we don't retry forever
+                        let err_path = format!("{}.error", out_png.display());
+                        let _ = std::fs::write(&err_path, stderr.as_bytes());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[PDF render] failed to spawn python3: {}", e);
+                    let err_path = format!("{}.error", out_png.display());
+                    let _ = std::fs::write(&err_path, format!("{}", e));
+                }
+            }
             ctx.request_repaint();
         });
     }
@@ -1782,17 +1809,64 @@ if doc:
                         });
                     }
                 } else {
-                    // Loading state
-                    ui.add_space(20.0);
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(
-                            egui::RichText::new("Rendering PDF page...")
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(120, 130, 140)),
-                        );
-                    });
-                    ui.add_space(20.0);
+                    // Check if render failed
+                    let err_path = format!("{}.error", Self::render_pdf_page_path(&full, current_page).display());
+                    if std::path::Path::new(&err_path).exists() {
+                        let err_msg = std::fs::read_to_string(&err_path).unwrap_or_default();
+                        // Fall back to text preview
+                        if !self.pdf_cache.contains_key(rel_path) && full.exists() {
+                            let text = match std::panic::catch_unwind(|| pdf_extract::extract_text(&full)) {
+                                Ok(Ok(t)) => t,
+                                Ok(Err(e)) => format!("[Could not extract PDF text: {}]", e),
+                                Err(_) => "[PDF extraction crashed]".to_string(),
+                            };
+                            self.pdf_cache.insert(rel_path.to_string(), text);
+                        }
+                        if let Some(text) = self.pdf_cache.get(rel_path) {
+                            ui.add_space(4.0);
+                            let preview = if is_expanded { text.clone() } else {
+                                let limit = text.char_indices().nth(800).map(|(i, _)| i).unwrap_or(text.len());
+                                let mut p = text[..limit].to_string();
+                                if limit < text.len() { p.push_str("\n\n... (click \u{25BC} to expand)"); }
+                                p
+                            };
+                            egui::Frame::new()
+                                .fill(egui::Color32::from_rgb(250, 250, 252))
+                                .corner_radius(4.0)
+                                .inner_margin(egui::Margin::same(8))
+                                .show(ui, |ui| {
+                                    let max_h = if is_expanded { 600.0 } else { 200.0 };
+                                    egui::ScrollArea::vertical()
+                                        .max_height(max_h)
+                                        .id_salt(format!("pdf_text_{}", rel_path))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                egui::RichText::new(&preview)
+                                                    .size(11.5)
+                                                    .color(egui::Color32::from_rgb(40, 44, 52))
+                                            );
+                                        });
+                                });
+                        } else {
+                            ui.label(
+                                egui::RichText::new(format!("PDF render failed: {}", err_msg.lines().next().unwrap_or("unknown")))
+                                    .size(10.0)
+                                    .color(egui::Color32::from_rgb(200, 60, 60)),
+                            );
+                        }
+                    } else {
+                        // Still loading
+                        ui.add_space(20.0);
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(
+                                egui::RichText::new("Rendering PDF page...")
+                                    .size(11.0)
+                                    .color(egui::Color32::from_rgb(120, 130, 140)),
+                            );
+                        });
+                        ui.add_space(20.0);
+                    }
                 }
             });
     }

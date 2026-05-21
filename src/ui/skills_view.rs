@@ -1357,11 +1357,47 @@ impl SkillsView {
         }
 
         // --- User-installed skills section ---
+        // Show skills from skills.json that aren't in the built-in catalog
         let user_skills: Vec<&Skill> = self.skills.iter()
             .filter(|s| !builtin_names.contains(&s.name.as_str()))
+            .filter(|s| s.source != "bundled") // skip bundled duplicates
             .collect();
 
-        if !user_skills.is_empty() {
+        // Also scan data/skills/ on disk for skills with SKILL.md that aren't registered
+        let mut disk_skills: Vec<(String, String)> = Vec::new(); // (name, description)
+        let data_dir = crate::server::data::data_dir();
+        let skills_on_disk = data_dir.join("skills");
+        if let Ok(entries) = std::fs::read_dir(&skills_on_disk) {
+            for entry in entries.flatten() {
+                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+                let name = entry.file_name().to_string_lossy().to_string();
+                // Skip if already in built-in or skills.json
+                if builtin_names.contains(&name.as_str()) { continue; }
+                if self.skills.iter().any(|s| s.name == name) { continue; }
+                let skill_md = entry.path().join("SKILL.md");
+                if skill_md.exists() {
+                    // Read first few lines for description
+                    let desc = std::fs::read_to_string(&skill_md)
+                        .ok()
+                        .and_then(|c| {
+                            // Try frontmatter description
+                            if c.starts_with("---") {
+                                c[3..].find("---").and_then(|end| {
+                                    c[3..3+end].lines()
+                                        .find(|l| l.trim().starts_with("description:"))
+                                        .map(|l| l.trim().strip_prefix("description:").unwrap_or("").trim().trim_matches('"').trim_matches('\'').to_string())
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| format!("Custom skill from data/skills/{}", name));
+                    disk_skills.push((name, desc));
+                }
+            }
+        }
+
+        if !user_skills.is_empty() || !disk_skills.is_empty() {
             ui.add_space(12.0);
             ui.label(
                 egui::RichText::new("User Skills")
@@ -1380,6 +1416,17 @@ impl SkillsView {
                 }
                 let category = Self::infer_category(&skill.source);
                 Self::render_catalog_card(ui, &skill.name, &skill.description, &skill.source, category);
+                ui.add_space(3.0);
+            }
+
+            for (name, desc) in &disk_skills {
+                if !query_lower.is_empty()
+                    && !name.to_lowercase().contains(&query_lower)
+                    && !desc.to_lowercase().contains(&query_lower)
+                {
+                    continue;
+                }
+                Self::render_catalog_card(ui, name, desc, "custom", "custom");
                 ui.add_space(3.0);
             }
         }
