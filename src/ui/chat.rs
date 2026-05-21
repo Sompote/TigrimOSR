@@ -624,8 +624,21 @@ impl ChatView {
         // Build content with file attachments
         let mut full_content = text.clone();
         let mut file_names: Vec<String> = Vec::new();
+        let sandbox = crate::server::data::get_sandbox_dir_sync();
         for file in &self.attached_files {
-            file_names.push(file.name.clone());
+            // Store sandbox-relative path so OutputPanel::full_path can resolve it
+            if !file.sandbox_path.is_empty() {
+                let rel = if let Some(stripped) = file.sandbox_path.strip_prefix(&format!("{}/", sandbox)) {
+                    stripped.to_string()
+                } else if let Some(stripped) = file.sandbox_path.strip_prefix(&sandbox) {
+                    stripped.trim_start_matches('/').to_string()
+                } else {
+                    file.sandbox_path.clone()
+                };
+                file_names.push(rel);
+            } else {
+                file_names.push(file.name.clone());
+            }
             if file.is_binary {
                 // Binary files: just tell the agent where the file is
                 full_content.push_str(&format!(
