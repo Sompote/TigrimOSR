@@ -1526,9 +1526,14 @@ pub fn get_compression_settings(
 
 /// Check if an error message indicates a context overflow.
 pub fn is_context_overflow(err_msg: &str) -> bool {
-    err_msg.contains("context window exceeds")
-        || err_msg.contains("context_length_exceeded")
-        || err_msg.contains("maximum context length")
-        || err_msg.contains("too many tokens")
-        || (err_msg.contains("invalid params") && err_msg.contains("2013"))
+    let lower = err_msg.to_lowercase();
+    lower.contains("context window exceeds")
+        || lower.contains("context_length_exceeded")
+        || lower.contains("maximum context length")
+        || lower.contains("too many tokens")
+        || lower.contains("message size") // Kimi: "total message size X exceeds limit Y"
+        || lower.contains("exceeds limit")
+        || lower.contains("request too large")
+        || lower.contains("payload too large")
+        || (lower.contains("invalid params") && lower.contains("2013"))
 }

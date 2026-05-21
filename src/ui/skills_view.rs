@@ -100,45 +100,72 @@ struct CatalogEntry {
 }
 
 const BUILTIN_CATALOG: &[CatalogEntry] = &[
+    // --- Core developer skills ---
+    CatalogEntry {
+        name: "web-search",
+        description: "Search the web using DuckDuckGo — text, news, images, videos with filtering options",
+        category: "Research",
+    },
     CatalogEntry {
         name: "code-review",
-        description: "Automated code-review suggestions powered by LLM",
-        category: "Code Review",
+        description: "Analyze code for bugs, security issues, style violations, and improvement suggestions",
+        category: "Code Quality",
     },
     CatalogEntry {
         name: "doc-generator",
-        description: "Generate documentation from source code and comments",
+        description: "Generate README, API docs, module summaries, and inline documentation from source code",
         category: "Documentation",
     },
     CatalogEntry {
         name: "test-scaffold",
-        description: "Scaffold unit and integration tests for your project",
+        description: "Scaffold unit and integration tests with proper assertions and edge case coverage",
         category: "Testing",
     },
     CatalogEntry {
         name: "debug-assist",
-        description: "Intelligent debugging assistant with stack-trace analysis",
+        description: "Analyze errors, stack traces, and logs to identify root causes and suggest fixes",
         category: "Debugging",
     },
     CatalogEntry {
         name: "refactor-bot",
-        description: "Suggest and apply code refactoring patterns",
-        category: "Refactoring",
+        description: "Suggest and apply refactoring — simplify, extract functions, deduplicate, modernize syntax",
+        category: "Code Quality",
     },
     CatalogEntry {
         name: "file-search",
-        description: "Fast recursive file search using glob patterns",
-        category: "Code Review",
+        description: "Find files by name, extension, content, or size across large codebases",
+        category: "Utilities",
     },
     CatalogEntry {
         name: "git-summarize",
-        description: "Summarize recent git history into a changelog",
+        description: "Summarize git history into changelogs, release notes, and activity reports",
         category: "Documentation",
     },
     CatalogEntry {
         name: "env-check",
-        description: "Validate environment variables and dependencies",
+        description: "Validate environment variables, dependencies, and system requirements for a project",
         category: "Debugging",
+    },
+    // --- Document & data skills ---
+    CatalogEntry {
+        name: "pdf",
+        description: "PDF manipulation toolkit — extract text/tables, create, merge/split, fill forms, and analyze PDF documents",
+        category: "Documents",
+    },
+    CatalogEntry {
+        name: "excel---xlsx",
+        description: "Create, inspect, and edit Excel workbooks with reliable formulas, dates, formatting, and template preservation",
+        category: "Documents",
+    },
+    CatalogEntry {
+        name: "literature-review",
+        description: "Search academic sources via Semantic Scholar, OpenAlex, Crossref and PubMed for literature reviews",
+        category: "Research",
+    },
+    CatalogEntry {
+        name: "twitter-search",
+        description: "Advanced Twitter/X search and social media data analysis — fetch tweets, trend analysis, sentiment",
+        category: "Research",
     },
 ];
 
@@ -1300,91 +1327,114 @@ impl SkillsView {
     }
 
     // ------------------------------------------------------------------
-    // Left panel: built-in catalog
+    // Left panel: full catalog (built-in + all installed skills)
     // ------------------------------------------------------------------
-    fn show_catalog(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
-        ui.add_space(16.0);
-        ui.separator();
-        ui.add_space(4.0);
-        ui.strong("Skill Catalog");
-        ui.add_space(4.0);
-
+    fn show_catalog(&mut self, ui: &mut egui::Ui, _runtime: &tokio::runtime::Handle) {
         let query_lower = self.search_query.to_lowercase();
 
+        // Collect built-in names for dedup
+        let builtin_names: Vec<&str> = BUILTIN_CATALOG.iter().map(|e| e.name).collect();
+
+        // --- Built-in skills section ---
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Built-in Skills")
+                .size(13.0)
+                .strong()
+                .color(egui::Color32::from_rgb(34, 197, 94)),
+        );
+        ui.add_space(4.0);
+
         for entry in BUILTIN_CATALOG {
-            // Filter by search
-            if !query_lower.is_empty() && !entry.name.to_lowercase().contains(&query_lower) {
+            if !query_lower.is_empty()
+                && !entry.name.to_lowercase().contains(&query_lower)
+                && !entry.description.to_lowercase().contains(&query_lower)
+            {
                 continue;
             }
+            Self::render_catalog_card(ui, entry.name, entry.description, "builtin", entry.category);
+            ui.add_space(3.0);
+        }
 
-            let already_installed = self.skills.iter().any(|s| s.name == entry.name);
+        // --- User-installed skills section ---
+        let user_skills: Vec<&Skill> = self.skills.iter()
+            .filter(|s| !builtin_names.contains(&s.name.as_str()))
+            .collect();
 
-            egui::Frame::new()
-                .fill(ui.visuals().extreme_bg_color)
-                .inner_margin(egui::Margin::same(8))
-                .corner_radius(4.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.strong(entry.name);
-                                Self::source_badge(ui, "builtin");
-                                Self::category_badge(ui, entry.category);
-                            });
-                            ui.label(
-                                egui::RichText::new(entry.description).small().weak(),
-                            );
+        if !user_skills.is_empty() {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new("User Skills")
+                    .size(13.0)
+                    .strong()
+                    .color(egui::Color32::from_rgb(59, 130, 246)),
+            );
+            ui.add_space(4.0);
+
+            for skill in &user_skills {
+                if !query_lower.is_empty()
+                    && !skill.name.to_lowercase().contains(&query_lower)
+                    && !skill.description.to_lowercase().contains(&query_lower)
+                {
+                    continue;
+                }
+                let category = Self::infer_category(&skill.source);
+                Self::render_catalog_card(ui, &skill.name, &skill.description, &skill.source, category);
+                ui.add_space(3.0);
+            }
+        }
+    }
+
+    /// Render a single catalog card
+    fn render_catalog_card(ui: &mut egui::Ui, name: &str, description: &str, source: &str, category: &str) {
+        egui::Frame::new()
+            .fill(ui.visuals().extreme_bg_color)
+            .inner_margin(egui::Margin::same(8))
+            .corner_radius(4.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.strong(name);
+                            Self::source_badge(ui, source);
+                            Self::category_badge(ui, category);
                         });
+                        // Show description truncated to ~120 chars
+                        let desc = if description.len() > 120 {
+                            format!("{}...", &description[..description.char_indices().nth(120).map(|(i,_)|i).unwrap_or(description.len())])
+                        } else {
+                            description.to_string()
+                        };
+                        ui.label(egui::RichText::new(desc).small().weak());
+                    });
 
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if already_installed {
-                                    egui::Frame::new()
-                                        .fill(egui::Color32::from_rgb(34, 197, 94).gamma_multiply(0.15))
-                                        .inner_margin(egui::Margin::symmetric(6, 2))
-                                        .corner_radius(3.0)
-                                        .show(ui, |ui| {
-                                            ui.label(
-                                                egui::RichText::new("Installed")
-                                                    .small()
-                                                    .color(egui::Color32::from_rgb(34, 197, 94))
-                                                    .strong(),
-                                            );
-                                        });
-                                } else if ui
-                                    .add(
-                                        egui::Button::new(
-                                            egui::RichText::new("Install")
-                                                .color(egui::Color32::WHITE),
-                                        )
-                                        .fill(egui::Color32::from_rgb(59, 130, 246)),
-                                    )
-                                    .clicked()
-                                {
-                                    let skill = Skill {
-                                        id: uuid::Uuid::new_v4().to_string(),
-                                        name: entry.name.to_string(),
-                                        description: entry.description.to_string(),
-                                        source: "builtin".to_string(),
-                                        script: String::new(),
-                                        enabled: true,
-                                        installed_at: chrono::Utc::now().to_rfc3339(),
-                                        review_status: None,
-                                        auto_meta: None,
-                                    };
-                                    self.skills.push(skill);
-                                    let skills = self.skills.clone();
-                                    runtime.spawn(async move {
-                                        data::save_skills(&skills).await;
-                                    });
-                                }
-                            },
-                        );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        egui::Frame::new()
+                            .fill(egui::Color32::from_rgb(34, 197, 94).gamma_multiply(0.15))
+                            .inner_margin(egui::Margin::symmetric(6, 2))
+                            .corner_radius(3.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new("Installed")
+                                        .small()
+                                        .color(egui::Color32::from_rgb(34, 197, 94))
+                                        .strong(),
+                                );
+                            });
                     });
                 });
+            });
+    }
 
-            ui.add_space(4.0);
+    /// Infer a display category from skill source
+    fn infer_category(source: &str) -> &'static str {
+        match source {
+            "builtin" | "bundled" => "built-in",
+            "auto" => "auto-created",
+            "upload" => "uploaded",
+            "clawhub" => "clawhub",
+            "manual" => "manual",
+            _ => "custom",
         }
     }
 

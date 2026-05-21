@@ -56,6 +56,12 @@ pub struct OutputPanel {
     excel_cache: HashMap<String, Vec<(String, Vec<Vec<String>>)>>,
     /// Track which doc card is expanded
     expanded_doc: Option<String>,
+    /// PDF page rendering: path -> (total_pages, HashMap<page_num, texture>)
+    pdf_pages: HashMap<String, (usize, HashMap<usize, egui::TextureHandle>)>,
+    /// Current displayed page per PDF
+    pdf_current_page: HashMap<String, usize>,
+    /// PDF pages currently being rendered (to avoid duplicate spawns)
+    pdf_rendering: HashMap<String, bool>,
 }
 
 impl Default for OutputPanel {
@@ -72,6 +78,9 @@ impl Default for OutputPanel {
             pdf_cache: HashMap::new(),
             excel_cache: HashMap::new(),
             expanded_doc: None,
+            pdf_pages: HashMap::new(),
+            pdf_current_page: HashMap::new(),
+            pdf_rendering: HashMap::new(),
         }
     }
 }
@@ -1539,19 +1548,122 @@ impl OutputPanel {
     }
 
     // -----------------------------------------------------------------------
-    // PDF card — inline text preview
+    // PDF card — visual page preview with navigation
     // -----------------------------------------------------------------------
+
+    /// Cache directory for rendered PDF page images
+    fn pdf_cache_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join("tigrimos_pdf_pages");
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// Render a single PDF page to PNG using macOS Quartz (via Python).
+    /// Returns the output PNG path.
+    fn render_pdf_page_path(pdf_path: &std::path::Path, page: usize) -> PathBuf {
+        let hash = format!("{:x}", {
+            let s = pdf_path.display().to_string();
+            let mut h: u64 = 5381;
+            for b in s.bytes() { h = h.wrapping_mul(33).wrapping_add(b as u64); }
+            h
+        });
+        Self::pdf_cache_dir().join(format!("{}_{}.png", hash, page))
+    }
+
+    /// Spawn background render of a PDF page using macOS Quartz
+    fn spawn_pdf_page_render(
+        ctx: egui::Context,
+        pdf_path: PathBuf,
+        page: usize,
+        rel_path: String,
+    ) {
+        std::thread::spawn(move || {
+            let out_png = Self::render_pdf_page_path(&pdf_path, page);
+            if out_png.exists() {
+                // Already rendered — just repaint to pick it up
+                ctx.request_repaint();
+                return;
+            }
+            let script = format!(
+                r#"
+import Quartz, CoreFoundation
+url = CoreFoundation.CFURLCreateFromFileSystemRepresentation(None, b"{pdf}", len(b"{pdf}"), False)
+doc = Quartz.CGPDFDocumentCreateWithURL(url)
+if doc:
+    n = Quartz.CGPDFDocumentGetNumberOfPages(doc)
+    pg = {page} + 1
+    if pg <= n:
+        page_ref = Quartz.CGPDFDocumentGetPage(doc, pg)
+        rect = Quartz.CGPDFPageGetBoxRect(page_ref, Quartz.kCGPDFMediaBox)
+        w, h = int(rect.size.width), int(rect.size.height)
+        scale = min(1600.0 / w, 1600.0 / h, 2.0)
+        sw, sh = int(w * scale), int(h * scale)
+        cs = Quartz.CGColorSpaceCreateDeviceRGB()
+        ctx = Quartz.CGBitmapContextCreate(None, sw, sh, 8, sw * 4, cs, Quartz.kCGImageAlphaPremultipliedLast)
+        Quartz.CGContextSetRGBFillColor(ctx, 1, 1, 1, 1)
+        Quartz.CGContextFillRect(ctx, Quartz.CGRectMake(0, 0, sw, sh))
+        Quartz.CGContextScaleCTM(ctx, scale, scale)
+        Quartz.CGContextDrawPDFPage(ctx, page_ref)
+        img = Quartz.CGBitmapContextCreateImage(ctx)
+        out_url = CoreFoundation.CFURLCreateFromFileSystemRepresentation(None, b"{out}", len(b"{out}"), False)
+        dest = Quartz.CGImageDestinationCreateWithURL(out_url, "public.png", 1, None)
+        Quartz.CGImageDestinationAddImage(dest, img, None)
+        Quartz.CGImageDestinationFinalize(dest)
+    # Write page count marker
+    with open("{out}.count", "w") as f:
+        f.write(str(n))
+"#,
+                pdf = pdf_path.display().to_string().replace('\\', "\\\\").replace('"', "\\\""),
+                page = page,
+                out = out_png.display().to_string().replace('\\', "\\\\").replace('"', "\\\""),
+            );
+            let _ = std::process::Command::new("python3")
+                .arg("-c")
+                .arg(&script)
+                .output();
+            ctx.request_repaint();
+        });
+    }
 
     fn render_pdf_card(&mut self, ui: &mut egui::Ui, rel_path: &str, border: egui::Color32) {
         let full = Self::full_path(rel_path);
         let filename = Self::filename(rel_path);
         let is_expanded = self.expanded_doc.as_deref() == Some(rel_path);
+        let current_page = *self.pdf_current_page.get(rel_path).unwrap_or(&0);
 
-        // Extract and cache PDF text
-        if !self.pdf_cache.contains_key(rel_path) && full.exists() {
-            let text = pdf_extract::extract_text(&full)
-                .unwrap_or_else(|e| format!("[Could not extract PDF text: {}]", e));
-            self.pdf_cache.insert(rel_path.to_string(), text);
+        // Kick off first page render if not started
+        if !self.pdf_pages.contains_key(rel_path) && !self.pdf_rendering.get(rel_path).copied().unwrap_or(false) && full.exists() {
+            self.pdf_rendering.insert(rel_path.to_string(), true);
+            Self::spawn_pdf_page_render(ui.ctx().clone(), full.clone(), 0, rel_path.to_string());
+        }
+
+        // Try to load rendered page image into texture cache
+        let page_png = Self::render_pdf_page_path(&full, current_page);
+        if page_png.exists() {
+            let entry = self.pdf_pages.entry(rel_path.to_string()).or_insert_with(|| {
+                // Read total page count from marker file
+                let count_file = format!("{}.count", page_png.display());
+                let total = std::fs::read_to_string(&count_file)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<usize>().ok())
+                    .unwrap_or(1);
+                (total, HashMap::new())
+            });
+            if !entry.1.contains_key(&current_page) {
+                if let Ok(data) = std::fs::read(&page_png) {
+                    if let Ok(img) = image::load_from_memory(&data) {
+                        let rgba = img.to_rgba8();
+                        let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
+                        let texture = ui.ctx().load_texture(
+                            format!("pdf_{}_{}", rel_path, current_page),
+                            color_image,
+                            egui::TextureOptions::LINEAR,
+                        );
+                        entry.1.insert(current_page, texture);
+                    }
+                }
+            }
         }
 
         egui::Frame::new()
@@ -1560,6 +1672,7 @@ impl OutputPanel {
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
+                // Header row
                 ui.horizontal(|ui| {
                     egui::Frame::new()
                         .fill(egui::Color32::from_rgba_premultiplied(220, 50, 50, 25))
@@ -1594,50 +1707,92 @@ impl OutputPanel {
                     });
                 });
 
-                // Show file size
-                if full.exists() {
-                    if let Ok(meta) = std::fs::metadata(&full) {
-                        let kb = meta.len() / 1024;
+                // File size + page info
+                ui.horizontal(|ui| {
+                    if full.exists() {
+                        if let Ok(meta) = std::fs::metadata(&full) {
+                            let kb = meta.len() / 1024;
+                            ui.label(
+                                egui::RichText::new(format!("{} KB", kb))
+                                    .size(10.0)
+                                    .color(egui::Color32::from_rgb(150, 160, 170)),
+                            );
+                        }
+                    }
+                    if let Some((total, _)) = self.pdf_pages.get(rel_path) {
                         ui.label(
-                            egui::RichText::new(format!("{} KB", kb))
+                            egui::RichText::new(format!("Page {} / {}", current_page + 1, total))
                                 .size(10.0)
-                                .color(egui::Color32::from_rgb(150, 160, 170)),
+                                .color(egui::Color32::from_rgb(100, 110, 120)),
                         );
                     }
-                }
+                });
 
-                // Inline text preview
-                if let Some(text) = self.pdf_cache.get(rel_path) {
-                    ui.add_space(6.0);
-                    let preview = if is_expanded {
-                        text.clone()
-                    } else {
-                        // Show first ~800 chars
-                        let limit = text.char_indices().nth(800).map(|(i, _)| i).unwrap_or(text.len());
-                        let mut preview = text[..limit].to_string();
-                        if limit < text.len() {
-                            preview.push_str("\n\n... (click \u{25BC} to expand)");
-                        }
-                        preview
-                    };
+                ui.add_space(4.0);
+
+                // Page image preview
+                let has_texture = self.pdf_pages.get(rel_path)
+                    .and_then(|(_, pages)| pages.get(&current_page))
+                    .is_some();
+
+                if has_texture {
+                    let (total, pages) = self.pdf_pages.get(rel_path).unwrap();
+                    let total = *total;
+                    let texture = pages.get(&current_page).unwrap();
+                    let tex_size = texture.size_vec2();
+                    let max_h = if is_expanded { 800.0 } else { 400.0 };
+                    let max_w = ui.available_width() - 4.0;
+                    let scale = (max_w / tex_size.x).min(max_h / tex_size.y).min(1.0);
+                    let display_size = egui::vec2(tex_size.x * scale, tex_size.y * scale);
 
                     egui::Frame::new()
-                        .fill(egui::Color32::from_rgb(250, 250, 252))
+                        .fill(egui::Color32::from_rgb(245, 245, 248))
                         .corner_radius(4.0)
-                        .inner_margin(egui::Margin::same(8))
+                        .inner_margin(egui::Margin::same(4))
                         .show(ui, |ui| {
-                            let max_h = if is_expanded { 600.0 } else { 200.0 };
                             egui::ScrollArea::vertical()
                                 .max_height(max_h)
-                                .id_salt(format!("pdf_scroll_{}", rel_path))
+                                .id_salt(format!("pdf_page_{}", rel_path))
                                 .show(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new(&preview)
-                                            .size(11.5)
-                                            .color(egui::Color32::from_rgb(40, 44, 52))
-                                    );
+                                    ui.add(egui::Image::new(texture).fit_to_exact_size(display_size));
                                 });
                         });
+
+                    // Page navigation
+                    if total > 1 {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let prev_enabled = current_page > 0;
+                            if ui.add_enabled(prev_enabled, egui::Button::new("\u{25C0} Prev").small()).clicked() {
+                                let new_page = current_page.saturating_sub(1);
+                                self.pdf_current_page.insert(rel_path.to_string(), new_page);
+                                // Trigger render of new page if not cached
+                                if !self.pdf_pages.get(rel_path).map(|(_, p)| p.contains_key(&new_page)).unwrap_or(false) {
+                                    Self::spawn_pdf_page_render(ui.ctx().clone(), full.clone(), new_page, rel_path.to_string());
+                                }
+                            }
+                            let next_enabled = current_page + 1 < total;
+                            if ui.add_enabled(next_enabled, egui::Button::new("Next \u{25B6}").small()).clicked() {
+                                let new_page = current_page + 1;
+                                self.pdf_current_page.insert(rel_path.to_string(), new_page);
+                                if !self.pdf_pages.get(rel_path).map(|(_, p)| p.contains_key(&new_page)).unwrap_or(false) {
+                                    Self::spawn_pdf_page_render(ui.ctx().clone(), full.clone(), new_page, rel_path.to_string());
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    // Loading state
+                    ui.add_space(20.0);
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(
+                            egui::RichText::new("Rendering PDF page...")
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(120, 130, 140)),
+                        );
+                    });
+                    ui.add_space(20.0);
                 }
             });
     }

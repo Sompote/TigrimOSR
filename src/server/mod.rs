@@ -224,31 +224,121 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     axum::serve(listener, app).await.expect("Server error");
 }
 
-/// Install bundled skills on first run (embedded in the binary via include_str!/include_bytes!)
+/// Bundled skill definition: name, description, SKILL.md content, optional extra files
+struct BundledSkill {
+    name: &'static str,
+    description: &'static str,
+    skill_md: &'static str,
+    meta_json: &'static str,
+    extra_files: &'static [(&'static str, &'static str)], // (relative_path, content)
+}
+
+const BUNDLED_SKILLS: &[BundledSkill] = &[
+    BundledSkill {
+        name: "web-search",
+        description: "Search the web using DuckDuckGo — text, news, images, videos with filtering options",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/_meta.json")),
+        extra_files: &[
+            ("scripts/search.py", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/scripts/search.py"))),
+        ],
+    },
+    BundledSkill {
+        name: "code-review",
+        description: "Automated code review — analyzes files for bugs, security issues, style violations, and improvements",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/code-review/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/code-review/_meta.json")),
+        extra_files: &[],
+    },
+    BundledSkill {
+        name: "doc-generator",
+        description: "Generate documentation from source code — README, API docs, module summaries",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/doc-generator/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/doc-generator/_meta.json")),
+        extra_files: &[],
+    },
+    BundledSkill {
+        name: "test-scaffold",
+        description: "Scaffold unit and integration tests with proper assertions and edge case coverage",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/test-scaffold/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/test-scaffold/_meta.json")),
+        extra_files: &[],
+    },
+    BundledSkill {
+        name: "debug-assist",
+        description: "Intelligent debugging — analyzes errors, stack traces, and logs to find root causes",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/debug-assist/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/debug-assist/_meta.json")),
+        extra_files: &[],
+    },
+    BundledSkill {
+        name: "refactor-bot",
+        description: "Suggest and apply code refactoring — simplify, extract, deduplicate, modernize",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/refactor-bot/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/refactor-bot/_meta.json")),
+        extra_files: &[],
+    },
+    BundledSkill {
+        name: "file-search",
+        description: "Fast recursive file search using name patterns, content grep, and project structure analysis",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/file-search/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/file-search/_meta.json")),
+        extra_files: &[],
+    },
+    BundledSkill {
+        name: "git-summarize",
+        description: "Summarize git history into changelogs, release notes, and activity reports",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/git-summarize/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/git-summarize/_meta.json")),
+        extra_files: &[],
+    },
+    BundledSkill {
+        name: "env-check",
+        description: "Validate environment variables, dependencies, and system requirements",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/env-check/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/env-check/_meta.json")),
+        extra_files: &[],
+    },
+    // --- Uploaded / user-contributed skills (now bundled) ---
+    BundledSkill {
+        name: "literature-review",
+        description: "Search academic sources via Semantic Scholar, OpenAlex, Crossref and PubMed for literature reviews with proper citations",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/literature-review/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/literature-review/_meta.json")),
+        extra_files: &[
+            ("scripts/lit_search.py", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/literature-review/scripts/lit_search.py"))),
+        ],
+    },
+    BundledSkill {
+        name: "twitter-search",
+        description: "Advanced Twitter/X search and social media data analysis — fetch tweets, trend analysis, sentiment analysis",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/twitter-search/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/twitter-search/_meta.json")),
+        extra_files: &[
+            ("scripts/twitter_search.py", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/twitter-search/scripts/twitter_search.py"))),
+            ("scripts/run_search.sh", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/twitter-search/scripts/run_search.sh"))),
+            ("references/twitter_api.md", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/twitter-search/references/twitter_api.md"))),
+            ("README.md", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/twitter-search/README.md"))),
+        ],
+    },
+    BundledSkill {
+        name: "pdf",
+        description: "PDF manipulation toolkit — extract text/tables, create, merge/split, fill forms, and analyze PDF documents",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/pdf/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/pdf/_meta.json")),
+        extra_files: &[],
+    },
+    BundledSkill {
+        name: "excel---xlsx",
+        description: "Create, inspect, and edit Excel workbooks with reliable formulas, dates, formatting, and template preservation",
+        skill_md: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/excel---xlsx/SKILL.md")),
+        meta_json: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/excel---xlsx/_meta.json")),
+        extra_files: &[],
+    },
+];
+
+/// Install bundled skills on first run (embedded in the binary via include_str!)
 async fn install_bundled_skills(data_dir: &str) {
-    let skills_dir = format!("{}/skills/web-search", data_dir);
-    let skill_md_path = format!("{}/SKILL.md", skills_dir);
-
-    // Skip if already installed on disk
-    if fs::metadata(&skill_md_path).await.is_ok() {
-        return;
-    }
-
-    tracing::info!("[init] Installing bundled skill: web-search");
-
-    // Create directories
-    let _ = fs::create_dir_all(format!("{}/scripts", skills_dir)).await;
-
-    // Write bundled files
-    let skill_md = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/SKILL.md"));
-    let search_py = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/scripts/search.py"));
-    let meta_json = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/skills/web-search/_meta.json"));
-
-    let _ = fs::write(&skill_md_path, skill_md).await;
-    let _ = fs::write(format!("{}/scripts/search.py", skills_dir), search_py).await;
-    let _ = fs::write(format!("{}/{}", skills_dir, "_meta.json"), meta_json).await;
-
-    // Register in skills.json if not already present
     let skills_json_path = format!("{}/skills.json", data_dir);
     let mut skills: Vec<serde_json::Value> = fs::read_to_string(&skills_json_path)
         .await
@@ -256,18 +346,67 @@ async fn install_bundled_skills(data_dir: &str) {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
 
-    let already_registered = skills.iter().any(|s| s["name"].as_str() == Some("web-search"));
-    if !already_registered {
-        skills.push(json!({
-            "id": uuid::Uuid::new_v4().to_string(),
-            "name": "web-search",
-            "description": "Search the web using DuckDuckGo — text, news, images, videos with filtering options",
-            "source": "bundled",
-            "script": "web-search",
-            "enabled": true,
-            "installedAt": chrono::Utc::now().to_rfc3339()
-        }));
+    let mut changed = false;
+
+    for bundled in BUNDLED_SKILLS {
+        let skill_dir = format!("{}/skills/{}", data_dir, bundled.name);
+        let skill_md_path = format!("{}/SKILL.md", skill_dir);
+
+        // Skip if already installed on disk
+        if fs::metadata(&skill_md_path).await.is_ok() {
+            // Still ensure registered in skills.json
+            let already_registered = skills.iter().any(|s| s["name"].as_str() == Some(bundled.name));
+            if !already_registered {
+                skills.push(json!({
+                    "id": uuid::Uuid::new_v4().to_string(),
+                    "name": bundled.name,
+                    "description": bundled.description,
+                    "source": "bundled",
+                    "script": bundled.name,
+                    "enabled": true,
+                    "installedAt": chrono::Utc::now().to_rfc3339()
+                }));
+                changed = true;
+            }
+            continue;
+        }
+
+        tracing::info!("[init] Installing bundled skill: {}", bundled.name);
+
+        // Create skill directory
+        let _ = fs::create_dir_all(&skill_dir).await;
+
+        // Write SKILL.md and _meta.json
+        let _ = fs::write(&skill_md_path, bundled.skill_md).await;
+        let _ = fs::write(format!("{}/_meta.json", skill_dir), bundled.meta_json).await;
+
+        // Write extra files (e.g. scripts)
+        for (rel_path, content) in bundled.extra_files {
+            let full_path = format!("{}/{}", skill_dir, rel_path);
+            if let Some(parent) = std::path::Path::new(&full_path).parent() {
+                let _ = fs::create_dir_all(parent).await;
+            }
+            let _ = fs::write(&full_path, content).await;
+        }
+
+        // Register in skills.json
+        let already_registered = skills.iter().any(|s| s["name"].as_str() == Some(bundled.name));
+        if !already_registered {
+            skills.push(json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "name": bundled.name,
+                "description": bundled.description,
+                "source": "bundled",
+                "script": bundled.name,
+                "enabled": true,
+                "installedAt": chrono::Utc::now().to_rfc3339()
+            }));
+            changed = true;
+            tracing::info!("[init] Registered {} skill in skills.json", bundled.name);
+        }
+    }
+
+    if changed {
         let _ = fs::write(&skills_json_path, serde_json::to_string_pretty(&skills).unwrap_or_default()).await;
-        tracing::info!("[init] Registered web-search skill in skills.json");
     }
 }

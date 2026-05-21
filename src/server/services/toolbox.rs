@@ -1779,11 +1779,12 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "read_file",
-                "description": "Read a file from disk.",
+                "description": "Read a file from disk. For PDF files, content is returned in chunks. First call returns chunk 0 and total_chunks. Use 'offset' to read subsequent chunks.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": { "type": "string", "description": "File path to read" }
+                        "path": { "type": "string", "description": "File path to read" },
+                        "offset": { "type": "integer", "description": "Chunk number for PDF pagination (0-based). Omit to read from the beginning." }
                     },
                     "required": ["path"]
                 }
@@ -3084,11 +3085,13 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
     }
 }
 
+const PDF_CHUNK_SIZE: usize = 8_000; // ~2K tokens per chunk — safe for small-context models
+
 async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
     let path = args["path"].as_str().unwrap_or("");
     let resolved = resolve_path(sandbox_dir, path);
 
-    // Handle PDF files — extract text instead of reading as raw string
+    // Handle PDF files — extract text and return in chunks
     if resolved.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("pdf")).unwrap_or(false) {
         let resolved_clone = resolved.clone();
         let result = tokio::task::spawn_blocking(move || {
@@ -3097,11 +3100,40 @@ async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
         return match result {
             Ok(Ok(text)) => {
                 compact::track_file_read(&resolved.display().to_string(), &text);
+                let total_chars = text.len();
+                // Split into chunks aligned to UTF-8 char boundaries
+                let mut char_chunks: Vec<String> = Vec::new();
+                let mut start = 0;
+                while start < text.len() {
+                    let mut end = (start + PDF_CHUNK_SIZE).min(text.len());
+                    // Align to char boundary
+                    while end < text.len() && !text.is_char_boundary(end) {
+                        end += 1;
+                    }
+                    char_chunks.push(text[start..end].to_string());
+                    start = end;
+                }
+                let total_chunks = char_chunks.len();
+                let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+                if offset >= total_chunks {
+                    return json!({
+                        "ok": false,
+                        "error": format!("Chunk offset {} out of range (total_chunks: {})", offset, total_chunks),
+                    });
+                }
                 json!({
                     "ok": true,
-                    "content": truncate(&text, MAX_CONTENT_LEN),
+                    "content": &char_chunks[offset],
                     "path": resolved.display().to_string(),
                     "format": "pdf",
+                    "chunk": offset,
+                    "total_chunks": total_chunks,
+                    "total_chars": total_chars,
+                    "hint": if total_chunks > 1 && offset == 0 {
+                        format!("PDF has {} chunks. Use offset 1..{} to read more.", total_chunks, total_chunks - 1)
+                    } else {
+                        String::new()
+                    },
                 })
             }
             Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to extract PDF text: {e}") }),
