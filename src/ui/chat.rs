@@ -2057,54 +2057,72 @@ You have access to these tools: {}.{}",
             .set_title("Attach files")
             .pick_files()
         {
-            // Create uploads dir inside sandbox
-            let sandbox = crate::server::data::get_sandbox_dir_sync();
-            let uploads_dir = std::path::PathBuf::from(&sandbox).join("uploads");
-            let _ = std::fs::create_dir_all(&uploads_dir);
+            self.attach_paths(&paths);
+        }
+    }
 
-            for path in paths {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
+    /// Handle files dropped onto the chat window via OS drag-and-drop
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<egui::DroppedFile> = ctx.input(|i| i.raw.dropped_files.clone());
+        if dropped.is_empty() {
+            return;
+        }
+        let paths: Vec<std::path::PathBuf> = dropped
+            .iter()
+            .filter_map(|f| f.path.clone())
+            .collect();
+        if !paths.is_empty() {
+            self.attach_paths(&paths);
+        }
+    }
 
-                // Copy file to sandbox/uploads/ (with timestamp to avoid collisions)
-                let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-                let dest_name = format!("{}_{}", ts, name);
-                let dest_path = uploads_dir.join(&dest_name);
-                let sandbox_path = if std::fs::copy(&path, &dest_path).is_ok() {
-                    dest_path.to_string_lossy().to_string()
-                } else {
-                    String::new()
-                };
+    /// Process and attach files from given paths (used by both file picker and drag-and-drop)
+    fn attach_paths(&mut self, paths: &[std::path::PathBuf]) {
+        let sandbox = crate::server::data::get_sandbox_dir_sync();
+        let uploads_dir = std::path::PathBuf::from(&sandbox).join("uploads");
+        let _ = std::fs::create_dir_all(&uploads_dir);
 
-                // Determine if binary by checking extension
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-                let binary_exts = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg",
-                    "mp3", "mp4", "wav", "ogg", "avi", "mov", "mkv",
-                    "zip", "tar", "gz", "bz2", "xz", "7z", "rar",
-                    "exe", "dll", "so", "dylib", "bin", "dat",
-                    "doc", "docx", "xls", "xlsx", "ppt", "pptx"];
-                let is_binary = binary_exts.contains(&ext.as_str());
+        for path in paths {
+            if !path.exists() { continue; }
 
-                let content = if is_binary {
-                    format!("[Binary file: {}]", name)
-                } else if ext == "pdf" {
-                    // pdf_extract can panic on malformed PDFs — catch_unwind
-                    // prevents the panic from propagating through winit's FFI
-                    // boundary (which would cause SIGABRT).
-                    match std::panic::catch_unwind(|| pdf_extract::extract_text(&path)) {
-                        Ok(Ok(text)) => text,
-                        Ok(Err(e)) => format!("[Could not extract PDF text: {}]", e),
-                        Err(_) => format!("[PDF extraction crashed for: {}]", name),
-                    }
-                } else {
-                    std::fs::read_to_string(&path).unwrap_or_else(|_| {
-                        format!("[Could not read file: {}]", path.display())
-                    })
-                };
-                self.attached_files.push(AttachedFile { name, content, sandbox_path, is_binary });
-            }
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // Copy file to sandbox/uploads/ (with timestamp to avoid collisions)
+            let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            let dest_name = format!("{}_{}", ts, name);
+            let dest_path = uploads_dir.join(&dest_name);
+            let sandbox_path = if std::fs::copy(path, &dest_path).is_ok() {
+                dest_path.to_string_lossy().to_string()
+            } else {
+                String::new()
+            };
+
+            // Determine if binary by checking extension
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let binary_exts = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg",
+                "mp3", "mp4", "wav", "ogg", "avi", "mov", "mkv",
+                "zip", "tar", "gz", "bz2", "xz", "7z", "rar",
+                "exe", "dll", "so", "dylib", "bin", "dat",
+                "doc", "docx", "xls", "xlsx", "ppt", "pptx"];
+            let is_binary = binary_exts.contains(&ext.as_str());
+
+            let content = if is_binary {
+                format!("[Binary file: {}]", name)
+            } else if ext == "pdf" {
+                match std::panic::catch_unwind(|| pdf_extract::extract_text(path)) {
+                    Ok(Ok(text)) => text,
+                    Ok(Err(e)) => format!("[Could not extract PDF text: {}]", e),
+                    Err(_) => format!("[PDF extraction crashed for: {}]", name),
+                }
+            } else {
+                std::fs::read_to_string(path).unwrap_or_else(|_| {
+                    format!("[Could not read file: {}]", path.display())
+                })
+            };
+            self.attached_files.push(AttachedFile { name, content, sandbox_path, is_binary });
         }
     }
 
@@ -2148,6 +2166,9 @@ You have access to these tools: {}.{}",
     pub fn show(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         // Poll streaming state
         self.poll_streaming(runtime);
+
+        // Handle drag-and-drop files
+        self.handle_dropped_files(ui.ctx());
 
         if self.needs_refresh {
             self.refresh(runtime);
