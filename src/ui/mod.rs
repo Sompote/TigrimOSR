@@ -12,6 +12,7 @@ pub mod skills_view;
 pub mod tasks_view;
 pub mod remote_view;
 pub mod terminal_view;
+pub mod math_render;
 
 #[allow(unused_imports)]
 pub use app::TigrimOSApp;

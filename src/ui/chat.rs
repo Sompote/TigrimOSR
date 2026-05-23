@@ -427,6 +427,8 @@ pub struct ChatView {
     graphic_zoom: f32,
     graphic_drag_start: Option<egui::Pos2>,
     graphic_last_reload: f64, // last auto-reload time (seconds)
+    graphic_live_statuses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+    graphic_status_poll_timer: std::time::Instant,
 }
 
 #[derive(Clone)]
@@ -478,6 +480,8 @@ impl ChatView {
             graphic_zoom: 1.0,
             graphic_drag_start: None,
             graphic_last_reload: 0.0,
+            graphic_live_statuses: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            graphic_status_poll_timer: std::time::Instant::now(),
         }
     }
 
@@ -1051,9 +1055,18 @@ Rules:\n\
 You have access to these tools: {}.{}",
             research_instruction, sandbox_dir, tool_list, sub_agent_prompt
         );
-        // Inject installed skills block so the agent knows what skills are available
+        // Resolve project skill filter — if a project is selected and has skills assigned,
+        // only those skills will be injected into the prompt.
+        let project_skill_ids: Option<Vec<String>> = self.selected_project_id.as_ref().and_then(|pid| {
+            let projects = runtime.block_on(crate::server::data::get_projects());
+            projects.iter().find(|p| &p.id == pid).and_then(|p| {
+                if p.skills.is_empty() { None } else { Some(p.skills.clone()) }
+            })
+        });
         let skills_block = runtime.block_on(
-            crate::server::services::toolbox::build_enabled_skills_block_pub()
+            crate::server::services::toolbox::build_enabled_skills_block_pub(
+                project_skill_ids.as_deref()
+            )
         );
         let base_system = if skills_block.is_empty() {
             base_system
@@ -1850,12 +1863,8 @@ You have access to these tools: {}.{}",
         if !project.memory.is_empty() {
             prompt_parts.push(format!("Project memory/context:\n{}", project.memory));
         }
-        if !project.skills.is_empty() {
-            prompt_parts.push(format!(
-                "Available skills: {}",
-                project.skills.join(", ")
-            ));
-        }
+        // Note: project skill filtering is handled by build_enabled_skills_block_pub(),
+        // which only injects skills assigned to this project into the INSTALLED SKILLS block.
         if let Some(ref sp) = project.system_prompt {
             if !sp.is_empty() {
                 prompt_parts.push(format!("Custom instructions:\n{}", sp));
@@ -2076,10 +2085,26 @@ You have access to these tools: {}.{}",
         }
     }
 
+    /// Determine the upload directory: project working folder (with uploads/ sub-dir) when a
+    /// project is selected and has a working folder configured, otherwise sandbox/uploads/.
+    fn resolve_upload_dir(&self) -> std::path::PathBuf {
+        if let Some(ref pid) = self.selected_project_id {
+            if let Some(proj) = self.projects.iter().find(|p| &p.id == pid) {
+                if !proj.working_folder.is_empty() {
+                    let dir = std::path::PathBuf::from(&proj.working_folder).join("uploads");
+                    return dir;
+                }
+            }
+        }
+        let sandbox = crate::server::data::get_sandbox_dir_sync();
+        std::path::PathBuf::from(&sandbox).join("uploads")
+    }
+
     /// Process and attach files from given paths (used by both file picker and drag-and-drop)
     fn attach_paths(&mut self, paths: &[std::path::PathBuf]) {
-        let sandbox = crate::server::data::get_sandbox_dir_sync();
-        let uploads_dir = std::path::PathBuf::from(&sandbox).join("uploads");
+        // If a project with a working folder is selected, upload into that folder;
+        // otherwise fall back to sandbox/uploads/.
+        let uploads_dir = self.resolve_upload_dir();
         let _ = std::fs::create_dir_all(&uploads_dir);
 
         for path in paths {
@@ -2977,7 +3002,7 @@ You have access to these tools: {}.{}",
                                 ui.ctx().request_repaint();
                             }
                             // Graphic monitor tab — renders inline, no scroll area
-                            self.render_graphic_monitor(ui);
+                            self.render_graphic_monitor(ui, runtime);
                         } else {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
@@ -3750,10 +3775,12 @@ You have access to these tools: {}.{}",
         // Collect agents, tool usage, and connections from history
         let mut agent_map: std::collections::HashMap<String, (String, String, Vec<String>)> =
             std::collections::HashMap::new(); // id -> (role, status, tools)
+        let mut display_names: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new(); // id -> display_name
         let mut edge_set: std::collections::HashSet<(String, String)> =
             std::collections::HashSet::new();
-        // YAML-defined connections (from SESSION_CONFIG event)
-        let mut yaml_edges: Vec<(String, String)> = Vec::new();
+        // YAML-defined connections (from SESSION_CONFIG event): (from, to, label, protocol)
+        let mut yaml_edges: Vec<(String, String, String, String)> = Vec::new();
         let mut orchestration_mode = String::new();
         // Pipeline order from workflow.sequence
         let mut pipeline_order: Vec<String> = Vec::new();
@@ -3780,13 +3807,15 @@ You have access to these tools: {}.{}",
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    // Extract YAML connections
+                    // Extract YAML connections with label + protocol
                     if let Some(conns) = data.and_then(|d| d.get("connections")).and_then(|v| v.as_array()) {
                         for conn in conns {
                             let from = conn.get("from").and_then(|v| v.as_str()).unwrap_or("");
                             let to = conn.get("to").and_then(|v| v.as_str()).unwrap_or("");
+                            let label = conn.get("label").and_then(|v| v.as_str()).unwrap_or("");
+                            let protocol = conn.get("protocol").and_then(|v| v.as_str()).unwrap_or("tcp");
                             if !from.is_empty() && !to.is_empty() && from != "human" && to != "human" {
-                                yaml_edges.push((from.to_string(), to.to_string()));
+                                yaml_edges.push((from.to_string(), to.to_string(), label.to_string(), protocol.to_string()));
                             }
                         }
                     }
@@ -3809,6 +3838,10 @@ You have access to these tools: {}.{}",
                         .and_then(|d| d.get("agent_name"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
+                    let display_name = data
+                        .and_then(|d| d.get("display_name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(name);
                     let role = data
                         .and_then(|d| d.get("role"))
                         .and_then(|v| v.as_str())
@@ -3816,8 +3849,7 @@ You have access to these tools: {}.{}",
                     agent_map
                         .entry(name.to_string())
                         .or_insert_with(|| (role.to_string(), "working".to_string(), Vec::new()));
-                    // Only add parent→child edge if no YAML connections (fallback for non-realtime)
-                    // For realtime sessions with SESSION_CONFIG, we use YAML edges instead
+                    display_names.insert(name.to_string(), display_name.to_string());
                 }
                 "SUBAGENT_DONE" => {
                     let name = data
@@ -3931,23 +3963,21 @@ You have access to these tools: {}.{}",
         }
 
         // Decide edges: prefer YAML connections when available, fall back to history edges
-        let final_edges: Vec<(String, String)> = if !yaml_edges.is_empty() {
-            // Use YAML-defined topology + only runtime edges between main and first agent
+        // (from, to, label, protocol)
+        let final_edges: Vec<(String, String, String, String)> = if !yaml_edges.is_empty() {
             let mut edges = yaml_edges.clone();
             // Add main → first_agent edge from runtime send_task calls
             for (from, to) in &edge_set {
                 if from == "main" {
-                    // Only add main's direct delegation edge (to first pipeline agent or orchestrator)
-                    if !edges.iter().any(|(f, t)| f == from && t == to) {
-                        edges.push((from.clone(), to.clone()));
+                    if !edges.iter().any(|(f, t, _, _)| f == from && t == to) {
+                        edges.push((from.clone(), to.clone(), String::new(), "tcp".to_string()));
                     }
-                    break; // Only first send_task from main
+                    break;
                 }
             }
             edges
         } else {
             // No YAML config — use all runtime edges (legacy / spawn_subagent mode)
-            // Also add parent edges from SUBAGENT_SPAWN
             for line in hist.lines() {
                 if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
                     if entry.get("event").and_then(|v| v.as_str()) == Some("SUBAGENT_SPAWN") {
@@ -3959,7 +3989,7 @@ You have access to these tools: {}.{}",
                     }
                 }
             }
-            edge_set.into_iter().collect()
+            edge_set.into_iter().map(|(f, t)| (f, t, String::new(), "delegate".to_string())).collect()
         };
 
         // Determine layout mode
@@ -4020,7 +4050,7 @@ You have access to these tools: {}.{}",
 
                 self.graphic_agents.push(GraphicAgent {
                     id: name.clone(),
-                    name: name.clone(),
+                    name: display_names.get(name).cloned().unwrap_or_else(|| name.clone()),
                     role: role.clone(),
                     status: status.clone(),
                     x,
@@ -4081,12 +4111,12 @@ You have access to these tools: {}.{}",
         }
 
         // Build edges from final_edges
-        for (from, to) in &final_edges {
+        for (from, to, label, protocol) in &final_edges {
             self.graphic_edges.push(GraphicEdge {
                 from: from.clone(),
                 to: to.clone(),
-                label: String::new(),
-                protocol: "delegate".to_string(),
+                label: label.clone(),
+                protocol: protocol.clone(),
                 state: "idle".to_string(),
             });
         }
@@ -4096,7 +4126,7 @@ You have access to these tools: {}.{}",
     // Graphic monitor — render network diagram with egui painter
     // -----------------------------------------------------------------
 
-    fn render_graphic_monitor(&mut self, ui: &mut egui::Ui) {
+    fn render_graphic_monitor(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         if self.graphic_agents.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
@@ -4113,6 +4143,47 @@ You have access to these tools: {}.{}",
                 );
             });
             return;
+        }
+
+        // Poll live agent statuses every 500ms from the realtime session
+        if self.graphic_status_poll_timer.elapsed() > std::time::Duration::from_millis(500) {
+            self.graphic_status_poll_timer = std::time::Instant::now();
+            let statuses_arc = self.graphic_live_statuses.clone();
+            let ctx = ui.ctx().clone();
+            runtime.spawn(async move {
+                let statuses = crate::server::services::toolbox::get_all_agent_statuses().await;
+                if !statuses.is_empty() {
+                    *statuses_arc.lock().unwrap() = statuses;
+                    ctx.request_repaint();
+                }
+            });
+        }
+
+        // Build a resolved status map: live statuses take priority over file-based.
+        // This avoids the 2s reload overwriting live "idle" back to "working".
+        let resolved_statuses: std::collections::HashMap<String, String> = {
+            let live = self.graphic_live_statuses.lock().unwrap();
+            let session_active = self.active_streams.contains_key(&self.graphic_loaded_config);
+            let mut map = std::collections::HashMap::new();
+            for agent in &self.graphic_agents {
+                let status = if let Some(live_status) = live.get(&agent.id) {
+                    // Live data always wins
+                    live_status.clone()
+                } else if !session_active && agent.status == "working" {
+                    // Stream finished, no live data — mark done
+                    "done".to_string()
+                } else {
+                    agent.status.clone()
+                };
+                map.insert(agent.id.clone(), status);
+            }
+            map
+        };
+        // Apply resolved statuses back to agents
+        for agent in &mut self.graphic_agents {
+            if let Some(status) = resolved_statuses.get(&agent.id) {
+                agent.status = status.clone();
+            }
         }
 
         let time = ui.input(|i| i.time);
@@ -4194,13 +4265,35 @@ You have access to these tools: {}.{}",
                     self.graphic_pan += response.drag_delta();
                 }
 
+                // Grid background (subtle lines like swarm editor)
+                let grid_size = 24.0;
+                let grid_color = egui::Color32::from_rgba_premultiplied(180, 185, 195, 50);
+                {
+                    let mut x = canvas_rect.min.x;
+                    while x < canvas_rect.max.x {
+                        painter.line_segment(
+                            [egui::pos2(x, canvas_rect.min.y), egui::pos2(x, canvas_rect.max.y)],
+                            egui::Stroke::new(0.5, grid_color),
+                        );
+                        x += grid_size;
+                    }
+                    let mut y = canvas_rect.min.y;
+                    while y < canvas_rect.max.y {
+                        painter.line_segment(
+                            [egui::pos2(canvas_rect.min.x, y), egui::pos2(canvas_rect.max.x, y)],
+                            egui::Stroke::new(0.5, grid_color),
+                        );
+                        y += grid_size;
+                    }
+                }
+
                 let zoom = self.graphic_zoom;
                 let pan = self.graphic_pan;
                 let origin = canvas_rect.min.to_vec2() + pan;
 
-                // Node dimensions — wider, rounded cards
-                let node_w = 140.0 * zoom;
-                let node_h = 52.0 * zoom;
+                // Node dimensions — matching swarm editor
+                let node_w = 160.0 * zoom;
+                let node_h = 60.0 * zoom;
 
                 // Build position lookup
                 let positions: std::collections::HashMap<String, egui::Pos2> = self
@@ -4230,43 +4323,76 @@ You have access to these tools: {}.{}",
                     egui::pos2(center.x + dx * s, center.y + dy * s)
                 };
 
-                // ── Determine active edges (delegation in progress) ──
-                // An edge is "active" if the source agent is currently "working"
+                // ── Determine active agents (for edge and node highlighting) ──
                 let active_agent_ids: std::collections::HashSet<&str> = self.graphic_agents.iter()
                     .filter(|a| a.status == "working")
                     .map(|a| a.id.as_str())
                     .collect();
 
-                // ── Draw edges — color changes based on delegation state ──
+                // ── Draw edges (swarm editor style: protocol-colored with labels) ──
                 for edge in &self.graphic_edges {
                     let Some(from_rect) = node_rects.get(&edge.from) else { continue };
                     let Some(to_rect) = node_rects.get(&edge.to) else { continue };
                     let from_pt = edge_point(from_rect, to_rect.center());
                     let to_pt = edge_point(to_rect, from_rect.center());
 
-                    // Active = source is working (delegating)
-                    let is_active = active_agent_ids.contains(edge.from.as_str());
-                    let (edge_color, thickness) = if is_active {
-                        (egui::Color32::from_rgb(99, 102, 241), 2.5 * zoom) // indigo, thicker
-                    } else {
-                        (egui::Color32::from_rgb(210, 215, 225), 1.2 * zoom) // light gray
+                    // Active = either source is delegating or target is processing
+                    let is_active = active_agent_ids.contains(edge.from.as_str())
+                        || active_agent_ids.contains(edge.to.as_str());
+
+                    // Protocol-based color (like swarm editor)
+                    let base_edge_color = match edge.protocol.as_str() {
+                        "tcp"        => egui::Color32::from_rgb(59, 130, 246),  // blue
+                        "queue"      => egui::Color32::from_rgb(245, 158, 11), // amber
+                        "bus"        => egui::Color32::from_rgb(168, 85, 247), // purple
+                        "blackboard" => egui::Color32::from_rgb(34, 197, 94),  // green
+                        _ => egui::Color32::from_rgb(59, 130, 246),            // default blue
                     };
+                    let edge_color = if is_active {
+                        base_edge_color
+                    } else {
+                        egui::Color32::from_rgb(200, 205, 215) // grey when no delegation
+                    };
+                    let thickness = if is_active { 2.5 * zoom } else { 1.2 * zoom };
 
-                    let stroke = egui::Stroke::new(thickness, edge_color);
-                    painter.line_segment([from_pt, to_pt], stroke);
+                    painter.line_segment([from_pt, to_pt], egui::Stroke::new(thickness, edge_color));
 
-                    // Arrow head
+                    // Arrowhead (stop before node center)
                     let dir = (to_pt - from_pt).normalized();
                     let perp = egui::vec2(-dir.y, dir.x);
-                    let arrow_size = 6.0 * zoom;
+                    let arrow_len = 10.0 * zoom;
                     let tip = to_pt;
-                    let left = tip - dir * arrow_size + perp * arrow_size * 0.4;
-                    let right = tip - dir * arrow_size - perp * arrow_size * 0.4;
+                    let left = tip - dir * arrow_len + perp * 5.0 * zoom;
+                    let right = tip - dir * arrow_len - perp * 5.0 * zoom;
                     painter.add(egui::Shape::convex_polygon(
                         vec![tip, left, right],
                         edge_color,
                         egui::Stroke::NONE,
                     ));
+
+                    // Edge label (centered on line)
+                    if !edge.label.is_empty() {
+                        let mid = egui::pos2(
+                            (from_pt.x + to_pt.x) / 2.0,
+                            (from_pt.y + to_pt.y) / 2.0,
+                        );
+                        let label_text = if edge.protocol.is_empty() || edge.protocol == "delegate" {
+                            edge.label.clone()
+                        } else {
+                            format!("{} ({})", edge.label, edge.protocol)
+                        };
+                        painter.text(
+                            mid + egui::vec2(0.0, -8.0 * zoom),
+                            egui::Align2::CENTER_BOTTOM,
+                            &label_text,
+                            egui::FontId::proportional(9.0 * zoom),
+                            if is_active {
+                                egui::Color32::from_rgb(29, 29, 31)
+                            } else {
+                                egui::Color32::from_rgb(180, 185, 195)
+                            },
+                        );
+                    }
                 }
 
                 // Draw faint lines for signals without explicit edges
@@ -4281,131 +4407,138 @@ You have access to these tools: {}.{}",
                         let Some(to_rect) = node_rects.get(&signal.to) else { continue };
                         let from_pt = edge_point(from_rect, to_rect.center());
                         let to_pt = edge_point(to_rect, from_rect.center());
-                        let is_active = active_agent_ids.contains(signal.from.as_str());
+                        let is_active = active_agent_ids.contains(signal.from.as_str())
+                            || active_agent_ids.contains(signal.to.as_str());
                         let color = if is_active {
-                            egui::Color32::from_rgb(150, 155, 220)
+                            egui::Color32::from_rgb(59, 130, 246)
                         } else {
-                            egui::Color32::from_rgb(220, 225, 235)
+                            egui::Color32::from_rgb(200, 205, 215)
                         };
-                        painter.line_segment([from_pt, to_pt], egui::Stroke::new(1.0 * zoom, color));
+                        painter.line_segment([from_pt, to_pt], egui::Stroke::new(1.5 * zoom, color));
+
+                        // Arrowhead for signal lines too
+                        let dir = (to_pt - from_pt).normalized();
+                        let perp = egui::vec2(-dir.y, dir.x);
+                        let arrow_len = 8.0 * zoom;
+                        let tip = to_pt;
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![tip, tip - dir * arrow_len + perp * 4.0 * zoom, tip - dir * arrow_len - perp * 4.0 * zoom],
+                            color,
+                            egui::Stroke::NONE,
+                        ));
                     }
                 }
 
-                // ── Draw agent node cards ──
+                // ── Draw agent nodes (swarm editor style: filled colored boxes) ──
                 for agent in &self.graphic_agents {
                     let Some(&pos) = positions.get(&agent.id) else { continue };
-                    let node_rect = egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h));
+                    let center = egui::pos2(pos.x + node_w / 2.0, pos.y + node_h / 2.0);
+                    let node_rect = egui::Rect::from_center_size(center, egui::vec2(node_w, node_h));
                     if !canvas_rect.intersects(node_rect) { continue; }
 
-                    // Card shadow
+                    // Role-based fill color (same palette as swarm editor)
+                    let base_color = match agent.role.as_str() {
+                        "human"        => egui::Color32::from_rgb(107, 114, 128),
+                        "orchestrator" => egui::Color32::from_rgb(59, 130, 246),
+                        "worker"       => egui::Color32::from_rgb(34, 197, 94),
+                        "checker"      => egui::Color32::from_rgb(245, 158, 11),
+                        "reporter"     => egui::Color32::from_rgb(168, 85, 247),
+                        "researcher"   => egui::Color32::from_rgb(6, 182, 212),
+                        "peer"         => egui::Color32::from_rgb(236, 72, 153),
+                        _ => egui::Color32::from_rgb(100, 100, 100),
+                    };
+
+                    // Working = brighter, done = normal, idle = slightly dimmed
+                    let fill_color = match agent.status.as_str() {
+                        "working" => base_color.gamma_multiply(1.3),
+                        "idle"    => base_color.gamma_multiply(0.7),
+                        _         => base_color,
+                    };
+
+                    // Shadow
                     painter.rect_filled(
-                        node_rect.translate(egui::vec2(1.0, 2.0)),
+                        node_rect.translate(egui::vec2(2.0, 3.0)),
                         10.0 * zoom,
-                        egui::Color32::from_rgba_premultiplied(0, 0, 0, 12),
+                        egui::Color32::from_rgba_premultiplied(0, 0, 0, 25),
                     );
 
-                    // Card background
-                    painter.rect_filled(node_rect, 10.0 * zoom, egui::Color32::WHITE);
+                    // Filled background
+                    painter.rect_filled(node_rect, 10.0 * zoom, fill_color);
 
-                    // Left accent strip (3px wide, colored by agent)
-                    let accent_color = match agent.status.as_str() {
-                        "working" => agent.color,
-                        "done" => egui::Color32::from_rgb(34, 197, 94),
-                        _ => egui::Color32::from_rgb(200, 205, 215),
-                    };
-                    let accent_rect = egui::Rect::from_min_size(
-                        node_rect.min,
-                        egui::vec2(3.5 * zoom, node_h),
-                    );
-                    painter.rect_filled(accent_rect, egui::Rounding {
-                        nw: (10.0 * zoom) as u8, sw: (10.0 * zoom) as u8, ne: 0, se: 0,
-                    }, accent_color);
-
-                    // Card border
-                    let border_color = if agent.status == "working" {
-                        agent.color.gamma_multiply(0.4)
-                    } else {
-                        egui::Color32::from_rgb(228, 232, 238)
-                    };
-                    painter.rect_stroke(
-                        node_rect, 10.0 * zoom,
-                        egui::Stroke::new(1.0, border_color),
-                        egui::epaint::StrokeKind::Middle,
-                    );
-
-                    // Status indicator dot (top-right)
-                    let dot_color = match agent.status.as_str() {
-                        "working" => egui::Color32::from_rgb(34, 197, 94),
-                        "done" => egui::Color32::from_rgb(156, 163, 175),
-                        _ => egui::Color32::from_rgb(200, 205, 215),
-                    };
-                    let dot_pos = egui::pos2(
-                        node_rect.right() - 10.0 * zoom,
-                        node_rect.top() + 10.0 * zoom,
-                    );
-                    painter.circle_filled(dot_pos, 4.0 * zoom, dot_color);
-                    // Pulse ring for working agents
+                    // Working agents: glow border
                     if agent.status == "working" {
-                        let pulse = (0.3 + 0.3 * (time * 2.5).sin() as f32).max(0.0);
-                        painter.circle_stroke(dot_pos, 6.0 * zoom,
-                            egui::Stroke::new(1.0, egui::Color32::from_rgb(34, 197, 94).gamma_multiply(pulse)));
+                        let pulse = (0.4 + 0.3 * (time * 3.0).sin() as f32).max(0.0);
+                        painter.rect_stroke(
+                            node_rect.expand(2.0 * zoom), 12.0 * zoom,
+                            egui::Stroke::new(2.0 * zoom, egui::Color32::WHITE.gamma_multiply(pulse)),
+                            egui::epaint::StrokeKind::Outside,
+                        );
                     }
 
-                    // Agent name
-                    let name_x = node_rect.left() + 10.0 * zoom;
-                    let display_name = if agent.name.len() > 16 {
-                        format!("{}..", &agent.name[..floor_char_boundary(&agent.name, 14)])
+                    // Agent name (centered, white, bold)
+                    let display_name = if agent.name.len() > 20 {
+                        format!("{}..", &agent.name[..floor_char_boundary(&agent.name, 18)])
                     } else {
                         agent.name.clone()
                     };
                     painter.text(
-                        egui::pos2(name_x, node_rect.top() + 8.0 * zoom),
-                        egui::Align2::LEFT_TOP,
+                        center + egui::vec2(0.0, -8.0 * zoom),
+                        egui::Align2::CENTER_CENTER,
                         &display_name,
-                        egui::FontId::proportional(11.0 * zoom),
-                        egui::Color32::from_rgb(31, 35, 40),
+                        egui::FontId::proportional(13.0 * zoom),
+                        egui::Color32::WHITE,
                     );
 
-                    // Role badge
-                    let role_label = match agent.role.as_str() {
-                        "orchestrator" => "Orchestrator",
-                        "worker" => "Worker",
-                        "peer" => "Peer",
-                        "human" => "Human",
-                        _ => "Agent",
-                    };
+                    // Role label (centered, lighter)
                     painter.text(
-                        egui::pos2(name_x, node_rect.top() + 24.0 * zoom),
-                        egui::Align2::LEFT_TOP,
-                        role_label,
-                        egui::FontId::proportional(8.5 * zoom),
-                        egui::Color32::from_rgb(130, 140, 155),
+                        center + egui::vec2(0.0, 10.0 * zoom),
+                        egui::Align2::CENTER_CENTER,
+                        &agent.role,
+                        egui::FontId::proportional(10.0 * zoom),
+                        egui::Color32::from_rgb(220, 220, 240),
                     );
 
-                    // Last tool (bottom-right, small)
-                    if !agent.last_tool.is_empty() {
-                        let tool_display = if agent.last_tool.len() > 14 {
-                            format!("{}..", &agent.last_tool[..floor_char_boundary(&agent.last_tool, 12)])
+                    // Working indicator: play triangle ▶ (top-right corner)
+                    if agent.status == "working" {
+                        let tri_cx = node_rect.right() - 10.0 * zoom;
+                        let tri_cy = node_rect.top() + 10.0 * zoom;
+                        let tri_r = 5.0 * zoom;
+                        // Right-pointing triangle
+                        let p1 = egui::pos2(tri_cx - tri_r * 0.7, tri_cy - tri_r);
+                        let p2 = egui::pos2(tri_cx + tri_r, tri_cy);
+                        let p3 = egui::pos2(tri_cx - tri_r * 0.7, tri_cy + tri_r);
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p1, p2, p3],
+                            egui::Color32::WHITE,
+                            egui::Stroke::NONE,
+                        ));
+                        ui.ctx().request_repaint(); // keep animating pulse
+                    }
+
+                    // Done indicator: checkmark (top-right corner)
+                    if agent.status == "done" {
+                        painter.text(
+                            egui::pos2(node_rect.right() - 8.0 * zoom, node_rect.top() + 4.0 * zoom),
+                            egui::Align2::RIGHT_TOP,
+                            "\u{2713}",
+                            egui::FontId::proportional(12.0 * zoom),
+                            egui::Color32::WHITE,
+                        );
+                    }
+
+                    // Bus/Mesh badges (bottom-right, small)
+                    if !agent.last_tool.is_empty() && agent.status == "working" {
+                        let tool_display = if agent.last_tool.len() > 16 {
+                            format!("{}..", &agent.last_tool[..floor_char_boundary(&agent.last_tool, 14)])
                         } else {
                             agent.last_tool.clone()
                         };
                         painter.text(
-                            egui::pos2(node_rect.right() - 8.0 * zoom, node_rect.bottom() - 12.0 * zoom),
-                            egui::Align2::RIGHT_TOP,
+                            egui::pos2(node_rect.right() - 6.0 * zoom, node_rect.bottom() - 6.0 * zoom),
+                            egui::Align2::RIGHT_BOTTOM,
                             &tool_display,
                             egui::FontId::proportional(7.5 * zoom),
-                            egui::Color32::from_rgb(160, 170, 185),
-                        );
-                    }
-
-                    // Done checkmark
-                    if agent.status == "done" {
-                        painter.text(
-                            egui::pos2(node_rect.right() - 10.0 * zoom, node_rect.bottom() - 14.0 * zoom),
-                            egui::Align2::RIGHT_TOP,
-                            "\u{2713}",
-                            egui::FontId::proportional(12.0 * zoom),
-                            egui::Color32::from_rgb(34, 197, 94),
+                            egui::Color32::from_rgba_premultiplied(255, 255, 255, 180),
                         );
                     }
                 }
@@ -4594,6 +4727,48 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
             continue;
         }
 
+        // Display math block: $$...$$
+        {
+            let trimmed_line = line.trim();
+            if trimmed_line.starts_with("$$") {
+                // Check for single-line $$...$$ (content between $$ on same line)
+                let after = trimmed_line.trim_start_matches('$');
+                if !after.is_empty() && after.trim_end().ends_with("$$") {
+                    let latex = after.trim_end().trim_end_matches('$').trim();
+                    if !latex.is_empty() {
+                        super::math_render::render_math_equation(ui, latex, true, default_color);
+                        i += 1;
+                        continue;
+                    }
+                }
+                // Multi-line: collect until closing $$
+                let mut math_lines: Vec<String> = Vec::new();
+                let first_content = trimmed_line.trim_start_matches('$').trim();
+                if !first_content.is_empty() {
+                    math_lines.push(first_content.to_string());
+                }
+                i += 1;
+                while i < all_lines.len() {
+                    let ml = all_lines[i].trim();
+                    if ml == "$$" || ml.ends_with("$$") {
+                        let last = ml.trim_end_matches('$').trim();
+                        if !last.is_empty() {
+                            math_lines.push(last.to_string());
+                        }
+                        i += 1;
+                        break;
+                    }
+                    math_lines.push(all_lines[i].to_string());
+                    i += 1;
+                }
+                let latex = math_lines.join(" ");
+                if !latex.is_empty() {
+                    super::math_render::render_math_equation(ui, &latex, true, default_color);
+                }
+                continue;
+            }
+        }
+
         // Markdown table detection: line starts with | and contains at least 2 |
         if line.trim().starts_with('|') && line.trim().matches('|').count() >= 2 {
             // Collect all consecutive table lines
@@ -4693,10 +4868,27 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
             }
         }
 
-        // Regular text
-        ui.add(egui::Label::new(
-            egui::RichText::new(clean_inline_md(trimmed)).size(14.0).color(default_color),
-        ).wrap());
+        // Regular text — check for inline $...$ math
+        let segments = super::math_render::split_inline_math(trimmed);
+        let has_math = segments.iter().any(|(is_math, _)| *is_math);
+        if has_math {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for (is_math, content) in &segments {
+                    if *is_math {
+                        super::math_render::render_math_equation(ui, content, false, default_color);
+                    } else if !content.is_empty() {
+                        ui.add(egui::Label::new(
+                            egui::RichText::new(clean_inline_md(content)).size(14.0).color(default_color),
+                        ).wrap());
+                    }
+                }
+            });
+        } else {
+            ui.add(egui::Label::new(
+                egui::RichText::new(clean_inline_md(trimmed)).size(14.0).color(default_color),
+            ).wrap());
+        }
     }
 }
 
