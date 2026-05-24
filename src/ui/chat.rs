@@ -400,7 +400,6 @@ pub struct ChatView {
     // --- Project selector ---
     projects: Vec<Project>,
     pub selected_project_id: Option<String>,
-    projects_loaded: bool,
 
     // --- Output panel ---
     output_panel: OutputPanel,
@@ -463,7 +462,6 @@ impl ChatView {
             attached_files: Vec::new(),
             projects: Vec::new(),
             selected_project_id: None,
-            projects_loaded: false,
             output_panel: OutputPanel::default(),
             sidebar_width: 262.0,
             show_log_panel: false,
@@ -492,11 +490,8 @@ impl ChatView {
     fn refresh(&mut self, runtime: &tokio::runtime::Handle) {
         let all_sessions = runtime.block_on(get_chat_history());
 
-        // Load projects if not yet loaded
-        if !self.projects_loaded {
-            self.projects = runtime.block_on(get_projects());
-            self.projects_loaded = true;
-        }
+        // Reload projects each refresh to stay in sync with projects_view edits
+        self.projects = runtime.block_on(get_projects());
 
         // Build sidebar summaries
         self.sessions = all_sessions
@@ -874,6 +869,15 @@ impl ChatView {
             // fully_auto and auto_swarm don't need a config file upfront
             let needs_config = !matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm");
 
+            // Debug: log why sub-agent config might be disabled
+            eprintln!("[SubAgent] enabled={}, mode={}, config_file='{}', needs_config={}, data_dir={:?}",
+                enabled, sub_agent_mode, config_file, needs_config, crate::server::data::data_dir());
+            if !enabled {
+                eprintln!("[SubAgent] DISABLED: settings.sub_agent_enabled is false or None");
+            } else if needs_config && config_file.is_empty() {
+                eprintln!("[SubAgent] DISABLED: mode='{}' requires config file but none set", sub_agent_mode);
+            }
+
             if enabled && (!config_file.is_empty() || !needs_config) {
                 let agent_ids = if !config_file.is_empty() {
                     load_agent_yaml(&config_file)
@@ -1211,7 +1215,15 @@ You have access to these tools: {}.{}",
             let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
             { state_log_lines.lock().unwrap().push(format!("[{}] === Session: {} ===", ts, sid)); }
             { state_log_lines.lock().unwrap().push(format!("[{}] USER: {}", ts, messages.last().and_then(|m| m["content"].as_str()).unwrap_or(""))); }
-            { state_log_lines.lock().unwrap().push(format!("[{}] MODE: enabled={}, mode={}, agents={:?}", ts, sub_agent_config.enabled, sub_agent_config.mode, sub_agent_config.agent_ids)); }
+            { state_log_lines.lock().unwrap().push(format!("[{}] MODE: enabled={}, mode={}, agents={:?}, config_file='{}'", ts, sub_agent_config.enabled, sub_agent_config.mode, sub_agent_config.agent_ids, sub_agent_config.config_file)); }
+            if !sub_agent_config.enabled {
+                let reason = if !settings.sub_agent_enabled.unwrap_or(false) {
+                    "sub_agent_enabled is false/None in settings".to_string()
+                } else {
+                    format!("mode='{}' needs config file but config_file is empty (data_dir={:?})", sub_agent_config.mode, crate::server::data::data_dir())
+                };
+                state_log_lines.lock().unwrap().push(format!("[{}] WARN: Sub-agent DISABLED because: {}", ts, reason));
+            }
 
             // Clone for subagent listener, auto_create, and fully_auto (before on_update_cb moves the originals)
             let subagent_log_lines = state_log_lines.clone();
@@ -2091,8 +2103,7 @@ You have access to these tools: {}.{}",
         if let Some(ref pid) = self.selected_project_id {
             if let Some(proj) = self.projects.iter().find(|p| &p.id == pid) {
                 if !proj.working_folder.is_empty() {
-                    let dir = std::path::PathBuf::from(&proj.working_folder).join("uploads");
-                    return dir;
+                    return std::path::PathBuf::from(&proj.working_folder).join("uploads");
                 }
             }
         }
@@ -2944,6 +2955,14 @@ You have access to these tools: {}.{}",
                                         .join("spawn.jsonl");
                                     self.log_agent_history = std::fs::read_to_string(&hist_path)
                                         .unwrap_or_else(|_| "(No agent history yet)".to_string());
+                                }
+                                if ui.small_button("\u{1F4CB} Copy").clicked() {
+                                    let text = if self.log_tab == 1 {
+                                        self.log_agent_history.clone()
+                                    } else {
+                                        self.log_content.clone()
+                                    };
+                                    ui.ctx().copy_text(text);
                                 }
                             });
                         });

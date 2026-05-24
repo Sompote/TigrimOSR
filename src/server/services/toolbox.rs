@@ -478,9 +478,10 @@ pub async fn get_all_agent_statuses() -> HashMap<String, String> {
 fn boot_realtime_session_deferred(
     session_id: String, config_file: String,
     api_key: String, api_url: String, model: String,
+    sandbox_dir: String,
 ) {
     tokio::spawn(async move {
-        start_realtime_session(&session_id, &config_file, &api_key, &api_url, &model, "sandbox").await;
+        start_realtime_session(&session_id, &config_file, &api_key, &api_url, &model, &sandbox_dir).await;
     });
 }
 
@@ -692,7 +693,7 @@ const SUBAGENT_SKILLS_PERSONA: &str =
 /// Build the `=== INSTALLED SKILLS ===` block that is injected into sub-agent
 /// and realtime-agent prompts so they can discover available skills without
 /// having to call `list_skills` first.  Mirrors TS `buildEnabledSkillsBlock`.
-async fn build_enabled_skills_block(persona: Option<&str>) -> String {
+async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Option<&[String]>) -> String {
     let data = crate::server::data::data_dir();
     let skills_path = data.join("skills.json");
     let registry: Vec<Value> = match tokio::fs::read_to_string(&skills_path).await {
@@ -703,6 +704,16 @@ async fn build_enabled_skills_block(persona: Option<&str>) -> String {
     let enabled: Vec<&Value> = registry
         .iter()
         .filter(|s| s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true))
+        .filter(|s| {
+            match project_skills {
+                Some(allowed) => {
+                    let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    allowed.iter().any(|a| a == id || a == name)
+                }
+                None => true,
+            }
+        })
         .collect();
 
     // Also scan data/skills/ directory for custom skills with SKILL.md
@@ -720,6 +731,12 @@ async fn build_enabled_skills_block(persona: Option<&str>) -> String {
                         sn == name || slugify_skill_name(sn) == slugify_skill_name(&name)
                     });
                     if already { continue; }
+                    // Skip custom skills not in the project's allowed list
+                    if let Some(allowed) = project_skills {
+                        if !allowed.iter().any(|a| a == &name || slugify_skill_name(a) == slugify_skill_name(&name)) {
+                            continue;
+                        }
+                    }
                     // Read description from SKILL.md frontmatter
                     let desc = if let Ok(content) = tokio::fs::read_to_string(&skill_md).await {
                         content.lines()
@@ -795,8 +812,9 @@ async fn build_enabled_skills_block(persona: Option<&str>) -> String {
 }
 
 /// Public wrapper for chat.rs to inject skills into the main agent prompt.
-pub async fn build_enabled_skills_block_pub() -> String {
-    build_enabled_skills_block(None).await
+/// When `project_skills` is Some, only skills whose id/name matches the list are included.
+pub async fn build_enabled_skills_block_pub(project_skills: Option<&[String]>) -> String {
+    build_enabled_skills_block(None, project_skills).await
 }
 
 /// Build the system prompt for a realtime agent — mode-aware (tiger_cowork clone).
@@ -973,7 +991,7 @@ async fn realtime_agent_loop(
 
     // Advertise enabled skills (incl. auto-generated) — same block the
     // orchestrator sees, so realtime agents can discover newly approved skills.
-    match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA)).await {
+    match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA), None).await {
         block if !block.is_empty() => system_prompt.push_str(&block),
         _ => {}
     }
@@ -1750,7 +1768,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "run_python",
-                "description": "Execute Python code in a sandbox.",
+                "description": "Execute Python code in the project folder. CWD is the project directory. plt.show() auto-saves figures to output_file/. Use save_output('name.csv', data) to save files to output_file/. Variable _project_dir holds the project path.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1794,11 +1812,11 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "write_file",
-                "description": "Write content to a file.",
+                "description": "Write content to a file. Use RELATIVE paths (e.g. 'model.py', 'output_file/result.csv') to save inside the project folder. Plots and output should go in 'output_file/' subdirectory.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": { "type": "string", "description": "File path to write" },
+                        "path": { "type": "string", "description": "File path (relative to project folder preferred, e.g. 'script.py' or 'output_file/data.csv')" },
                         "content": { "type": "string", "description": "Content to write" },
                         "append": { "type": "boolean", "description": "Append instead of overwrite (default false)" }
                     },
@@ -2792,8 +2810,18 @@ async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
     }
 
     // Prepend matplotlib non-interactive setup so plt.show() saves files instead of opening GUI
-    let matplotlib_prelude = r#"
+    // Set MPLCONFIGDIR inside sandbox to avoid ~/.matplotlib permission errors
+    let mpl_config_dir = std::path::Path::new(sandbox_dir).join(".mpl_config");
+    let _ = std::fs::create_dir_all(&mpl_config_dir);
+    let output_sub = std::path::Path::new(sandbox_dir).join("output_file");
+    let _ = std::fs::create_dir_all(&output_sub);
+    let matplotlib_prelude = format!(r#"
 import sys, os, uuid
+os.environ['MPLCONFIGDIR'] = '{mpl_dir}'
+os.environ['HOME'] = os.getcwd()
+_project_dir = os.getcwd()
+_output_dir = os.path.join(_project_dir, 'output_file')
+os.makedirs(_output_dir, exist_ok=True)
 try:
     import matplotlib
     matplotlib.use('Agg')
@@ -2801,21 +2829,24 @@ try:
     _plt_show_count = [0]
     def _patched_show(*args, **kwargs):
         _plt_show_count[0] += 1
-        fname = f'figure_{_plt_show_count[0]}.png'
+        fname = os.path.join(_output_dir, f'figure_{{_plt_show_count[0]}}.png')
         _plt_orig.savefig(fname, dpi=150, bbox_inches='tight')
-        print(f'[saved figure to {fname}]')
+        print(f'[saved figure to {{fname}}]')
         _plt_orig.close('all')
     import matplotlib.pyplot as plt
     plt.show = _patched_show
 except ImportError:
     pass
-"#;
+# Helper: save any file to project output_file/ directory
+def save_output(filename, content=None, mode='w'):
+    path = os.path.join(_output_dir, filename)
+    if content is not None:
+        with open(path, mode) as f:
+            f.write(content)
+    return path
+"#, mpl_dir = mpl_config_dir.display());
     let code = &format!("{matplotlib_prelude}
 {code}");
-
-    // Ensure output_file directory exists
-    let output_dir = std::path::Path::new(sandbox_dir).join("output_file");
-    let _ = tokio::fs::create_dir_all(&output_dir).await;
 
     // Try VM execution first if VM is running
     if is_vm_running().await {
@@ -2894,6 +2925,8 @@ except ImportError:
                         .arg("-c")
                         .arg(code)
                         .current_dir(sandbox_dir)
+                        .env("MPLCONFIGDIR", &mpl_config_dir)
+                        .env("HOME", sandbox_dir)
                         .output(),
                 )
                 .await
@@ -2911,6 +2944,8 @@ except ImportError:
                         .arg("-c")
                         .arg(code)
                         .current_dir(sandbox_dir)
+                        .env("MPLCONFIGDIR", &mpl_config_dir)
+                        .env("HOME", sandbox_dir)
                         .output(),
                 )
                 .await
@@ -2925,6 +2960,8 @@ except ImportError:
             .arg("-c")
             .arg(code)
             .current_dir(sandbox_dir)
+            .env("MPLCONFIGDIR", &mpl_config_dir)
+            .env("HOME", sandbox_dir)
             .output(),
     )
     .await;
@@ -3085,60 +3122,79 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
     }
 }
 
-const PDF_CHUNK_SIZE: usize = 8_000; // ~2K tokens per chunk — safe for small-context models
+/// Max chars to return in a single PDF read (large enough for most PDFs in one call)
+const PDF_CHUNK_SIZE: usize = 60_000;
+
+/// Cache extracted PDF text to avoid re-extracting on every chunk read
+fn pdf_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
 
 async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
     let path = args["path"].as_str().unwrap_or("");
     let resolved = resolve_path(sandbox_dir, path);
 
-    // Handle PDF files — extract text and return in chunks
+    // Handle PDF files — extract text, return in large chunks (cached)
     if resolved.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("pdf")).unwrap_or(false) {
-        let resolved_clone = resolved.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            pdf_extract::extract_text(&resolved_clone)
-        }).await;
-        return match result {
-            Ok(Ok(text)) => {
-                compact::track_file_read(&resolved.display().to_string(), &text);
-                let total_chars = text.len();
-                // Split into chunks aligned to UTF-8 char boundaries
-                let mut char_chunks: Vec<String> = Vec::new();
-                let mut start = 0;
-                while start < text.len() {
-                    let mut end = (start + PDF_CHUNK_SIZE).min(text.len());
-                    // Align to char boundary
-                    while end < text.len() && !text.is_char_boundary(end) {
-                        end += 1;
-                    }
-                    char_chunks.push(text[start..end].to_string());
-                    start = end;
-                }
-                let total_chunks = char_chunks.len();
-                let offset = args["offset"].as_u64().unwrap_or(0) as usize;
-                if offset >= total_chunks {
-                    return json!({
-                        "ok": false,
-                        "error": format!("Chunk offset {} out of range (total_chunks: {})", offset, total_chunks),
-                    });
-                }
-                json!({
-                    "ok": true,
-                    "content": &char_chunks[offset],
-                    "path": resolved.display().to_string(),
-                    "format": "pdf",
-                    "chunk": offset,
-                    "total_chunks": total_chunks,
-                    "total_chars": total_chars,
-                    "hint": if total_chunks > 1 && offset == 0 {
-                        format!("PDF has {} chunks. Use offset 1..{} to read more.", total_chunks, total_chunks - 1)
-                    } else {
-                        String::new()
-                    },
-                })
-            }
-            Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to extract PDF text: {e}") }),
-            Err(e) => json!({ "ok": false, "error": format!("PDF extraction task failed: {e}") }),
+        let key = resolved.display().to_string();
+        let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+
+        // Get text from cache or extract
+        let text = {
+            let cache = pdf_cache().lock().unwrap();
+            cache.get(&key).cloned()
         };
+        let text = if let Some(t) = text {
+            t
+        } else {
+            let resolved_clone = resolved.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                pdf_extract::extract_text(&resolved_clone)
+            }).await;
+            match result {
+                Ok(Ok(t)) => {
+                    compact::track_file_read(&key, &t);
+                    pdf_cache().lock().unwrap().insert(key.clone(), t.clone());
+                    t
+                }
+                Ok(Err(e)) => return json!({ "ok": false, "error": format!("Failed to extract PDF text: {e}") }),
+                Err(e) => return json!({ "ok": false, "error": format!("PDF extraction task failed: {e}") }),
+            }
+        };
+
+        let total_chars = text.len();
+        // Calculate chunk boundaries
+        let char_start = offset * PDF_CHUNK_SIZE;
+        if char_start >= total_chars {
+            let total_chunks = (total_chars + PDF_CHUNK_SIZE - 1) / PDF_CHUNK_SIZE;
+            return json!({
+                "ok": false,
+                "error": format!("Chunk offset {} out of range (total_chunks: {})", offset, total_chunks),
+            });
+        }
+        let mut char_end = (char_start + PDF_CHUNK_SIZE).min(total_chars);
+        while char_end < total_chars && !text.is_char_boundary(char_end) {
+            char_end += 1;
+        }
+        let total_chunks = (total_chars + PDF_CHUNK_SIZE - 1) / PDF_CHUNK_SIZE;
+        let content = &text[char_start..char_end];
+
+        return json!({
+            "ok": true,
+            "content": content,
+            "path": &key,
+            "format": "pdf",
+            "chunk": offset,
+            "total_chunks": total_chunks,
+            "total_chars": total_chars,
+            "hint": if total_chunks > 1 && offset == 0 {
+                format!("PDF has {} chunks (~{}KB each). Use offset 1..{} to read more.", total_chunks, PDF_CHUNK_SIZE / 1000, total_chunks - 1)
+            } else {
+                String::new()
+            },
+        });
     }
 
     match fs::read_to_string(&resolved).await {
@@ -4578,6 +4634,7 @@ RULES:
 async fn exec_select_swarm(
     args: &Value,
     sub_agent: &SubAgentConfig,
+    sandbox_dir: &str,
 ) -> Value {
     let filename = args["filename"].as_str().unwrap_or("");
     let reason = args["reason"].as_str().unwrap_or("");
@@ -4620,6 +4677,7 @@ async fn exec_select_swarm(
         session_id.clone(), filename.to_string(),
         sub_agent.api_key.clone(), sub_agent.api_url.clone(),
         sub_agent.model.clone(),
+        sandbox_dir.to_string(),
     );
 
     let mode = config["system"]["orchestration_mode"]
@@ -4755,7 +4813,7 @@ fn exec_spawn_subagent(
     let mut system_prompt = build_agent_system_prompt(&agent_def, &yaml_val, &available_targets);
 
     // Advertise enabled skills so sub-agents can discover them without calling list_skills.
-    match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA)).await {
+    match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA), None).await {
         block if !block.is_empty() => system_prompt.push_str(&block),
         _ => {}
     }
@@ -6298,6 +6356,7 @@ async fn call_with_tools_inner(
                 sub_agent.api_key.clone(),
                 sub_agent.api_url.clone(),
                 sub_agent.model.clone(),
+                sandbox_dir.to_string(),
             );
             session_activated = true;
             info!("[call_with_tools] manual mode: booted realtime session, agents={:?}", sub_agent.agent_ids);
@@ -7156,7 +7215,7 @@ async fn execute_tool_dispatch(
     } else if tool_name == "create_architecture" {
         exec_create_architecture(tool_args, sub_agent).await
     } else if tool_name == "select_swarm" {
-        exec_select_swarm(tool_args, sub_agent).await
+        exec_select_swarm(tool_args, sub_agent, sandbox_dir).await
     } else {
         execute_tool_with_context(
             tool_name, tool_args, sandbox_dir,

@@ -71,6 +71,8 @@ pub struct ProjectsView {
     file_browser_needs_refresh: bool,
     file_selected: Option<String>,
     file_content: String,
+    file_is_binary: bool,
+    file_image_texture: Option<egui::TextureHandle>,
     file_editing: bool,
     file_new_dir_name: String,
     file_show_new_dir: bool,
@@ -120,6 +122,8 @@ impl Default for ProjectsView {
             file_browser_needs_refresh: true,
             file_selected: None,
             file_content: String::new(),
+            file_is_binary: false,
+            file_image_texture: None,
             file_editing: false,
             file_new_dir_name: String::new(),
             file_show_new_dir: false,
@@ -786,6 +790,15 @@ impl ProjectsView {
                 .clicked()
             {
                 self.projects[idx].updated_at = chrono::Utc::now().to_rfc3339();
+                // Resolve relative working folder to absolute path
+                let wf = &self.projects[idx].working_folder;
+                if !wf.is_empty() && !std::path::Path::new(wf).is_absolute() {
+                    let sandbox = crate::server::data::get_sandbox_dir_sync();
+                    self.projects[idx].working_folder = std::path::PathBuf::from(&sandbox)
+                        .join(wf)
+                        .to_string_lossy()
+                        .to_string();
+                }
                 let to_save = self.projects.clone();
                 runtime.block_on(save_projects(&to_save));
                 self.needs_refresh = true;
@@ -1179,16 +1192,22 @@ impl ProjectsView {
 
         // Two-column: file list left, viewer right
         let avail = ui.available_size();
-        let left_w = (avail.x * 0.4).max(180.0);
+        let left_w = (avail.x * 0.38).max(180.0);
+        // Use screen height minus current position for robust sizing
+        // (avail.y can be tiny inside a parent ScrollArea)
+        let screen_h = ui.ctx().screen_rect().height();
+        let cursor_y = ui.cursor().top();
+        let panel_h = (screen_h - cursor_y - 30.0).max(400.0);
 
-        ui.horizontal(|ui| {
+        ui.horizontal_top(|ui| {
+            ui.set_min_height(panel_h);
             // Left: file list
             ui.vertical(|ui| {
                 ui.set_width(left_w);
                 egui::ScrollArea::vertical()
                     .id_salt("project_files_list")
                     .auto_shrink([false, false])
-                    .max_height(avail.y - 8.0)
+                    .max_height(panel_h - 8.0)
                     .show(ui, |ui| {
                         // ".." go-back
                         if !self.file_browser_path.is_empty() {
@@ -1273,16 +1292,46 @@ impl ProjectsView {
                             self.file_browser_needs_refresh = true;
                         } else if let Some(path) = sel_target {
                             let wf = working_folder.to_string();
-                            match runtime.block_on(data::read_file_content(&wf, &path)) {
-                                Ok(content) => {
-                                    self.file_content = content;
-                                    self.file_editing = false;
-                                    self.file_status = None;
+                            let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+                            let image_exts = ["png", "jpg", "jpeg", "gif", "bmp", "webp"];
+                            if image_exts.contains(&ext.as_str()) {
+                                // Load as image texture
+                                self.file_is_binary = true;
+                                self.file_content = format!("[Image: {}]", path);
+                                self.file_editing = false;
+                                self.file_status = None;
+                                let full_path = std::path::Path::new(&wf).join(&path);
+                                match image::open(&full_path) {
+                                    Ok(img) => {
+                                        let rgba = img.to_rgba8();
+                                        let size = [rgba.width() as usize, rgba.height() as usize];
+                                        let pixels = rgba.into_raw();
+                                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                        self.file_image_texture = Some(ui.ctx().load_texture(
+                                            format!("file_preview_{}", path),
+                                            color_image,
+                                            egui::TextureOptions::LINEAR,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        self.file_image_texture = None;
+                                        self.file_status = Some((format!("Failed to load image: {}", e), true));
+                                    }
                                 }
-                                Err(e) => {
-                                    self.file_content.clear();
-                                    self.file_status =
-                                        Some((format!("Failed to read: {}", e), true));
+                            } else {
+                                self.file_is_binary = false;
+                                self.file_image_texture = None;
+                                match runtime.block_on(data::read_file_content(&wf, &path)) {
+                                    Ok(content) => {
+                                        self.file_content = content;
+                                        self.file_editing = false;
+                                        self.file_status = None;
+                                    }
+                                    Err(e) => {
+                                        self.file_content.clear();
+                                        self.file_status =
+                                            Some((format!("Failed to read: {}", e), true));
+                                    }
                                 }
                             }
                             self.file_selected = Some(path);
@@ -1383,42 +1432,63 @@ impl ProjectsView {
                                     }
                                 }
 
-                                // Edit toggle
-                                let edit_label = if self.file_editing {
-                                    "View"
-                                } else {
-                                    "Edit"
-                                };
-                                if ui.button(edit_label).clicked() {
-                                    self.file_editing = !self.file_editing;
+                                // Edit toggle (not for binary files)
+                                if !self.file_is_binary {
+                                    let edit_label = if self.file_editing {
+                                        "View"
+                                    } else {
+                                        "Edit"
+                                    };
+                                    if ui.button(edit_label).clicked() {
+                                        self.file_editing = !self.file_editing;
+                                    }
                                 }
                             },
                         );
                     });
                     ui.separator();
 
+                    let content_h = (panel_h - 40.0).max(200.0);
                     egui::ScrollArea::both()
                         .id_salt("project_file_content")
                         .auto_shrink([false, false])
+                        .max_height(content_h)
                         .show(ui, |ui| {
-                            if self.file_editing {
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut self.file_content)
+                            if self.file_is_binary {
+                                // Image preview
+                                if let Some(ref tex) = self.file_image_texture {
+                                    let tex_size = tex.size_vec2();
+                                    let avail_w = ui.available_width().min(tex_size.x);
+                                    let scale = avail_w / tex_size.x;
+                                    let display_size = egui::vec2(tex_size.x * scale, tex_size.y * scale);
+                                    ui.image(egui::load::SizedTexture::new(tex.id(), display_size));
+                                } else {
+                                    ui.label(
+                                        egui::RichText::new(&self.file_content)
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                }
+                            } else {
+                                let rows = (content_h / 14.0) as usize;
+                                if self.file_editing {
+                                    ui.add(
+                                        egui::TextEdit::multiline(&mut self.file_content)
+                                            .font(egui::TextStyle::Monospace)
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(rows)
+                                            .code_editor(),
+                                    );
+                                } else {
+                                    ui.add(
+                                        egui::TextEdit::multiline(
+                                            &mut self.file_content.as_str(),
+                                        )
                                         .font(egui::TextStyle::Monospace)
                                         .desired_width(f32::INFINITY)
-                                        .desired_rows(18)
+                                        .desired_rows(rows)
                                         .code_editor(),
-                                );
-                            } else {
-                                ui.add(
-                                    egui::TextEdit::multiline(
-                                        &mut self.file_content.as_str(),
-                                    )
-                                    .font(egui::TextStyle::Monospace)
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(18)
-                                    .code_editor(),
-                                );
+                                    );
+                                }
                             }
                         });
                 } else {
@@ -1858,11 +1928,22 @@ impl ProjectsView {
                         .clicked()
                     {
                         let now = chrono::Utc::now().to_rfc3339();
+                        // Resolve relative working folder to absolute path
+                        let wf_raw = self.new_working_folder.trim().to_string();
+                        let resolved_wf = if wf_raw.is_empty() || std::path::Path::new(&wf_raw).is_absolute() {
+                            wf_raw
+                        } else {
+                            let sandbox = crate::server::data::get_sandbox_dir_sync();
+                            std::path::PathBuf::from(&sandbox)
+                                .join(&wf_raw)
+                                .to_string_lossy()
+                                .to_string()
+                        };
                         let new_project = Project {
                             id: uuid::Uuid::new_v4().to_string(),
                             name: self.new_name.trim().to_string(),
                             description: self.new_description.trim().to_string(),
-                            working_folder: self.new_working_folder.trim().to_string(),
+                            working_folder: resolved_wf,
                             memory: String::new(),
                             skills: Vec::new(),
                             system_prompt: None,

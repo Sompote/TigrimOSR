@@ -603,14 +603,26 @@ pub struct Project {
 }
 
 pub async fn get_projects() -> Vec<Project> {
-    if let Some(rb) = get_remote_backend() {
-        // Sync fast-path
+    let mut projects: Vec<Project> = if let Some(rb) = get_remote_backend() {
         if let Some(cached) = remote_cache_try_get::<Vec<Project>>("/api/projects") {
-            return cached;
+            cached
+        } else {
+            remote_get_cached(&rb, "/api/projects", 10).await
         }
-        return remote_get_cached(&rb, "/api/projects", 10).await;
+    } else {
+        read_json("projects.json").await
+    };
+    // Resolve any relative working_folder paths to absolute under sandbox
+    let sandbox = get_sandbox_dir_sync();
+    for p in &mut projects {
+        if !p.working_folder.is_empty() && !std::path::Path::new(&p.working_folder).is_absolute() {
+            p.working_folder = std::path::PathBuf::from(&sandbox)
+                .join(&p.working_folder)
+                .to_string_lossy()
+                .to_string();
+        }
     }
-    read_json("projects.json").await
+    projects
 }
 
 pub async fn save_projects(projects: &[Project]) {
