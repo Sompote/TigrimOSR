@@ -82,6 +82,7 @@ pub struct ProjectsView {
     linked_sessions: Vec<ChatSession>,
     unlinked_sessions: Vec<ChatSession>,
     sessions_loaded_for: Option<String>,
+    chat_search_query: String,
 
     // Signal to switch to Chat tab externally (project_id, session_id)
     pub navigate_to_chat_session: Option<(String, String)>,
@@ -132,6 +133,7 @@ impl Default for ProjectsView {
             linked_sessions: Vec::new(),
             unlinked_sessions: Vec::new(),
             sessions_loaded_for: None,
+            chat_search_query: String::new(),
 
             navigate_to_chat_session: None,
         }
@@ -325,7 +327,7 @@ impl ProjectsView {
                             egui::RichText::new("+ Create Project")
                                 .color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(59, 130, 246)),
+                        .fill(egui::Color32::from_rgb(74, 144, 226)),
                     )
                     .clicked()
                 {
@@ -932,7 +934,7 @@ impl ProjectsView {
                     egui::Button::new(
                         egui::RichText::new("Reload").color(egui::Color32::WHITE),
                     )
-                    .fill(egui::Color32::from_rgb(59, 130, 246)),
+                    .fill(egui::Color32::from_rgb(74, 144, 226)),
                 )
                 .clicked()
             {
@@ -1052,7 +1054,7 @@ impl ProjectsView {
                         egui::Button::new(
                             egui::RichText::new("Upload").color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(59, 130, 246)),
+                        .fill(egui::Color32::from_rgb(74, 144, 226)),
                     )
                     .clicked()
                 {
@@ -1665,7 +1667,7 @@ impl ProjectsView {
                                         .size(11.0)
                                         .color(egui::Color32::WHITE),
                                 )
-                                .fill(egui::Color32::from_rgb(59, 130, 246)),
+                                .fill(egui::Color32::from_rgb(74, 144, 226)),
                             )
                             .clicked()
                         {
@@ -1767,8 +1769,8 @@ impl ProjectsView {
             egui::Frame::default()
                 .inner_margin(egui::Margin::same(10))
                 .corner_radius(egui::CornerRadius::same(6))
-                .fill(egui::Color32::from_rgb(220, 238, 255))
-                .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(59, 130, 246)))
+                .fill(egui::Color32::from_rgba_premultiplied(74, 144, 226, 25))
+                .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(74, 144, 226)))
                 .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new(&session.title)
@@ -1789,7 +1791,7 @@ impl ProjectsView {
                                     .size(11.0)
                                     .color(egui::Color32::WHITE),
                             )
-                            .fill(egui::Color32::from_rgb(59, 130, 246)),
+                            .fill(egui::Color32::from_rgb(74, 144, 226)),
                         ).clicked() {
                             open_session_id = Some(session.id.clone());
                         }
@@ -1801,43 +1803,83 @@ impl ProjectsView {
             ui.add_space(4.0);
         }
 
-        // ── Available (unlinked) sessions ──
+        // ── Link existing chat (search-based) ──
         if !unlinked.is_empty() {
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(format!("Available Chats ({})", unlinked.len()))
-                    .size(13.0)
-                    .strong(),
-            );
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Link Existing Chat").size(13.0).strong());
+                ui.label(
+                    egui::RichText::new(format!("({} available)", unlinked.len()))
+                        .size(11.0)
+                        .color(egui::Color32::GRAY),
+                );
+            });
             ui.add_space(4.0);
 
-            for session in &unlinked {
-                egui::Frame::default()
-                    .inner_margin(egui::Margin::same(8))
-                    .corner_radius(egui::CornerRadius::same(4))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(160)))
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new(&session.title).size(12.0));
+            // Search box
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("\u{1F50D}").size(13.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.chat_search_query)
+                        .hint_text("Search chats by title...")
+                        .desired_width(300.0),
+                );
+            });
+            ui.add_space(4.0);
+
+            // Only show results when there's a search query
+            if !self.chat_search_query.trim().is_empty() {
+                let query_lower = self.chat_search_query.trim().to_lowercase();
+                let filtered: Vec<_> = unlinked.iter()
+                    .filter(|s| s.title.to_lowercase().contains(&query_lower))
+                    .take(10)
+                    .collect();
+
+                if filtered.is_empty() {
+                    ui.label(
+                        egui::RichText::new("No matching chats found")
+                            .size(11.0)
+                            .color(egui::Color32::GRAY)
+                            .italics(),
+                    );
+                } else {
+                    for session in &filtered {
+                        egui::Frame::default()
+                            .inner_margin(egui::Margin::same(8))
+                            .corner_radius(egui::CornerRadius::same(4))
+                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 218, 230)))
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new(&session.title).size(12.0));
+                                ui.label(
+                                    egui::RichText::new(format!("{} messages", session.messages.len()))
+                                        .size(10.0)
+                                        .color(egui::Color32::GRAY),
+                                );
+                                ui.add_space(2.0);
+                                if ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new("+ Link to Project")
+                                            .size(11.0)
+                                            .color(egui::Color32::WHITE),
+                                    )
+                                    .fill(egui::Color32::from_rgb(74, 144, 226)),
+                                ).clicked() {
+                                    link_session_id = Some(session.id.clone());
+                                }
+                            });
+                        ui.add_space(3.0);
+                    }
+                    if unlinked.iter().filter(|s| s.title.to_lowercase().contains(&query_lower)).count() > 10 {
                         ui.label(
-                            egui::RichText::new(format!("{} messages", session.messages.len()))
-                                .size(10.0)
-                                .color(egui::Color32::GRAY),
+                            egui::RichText::new("...and more. Refine your search.")
+                                .size(11.0)
+                                .color(egui::Color32::GRAY)
+                                .italics(),
                         );
-                        ui.add_space(2.0);
-                        if ui.add(
-                            egui::Button::new(
-                                egui::RichText::new("+ Link to Project")
-                                    .size(11.0)
-                                    .color(egui::Color32::WHITE),
-                            )
-                            .fill(egui::Color32::from_rgb(34, 197, 94)),
-                        ).clicked() {
-                            link_session_id = Some(session.id.clone());
-                        }
-                    });
-                ui.add_space(3.0);
+                    }
+                }
             }
         }
 
@@ -1923,7 +1965,7 @@ impl ProjectsView {
                             egui::Button::new(
                                 egui::RichText::new("Create").color(egui::Color32::WHITE),
                             )
-                            .fill(egui::Color32::from_rgb(59, 130, 246)),
+                            .fill(egui::Color32::from_rgb(74, 144, 226)),
                         )
                         .clicked()
                     {
