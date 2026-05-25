@@ -135,19 +135,19 @@ impl TigrimOSApp {
             cc.egui_ctx.set_fonts(fonts);
         }
 
-        // ── Canva-style light/white theme ────────────────────────────
+        // ── CeTeaU-style light/blue theme ────────────────────────────
         let mut visuals = egui::Visuals::light();
 
-        // Base palette (light)
+        // Base palette – soft blue tones inspired by CeTeauAI
         let bg_white   = egui::Color32::WHITE;
-        let bg_light   = egui::Color32::from_rgb(248, 249, 250);  // #f8f9fa
+        let bg_light   = egui::Color32::from_rgb(243, 246, 251);  // #f3f6fb very light blue-gray
         let bg_card    = egui::Color32::from_rgb(255, 255, 255);  // white cards
-        let bg_hover   = egui::Color32::from_rgb(240, 242, 245);  // light hover
-        let border     = egui::Color32::from_rgb(225, 228, 232);  // #e1e4e8
-        let text_primary   = egui::Color32::from_rgb(31, 35, 40);   // near black
-        let text_secondary = egui::Color32::from_rgb(101, 109, 118); // gray
-        let accent     = egui::Color32::from_rgb(88, 166, 255);   // blue accent
-        let accent_hover = egui::Color32::from_rgb(56, 139, 253);
+        let bg_hover   = egui::Color32::from_rgb(232, 237, 245);  // #e8edf5 soft blue hover
+        let border     = egui::Color32::from_rgb(210, 218, 230);  // #d2dae6 soft blue border
+        let text_primary   = egui::Color32::from_rgb(33, 37, 41);   // #212529 near black
+        let text_secondary = egui::Color32::from_rgb(108, 117, 125); // #6c757d muted gray
+        let accent     = egui::Color32::from_rgb(74, 144, 226);   // #4a90e2 clean blue
+        let accent_hover = egui::Color32::from_rgb(56, 123, 199);
 
         // Window & panel backgrounds
         visuals.panel_fill = bg_white;
@@ -319,11 +319,11 @@ impl eframe::App for TigrimOSApp {
         }
 
         // ── Colors ──────────────────────────────────────────────
-        let accent = egui::Color32::from_rgb(88, 166, 255);
-        let text_dim = egui::Color32::from_rgb(101, 109, 118);
-        let text_dark = egui::Color32::from_rgb(31, 35, 40);
-        let border_color = egui::Color32::from_rgb(225, 228, 232);
-        let sidebar_bg = egui::Color32::from_rgb(248, 249, 250);
+        let accent = egui::Color32::from_rgb(74, 144, 226);   // #4a90e2
+        let text_dim = egui::Color32::from_rgb(108, 117, 125);  // muted gray
+        let text_dark = egui::Color32::from_rgb(33, 37, 41);
+        let border_color = egui::Color32::from_rgb(210, 218, 230);
+        let sidebar_bg = egui::Color32::from_rgb(232, 237, 245); // #e8edf5 soft blue sidebar
 
         // ── Left sidebar (Kimi-style) ────────────────────────────────
         let sidebar_w = if self.sidebar_open { 240.0 } else { 52.0 };
@@ -361,10 +361,10 @@ impl eframe::App for TigrimOSApp {
 
                 // ── New Chat button ──
                 {
-                    let (label, icon) = if self.sidebar_open { ("\u{2295}  New Chat", "") } else { ("\u{2295}", "New Chat") };
-                    let btn = egui::Button::new(egui::RichText::new(label).size(13.0).color(text_dark))
-                        .fill(egui::Color32::WHITE)
-                        .stroke(egui::Stroke::new(0.5, border_color))
+                    let (label, icon) = if self.sidebar_open { ("+  New chat", "") } else { ("+", "New chat") };
+                    let btn = egui::Button::new(egui::RichText::new(label).size(13.0).color(accent))
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
                         .corner_radius(8.0)
                         .min_size(egui::vec2(if self.sidebar_open { ui.available_width() } else { 36.0 }, 32.0));
                     let resp = ui.add(btn);

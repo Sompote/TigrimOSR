@@ -393,6 +393,9 @@ pub struct ChatView {
 
     // --- Streaming AI responses (multiple sessions can stream in parallel) ---
     active_streams: std::collections::HashMap<String, StreamingState>,
+    /// Snapshot of in-memory session at the moment streaming started.
+    /// Used to persist user messages even if the user switches to a different chat.
+    stream_session_snapshots: std::collections::HashMap<String, ChatSession>,
 
     // --- File attachments ---
     attached_files: Vec<AttachedFile>,
@@ -459,6 +462,7 @@ impl ChatView {
             scroll_to_bottom: false,
             confirm_delete_id: None,
             active_streams: std::collections::HashMap::new(),
+            stream_session_snapshots: std::collections::HashMap::new(),
             attached_files: Vec::new(),
             projects: Vec::new(),
             selected_project_id: None,
@@ -1104,6 +1108,12 @@ You have access to these tools: {}.{}",
 
         let state = StreamingState::new();
         self.active_streams.insert(sid.clone(), state.clone());
+
+        // Snapshot the in-memory session so we can persist it even if the user
+        // switches to a different chat before this stream finishes.
+        if let Some(ref session) = self.selected_session {
+            self.stream_session_snapshots.insert(sid.clone(), session.clone());
+        }
 
         // Register active chat session in the shared tasks list
         {
@@ -1955,7 +1965,10 @@ You have access to these tools: {}.{}",
 
             // Save assistant message + merge in-memory session (user msgs may not be on disk yet)
             let sid_clone = sid.clone();
-            let mem_session = self.selected_session.clone();
+            // Use the snapshot taken when streaming started — not self.selected_session,
+            // which may point to a different chat if the user clicked "New Chat".
+            let mem_session = self.stream_session_snapshots.remove(sid)
+                .or_else(|| self.selected_session.clone());
             runtime.block_on(async {
                 let mut sessions = get_chat_history().await;
 
@@ -2210,7 +2223,7 @@ You have access to these tools: {}.{}",
             self.refresh(runtime);
         }
 
-        let _border_color   = egui::Color32::from_rgb(225, 228, 232);
+        let _border_color   = egui::Color32::from_rgb(210, 218, 230);
 
         // Collect all output files from current session messages
         // Also include files from streaming state
@@ -2287,9 +2300,9 @@ You have access to these tools: {}.{}",
             let drag_response = ui.interact(drag_rect, drag_id, egui::Sense::drag());
             // Highlight on hover/drag
             let handle_color = if drag_response.hovered() || drag_response.dragged() {
-                egui::Color32::from_rgb(88, 166, 255)
+                egui::Color32::from_rgb(74, 144, 226)
             } else {
-                egui::Color32::from_rgb(225, 228, 232)
+                egui::Color32::from_rgb(210, 218, 230)
             };
             ui.painter().rect_filled(drag_rect, 0.0, handle_color);
             if drag_response.dragged() {
@@ -2409,7 +2422,7 @@ You have access to these tools: {}.{}",
             let btn = egui::Button::new(
                 egui::RichText::new("+ New").size(12.0).color(egui::Color32::WHITE),
             )
-            .fill(egui::Color32::from_rgb(88, 166, 255))
+            .fill(egui::Color32::from_rgb(74, 144, 226))
             .corner_radius(6.0);
             if ui.add(btn).clicked() {
                 self.create_session(runtime);
@@ -2489,14 +2502,14 @@ You have access to these tools: {}.{}",
                     };
 
                     let card_bg = if is_selected {
-                        egui::Color32::from_rgba_premultiplied(88, 166, 255, 20)
+                        egui::Color32::from_rgba_premultiplied(74, 144, 226, 25)
                     } else {
                         egui::Color32::WHITE
                     };
                     let card_stroke = if is_selected {
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(88, 166, 255))
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(74, 144, 226))
                     } else {
-                        egui::Stroke::new(0.5, egui::Color32::from_rgb(225, 228, 232))
+                        egui::Stroke::new(0.5, egui::Color32::from_rgb(210, 218, 230))
                     };
 
                     // Format relative timestamp
@@ -2705,8 +2718,9 @@ You have access to these tools: {}.{}",
                                                 .size(13.0)
                                                 .color(egui::Color32::from_rgb(31, 35, 40)),
                                         )
-                                        .fill(egui::Color32::from_rgb(240, 242, 245))
-                                        .corner_radius(8.0),
+                                        .fill(egui::Color32::from_rgb(240, 243, 248))
+                                        .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(210, 218, 230)))
+                                        .corner_radius(12.0),
                                     );
                                     if btn.clicked() {
                                         suggestion_clicked = Some(suggestion.to_string());
@@ -2749,15 +2763,15 @@ You have access to these tools: {}.{}",
                 if let Some(proj) = self.projects.iter().find(|p| &p.id == pid) {
                     ui.add_space(8.0);
                     egui::Frame::new()
-                        .fill(egui::Color32::from_rgba_premultiplied(88, 166, 255, 20))
+                        .fill(egui::Color32::from_rgba_premultiplied(74, 144, 226, 25))
                         .corner_radius(4.0)
                         .inner_margin(egui::Margin::symmetric(6, 2))
-                        .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(88, 166, 255)))
+                        .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(74, 144, 226)))
                         .show(ui, |ui| {
                             ui.label(
                                 egui::RichText::new(&proj.name)
                                     .size(11.0)
-                                    .color(egui::Color32::from_rgb(56, 139, 253)),
+                                    .color(egui::Color32::from_rgb(74, 144, 226)),
                             );
                         });
                 }
@@ -2770,10 +2784,11 @@ You have access to these tools: {}.{}",
                     let log_btn = egui::Button::new(
                         egui::RichText::new("\u{1F4CB} Log")
                             .size(12.0)
-                            .color(egui::Color32::WHITE),
+                            .color(egui::Color32::from_rgb(108, 117, 125)),
                     )
-                    .fill(egui::Color32::from_rgb(71, 85, 105))
-                    .corner_radius(6.0);
+                    .fill(egui::Color32::from_rgb(240, 243, 248))
+                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(210, 218, 230)))
+                    .corner_radius(14.0);
                     if ui.add(log_btn).on_hover_text("View agent activity log").clicked() {
                         self.show_log_panel = !self.show_log_panel;
                         self.log_tab = 0;
@@ -2789,10 +2804,11 @@ You have access to these tools: {}.{}",
                     let gfx_btn = egui::Button::new(
                         egui::RichText::new("\u{1F4CA} Graphic")
                             .size(12.0)
-                            .color(egui::Color32::WHITE),
+                            .color(egui::Color32::from_rgb(108, 117, 125)),
                     )
-                    .fill(egui::Color32::from_rgb(99, 102, 241))
-                    .corner_radius(6.0);
+                    .fill(egui::Color32::from_rgb(240, 243, 248))
+                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(210, 218, 230)))
+                    .corner_radius(14.0);
                     if ui.add(gfx_btn).on_hover_text("View agent network diagram").clicked() {
                         self.show_log_panel = true;
                         self.log_tab = 2;
@@ -2857,19 +2873,19 @@ You have access to these tools: {}.{}",
                 egui::Color32::from_rgb(107, 114, 128) // gray
             } else {
                 match mode.as_str() {
-                    "fully_auto" => egui::Color32::from_rgb(59, 130, 246),  // blue
+                    "fully_auto" => egui::Color32::from_rgb(74, 144, 226),  // blue
                     "auto" => egui::Color32::from_rgb(34, 197, 94),         // green
                     "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),  // purple
                     "manual" => egui::Color32::from_rgb(239, 68, 68),       // red
-                    _ => egui::Color32::from_rgb(59, 130, 246),             // blue
+                    _ => egui::Color32::from_rgb(74, 144, 226),             // blue
                 }
             };
 
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(240, 242, 245))
+                .fill(egui::Color32::from_rgb(240, 243, 248))
                 .corner_radius(6.0)
                 .inner_margin(egui::Margin::symmetric(10, 4))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 215, 220)))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 218, 230)))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         // Swarm mode badge
@@ -2896,7 +2912,7 @@ You have access to these tools: {}.{}",
                                     .color(egui::Color32::from_rgb(80, 85, 95)),
                             );
                             egui::Frame::new()
-                                .fill(egui::Color32::from_rgb(59, 130, 246))
+                                .fill(egui::Color32::from_rgb(74, 144, 226))
                                 .corner_radius(4.0)
                                 .inner_margin(egui::Margin::symmetric(6, 2))
                                 .show(ui, |ui| {
@@ -2970,7 +2986,7 @@ You have access to these tools: {}.{}",
                         // Tab bar
                         ui.horizontal(|ui| {
                             let tab0_color = if self.log_tab == 0 {
-                                egui::Color32::from_rgb(59, 130, 246)
+                                egui::Color32::from_rgb(74, 144, 226)
                             } else {
                                 egui::Color32::GRAY
                             };
@@ -2997,7 +3013,7 @@ You have access to these tools: {}.{}",
                                     .unwrap_or_else(|_| "(No agent history yet - sub-agents haven't been used in this session)".to_string());
                             }
                             let tab2_color = if self.log_tab == 2 {
-                                egui::Color32::from_rgb(99, 102, 241)
+                                egui::Color32::from_rgb(74, 144, 226)
                             } else {
                                 egui::Color32::GRAY
                             };
@@ -3210,7 +3226,7 @@ You have access to these tools: {}.{}",
                 egui::Frame::new()
                     .fill(egui::Color32::WHITE)
                     .corner_radius(16.0)
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(225, 228, 232)))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 218, 230)))
                     .inner_margin(egui::Margin::symmetric(14, 10))
                     .show(ui, |ui| {
                         // ── Text area (top part) ──
@@ -3283,7 +3299,7 @@ You have access to these tools: {}.{}",
                                     _ => "Single Agent",
                                 };
                                 let mode_color = match current_mode {
-                                    "fully_auto" => egui::Color32::from_rgb(59, 130, 246),
+                                    "fully_auto" => egui::Color32::from_rgb(74, 144, 226),
                                     "auto" => egui::Color32::from_rgb(34, 197, 94),
                                     "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),
                                     "manual" => egui::Color32::from_rgb(239, 68, 68),
@@ -3303,7 +3319,7 @@ You have access to these tools: {}.{}",
                                     ui.set_min_width(140.0);
                                     let modes: &[(&str, &str, egui::Color32)] = &[
                                         ("single", "Single Agent", egui::Color32::from_rgb(107, 114, 128)),
-                                        ("fully_auto", "Fully Auto", egui::Color32::from_rgb(59, 130, 246)),
+                                        ("fully_auto", "Fully Auto", egui::Color32::from_rgb(74, 144, 226)),
                                         ("auto", "Auto", egui::Color32::from_rgb(34, 197, 94)),
                                         ("auto_swarm", "Auto Swarm", egui::Color32::from_rgb(168, 85, 247)),
                                         ("manual", "Manual", egui::Color32::from_rgb(239, 68, 68)),
@@ -3332,7 +3348,7 @@ You have access to these tools: {}.{}",
                                 let mut remove_idx: Option<usize> = None;
                                 for (i, file) in self.attached_files.iter().enumerate() {
                                     egui::Frame::new()
-                                        .fill(egui::Color32::from_rgb(240, 242, 245))
+                                        .fill(egui::Color32::from_rgb(240, 243, 248))
                                         .corner_radius(10.0)
                                         .inner_margin(egui::Margin::symmetric(6, 2))
                                         .show(ui, |ui| {
@@ -3369,9 +3385,9 @@ You have access to these tools: {}.{}",
                                     }
                                 } else {
                                     let send_color = if can_send {
-                                        egui::Color32::from_rgb(88, 166, 255)
+                                        egui::Color32::from_rgb(74, 144, 226)
                                     } else {
-                                        egui::Color32::from_rgb(210, 215, 220)
+                                        egui::Color32::from_rgb(210, 218, 230)
                                     };
                                     let send_btn = egui::Button::new(
                                         egui::RichText::new("\u{2191}").size(16.0).strong().color(egui::Color32::WHITE), // ↑
@@ -3428,14 +3444,14 @@ You have access to these tools: {}.{}",
 
         let (bg_color, text_color, icon) = if is_user {
             (
-                egui::Color32::from_rgb(88, 166, 255), // accent blue
+                egui::Color32::from_rgb(59, 141, 153), // #3B8D99 teal
                 egui::Color32::WHITE,
                 "You",
             )
         } else {
             (
-                egui::Color32::WHITE, // white card
-                egui::Color32::from_rgb(31, 35, 40),
+                egui::Color32::from_rgb(249, 250, 252), // #f9fafc very light gray-blue
+                egui::Color32::from_rgb(33, 37, 41),
                 "AI",
             )
         };
@@ -3451,7 +3467,7 @@ You have access to these tools: {}.{}",
             let bubble_stroke = if is_user {
                 egui::Stroke::NONE
             } else {
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(225, 228, 232))
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(218, 224, 234))
             };
 
             egui::Frame::new()
@@ -3484,7 +3500,7 @@ You have access to these tools: {}.{}",
                                     .map(|n| n.to_string_lossy().to_string())
                                     .unwrap_or_else(|| fname.clone());
                                 egui::Frame::new()
-                                    .fill(egui::Color32::from_rgb(240, 242, 245))
+                                    .fill(egui::Color32::from_rgb(240, 243, 248))
                                     .corner_radius(4.0)
                                     .inner_margin(egui::Margin::symmetric(8, 4))
                                     .show(ui, |ui| {
@@ -3492,7 +3508,7 @@ You have access to these tools: {}.{}",
                                             ui.label(
                                                 egui::RichText::new(format!("\u{1F4C4} {}", short_name))
                                                     .size(11.0)
-                                                    .color(egui::Color32::from_rgb(59, 130, 246)),
+                                                    .color(egui::Color32::from_rgb(74, 144, 226)),
                                             );
                                             if ui.small_button("\u{1F4CB}").on_hover_text("Copy path").clicked() {
                                                 ui.ctx().copy_text(fname.clone());
@@ -3682,7 +3698,7 @@ You have access to these tools: {}.{}",
                     ui.label(
                         egui::RichText::new("\u{25CF}")
                             .size(10.0)
-                            .color(egui::Color32::from_rgb(59, 130, 246)),
+                            .color(egui::Color32::from_rgb(74, 144, 226)),
                     );
 
                     }); // close ui.vertical
@@ -4851,7 +4867,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
             egui::Frame::new()
                 .fill(egui::Color32::from_rgb(246, 248, 250))
                 .inner_margin(egui::Margin::symmetric(12, 4))
-                .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(88, 166, 255)))
+                .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(74, 144, 226)))
                 .corner_radius(4.0)
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(
@@ -4972,11 +4988,11 @@ fn render_markdown_table(ui: &mut egui::Ui, lines: &[&str], default_color: egui:
 
     ui.add_space(4.0);
 
-    let header_bg = egui::Color32::from_rgba_premultiplied(88, 166, 255, 25);
+    let header_bg = egui::Color32::from_rgba_premultiplied(74, 144, 226, 25);
     let even_bg = egui::Color32::WHITE;
     let odd_bg = egui::Color32::from_rgb(246, 248, 250);
-    let border_color = egui::Color32::from_rgb(208, 215, 222);
-    let header_text_color = egui::Color32::from_rgb(56, 139, 253);
+    let border_color = egui::Color32::from_rgb(210, 218, 230);
+    let header_text_color = egui::Color32::from_rgb(74, 144, 226);
 
     egui::Frame::new()
         .fill(even_bg)
@@ -5031,7 +5047,7 @@ fn render_markdown_table(ui: &mut egui::Ui, lines: &[&str], default_color: egui:
                         ui.painter().hline(
                             rect.left()..=rect.right(),
                             y,
-                            egui::Stroke::new(1.5, egui::Color32::from_rgb(59, 130, 246)),
+                            egui::Stroke::new(1.5, egui::Color32::from_rgb(74, 144, 226)),
                         );
                     }
                 }
