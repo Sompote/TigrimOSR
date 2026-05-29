@@ -3476,11 +3476,7 @@ You have access to these tools: {}.{}",
 
         ui.with_layout(layout, |ui| {
             let max_bubble_width = (ui.available_width() * 0.75).min(650.0);
-            let bubble_stroke = if is_user {
-                egui::Stroke::NONE
-            } else {
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204))
-            };
+            let bubble_stroke = egui::Stroke::NONE;
 
             // Asymmetric corners: AI = 6/20/20/20, User = 20/6/20/20
             let bubble_radius = if is_user {
@@ -3569,47 +3565,52 @@ You have access to these tools: {}.{}",
                             }),
                     );
 
-                    // Feedback buttons for assistant messages
+                    // Feedback buttons — outline icon style (matching template)
                     if !is_user {
+                        ui.add_space(4.0);
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
                             let current_rating = msg
                                 .feedback
                                 .as_ref()
                                 .and_then(|f| f.rating.as_deref());
 
-                            let thumbs_up_color = if current_rating == Some("up") {
-                                egui::Color32::from_rgb(34, 197, 94) // green
-                            } else {
-                                egui::Color32::from_rgb(168, 158, 144) // gray
-                            };
-                            let thumbs_down_color = if current_rating == Some("down") {
-                                egui::Color32::from_rgb(239, 68, 68) // red
-                            } else {
-                                egui::Color32::from_rgb(168, 158, 144) // gray
-                            };
+                            let default_color = egui::Color32::from_rgb(168, 158, 144);
 
-                            if ui
-                                .add(egui::Button::new(
-                                    egui::RichText::new("\u{1F44D}")
-                                        .size(13.0)
-                                        .color(thumbs_up_color),
-                                ).frame(false))
-                                .on_hover_text("Good response")
-                                .clicked()
-                            {
+                            // Thumbs up
+                            let up_color = if current_rating == Some("up") {
+                                egui::Color32::from_rgb(18, 154, 145) // teal active
+                            } else { default_color };
+                            let up_bg = if current_rating == Some("up") {
+                                egui::Color32::from_rgb(225, 241, 239) // accent-soft
+                            } else { egui::Color32::TRANSPARENT };
+                            if ui.add(
+                                egui::Button::new(egui::RichText::new("\u{25B3}").size(14.0).color(up_color)) // △
+                                    .fill(up_bg).corner_radius(9.0).min_size(egui::vec2(32.0, 32.0))
+                            ).on_hover_text("Helpful").clicked() {
                                 feedback_action = Some((index, "up".to_string()));
                             }
 
-                            if ui
-                                .add(egui::Button::new(
-                                    egui::RichText::new("\u{1F44E}")
-                                        .size(13.0)
-                                        .color(thumbs_down_color),
-                                ).frame(false))
-                                .on_hover_text("Bad response")
-                                .clicked()
-                            {
+                            // Thumbs down
+                            let down_color = if current_rating == Some("down") {
+                                egui::Color32::from_rgb(201, 85, 78) // warm red
+                            } else { default_color };
+                            let down_bg = if current_rating == Some("down") {
+                                egui::Color32::from_rgb(247, 229, 227) // red-soft
+                            } else { egui::Color32::TRANSPARENT };
+                            if ui.add(
+                                egui::Button::new(egui::RichText::new("\u{25BD}").size(14.0).color(down_color)) // ▽
+                                    .fill(down_bg).corner_radius(9.0).min_size(egui::vec2(32.0, 32.0))
+                            ).on_hover_text("Not helpful").clicked() {
                                 feedback_action = Some((index, "down".to_string()));
+                            }
+
+                            // Copy button
+                            if ui.add(
+                                egui::Button::new(egui::RichText::new("\u{2750}").size(14.0).color(default_color)) // ❐
+                                    .fill(egui::Color32::TRANSPARENT).corner_radius(9.0).min_size(egui::vec2(32.0, 32.0))
+                            ).on_hover_text("Copy").clicked() {
+                                ui.ctx().copy_text(msg.content.clone());
                             }
                         });
                     }

@@ -311,7 +311,7 @@ impl SettingsView {
             .show(ctx, |ui| {
                 // Tab bar — plain horizontal wrap, no scroll area (avoids dark hover band)
                 egui::Frame::new()
-                    .fill(egui::Color32::WHITE)
+                    .fill(egui::Color32::from_rgb(251, 247, 241))
                     .inner_margin(egui::Margin::symmetric(0, 2))
                     .show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
@@ -329,11 +329,11 @@ impl SettingsView {
                                         .color(if is_selected {
                                             accent
                                         } else {
-                                            egui::Color32::from_rgb(101, 109, 118)
+                                            egui::Color32::from_rgb(124, 115, 104)
                                         }),
                                 )
                                 .fill(if is_selected {
-                                    egui::Color32::from_rgba_premultiplied(88, 166, 255, 20)
+                                    egui::Color32::from_rgba_premultiplied(18, 154, 145, 20)
                                 } else {
                                     egui::Color32::TRANSPARENT
                                 })
@@ -663,7 +663,7 @@ impl SettingsView {
                 VmState::Running if service_ready => egui::Color32::from_rgb(34, 197, 94),
                 VmState::Running => egui::Color32::from_rgb(250, 204, 21),
                 VmState::Error => egui::Color32::from_rgb(239, 68, 68),
-                VmState::Stopped => egui::Color32::from_rgb(156, 163, 175),
+                VmState::Stopped => egui::Color32::from_rgb(168, 158, 144),
                 _ => egui::Color32::from_rgb(18, 154, 145),
             };
             ui.horizontal(|ui| {
@@ -1174,11 +1174,11 @@ impl SettingsView {
 
             ui.add_space(4.0);
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(240, 242, 245))
+                .fill(egui::Color32::from_rgb(239, 231, 218))
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
-                    let tc = egui::Color32::from_rgb(50, 55, 65);
+                    let tc = egui::Color32::from_rgb(52, 48, 42);
                     ui.label(egui::RichText::new("Key Distinction:").strong().size(11.0).color(tc));
                     ui.add_space(4.0);
                     egui::Grid::new("soul_identity_table")
@@ -2110,7 +2110,7 @@ impl SettingsView {
         ui.label(
             egui::RichText::new("Automatically generates reusable skills from your chat sessions using LLM analysis.")
                 .size(12.0)
-                .color(egui::Color32::from_rgb(156, 163, 175)),
+                .color(egui::Color32::from_rgb(168, 158, 144)),
         );
         ui.add_space(8.0);
 
@@ -2265,7 +2265,7 @@ impl SettingsView {
                 let _proposal_name = proposal.name.clone();
 
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgba_premultiplied(88, 166, 255, 12))
+                    .fill(egui::Color32::from_rgba_premultiplied(18, 154, 145, 12))
                     .corner_radius(8.0)
                     .inner_margin(egui::Margin::same(10))
                     .stroke(egui::Stroke::new(
@@ -2306,7 +2306,7 @@ impl SettingsView {
                             ui.label(
                                 egui::RichText::new(&proposal.description)
                                     .size(12.0)
-                                    .color(egui::Color32::from_rgb(156, 163, 175)),
+                                    .color(egui::Color32::from_rgb(168, 158, 144)),
                             );
 
                             if !proposal.rationale.is_empty() {
@@ -2317,7 +2317,7 @@ impl SettingsView {
                                     ))
                                     .size(11.0)
                                     .italics()
-                                    .color(egui::Color32::from_rgb(107, 114, 128)),
+                                    .color(egui::Color32::from_rgb(168, 158, 144)),
                                 );
                             }
 
@@ -2423,7 +2423,7 @@ impl SettingsView {
                     ui.label(
                         egui::RichText::new(&proposal.review_status)
                             .size(11.0)
-                            .color(egui::Color32::from_rgb(107, 114, 128)),
+                            .color(egui::Color32::from_rgb(168, 158, 144)),
                     );
                 });
             }

@@ -289,7 +289,6 @@ impl AgentsView {
                     });
 
                 ui.add_space(4.0);
-                ui.separator();
                 ui.add_space(4.0);
 
                 // Auto Architecture
@@ -343,7 +342,6 @@ impl AgentsView {
                 }
 
                 ui.add_space(4.0);
-                ui.separator();
                 ui.add_space(4.0);
 
                 // Add agent + Save + Apply
@@ -382,8 +380,6 @@ impl AgentsView {
                     ui.label(RichText::new(msg).size(10.0).color(color));
                 }
             });
-
-            ui.separator();
 
             // --- Center: Graph Canvas (full remaining width) ---
             let canvas_width = available.x - sidebar_w - 20.0;

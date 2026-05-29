@@ -798,7 +798,7 @@ impl FilesView {
                 ui.label(
                     egui::RichText::new(trimmed)
                         .monospace()
-                        .color(egui::Color32::from_rgb(150, 150, 150)),
+                        .color(egui::Color32::from_rgb(168, 158, 144)),
                 );
             } else if trimmed.is_empty() {
                 ui.add_space(4.0);
@@ -891,9 +891,9 @@ impl FilesView {
     // ── Sidebar rendering ──
 
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
-        let sidebar_bg = egui::Color32::from_rgb(247, 247, 248);
-        let text_dim = egui::Color32::from_rgb(100, 100, 105);
-        let text_normal = egui::Color32::from_rgb(30, 30, 32);
+        let sidebar_bg = egui::Color32::from_rgb(244, 238, 229);
+        let text_dim = egui::Color32::from_rgb(124, 115, 104);
+        let text_normal = egui::Color32::from_rgb(52, 48, 42);
         let accent = egui::Color32::from_rgb(18, 154, 145);
 
         ui.painter().rect_filled(
@@ -958,7 +958,7 @@ impl FilesView {
         for (label, section, count) in &lib_items {
             let is_active = self.active_section == *section;
             let bg = if is_active {
-                egui::Color32::from_rgb(232, 232, 235)
+                egui::Color32::from_rgb(239, 231, 218)
             } else {
                 egui::Color32::TRANSPARENT
             };
@@ -1015,7 +1015,7 @@ impl FilesView {
         for (dir_name, count) in &places_clone {
             let is_active = self.active_section == LibrarySection::Place(dir_name.clone());
             let bg = if is_active {
-                egui::Color32::from_rgb(232, 232, 235)
+                egui::Color32::from_rgb(239, 231, 218)
             } else {
                 egui::Color32::TRANSPARENT
             };
@@ -1099,7 +1099,7 @@ impl FilesView {
                 ui.painter().rect_filled(
                     bar_rect,
                     2.0,
-                    egui::Color32::from_rgb(210, 210, 215),
+                    egui::Color32::from_rgb(230, 220, 204),
                 );
                 let filled = egui::Rect::from_min_size(
                     bar_rect.min,
@@ -1345,7 +1345,7 @@ impl FilesView {
                 egui::pos2(full_rect.min.x + sidebar_w, full_rect.min.y),
                 egui::pos2(full_rect.min.x + sidebar_w, full_rect.max.y),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 230, 232)),
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)),
         );
 
         let mut main_ui = ui.new_child(
@@ -1358,15 +1358,15 @@ impl FilesView {
     }
 
     fn render_main_area(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
-        let text_dim = egui::Color32::from_rgb(134, 134, 139);
-        let text_normal = egui::Color32::from_rgb(29, 29, 31);
+        let text_dim = egui::Color32::from_rgb(168, 158, 144);
+        let text_normal = egui::Color32::from_rgb(52, 48, 42);
         let accent = egui::Color32::from_rgb(18, 154, 145);
 
-        // White background
+        // Warm surface background
         ui.painter().rect_filled(
             ui.available_rect_before_wrap(),
             0.0,
-            egui::Color32::WHITE,
+            egui::Color32::from_rgb(251, 247, 241),
         );
 
         ui.add_space(8.0);
@@ -1485,7 +1485,7 @@ impl FilesView {
                             .size(12.0)
                             .color(egui::Color32::WHITE),
                     )
-                    .fill(egui::Color32::from_rgb(230, 230, 232))
+                    .fill(egui::Color32::from_rgb(230, 220, 204))
                     .corner_radius(6.0),
                 );
                 if new_btn.clicked() {
@@ -1544,7 +1544,7 @@ impl FilesView {
             ui.add_space(12.0);
             let search_w = 200.0_f32.min(ui.available_width() * 0.3);
             egui::Frame::NONE
-                .fill(egui::Color32::from_rgb(240, 240, 242))
+                .fill(egui::Color32::from_rgb(239, 231, 218))
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::symmetric(8, 4))
                 .show(ui, |ui| {
@@ -1684,7 +1684,7 @@ impl FilesView {
         if !self.selected_set.is_empty() {
             ui.add_space(4.0);
             egui::Frame::NONE
-                .fill(egui::Color32::from_rgb(240, 245, 255))
+                .fill(egui::Color32::from_rgb(239, 231, 218))
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::symmetric(12, 6))
                 .outer_margin(egui::Margin::symmetric(12, 0))
@@ -1707,7 +1707,7 @@ impl FilesView {
                                         .size(12.0)
                                         .color(egui::Color32::WHITE),
                                 )
-                                .fill(egui::Color32::from_rgb(107, 114, 128))
+                                .fill(egui::Color32::from_rgb(168, 158, 144))
                                 .corner_radius(6.0),
                             )
                             .clicked()
@@ -1821,7 +1821,7 @@ impl FilesView {
                 egui::pos2(ui.min_rect().min.x + 12.0, ui.cursor().min.y),
                 egui::pos2(ui.min_rect().max.x - 8.0, ui.cursor().min.y),
             ],
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(230, 230, 232)),
+            egui::Stroke::new(0.5, egui::Color32::from_rgb(230, 220, 204)),
         );
         ui.add_space(2.0);
 
@@ -1885,13 +1885,13 @@ impl FilesView {
                         ui.painter().rect_filled(
                             row_rect,
                             0.0,
-                            egui::Color32::from_rgb(219, 234, 254),
+                            egui::Color32::from_rgb(225, 241, 239),
                         );
                     } else if hovered {
                         ui.painter().rect_filled(
                             row_rect,
                             0.0,
-                            egui::Color32::from_rgb(245, 245, 247),
+                            egui::Color32::from_rgb(244, 238, 229),
                         );
                     }
 
