@@ -474,7 +474,7 @@ impl RemoteView {
             self.load_instances(runtime);
         }
 
-        let accent = egui::Color32::from_rgb(88, 166, 255);
+        let accent = egui::Color32::from_rgb(18, 154, 145);
         let text_dim = egui::Color32::from_rgb(139, 148, 158);
 
         ui.add_space(12.0);
@@ -706,7 +706,7 @@ impl RemoteView {
 
                 let status_color = match status {
                     "completed" => egui::Color32::from_rgb(74, 222, 128),
-                    "running" => egui::Color32::from_rgb(88, 166, 255),
+                    "running" => egui::Color32::from_rgb(18, 154, 145),
                     "pending" => egui::Color32::from_rgb(250, 204, 21),
                     "failed" => egui::Color32::from_rgb(239, 68, 68),
                     "killed" => egui::Color32::from_rgb(156, 163, 175),
@@ -1080,7 +1080,7 @@ impl RemoteView {
                                 let role = msg["role"].as_str().unwrap_or("user");
                                 let content = msg["content"].as_str().unwrap_or("");
                                 let color = if role == "assistant" {
-                                    egui::Color32::from_rgb(88, 166, 255)
+                                    egui::Color32::from_rgb(18, 154, 145)
                                 } else {
                                     egui::Color32::from_rgb(36, 41, 47)
                                 };

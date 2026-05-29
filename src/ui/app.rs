@@ -135,19 +135,19 @@ impl TigrimOSApp {
             cc.egui_ctx.set_fonts(fonts);
         }
 
-        // ── CeTeaU-style light/blue theme ────────────────────────────
+        // ── Warm neutral theme with teal accent ─────────────────────
         let mut visuals = egui::Visuals::light();
 
-        // Base palette – soft blue tones inspired by CeTeauAI
+        // Base palette – warm neutral surfaces, teal accent
         let bg_white   = egui::Color32::WHITE;
-        let bg_light   = egui::Color32::from_rgb(243, 246, 251);  // #f3f6fb very light blue-gray
+        let bg_light   = egui::Color32::from_rgb(244, 238, 229);  // #F4EEE5 warm canvas
         let bg_card    = egui::Color32::from_rgb(255, 255, 255);  // white cards
-        let bg_hover   = egui::Color32::from_rgb(232, 237, 245);  // #e8edf5 soft blue hover
-        let border     = egui::Color32::from_rgb(210, 218, 230);  // #d2dae6 soft blue border
-        let text_primary   = egui::Color32::from_rgb(33, 37, 41);   // #212529 near black
-        let text_secondary = egui::Color32::from_rgb(108, 117, 125); // #6c757d muted gray
-        let accent     = egui::Color32::from_rgb(74, 144, 226);   // #4a90e2 clean blue
-        let accent_hover = egui::Color32::from_rgb(56, 123, 199);
+        let bg_hover   = egui::Color32::from_rgb(239, 231, 218);  // #EFE7DA warm hover
+        let border     = egui::Color32::from_rgb(230, 220, 204);  // #E6DCCC warm hairline
+        let text_primary   = egui::Color32::from_rgb(52, 48, 42);   // #34302A warm ink
+        let text_secondary = egui::Color32::from_rgb(124, 115, 104); // #7C7368 warm muted
+        let accent     = egui::Color32::from_rgb(18, 154, 145);   // #129A91 teal
+        let accent_hover = egui::Color32::from_rgb(12, 129, 122); // #0C817A deep teal
 
         // Window & panel backgrounds
         visuals.panel_fill = bg_white;
@@ -182,7 +182,7 @@ impl TigrimOSApp {
         visuals.widgets.open.corner_radius = egui::CornerRadius::same(6);
 
         // Selection & hyperlinks
-        visuals.selection.bg_fill = egui::Color32::from_rgba_premultiplied(88, 166, 255, 50);
+        visuals.selection.bg_fill = egui::Color32::from_rgba_premultiplied(18, 154, 145, 50);
         visuals.selection.stroke = egui::Stroke::new(1.0, accent);
         visuals.hyperlink_color = accent;
 
@@ -319,11 +319,11 @@ impl eframe::App for TigrimOSApp {
         }
 
         // ── Colors ──────────────────────────────────────────────
-        let accent = egui::Color32::from_rgb(74, 144, 226);   // #4a90e2
-        let text_dim = egui::Color32::from_rgb(108, 117, 125);  // muted gray
-        let text_dark = egui::Color32::from_rgb(33, 37, 41);
-        let border_color = egui::Color32::from_rgb(210, 218, 230);
-        let sidebar_bg = egui::Color32::from_rgb(232, 237, 245); // #e8edf5 soft blue sidebar
+        let accent = egui::Color32::from_rgb(18, 154, 145);     // #129A91 teal
+        let text_dim = egui::Color32::from_rgb(124, 115, 104);  // #7C7368 warm muted
+        let text_dark = egui::Color32::from_rgb(52, 48, 42);    // #34302A warm ink
+        let border_color = egui::Color32::from_rgb(230, 220, 204); // #E6DCCC warm hairline
+        let sidebar_bg = egui::Color32::from_rgb(239, 231, 218);  // #EFE7DA warm rail
 
         // ── Left sidebar (Kimi-style) ────────────────────────────────
         let sidebar_w = if self.sidebar_open { 240.0 } else { 52.0 };
@@ -399,7 +399,7 @@ impl eframe::App for TigrimOSApp {
                     let is_active = self.selected_tab == tab;
                     let text_color = if is_active { accent } else { text_dim };
                     let bg = if is_active {
-                        egui::Color32::from_rgba_premultiplied(88, 166, 255, 20)
+                        egui::Color32::from_rgba_premultiplied(18, 154, 145, 25)
                     } else {
                         egui::Color32::TRANSPARENT
                     };
@@ -461,7 +461,7 @@ impl eframe::App for TigrimOSApp {
                                 for (id, title, streaming) in &sessions {
                                     let is_sel = selected_id.as_deref() == Some(id.as_str());
                                     let bg = if is_sel {
-                                        egui::Color32::from_rgba_premultiplied(88, 166, 255, 20)
+                                        egui::Color32::from_rgba_premultiplied(18, 154, 145, 25)
                                     } else {
                                         egui::Color32::TRANSPARENT
                                     };
@@ -604,7 +604,7 @@ impl eframe::App for TigrimOSApp {
         // Central panel - main content
         egui::CentralPanel::default()
             .frame(egui::Frame::new()
-                .fill(egui::Color32::WHITE)
+                .fill(egui::Color32::from_rgb(251, 247, 241)) // #FBF7F1 warm surface
                 .inner_margin(egui::Margin::same(0)))
             .show(ctx, |ui| {
             // Handle navigation from Projects -> Chat

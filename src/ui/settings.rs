@@ -317,7 +317,7 @@ impl SettingsView {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing.x = 2.0;
                             ui.spacing_mut().item_spacing.y = 2.0;
-                            let accent = egui::Color32::from_rgb(88, 166, 255);
+                            let accent = egui::Color32::from_rgb(18, 154, 145);
                             for &section in SettingsSection::ALL {
                                 let is_selected = self.selected_section == section;
                                 let label = section.label();
@@ -2270,7 +2270,7 @@ impl SettingsView {
                     .inner_margin(egui::Margin::same(10))
                     .stroke(egui::Stroke::new(
                         1.0,
-                        egui::Color32::from_rgb(88, 166, 255),
+                        egui::Color32::from_rgb(18, 154, 145),
                     ))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {

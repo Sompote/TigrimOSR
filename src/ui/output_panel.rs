@@ -202,11 +202,11 @@ impl OutputPanel {
     // -----------------------------------------------------------------------
 
     pub fn show(&mut self, ui: &mut egui::Ui, files: &[String]) {
-        let panel_bg   = egui::Color32::from_rgb(248, 249, 250);
-        let border     = egui::Color32::from_rgb(225, 228, 232);
-        let text_dark  = egui::Color32::from_rgb(31, 35, 40);
-        let text_muted = egui::Color32::from_rgb(101, 109, 118);
-        let accent     = egui::Color32::from_rgb(88, 166, 255);
+        let panel_bg   = egui::Color32::from_rgb(244, 238, 229);  // warm canvas
+        let border     = egui::Color32::from_rgb(230, 220, 204);  // warm line
+        let text_dark  = egui::Color32::from_rgb(52, 48, 42);     // warm ink
+        let text_muted = egui::Color32::from_rgb(124, 115, 104);  // warm muted
+        let accent     = egui::Color32::from_rgb(18, 154, 145);   // teal
 
         egui::Frame::new()
             .fill(panel_bg)
@@ -230,7 +230,7 @@ impl OutputPanel {
                             );
                             if !files.is_empty() {
                                 egui::Frame::new()
-                                    .fill(egui::Color32::from_rgba_premultiplied(88, 166, 255, 25))
+                                    .fill(egui::Color32::from_rgba_premultiplied(18, 154, 145, 25))
                                     .corner_radius(10.0)
                                     .inner_margin(egui::Margin::symmetric(6, 2))
                                     .show(ui, |ui| {
@@ -275,7 +275,7 @@ impl OutputPanel {
                         ui.label(
                             egui::RichText::new("Files created by AI tools\nwill appear here.")
                                 .size(11.0)
-                                .color(egui::Color32::from_rgb(150, 160, 170)),
+                                .color(egui::Color32::from_rgb(168, 158, 144)),
                         );
                     });
                     return;
@@ -475,7 +475,7 @@ impl OutputPanel {
                         egui::RichText::new(filename)
                             .size(12.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                            .color(egui::Color32::from_rgb(52, 48, 42)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Open").clicked() {
@@ -510,7 +510,7 @@ impl OutputPanel {
                     ui.label(
                         egui::RichText::new("Loading...")
                             .size(11.0)
-                            .color(egui::Color32::from_rgb(150, 160, 170)),
+                            .color(egui::Color32::from_rgb(168, 158, 144)),
                     );
                 }
             });
@@ -577,7 +577,7 @@ impl OutputPanel {
                                 .size(11.0)
                                 .color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(88, 166, 255))
+                        .fill(egui::Color32::from_rgb(18, 154, 145))
                         .corner_radius(4.0);
                         if ui.add(browser_btn).on_hover_text("Open interactive version in browser").clicked() {
                             let encoded_path = rel_path.replace(' ', "%20");
@@ -632,7 +632,7 @@ impl OutputPanel {
                     ui.label(
                         egui::RichText::new("No chart data found in file")
                             .size(11.0)
-                            .color(egui::Color32::from_rgb(150, 160, 170)),
+                            .color(egui::Color32::from_rgb(168, 158, 144)),
                     );
                 }
             });
@@ -1269,7 +1269,7 @@ impl OutputPanel {
                         egui::Align2::LEFT_CENTER,
                         format!("{:.0} ({:.0}%)", value, frac),
                         egui::FontId::proportional(9.0),
-                        egui::Color32::from_rgb(100, 116, 139),
+                        egui::Color32::from_rgb(124, 115, 104),
                     );
                 }
             });
@@ -1301,12 +1301,12 @@ impl OutputPanel {
                         egui::RichText::new(filename)
                             .size(12.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                            .color(egui::Color32::from_rgb(52, 48, 42)),
                     );
                     ui.label(
                         egui::RichText::new(format!("({} lines, {} chars)", line_count, char_count))
                             .size(10.0)
-                            .color(egui::Color32::from_rgb(150, 160, 170)),
+                            .color(egui::Color32::from_rgb(168, 158, 144)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Open").clicked() {
@@ -1337,7 +1337,7 @@ impl OutputPanel {
                                     egui::RichText::new(&content)
                                         .size(11.5)
                                         .monospace()
-                                        .color(egui::Color32::from_rgb(50, 60, 70)),
+                                        .color(egui::Color32::from_rgb(52, 48, 42)),
                                 )
                                 .wrap(),
                             );
@@ -1384,7 +1384,7 @@ impl OutputPanel {
                     egui::RichText::new(&line[3..])
                         .size(14.0)
                         .strong()
-                        .color(egui::Color32::from_rgb(31, 35, 40)),
+                        .color(egui::Color32::from_rgb(52, 48, 42)),
                 ).wrap());
             } else if line.starts_with("### ") {
                 ui.add_space(2.0);
@@ -1392,24 +1392,24 @@ impl OutputPanel {
                     egui::RichText::new(&line[4..])
                         .size(13.0)
                         .strong()
-                        .color(egui::Color32::from_rgb(56, 139, 253)),
+                        .color(egui::Color32::from_rgb(18, 154, 145)),
                 ).wrap());
             } else if line.starts_with("#### ") {
                 ui.add(egui::Label::new(
                     egui::RichText::new(&line[5..])
                         .size(12.0)
                         .strong()
-                        .color(egui::Color32::from_rgb(100, 116, 139)),
+                        .color(egui::Color32::from_rgb(124, 115, 104)),
                 ).wrap());
             } else if line.starts_with("- ") || line.starts_with("* ") {
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
-                    ui.label(egui::RichText::new("\u{2022}").size(12.0).color(egui::Color32::from_rgb(88, 166, 255)));
+                    ui.label(egui::RichText::new("\u{2022}").size(12.0).color(egui::Color32::from_rgb(18, 154, 145)));
                     ui.add_space(2.0);
                     ui.add(egui::Label::new(
                         egui::RichText::new(&line[2..])
                             .size(12.0)
-                            .color(egui::Color32::from_rgb(50, 60, 70)),
+                            .color(egui::Color32::from_rgb(52, 48, 42)),
                     ).wrap());
                 });
             } else if line.trim_start_matches(|c: char| c.is_ascii_digit()).starts_with(". ") {
@@ -1418,26 +1418,26 @@ impl OutputPanel {
                     ui.add_space(8.0);
                     let num_end = trimmed.find(". ").unwrap_or(0);
                     let num = &trimmed[..num_end];
-                    ui.label(egui::RichText::new(format!("{}.", num)).size(12.0).color(egui::Color32::from_rgb(88, 166, 255)));
+                    ui.label(egui::RichText::new(format!("{}.", num)).size(12.0).color(egui::Color32::from_rgb(18, 154, 145)));
                     ui.add_space(2.0);
                     ui.add(egui::Label::new(
                         egui::RichText::new(&trimmed[num_end + 2..])
                             .size(12.0)
-                            .color(egui::Color32::from_rgb(50, 60, 70)),
+                            .color(egui::Color32::from_rgb(52, 48, 42)),
                     ).wrap());
                 });
             } else if line.starts_with("---") || line.starts_with("===") {
                 ui.add(egui::Separator::default().spacing(4.0));
             } else if line.starts_with("> ") {
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(240, 246, 255))
+                    .fill(egui::Color32::from_rgb(225, 241, 239))
                     .inner_margin(egui::Margin::symmetric(8, 2))
                     .show(ui, |ui| {
                         ui.add(egui::Label::new(
                             egui::RichText::new(&line[2..])
                                 .size(12.0)
                                 .italics()
-                                .color(egui::Color32::from_rgb(80, 100, 130)),
+                                .color(egui::Color32::from_rgb(10, 95, 90)),
                         ).wrap());
                     });
             } else if line.is_empty() {
@@ -1446,9 +1446,9 @@ impl OutputPanel {
                 let display = line.replace("**", "").replace("__", "").replace('`', "");
                 let is_bold = line.contains("**") || line.contains("__");
                 let text = if is_bold {
-                    egui::RichText::new(display).size(12.0).strong().color(egui::Color32::from_rgb(31, 35, 40))
+                    egui::RichText::new(display).size(12.0).strong().color(egui::Color32::from_rgb(52, 48, 42))
                 } else {
-                    egui::RichText::new(display).size(12.0).color(egui::Color32::from_rgb(50, 60, 70))
+                    egui::RichText::new(display).size(12.0).color(egui::Color32::from_rgb(52, 48, 42))
                 };
                 ui.add(egui::Label::new(text).wrap());
             }
@@ -1483,12 +1483,12 @@ impl OutputPanel {
                         egui::RichText::new(filename)
                             .size(12.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                            .color(egui::Color32::from_rgb(52, 48, 42)),
                     );
                     ui.label(
                         egui::RichText::new(format!("({} rows \u{00D7} {} cols)", total_rows.saturating_sub(1), col_count))
                             .size(10.0)
-                            .color(egui::Color32::from_rgb(150, 160, 170)),
+                            .color(egui::Color32::from_rgb(168, 158, 144)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Open").clicked() {
@@ -1523,13 +1523,13 @@ impl OutputPanel {
                                                 egui::RichText::new(text)
                                                     .size(11.0)
                                                     .strong()
-                                                    .color(egui::Color32::from_rgb(56, 139, 253)),
+                                                    .color(egui::Color32::from_rgb(18, 154, 145)),
                                             );
                                         } else {
                                             ui.label(
                                                 egui::RichText::new(text)
                                                     .size(11.0)
-                                                    .color(egui::Color32::from_rgb(50, 60, 70)),
+                                                    .color(egui::Color32::from_rgb(52, 48, 42)),
                                             );
                                         }
                                     }
@@ -1717,7 +1717,7 @@ if doc:
                         egui::RichText::new(filename)
                             .size(13.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                            .color(egui::Color32::from_rgb(52, 48, 42)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Open").clicked() {
@@ -1742,7 +1742,7 @@ if doc:
                             ui.label(
                                 egui::RichText::new(format!("{} KB", kb))
                                     .size(10.0)
-                                    .color(egui::Color32::from_rgb(150, 160, 170)),
+                                    .color(egui::Color32::from_rgb(168, 158, 144)),
                             );
                         }
                     }
@@ -1946,7 +1946,7 @@ if doc:
                         egui::RichText::new(filename)
                             .size(13.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                            .color(egui::Color32::from_rgb(52, 48, 42)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Open").clicked() {
@@ -1974,7 +1974,7 @@ if doc:
                     ui.label(
                         egui::RichText::new(info)
                             .size(10.0)
-                            .color(egui::Color32::from_rgb(150, 160, 170)),
+                            .color(egui::Color32::from_rgb(168, 158, 144)),
                     );
                 }
 
@@ -2008,7 +2008,7 @@ if doc:
                                             ui.label(
                                                 egui::RichText::new("(empty sheet)")
                                                     .size(11.0)
-                                                    .color(egui::Color32::from_rgb(150, 160, 170)),
+                                                    .color(egui::Color32::from_rgb(168, 158, 144)),
                                             );
                                         } else {
                                             let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
@@ -2024,7 +2024,7 @@ if doc:
                                                                     egui::RichText::new(cell)
                                                                         .size(11.0)
                                                                         .strong()
-                                                                        .color(egui::Color32::from_rgb(31, 35, 40)),
+                                                                        .color(egui::Color32::from_rgb(52, 48, 42)),
                                                                 );
                                                             });
                                                         }
@@ -2041,7 +2041,7 @@ if doc:
                                                                     ui.label(
                                                                         egui::RichText::new(val)
                                                                             .size(10.5)
-                                                                            .color(egui::Color32::from_rgb(50, 60, 70)),
+                                                                            .color(egui::Color32::from_rgb(52, 48, 42)),
                                                                     );
                                                                 });
                                                             }
@@ -2054,7 +2054,7 @@ if doc:
                                                 ui.label(
                                                     egui::RichText::new(format!("... {} more rows (click \u{25BC} to expand)", rows.len() - max_rows - 1))
                                                         .size(10.0)
-                                                        .color(egui::Color32::from_rgb(150, 160, 170)),
+                                                        .color(egui::Color32::from_rgb(168, 158, 144)),
                                                 );
                                             }
                                         }
@@ -2084,7 +2084,7 @@ if doc:
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     egui::Frame::new()
-                        .fill(egui::Color32::from_rgba_premultiplied(88, 166, 255, 20))
+                        .fill(egui::Color32::from_rgba_premultiplied(18, 154, 145, 20))
                         .corner_radius(6.0)
                         .inner_margin(egui::Margin::symmetric(6, 4))
                         .show(ui, |ui| {
@@ -2092,7 +2092,7 @@ if doc:
                                 egui::RichText::new(format!("{} {}", icon, ext))
                                     .size(11.0)
                                     .strong()
-                                    .color(egui::Color32::from_rgb(56, 139, 253)),
+                                    .color(egui::Color32::from_rgb(18, 154, 145)),
                             );
                         });
 
@@ -2101,7 +2101,7 @@ if doc:
                             egui::RichText::new(filename)
                                 .size(13.0)
                                 .strong()
-                                .color(egui::Color32::from_rgb(31, 35, 40)),
+                                .color(egui::Color32::from_rgb(52, 48, 42)),
                         );
                         if full.exists() {
                             if let Ok(meta) = std::fs::metadata(&full) {
@@ -2109,7 +2109,7 @@ if doc:
                                 ui.label(
                                     egui::RichText::new(format!("{} KB", kb))
                                         .size(10.0)
-                                        .color(egui::Color32::from_rgb(150, 160, 170)),
+                                        .color(egui::Color32::from_rgb(168, 158, 144)),
                                 );
                             }
                         }
@@ -2121,7 +2121,7 @@ if doc:
                                 .size(12.0)
                                 .color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(88, 166, 255))
+                        .fill(egui::Color32::from_rgb(18, 154, 145))
                         .corner_radius(6.0);
                         if ui.add(open_btn).clicked() {
                             let _ = open::that(&full);
@@ -2152,7 +2152,7 @@ if doc:
                         egui::RichText::new(filename)
                             .size(13.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(31, 35, 40)),
+                            .color(egui::Color32::from_rgb(52, 48, 42)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let open_btn = egui::Button::new(
@@ -2160,7 +2160,7 @@ if doc:
                                 .size(12.0)
                                 .color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(88, 166, 255))
+                        .fill(egui::Color32::from_rgb(18, 154, 145))
                         .corner_radius(6.0);
                         if ui.add(open_btn).clicked() {
                             let _ = open::that(&full);
@@ -2175,7 +2175,7 @@ if doc:
     // -----------------------------------------------------------------------
 
     pub fn show_toggle_button(&mut self, ui: &mut egui::Ui, file_count: usize) {
-        let accent = egui::Color32::from_rgb(88, 166, 255);
+        let accent = egui::Color32::from_rgb(18, 154, 145);
         let btn = egui::Button::new(
             egui::RichText::new(format!("\u{1F4E4} {} output{}", file_count, if file_count == 1 { "" } else { "s" }))
                 .size(12.0)

@@ -90,20 +90,20 @@ fn extension_badge(name: &str) -> Option<(&'static str, egui::Color32)> {
         "bmp" => ("BMP", egui::Color32::from_rgb(194, 100, 39)),
         "mp4" | "mov" | "avi" | "mkv" => ("VID", egui::Color32::from_rgb(128, 0, 128)),
         "mp3" | "wav" | "flac" | "ogg" => ("AUD", egui::Color32::from_rgb(128, 0, 128)),
-        "zip" | "tar" | "gz" | "7z" | "rar" => ("ZIP", egui::Color32::from_rgb(108, 117, 125)),
+        "zip" | "tar" | "gz" | "7z" | "rar" => ("ZIP", egui::Color32::from_rgb(124, 115, 104)),
         "py" => ("PY", egui::Color32::from_rgb(55, 118, 171)),
         "rs" => ("RS", egui::Color32::from_rgb(183, 65, 14)),
         "js" | "jsx" => ("JS", egui::Color32::from_rgb(247, 223, 30)),
         "ts" | "tsx" => ("TS", egui::Color32::from_rgb(49, 120, 198)),
         "html" | "htm" => ("HTML", egui::Color32::from_rgb(228, 77, 38)),
         "css" | "scss" | "sass" => ("CSS", egui::Color32::from_rgb(86, 61, 124)),
-        "json" => ("JSON", egui::Color32::from_rgb(108, 117, 125)),
-        "yaml" | "yml" => ("YAML", egui::Color32::from_rgb(108, 117, 125)),
-        "toml" => ("TOML", egui::Color32::from_rgb(108, 117, 125)),
-        "xml" => ("XML", egui::Color32::from_rgb(108, 117, 125)),
+        "json" => ("JSON", egui::Color32::from_rgb(124, 115, 104)),
+        "yaml" | "yml" => ("YAML", egui::Color32::from_rgb(124, 115, 104)),
+        "toml" => ("TOML", egui::Color32::from_rgb(124, 115, 104)),
+        "xml" => ("XML", egui::Color32::from_rgb(124, 115, 104)),
         "md" | "markdown" => ("MD", egui::Color32::from_rgb(86, 61, 124)),
-        "txt" => ("TXT", egui::Color32::from_rgb(108, 117, 125)),
-        "log" => ("LOG", egui::Color32::from_rgb(108, 117, 125)),
+        "txt" => ("TXT", egui::Color32::from_rgb(124, 115, 104)),
+        "log" => ("LOG", egui::Color32::from_rgb(124, 115, 104)),
         "csv" => ("CSV", egui::Color32::from_rgb(33, 115, 70)),
         "sql" => ("SQL", egui::Color32::from_rgb(0, 114, 198)),
         "sh" | "bash" | "zsh" => ("SH", egui::Color32::from_rgb(60, 60, 60)),
@@ -118,7 +118,7 @@ fn extension_badge(name: &str) -> Option<(&'static str, egui::Color32)> {
         "r" => ("R", egui::Color32::from_rgb(39, 104, 177)),
         "bib" => ("BIB", egui::Color32::from_rgb(120, 94, 70)),
         "tex" | "latex" => ("TEX", egui::Color32::from_rgb(0, 128, 128)),
-        "ini" | "cfg" | "conf" => ("CFG", egui::Color32::from_rgb(108, 117, 125)),
+        "ini" | "cfg" | "conf" => ("CFG", egui::Color32::from_rgb(124, 115, 104)),
         _ => return None,
     };
     Some((label, color))
@@ -724,7 +724,7 @@ impl FilesView {
             let badge_rect = ui.allocate_space(egui::vec2(36.0, 20.0));
             let rect = badge_rect.1;
             ui.painter()
-                .rect_filled(rect, 3.0, egui::Color32::from_rgb(108, 117, 125));
+                .rect_filled(rect, 3.0, egui::Color32::from_rgb(124, 115, 104));
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,

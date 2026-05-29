@@ -896,7 +896,7 @@ impl TasksView {
                 egui::RichText::new("Active Chat Sessions")
                     .size(12.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(56, 139, 253)),
+                    .color(egui::Color32::from_rgb(18, 154, 145)),
             );
             ui.add_space(4.0);
             let mut kill_chat_id: Option<String> = None;
@@ -979,7 +979,7 @@ impl TasksView {
                                         ui.label(
                                             egui::RichText::new(format!("Tools: {}", chat.tool_calls))
                                                 .small()
-                                                .color(egui::Color32::from_rgb(88, 166, 255)),
+                                                .color(egui::Color32::from_rgb(18, 154, 145)),
                                         );
                                     }
                                 });
@@ -1410,7 +1410,7 @@ impl TasksView {
                                         ui.label(
                                             egui::RichText::new(format!("Tools: {}", chat.tool_calls))
                                                 .small()
-                                                .color(egui::Color32::from_rgb(88, 166, 255)),
+                                                .color(egui::Color32::from_rgb(18, 154, 145)),
                                         );
                                     }
                                     ui.label(

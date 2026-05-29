@@ -327,7 +327,7 @@ impl ProjectsView {
                             egui::RichText::new("+ Create Project")
                                 .color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(74, 144, 226)),
+                        .fill(egui::Color32::from_rgb(18, 154, 145)),
                     )
                     .clicked()
                 {
@@ -934,7 +934,7 @@ impl ProjectsView {
                     egui::Button::new(
                         egui::RichText::new("Reload").color(egui::Color32::WHITE),
                     )
-                    .fill(egui::Color32::from_rgb(74, 144, 226)),
+                    .fill(egui::Color32::from_rgb(18, 154, 145)),
                 )
                 .clicked()
             {
@@ -1054,7 +1054,7 @@ impl ProjectsView {
                         egui::Button::new(
                             egui::RichText::new("Upload").color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(74, 144, 226)),
+                        .fill(egui::Color32::from_rgb(18, 154, 145)),
                     )
                     .clicked()
                 {
@@ -1667,7 +1667,7 @@ impl ProjectsView {
                                         .size(11.0)
                                         .color(egui::Color32::WHITE),
                                 )
-                                .fill(egui::Color32::from_rgb(74, 144, 226)),
+                                .fill(egui::Color32::from_rgb(18, 154, 145)),
                             )
                             .clicked()
                         {
@@ -1770,7 +1770,7 @@ impl ProjectsView {
                 .inner_margin(egui::Margin::same(10))
                 .corner_radius(egui::CornerRadius::same(6))
                 .fill(egui::Color32::from_rgba_premultiplied(74, 144, 226, 25))
-                .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(74, 144, 226)))
+                .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(18, 154, 145)))
                 .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new(&session.title)
@@ -1791,7 +1791,7 @@ impl ProjectsView {
                                     .size(11.0)
                                     .color(egui::Color32::WHITE),
                             )
-                            .fill(egui::Color32::from_rgb(74, 144, 226)),
+                            .fill(egui::Color32::from_rgb(18, 154, 145)),
                         ).clicked() {
                             open_session_id = Some(session.id.clone());
                         }
@@ -1849,7 +1849,7 @@ impl ProjectsView {
                         egui::Frame::default()
                             .inner_margin(egui::Margin::same(8))
                             .corner_radius(egui::CornerRadius::same(4))
-                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 218, 230)))
+                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
                             .show(ui, |ui| {
                                 ui.label(egui::RichText::new(&session.title).size(12.0));
                                 ui.label(
@@ -1864,7 +1864,7 @@ impl ProjectsView {
                                             .size(11.0)
                                             .color(egui::Color32::WHITE),
                                     )
-                                    .fill(egui::Color32::from_rgb(74, 144, 226)),
+                                    .fill(egui::Color32::from_rgb(18, 154, 145)),
                                 ).clicked() {
                                     link_session_id = Some(session.id.clone());
                                 }
@@ -1965,7 +1965,7 @@ impl ProjectsView {
                             egui::Button::new(
                                 egui::RichText::new("Create").color(egui::Color32::WHITE),
                             )
-                            .fill(egui::Color32::from_rgb(74, 144, 226)),
+                            .fill(egui::Color32::from_rgb(18, 154, 145)),
                         )
                         .clicked()
                     {
