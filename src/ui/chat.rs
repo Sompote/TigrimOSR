@@ -4192,8 +4192,8 @@ You have access to these tools: {}.{}",
             return;
         }
 
-        // Poll live agent statuses every 500ms from the realtime session
-        if self.graphic_status_poll_timer.elapsed() > std::time::Duration::from_millis(500) {
+        // Poll live agent statuses every 2s (slower to avoid flickering)
+        if self.graphic_status_poll_timer.elapsed() > std::time::Duration::from_millis(2000) {
             self.graphic_status_poll_timer = std::time::Instant::now();
             let statuses_arc = self.graphic_live_statuses.clone();
             let ctx = ui.ctx().clone();
@@ -4207,17 +4207,22 @@ You have access to these tools: {}.{}",
         }
 
         // Build a resolved status map: live statuses take priority over file-based.
-        // This avoids the 2s reload overwriting live "idle" back to "working".
+        // "idle" agents that have already done work (have signals) are shown as "done".
         let resolved_statuses: std::collections::HashMap<String, String> = {
             let live = self.graphic_live_statuses.lock().unwrap();
             let session_active = self.active_streams.contains_key(&self.graphic_loaded_config);
             let mut map = std::collections::HashMap::new();
             for agent in &self.graphic_agents {
+                let has_done_work = self.graphic_signals.iter().any(|s| s.from == agent.id);
                 let status = if let Some(live_status) = live.get(&agent.id) {
-                    // Live data always wins
-                    live_status.clone()
-                } else if !session_active && agent.status == "working" {
-                    // Stream finished, no live data — mark done
+                    // Live "idle" + has done work = "done" (agent finished its task)
+                    if live_status == "idle" && has_done_work {
+                        "done".to_string()
+                    } else {
+                        live_status.clone()
+                    }
+                } else if !session_active && (agent.status == "working" || has_done_work) {
+                    // Stream finished — mark done
                     "done".to_string()
                 } else {
                     agent.status.clone()
@@ -4226,10 +4231,16 @@ You have access to these tools: {}.{}",
             }
             map
         };
-        // Apply resolved statuses back to agents
+        // Apply resolved statuses and update last_tool from latest signal
         for agent in &mut self.graphic_agents {
             if let Some(status) = resolved_statuses.get(&agent.id) {
                 agent.status = status.clone();
+            }
+            // Update last_tool from the most recent signal for this agent
+            if let Some(latest) = self.graphic_signals.iter().rev()
+                .find(|s| s.from == agent.id && !s.tool.is_empty())
+            {
+                agent.last_tool = latest.tool.clone();
             }
         }
 
@@ -4389,6 +4400,10 @@ You have access to these tools: {}.{}",
                         .filter(|a| a.status == "working")
                         .map(|a| a.id.as_str())
                         .collect();
+                    let done_agent_ids: std::collections::HashSet<&str> = self.graphic_agents.iter()
+                        .filter(|a| a.status == "done")
+                        .map(|a| a.id.as_str())
+                        .collect();
 
                     // ── Draw edges ──
                     for edge in &self.graphic_edges {
@@ -4397,8 +4412,12 @@ You have access to these tools: {}.{}",
                         let from_pt = edge_point(from_rect, to_rect.center());
                         let to_pt = edge_point(to_rect, from_rect.center());
 
-                        let is_active = active_agent_ids.contains(edge.from.as_str())
-                            || active_agent_ids.contains(edge.to.as_str());
+                        let from_working = active_agent_ids.contains(edge.from.as_str());
+                        let to_working = active_agent_ids.contains(edge.to.as_str());
+                        let from_done = done_agent_ids.contains(edge.from.as_str());
+                        let to_done = done_agent_ids.contains(edge.to.as_str());
+                        let is_active = from_working || to_working;
+                        let both_done = from_done && to_done;
 
                         let base_edge_color = match edge.protocol.as_str() {
                             "tcp"        => egui::Color32::from_rgb(59, 130, 246),
@@ -4407,7 +4426,14 @@ You have access to these tools: {}.{}",
                             "blackboard" => egui::Color32::from_rgb(34, 197, 94),
                             _ => egui::Color32::from_rgb(59, 130, 246),
                         };
-                        let edge_color = if is_active { base_edge_color } else { egui::Color32::from_rgb(200, 205, 215) };
+                        // Active = colored, Done = grey, Idle = light grey
+                        let edge_color = if is_active {
+                            base_edge_color
+                        } else if both_done {
+                            egui::Color32::from_rgb(180, 188, 200)
+                        } else {
+                            egui::Color32::from_rgb(215, 220, 228)
+                        };
                         let thickness = if is_active { 2.5 * zoom } else { 1.2 * zoom };
 
                         painter.line_segment([from_pt, to_pt], egui::Stroke::new(thickness, edge_color));
@@ -4451,10 +4477,21 @@ You have access to these tools: {}.{}",
                             let Some(to_rect) = node_rects.get(&signal.to) else { continue };
                             let from_pt = edge_point(from_rect, to_rect.center());
                             let to_pt = edge_point(to_rect, from_rect.center());
-                            let is_active = active_agent_ids.contains(signal.from.as_str())
-                                || active_agent_ids.contains(signal.to.as_str());
-                            let color = if is_active { egui::Color32::from_rgb(59, 130, 246) } else { egui::Color32::from_rgb(200, 205, 215) };
-                            painter.line_segment([from_pt, to_pt], egui::Stroke::new(1.5 * zoom, color));
+                            let from_working = active_agent_ids.contains(signal.from.as_str());
+                            let to_working = active_agent_ids.contains(signal.to.as_str());
+                            let from_done = done_agent_ids.contains(signal.from.as_str());
+                            let to_done = done_agent_ids.contains(signal.to.as_str());
+                            let is_active = from_working || to_working;
+                            let both_done = from_done && to_done;
+                            let color = if is_active {
+                                egui::Color32::from_rgb(59, 130, 246)
+                            } else if both_done {
+                                egui::Color32::from_rgb(180, 188, 200)
+                            } else {
+                                egui::Color32::from_rgb(215, 220, 228)
+                            };
+                            let thickness = if is_active { 2.0 * zoom } else { 1.2 * zoom };
+                            painter.line_segment([from_pt, to_pt], egui::Stroke::new(thickness, color));
 
                             let dir = (to_pt - from_pt).normalized();
                             let perp = egui::vec2(-dir.y, dir.x);
@@ -4615,28 +4652,48 @@ You have access to these tools: {}.{}",
 
                                 let conns = connections.get(&agent.id);
 
-                                let description = match agent.status.as_str() {
+                                // Current action line — what the agent is doing RIGHT NOW
+                                let current_action = if agent.status == "working" && !agent.last_tool.is_empty() {
+                                    match agent.last_tool.as_str() {
+                                        "send_task" => {
+                                            if let Some(c) = conns {
+                                                format!("Delegating to {}", c.join(", "))
+                                            } else {
+                                                "Sending task...".to_string()
+                                            }
+                                        }
+                                        "wait_result" => "Waiting for agent result...".to_string(),
+                                        "check_agents" => "Checking agent status...".to_string(),
+                                        "run_python" => "Running Python code...".to_string(),
+                                        "web_search" => "Searching the web...".to_string(),
+                                        "fetch_url" => "Fetching URL...".to_string(),
+                                        "read_file" => "Reading file...".to_string(),
+                                        "write_file" => "Writing file...".to_string(),
+                                        "load_skill" => "Loading skill...".to_string(),
+                                        "run_shell" => "Running shell command...".to_string(),
+                                        other => format!("Running {}...", other),
+                                    }
+                                } else {
+                                    String::new()
+                                };
+
+                                // Summary line — total tools used
+                                let summary = match agent.status.as_str() {
                                     "working" => {
                                         if let Some((total, ref top_tools)) = tool_summary {
-                                            if let Some(c) = conns {
-                                                format!("{} tools ({}) \u{2192} {}", total, top_tools, c.join(", "))
-                                            } else {
-                                                format!("{} tools ({})", total, top_tools)
-                                            }
-                                        } else if let Some(c) = conns {
-                                            format!("Delegating \u{2192} {}", c.join(", "))
+                                            format!("{} tools used ({})", total, top_tools)
                                         } else {
-                                            "Processing...".to_string()
+                                            "Starting...".to_string()
                                         }
                                     }
                                     "done" => {
-                                        if let Some((total, _)) = tool_summary {
-                                            format!("Completed \u{2014} {} tools", total)
+                                        if let Some((total, ref top_tools)) = tool_summary {
+                                            format!("Completed \u{2014} {} tools ({})", total, top_tools)
                                         } else {
                                             "Completed".to_string()
                                         }
                                     }
-                                    _ => "Waiting".to_string(),
+                                    _ => "Waiting for task".to_string(),
                                 };
 
                                 // Status dot color
@@ -4648,7 +4705,11 @@ You have access to these tools: {}.{}",
 
                                 // Agent card
                                 egui::Frame::new()
-                                    .fill(egui::Color32::from_rgb(240, 243, 248))
+                                    .fill(if agent.status == "working" {
+                                        egui::Color32::from_rgb(237, 247, 237) // light green tint for active
+                                    } else {
+                                        egui::Color32::from_rgb(240, 243, 248)
+                                    })
                                     .corner_radius(6.0)
                                     .inner_margin(egui::Margin::symmetric(8, 6))
                                     .show(ui, |ui| {
@@ -4668,8 +4729,13 @@ You have access to these tools: {}.{}",
                                             ui.label(egui::RichText::new(format!("{}{}", role_icon, agent.name))
                                                 .size(11.0).strong().color(egui::Color32::from_rgb(33, 37, 41)));
                                         });
-                                        // Description — wraps within card
-                                        ui.label(egui::RichText::new(&description)
+                                        // Current action — prominent, only when working
+                                        if !current_action.is_empty() {
+                                            ui.label(egui::RichText::new(&current_action)
+                                                .size(10.5).color(egui::Color32::from_rgb(34, 120, 80)).italics());
+                                        }
+                                        // Summary — tool counts
+                                        ui.label(egui::RichText::new(&summary)
                                             .size(10.0).color(egui::Color32::from_rgb(100, 110, 125)));
                                     });
                             }
