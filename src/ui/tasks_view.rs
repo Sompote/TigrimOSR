@@ -586,7 +586,7 @@ impl TasksView {
                                         if ui
                                             .button(
                                                 egui::RichText::new("Run Now").color(
-                                                    egui::Color32::from_rgb(59, 130, 246),
+                                                    egui::Color32::from_rgb(18, 154, 145),
                                                 ),
                                             )
                                             .clicked()
@@ -950,7 +950,7 @@ impl TasksView {
                                                     .color(egui::Color32::WHITE)
                                                     .small(),
                                             )
-                                            .fill(egui::Color32::from_rgb(59, 130, 246))
+                                            .fill(egui::Color32::from_rgb(18, 154, 145))
                                             .corner_radius(4.0),
                                         ).clicked() {
                                             goto_chat_id = Some(chat.session_id.clone());
@@ -1202,7 +1202,7 @@ impl TasksView {
                 let is_expanded = self.expanded_remote_id.as_deref() == Some(id);
 
                 let status_color = match status {
-                    "running" => egui::Color32::from_rgb(59, 130, 246),
+                    "running" => egui::Color32::from_rgb(18, 154, 145),
                     "completed" => egui::Color32::from_rgb(74, 222, 128),
                     "failed" => egui::Color32::from_rgb(239, 68, 68),
                     "killed" => egui::Color32::from_rgb(107, 114, 128),
@@ -1386,7 +1386,7 @@ impl TasksView {
                                                     .color(egui::Color32::WHITE)
                                                     .small(),
                                             )
-                                            .fill(egui::Color32::from_rgb(59, 130, 246))
+                                            .fill(egui::Color32::from_rgb(18, 154, 145))
                                             .corner_radius(4.0),
                                         ).clicked() {
                                             self.navigate_to_chat = Some(chat.session_id.clone());

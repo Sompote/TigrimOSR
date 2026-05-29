@@ -133,7 +133,7 @@ impl SetupView {
         ] {
             ui.horizontal(|ui| {
                 ui.add_space(20.0);
-                ui.label(egui::RichText::new(icon).size(20.0).color(egui::Color32::from_rgb(59, 130, 246)));
+                ui.label(egui::RichText::new(icon).size(20.0).color(egui::Color32::from_rgb(18, 154, 145)));
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new(title).strong());
                     ui.label(egui::RichText::new(detail).size(12.0).color(egui::Color32::GRAY));

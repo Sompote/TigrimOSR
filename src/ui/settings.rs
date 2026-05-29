@@ -664,7 +664,7 @@ impl SettingsView {
                 VmState::Running => egui::Color32::from_rgb(250, 204, 21),
                 VmState::Error => egui::Color32::from_rgb(239, 68, 68),
                 VmState::Stopped => egui::Color32::from_rgb(156, 163, 175),
-                _ => egui::Color32::from_rgb(59, 130, 246),
+                _ => egui::Color32::from_rgb(18, 154, 145),
             };
             ui.horizontal(|ui| {
                 let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());

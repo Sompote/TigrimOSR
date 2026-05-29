@@ -894,7 +894,7 @@ impl FilesView {
         let sidebar_bg = egui::Color32::from_rgb(247, 247, 248);
         let text_dim = egui::Color32::from_rgb(100, 100, 105);
         let text_normal = egui::Color32::from_rgb(30, 30, 32);
-        let accent = egui::Color32::from_rgb(59, 130, 246);
+        let accent = egui::Color32::from_rgb(18, 154, 145);
 
         ui.painter().rect_filled(
             ui.available_rect_before_wrap(),
@@ -1360,7 +1360,7 @@ impl FilesView {
     fn render_main_area(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         let text_dim = egui::Color32::from_rgb(134, 134, 139);
         let text_normal = egui::Color32::from_rgb(29, 29, 31);
-        let accent = egui::Color32::from_rgb(59, 130, 246);
+        let accent = egui::Color32::from_rgb(18, 154, 145);
 
         // White background
         ui.painter().rect_filled(

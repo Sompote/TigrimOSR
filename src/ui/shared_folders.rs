@@ -17,7 +17,7 @@ pub fn shared_folders_view(
             ui.label(egui::RichText::new("Only these folders are accessible inside the sandbox.").size(12.0).color(egui::Color32::GRAY));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.add(egui::Button::new(egui::RichText::new("+ Add Folder").color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(59, 130, 246))).clicked() {
+            if ui.add(egui::Button::new(egui::RichText::new("+ Add Folder").color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(18, 154, 145))).clicked() {
                 if let Some(path) = rfd::FileDialog::new().set_title("Select folder to share").pick_folder() {
                     let vm = vm_manager.clone();
                     runtime.spawn(async move { vm.add_shared_folder(path, true).await; });
@@ -44,7 +44,7 @@ pub fn shared_folders_view(
 
             for entry in shared_folders {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("\u{1F4C1}").size(18.0).color(egui::Color32::from_rgb(59, 130, 246)));
+                    ui.label(egui::RichText::new("\u{1F4C1}").size(18.0).color(egui::Color32::from_rgb(18, 154, 145)));
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(&entry.name).strong());
                         ui.label(egui::RichText::new(entry.path.to_string_lossy().as_ref()).size(11.0).color(egui::Color32::GRAY));

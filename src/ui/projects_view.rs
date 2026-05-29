@@ -439,7 +439,7 @@ impl ProjectsView {
                 .stroke(egui::Stroke::new(
                     1.0,
                     if is_selected {
-                        egui::Color32::from_rgb(59, 130, 246)
+                        egui::Color32::from_rgb(18, 154, 145)
                     } else {
                         egui::Color32::from_gray(60)
                     },
@@ -452,7 +452,7 @@ impl ProjectsView {
                         ui.label(
                             egui::RichText::new("\u{1F4C1}")
                                 .size(20.0)
-                                .color(egui::Color32::from_rgb(59, 130, 246)),
+                                .color(egui::Color32::from_rgb(18, 154, 145)),
                         );
                         ui.vertical(|ui| {
                             ui.add(egui::Label::new(egui::RichText::new(&project.name).strong().size(14.0)).wrap());
@@ -548,7 +548,7 @@ impl ProjectsView {
                 };
                 let btn = if is_active {
                     egui::Button::new(text)
-                        .fill(egui::Color32::from_rgb(59, 130, 246))
+                        .fill(egui::Color32::from_rgb(18, 154, 145))
                         .corner_radius(egui::CornerRadius::same(4))
                 } else {
                     egui::Button::new(text)
@@ -1272,7 +1272,7 @@ impl ProjectsView {
                             };
                             let btn = if is_sel {
                                 egui::Button::new(text)
-                                    .fill(egui::Color32::from_rgb(59, 130, 246))
+                                    .fill(egui::Color32::from_rgb(18, 154, 145))
                             } else {
                                 egui::Button::new(text).frame(false)
                             };
@@ -1554,7 +1554,7 @@ impl ProjectsView {
                     .inner_margin(egui::Margin::same(10))
                     .corner_radius(egui::CornerRadius::same(6))
                     .fill(egui::Color32::from_rgb(220, 238, 255))
-                    .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(59, 130, 246)))
+                    .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(18, 154, 145)))
                     .show(ui, |ui| {
                         if let Some(info) = skill_info {
                             let status = if info.enabled { "enabled" } else { "disabled" };

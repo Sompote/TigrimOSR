@@ -70,16 +70,38 @@ impl TigrimOSApp {
         vm_manager: Arc<VmManager>,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
-        // ── Thai font support ────────────────────────────────────────
-        // egui 0.31 uses ab_glyph which has no OpenType shaping, so Thai
-        // combining marks won't be kerned perfectly. Loading ThonburiUI
-        // (the macOS system UI Thai font) as PRIMARY font gives the best
-        // result available until we upgrade to egui 0.32+ (cosmic-text).
+        // ── Font setup: Plus Jakarta Sans + Thai fallback ────────────
         {
             let mut fonts = egui::FontDefinitions::default();
 
-            // Ayuthaya has clean combining marks without dotted-circle placeholders.
-            // Fall back to Silom / SukhumvitSet / Arial Unicode on other systems.
+            // Plus Jakarta Sans — primary UI font (bundled)
+            let assets_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+            let jakarta_regular = assets_dir.join("PlusJakartaSans-Regular.ttf");
+            let jakarta_bold = assets_dir.join("PlusJakartaSans-SemiBold.ttf");
+            if let Ok(data) = std::fs::read(&jakarta_regular) {
+                fonts.font_data.insert(
+                    "JakartaSans".to_owned(),
+                    egui::FontData::from_owned(data).into(),
+                );
+                // Insert as FIRST font in Proportional family
+                if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    v.insert(0, "JakartaSans".to_owned());
+                }
+            }
+            if let Ok(data) = std::fs::read(&jakarta_bold) {
+                fonts.font_data.insert(
+                    "JakartaSansBold".to_owned(),
+                    egui::FontData::from_owned(data).into(),
+                );
+                // Available as fallback after regular
+                if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    // Insert after JakartaSans regular
+                    let pos = v.iter().position(|n| n == "JakartaSans").map(|i| i + 1).unwrap_or(1);
+                    v.insert(pos, "JakartaSansBold".to_owned());
+                }
+            }
+
+            // Thai fallback (Ayuthaya / Silom / etc.)
             let thai_paths = [
                 "/System/Library/Fonts/Supplemental/Ayuthaya.ttf",
                 "/System/Library/Fonts/Supplemental/Silom.ttf",
@@ -95,11 +117,8 @@ impl TigrimOSApp {
                         "ThaiFallback".to_owned(),
                         egui::FontData::from_owned(data).into(),
                     );
-                    // Insert as FIRST fallback so Thai codepoints are found early
                     if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                        // insert after the default Latin font so Latin still renders sharp
-                        let pos = v.len().saturating_sub(0);
-                        v.insert(pos, "ThaiFallback".to_owned());
+                        v.push("ThaiFallback".to_owned());
                     }
                     if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
                         v.push("ThaiFallback".to_owned());
@@ -108,7 +127,7 @@ impl TigrimOSApp {
                 }
             }
 
-            // Add a symbol font so sidebar icons render correctly
+            // Symbol fallback for sidebar icons
             let symbol_paths = [
                 "/System/Library/Fonts/Apple Symbols.ttf",
                 "/System/Library/Fonts/Supplemental/Apple Symbols.ttf",
@@ -150,8 +169,9 @@ impl TigrimOSApp {
         let accent_hover = egui::Color32::from_rgb(12, 129, 122); // #0C817A deep teal
 
         // Window & panel backgrounds
-        visuals.panel_fill = bg_white;
-        visuals.window_fill = bg_light;
+        let bg_surface = egui::Color32::from_rgb(251, 247, 241); // #FBF7F1 warm surface
+        visuals.panel_fill = bg_surface;
+        visuals.window_fill = bg_surface;
         visuals.extreme_bg_color = bg_light;
         visuals.faint_bg_color = bg_light;
 

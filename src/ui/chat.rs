@@ -3107,7 +3107,7 @@ You have access to these tools: {}.{}",
                                                         let tool = data.and_then(|d| d.get("tool")).and_then(|v| v.as_str()).unwrap_or("?");
                                                         let args = data.and_then(|d| d.get("args_preview")).and_then(|v| v.as_str()).unwrap_or("");
                                                         let args_short = if args.len() > 120 { &args[..floor_char_boundary(args, 120)] } else { args };
-                                                        (egui::Color32::from_rgb(59, 130, 246),
+                                                        (egui::Color32::from_rgb(18, 154, 145),
                                                          format!("[{}] {} > {} {}", ts_short, agent_id, tool, args_short))
                                                     }
                                                     "TOOL_RESULT" => {
@@ -4427,11 +4427,11 @@ You have access to these tools: {}.{}",
                         let both_done = from_done && to_done;
 
                         let base_edge_color = match edge.protocol.as_str() {
-                            "tcp"        => egui::Color32::from_rgb(59, 130, 246),
+                            "tcp"        => egui::Color32::from_rgb(18, 154, 145),
                             "queue"      => egui::Color32::from_rgb(245, 158, 11),
                             "bus"        => egui::Color32::from_rgb(168, 85, 247),
                             "blackboard" => egui::Color32::from_rgb(34, 197, 94),
-                            _ => egui::Color32::from_rgb(59, 130, 246),
+                            _ => egui::Color32::from_rgb(18, 154, 145),
                         };
                         // Active = colored, Done = grey, Idle = light grey
                         let edge_color = if is_active {
@@ -4491,7 +4491,7 @@ You have access to these tools: {}.{}",
                             let is_active = from_working || to_working;
                             let both_done = from_done && to_done;
                             let color = if is_active {
-                                egui::Color32::from_rgb(59, 130, 246)
+                                egui::Color32::from_rgb(18, 154, 145)
                             } else if both_done {
                                 egui::Color32::from_rgb(200, 192, 178)
                             } else {
@@ -4521,7 +4521,7 @@ You have access to these tools: {}.{}",
 
                         let base_color = match agent.role.as_str() {
                             "human"        => egui::Color32::from_rgb(168, 158, 144),
-                            "orchestrator" => egui::Color32::from_rgb(59, 130, 246),
+                            "orchestrator" => egui::Color32::from_rgb(18, 154, 145),
                             "worker"       => egui::Color32::from_rgb(34, 197, 94),
                             "checker"      => egui::Color32::from_rgb(245, 158, 11),
                             "reporter"     => egui::Color32::from_rgb(168, 85, 247),

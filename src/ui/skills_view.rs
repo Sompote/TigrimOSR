@@ -259,7 +259,7 @@ impl SkillsView {
     // ------------------------------------------------------------------
     fn source_badge(ui: &mut egui::Ui, source: &str) {
         let (badge_text, badge_color) = match source {
-            "upload" => ("upload", egui::Color32::from_rgb(59, 130, 246)),
+            "upload" => ("upload", egui::Color32::from_rgb(18, 154, 145)),
             "builtin" => ("built-in", egui::Color32::from_rgb(34, 197, 94)),
             "auto" => ("auto", egui::Color32::from_rgb(168, 85, 247)),
             "manual" => ("manual", egui::Color32::from_rgb(249, 115, 22)),
@@ -328,7 +328,7 @@ impl SkillsView {
                             egui::RichText::new("Upload Skill")
                                 .color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(59, 130, 246)),
+                        .fill(egui::Color32::from_rgb(18, 154, 145)),
                     )
                     .clicked()
                 {
@@ -1263,7 +1263,7 @@ impl SkillsView {
                 .stroke(egui::Stroke::new(
                     1.0,
                     if is_selected {
-                        egui::Color32::from_rgb(59, 130, 246)
+                        egui::Color32::from_rgb(18, 154, 145)
                     } else {
                         egui::Color32::TRANSPARENT
                     },
@@ -1403,7 +1403,7 @@ impl SkillsView {
                 egui::RichText::new("User Skills")
                     .size(13.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(59, 130, 246)),
+                    .color(egui::Color32::from_rgb(18, 154, 145)),
             );
             ui.add_space(4.0);
 
