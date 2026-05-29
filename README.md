@@ -1,4 +1,4 @@
-# TigrimOSR v0.5.1
+# TigrimOSR v0.5.2
 
 **TigrimOSR** is a native desktop AI agent platform that lets you orchestrate teams of specialist AI agents — all from a single, self-contained binary. Define agent swarms in simple YAML, connect them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously to solve complex tasks.
 
@@ -26,7 +26,19 @@ Design multi-agent systems visually — create architectures manually or generat
 
 ![Agent Swarm Editor](assets/screenshot_agents.png)
 
-## What's New in v0.5.1
+## What's New in v0.5.2
+
+- **Side-by-side Agent Activity panel** — The Graphic monitor tab now displays the agent network diagram on the left and the Agent Activity panel on the right, in a single-screen layout with no page-level scrolling. Activity cards use the same soft-blue theme as the main chat.
+- **`<think>` tag stripping** — LLM reasoning tags (`<think>...</think>`) are now stripped from all output paths: subagent log lines, bid logs, and all final response `TextChunk` emissions. Previously, raw `<think>` blocks leaked into agent activity logs and chat text when using reasoning models.
+- **Stale subagent log isolation** — The subagent broadcast listener now skips relay when sub-agents are disabled, preventing ghost agent output from a previous Fully Auto session (same session ID) from leaking into subsequent Single Agent sessions.
+- **Auto mode YAML-only enforcement** — Auto mode now strictly uses agents defined in the YAML config file. The `create_architecture` and `select_swarm` tools have been removed from Auto mode — only `spawn_subagent` is available, ensuring agents come exclusively from the selected YAML configuration.
+- **Auto mode config fallback** — When switching from Fully Auto to Auto mode, the system now automatically reuses the YAML architecture created by the previous Fully Auto session, so agents remain available without manually re-selecting a config file.
+- **Orchestrator tool access** — Orchestrator agents now have full access to all tools (web_search, fetch_url, etc.) and can decide whether to handle quick tasks directly or delegate to workers, instead of being restricted to delegation-only tools.
+
+### Previous Releases
+
+<details>
+<summary>v0.5.1 — Soul & Identity, output panel, skill browser</summary>
 
 - **Orchestrator Soul & Identity** — New Settings section to define the orchestrator's internal cognition (SOUL.md) and external presentation (IDENTITY.md). Saved as standalone markdown files, injected into the system prompt. No character limits — write as much behavioral context as needed.
 - **Output panel for agent-created files** — Files created via `write_file` now automatically appear in the output panel with inline rendering (markdown, images, CSV, PDF, etc.). Previously only `run_python` output files were detected.
@@ -36,7 +48,7 @@ Design multi-agent systems visually — create architectures manually or generat
 - **Skill synthesizer CLI provider guard** — Skill auto-update now returns a clear error when using CLI providers (Claude Code, Gemini CLI, Codex) instead of crashing with "builder error".
 - **Security: .env false positive fix** — The `.env` file security check no longer blocks legitimate Python calls like `os.environ` or `printenv`.
 
-### Previous Releases
+</details>
 
 <details>
 <summary>v0.5.0 — Kimi-style files, agent swarm light theme, zero-lag chat</summary>

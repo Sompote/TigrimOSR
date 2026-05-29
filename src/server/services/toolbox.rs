@@ -205,6 +205,22 @@ pub enum ToolUpdate {
     ApprovalRequired { name: String, args: Value },
 }
 
+/// Strip `<think>...</think>` blocks from LLM output (reasoning tags).
+fn strip_think_blocks(text: &str) -> String {
+    let mut result = text.to_string();
+    while let Some(start) = result.find("<think>") {
+        if let Some(end) = result.find("</think>") {
+            let end_pos = end + "</think>".len();
+            result = format!("{}{}", &result[..start], result[end_pos..].trim_start());
+        } else {
+            // Unclosed <think> — remove from tag to end
+            result = result[..start].to_string();
+            break;
+        }
+    }
+    result.trim().to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Tool approval gate (global channel for UI ↔ toolbox)
 // ---------------------------------------------------------------------------
@@ -858,7 +874,8 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
                     Your downstream agents: [{}]\n\
                     DELEGATION: Use send_task({{to: \"<agentId>\", task: \"...\"}}) then wait_result({{from: \"<agentId>\"}}).\n\
                     Send tasks to MULTIPLE agents in a SINGLE response for parallel execution.\n\
-                    Do NOT do research or analysis yourself — delegate everything to your workers.\n\
+                    You have full access to all tools. Use your judgement: delegate complex or parallelizable work to workers, \
+                    but feel free to handle quick tasks (reading files, checking data) yourself when it's more efficient.\n\
                     Synthesize agent results into a comprehensive final response.",
                     downstream.join(", ")
                 );
@@ -1054,7 +1071,10 @@ async fn realtime_agent_loop(
                         format!("[{}] [{}] BID TOOL RESULT: {}\n  {}", ts, bid_log_aid, name, r_short)
                     }
                     ToolUpdate::TextChunk(t) => {
-                        format!("[{}] [{}] BID TEXT: {}", ts, bid_log_aid, if t.len() > 100 { &t[..100] } else { t })
+                        let clean = strip_think_blocks(t);
+                        if clean.is_empty() { return; }
+                        let display = if clean.len() > 100 { format!("{}...", &clean[..100]) } else { clean };
+                        format!("[{}] [{}] BID TEXT: {}", ts, bid_log_aid, display)
                     }
                     ToolUpdate::Error(e) => format!("[{}] [{}] BID ERROR: {}", ts, bid_log_aid, e),
                     ToolUpdate::ApprovalRequired { name, .. } => format!("[{}] [{}] BID APPROVAL: {}", ts, bid_log_aid, name),
@@ -1157,11 +1177,10 @@ async fn realtime_agent_loop(
                     format!("[{}] [{}] TOOL RESULT: {}\n  {}", ts, log_aid, name, r_short)
                 }
                 ToolUpdate::TextChunk(t) => {
-                    if t.len() > 100 {
-                        format!("[{}] [{}] TEXT: {}...", ts, log_aid, &t[..100])
-                    } else {
-                        format!("[{}] [{}] TEXT: {}", ts, log_aid, t)
-                    }
+                    let clean = strip_think_blocks(t);
+                    if clean.is_empty() { return; }
+                    let display = if clean.len() > 100 { format!("{}...", &clean[..100]) } else { clean };
+                    format!("[{}] [{}] TEXT: {}", ts, log_aid, display)
                 }
                 ToolUpdate::Error(e) => {
                     format!("[{}] [{}] ERROR: {}", ts, log_aid, e)
@@ -2383,14 +2402,12 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
             return rt_tools;
         }
         _ => {
-            // "auto" mode: spawn_subagent (depth-limited)
+            // "auto" mode: spawn_subagent only — agents come from YAML config
             if realtime {
                 tools.extend(realtime_tools(&agent_list));
             } else {
                 tools.push(spawn_subagent_tool(&agent_list));
             }
-            tools.push(create_architecture_tool());
-            tools.push(select_swarm_tool());
         }
     }
     tools
@@ -6380,13 +6397,7 @@ async fn call_with_tools_inner(
         tools.extend(mcp_tools);
     }
 
-    // Orchestrators get reduced tools — research delegated to workers
-    if sub_agent.agent_role == "orchestrator" {
-        tools.retain(|t| {
-            let name = t["function"]["name"].as_str().unwrap_or("");
-            !matches!(name, "web_search" | "fetch_url")
-        });
-    }
+    // Orchestrators have the same tools as workers — they decide when to delegate vs do directly.
 
     // Load settings — realtime agents get higher limits since orchestrators need many rounds
     let settings = load_agent_settings();
@@ -6777,7 +6788,7 @@ async fn call_with_tools_inner(
         if let Some(calls) = tool_calls {
             if calls.is_empty() {
                 // No tool calls -- treat as final response
-                let content = message["content"].as_str().unwrap_or("").to_string();
+                let content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
                 on_update(ToolUpdate::TextChunk(content.clone()));
                 clear_checkpoint(&sub_agent.session_id).await;
                 return ToolLoopResult {
@@ -6821,10 +6832,10 @@ async fn call_with_tools_inner(
             for (tool_name, tool_id, tool_args, _raw) in &sequential_calls {
                 if total_tool_calls >= max_tool_calls {
                     warn!("Max total tool calls reached ({})", max_tool_calls);
-                    let content = force_final_response(
+                    let content = strip_think_blocks(&force_final_response(
                         &client, api_key, api_url, model, &all_messages, &tool_records,
                         total_tool_calls, temperature,
-                    ).await;
+                    ).await);
                     on_update(ToolUpdate::TextChunk(content.clone()));
                     clear_checkpoint(&sub_agent.session_id).await;
                     return ToolLoopResult { content, tool_results: tool_records, files: collected_files };
@@ -6846,10 +6857,10 @@ async fn call_with_tools_inner(
                     if tail.iter().all(|s| s == &signature) {
                         warn!("Loop detected: same tool+args repeated {} times", MAX_LOOP_REPEATS);
                         on_update(ToolUpdate::Error("Loop detected: same tool call repeated".to_string()));
-                        let content = force_final_response(
+                        let content = strip_think_blocks(&force_final_response(
                             &client, api_key, api_url, model, &all_messages, &tool_records,
                             total_tool_calls, temperature,
-                        ).await;
+                        ).await);
                         on_update(ToolUpdate::TextChunk(content.clone()));
                         clear_checkpoint(&sub_agent.session_id).await;
                         return ToolLoopResult { content, tool_results: tool_records, files: collected_files };
@@ -6920,13 +6931,7 @@ async fn call_with_tools_inner(
                     session_activated = true;
                     // Refresh tool set to include send_task/wait_result
                     tools = tool_definitions_for_mode(&sub_agent, true, true);
-                    // Orchestrators get reduced tools — research delegated to workers
-                    if sub_agent.agent_role == "orchestrator" {
-                        tools.retain(|t| {
-                            let name = t["function"]["name"].as_str().unwrap_or("");
-                            !matches!(name, "web_search" | "fetch_url")
-                        });
-                    }
+                    // Orchestrators have the same tools as workers — they decide when to delegate.
                     info!("[ToolLoop] Session activated via {}, tools refreshed with realtime tools", tool_name);
                 }
 
@@ -7108,7 +7113,7 @@ async fn call_with_tools_inner(
             }
 
             // Truly done — return final response
-            let content = message["content"].as_str().unwrap_or("").to_string();
+            let content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
             on_update(ToolUpdate::TextChunk(content.clone()));
             clear_checkpoint(&sub_agent.session_id).await;
 
@@ -7162,13 +7167,13 @@ async fn call_with_tools_inner(
     // Exhausted max rounds — force a final text response
     warn!("Tool loop exhausted max rounds ({})", max_rounds);
     clear_checkpoint(&sub_agent.session_id).await;
-    let content = force_final_response(
+    let content = strip_think_blocks(&force_final_response(
         &client, api_key, api_url, model, &all_messages, &tool_records,
         total_tool_calls, temperature,
-    ).await;
+    ).await);
     // Fall back to early_content if force_final_response returned empty
     let content = if content.is_empty() && !early_content.is_empty() {
-        early_content
+        strip_think_blocks(&early_content)
     } else {
         content
     };
