@@ -362,15 +362,16 @@ impl eframe::App for TigrimOSApp {
                 // ── Header: Logo + collapse toggle ──
                 ui.horizontal(|ui| {
                     if self.sidebar_open {
-                        if let Some(tex) = &self.logo_texture {
-                            ui.add(egui::Image::new(tex).max_size(egui::vec2(22.0, 22.0)).corner_radius(4.0));
-                        }
-                        ui.label(egui::RichText::new("TigrimOS").size(16.0).strong().color(text_dark));
+                        // "Tigrim" in dark + "OS" in accent bold (matching template)
+                        ui.label(egui::RichText::new("Tigrim").size(19.0).strong().color(text_dark));
+                        ui.add_space(-6.0);
+                        ui.label(egui::RichText::new("OS").size(19.0).strong().color(accent));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let icon = if self.sidebar_open { "\u{25C0}" } else { "\u{2630}" }; // ◀ or ☰
-                        let btn = egui::Button::new(egui::RichText::new(icon).size(14.0).color(text_dim))
-                            .fill(egui::Color32::TRANSPARENT);
+                        let icon = if self.sidebar_open { "\u{2039}" } else { "\u{2630}" }; // ‹ or ☰
+                        let btn = egui::Button::new(egui::RichText::new(icon).size(16.0).color(text_dim))
+                            .fill(egui::Color32::TRANSPARENT)
+                            .corner_radius(9.0);
                         if ui.add(btn).on_hover_text(if self.sidebar_open { "Collapse sidebar" } else { "Expand sidebar" }).clicked() {
                             self.sidebar_open = !self.sidebar_open;
                         }
@@ -379,14 +380,14 @@ impl eframe::App for TigrimOSApp {
 
                 ui.add_space(8.0);
 
-                // ── New Chat button ──
+                // ── New Chat button (filled teal pill, matching template) ──
                 {
                     let (label, icon) = if self.sidebar_open { ("+  New chat", "") } else { ("+", "New chat") };
-                    let btn = egui::Button::new(egui::RichText::new(label).size(13.0).color(accent))
-                        .fill(egui::Color32::TRANSPARENT)
+                    let btn = egui::Button::new(egui::RichText::new(label).size(14.0).strong().color(egui::Color32::WHITE))
+                        .fill(accent)
                         .stroke(egui::Stroke::NONE)
-                        .corner_radius(8.0)
-                        .min_size(egui::vec2(if self.sidebar_open { ui.available_width() } else { 36.0 }, 32.0));
+                        .corner_radius(14.0)
+                        .min_size(egui::vec2(if self.sidebar_open { ui.available_width() } else { 36.0 }, 38.0));
                     let resp = ui.add(btn);
                     if !self.sidebar_open {
                         resp.clone().on_hover_text(icon);
@@ -401,27 +402,36 @@ impl eframe::App for TigrimOSApp {
                 ui.add(egui::Separator::default().spacing(4.0));
                 ui.add_space(4.0);
 
-                // ── Navigation items ──
+                // ── Navigation items (clean line-icon style matching template) ──
                 let nav_items: &[(Tab, &str, &str)] = &[
-                    (Tab::Chat,         "\u{2709}",  "Chat"),        // ✉ envelope
-                    (Tab::Projects,     "\u{2302}",  "Projects"),    // ⌂ house/home
-                    (Tab::Agents,       "\u{2638}",  "Agent Swarm"), // ☸ wheel/dharma = swarm
-                    (Tab::Files,        "\u{25A4}",  "Files"),       // ▤ square with horizontal fill = documents
-                    (Tab::Tasks,        "\u{2611}",  "Tasks"),       // ☑ ballot box with check
-                    (Tab::Skills,       "\u{2605}",  "Skills"),      // ★ black star
-                    (Tab::Terminal,     "\u{2588}",  "Terminal"),     // █ full block = terminal cursor
-                    (Tab::RemoteServer, "\u{2641}",  "Remote"),      // ♁ earth
-                    (Tab::Console,      "\u{2261}",  "VM Log"),      // ≡ identical/log lines
-                    (Tab::Folders,      "\u{21C4}",  "Shared"),      // ⇄ rightwards/leftwards arrows = share
+                    (Tab::Chat,         "\u{1D362}","Chat"),         // 𝍢 chat bubble
+                    (Tab::Projects,     "\u{25FB}", "Projects"),     // ◻ folder
+                    (Tab::Agents,       "\u{2042}", "Agent Swarm"),  // ⁂ asterism = network
+                    (Tab::Files,        "\u{25F7}", "Files"),        // ◷ document
+                    (Tab::Tasks,        "\u{2610}", "Tasks"),        // ☐ ballot box
+                    (Tab::Skills,       "\u{2606}", "Skills"),       // ☆ white star
+                    (Tab::Terminal,     "\u{2395}", "Terminal"),     // ⎕ terminal screen
+                    (Tab::RemoteServer, "\u{25CE}", "Remote"),       // ◎ bullseye = signal
+                    (Tab::Console,      "\u{2261}", "VM Log"),       // ≡ triple bar = log
+                    (Tab::Folders,      "\u{21C6}", "Shared"),       // ⇆ leftright arrows = share
                 ];
 
                 for &(tab, icon, label) in nav_items {
                     let is_active = self.selected_tab == tab;
-                    let text_color = if is_active { accent } else { text_dim };
+                    let text_color = if is_active {
+                        egui::Color32::from_rgb(10, 95, 90) // accent-ink for active
+                    } else {
+                        text_dim
+                    };
                     let bg = if is_active {
-                        egui::Color32::from_rgba_premultiplied(18, 154, 145, 25)
+                        egui::Color32::WHITE // white card for active (like template)
                     } else {
                         egui::Color32::TRANSPARENT
+                    };
+                    let stroke = if is_active {
+                        egui::Stroke::new(0.5, egui::Color32::from_rgba_premultiplied(52, 48, 42, 12))
+                    } else {
+                        egui::Stroke::NONE
                     };
 
                     let btn_text = if self.sidebar_open {
@@ -429,10 +439,17 @@ impl eframe::App for TigrimOSApp {
                     } else {
                         icon.to_string()
                     };
-                    let btn = egui::Button::new(egui::RichText::new(&btn_text).size(13.0).color(text_color))
+                    let font_weight = if is_active { 14.5 } else { 14.0 };
+                    let rich = if is_active {
+                        egui::RichText::new(&btn_text).size(font_weight).strong().color(text_color)
+                    } else {
+                        egui::RichText::new(&btn_text).size(font_weight).color(text_color)
+                    };
+                    let btn = egui::Button::new(rich)
                         .fill(bg)
-                        .corner_radius(6.0)
-                        .min_size(egui::vec2(if self.sidebar_open { ui.available_width() } else { 36.0 }, 30.0));
+                        .stroke(stroke)
+                        .corner_radius(10.0)
+                        .min_size(egui::vec2(if self.sidebar_open { ui.available_width() } else { 36.0 }, 34.0));
                     let resp = ui.add(btn);
                     if !self.sidebar_open {
                         resp.clone().on_hover_text(label);
@@ -451,9 +468,11 @@ impl eframe::App for TigrimOSApp {
                     // Ensure sessions are loaded
                     self.chat_view.ensure_sessions_loaded(&self.runtime);
 
-                    let arrow = if self.chat_history_expanded { "\u{25BC}" } else { "\u{25B6}" }; // ▼ or ▶
+                    // Template-style uppercase section header
                     let header_btn = egui::Button::new(
-                        egui::RichText::new(format!("{} \u{21BB}  Chat History", arrow)).size(12.0).color(text_dim),
+                        egui::RichText::new("CHAT HISTORY").size(11.0).strong().color(
+                            egui::Color32::from_rgb(168, 158, 144) // ink-faint
+                        ),
                     )
                     .fill(egui::Color32::TRANSPARENT)
                     .min_size(egui::vec2(ui.available_width(), 26.0));
@@ -480,27 +499,31 @@ impl eframe::App for TigrimOSApp {
                                 let selected_id = self.chat_view.selected_session_id.clone();
                                 for (id, title, streaming) in &sessions {
                                     let is_sel = selected_id.as_deref() == Some(id.as_str());
-                                    let bg = if is_sel {
-                                        egui::Color32::from_rgba_premultiplied(18, 154, 145, 25)
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    };
                                     let display = if title.len() > 28 {
                                         format!("{}...", &title[..title.char_indices().nth(28).map(|(i,_)|i).unwrap_or(title.len())])
                                     } else {
                                         title.clone()
                                     };
                                     let label_text = if *streaming {
-                                        format!("\u{1F7E1} {}", display) // 🟡
+                                        format!("\u{1F7E1} {}", display)
                                     } else {
-                                        format!("  {}", display)
+                                        display.clone()
                                     };
-                                    let btn = egui::Button::new(
-                                        egui::RichText::new(&label_text).size(11.5).color(if is_sel { text_dark } else { text_dim }),
-                                    )
-                                    .fill(bg)
-                                    .corner_radius(4.0)
-                                    .min_size(egui::vec2(ui.available_width(), 24.0));
+                                    // Active = accent-ink + bold, inactive = dim
+                                    let item_color = if is_sel {
+                                        egui::Color32::from_rgb(10, 95, 90) // accent-ink
+                                    } else {
+                                        text_dim
+                                    };
+                                    let rich = if is_sel {
+                                        egui::RichText::new(&label_text).size(13.0).strong().color(item_color)
+                                    } else {
+                                        egui::RichText::new(&label_text).size(13.0).color(item_color)
+                                    };
+                                    let btn = egui::Button::new(rich)
+                                    .fill(egui::Color32::TRANSPARENT)
+                                    .corner_radius(9.0)
+                                    .min_size(egui::vec2(ui.available_width(), 28.0));
                                     let resp = ui.add(btn);
                                     if resp.clicked() {
                                         clicked_id = Some(id.clone());
