@@ -1,4 +1,4 @@
-# TigrimOSR v0.5.2
+# TigrimOSR v0.5.3
 
 **TigrimOSR** is a native desktop AI agent platform that lets you orchestrate teams of specialist AI agents — all from a single, self-contained binary. Define agent swarms in simple YAML, connect them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously to solve complex tasks.
 
@@ -26,7 +26,34 @@ Design multi-agent systems visually — create architectures manually or generat
 
 ![Agent Swarm Editor](assets/screenshot_agents.png)
 
-## What's New in v0.5.2
+## What's New in v0.5.3
+
+- **Web/mobile UI parity** — Remote and mobile web chat now uses the same system prompt, SOUL.md, and IDENTITY.md as the native desktop UI. Responses are consistent regardless of how you connect.
+- **Inline image rendering** — Generated images (charts, figures, plots) now display inline in web chat with click-to-enlarge lightbox. Auth tokens are passed as query params so `<img>` tags can load from authenticated endpoints.
+- **Web tasks in native Tasks view** — Chat sessions initiated from the web/mobile UI now appear in the native desktop Tasks view while running, and are removed when complete.
+- **Amber blinking indicator** — Replaced the 3-dot typing animation with a single amber blinking dot with glow effect for a cleaner waiting state.
+- **Mobile background recovery** — Added `visibilitychange` listener and recovery polling so mobile browsers don't lose the AI response when the tab goes to background.
+- **Desktop sidebar layout** — On desktop-width browsers (≥769px), the tab bar moves to a sidebar instead of bottom tabs.
+- **Activity log viewer** — New log viewer modal (top-right button) to inspect activity and chat logs in real time.
+- **Sandbox path fix for .app bundles** — Web routes now use `get_sandbox_dir_sync()` to resolve relative sandbox paths correctly when running from a macOS `.app` bundle.
+- **`<think>` tag stripping in web UI** — Frontend now strips `<think>` reasoning blocks as a safety net, in addition to backend stripping.
+- **`.env` loading from data directory** — The app now loads `.env` files from both the data directory and the current working directory via `dotenvy`.
+- **Cache-Control on web UI** — Added `no-cache, no-store, must-revalidate` headers to prevent browsers from serving stale cached pages.
+
+### Mobile Remote Connection
+
+Connect from your phone to TigrimOS running on a cloud server — full chat with inline charts, tool execution, and file browsing.
+
+<p align="center">
+  <img src="assets/screenshot_mobile_remote_1.jpg" width="300" alt="Mobile Remote Chat">
+  &nbsp;&nbsp;
+  <img src="assets/screenshot_mobile_remote_2.jpg" width="300" alt="Mobile Remote Chart">
+</p>
+
+### Previous Releases
+
+<details>
+<summary>v0.5.2 — Agent Activity panel, think-tag stripping, Auto mode enforcement</summary>
 
 - **Side-by-side Agent Activity panel** — The Graphic monitor tab now displays the agent network diagram on the left and the Agent Activity panel on the right, in a single-screen layout with no page-level scrolling. Activity cards use the same soft-blue theme as the main chat.
 - **`<think>` tag stripping** — LLM reasoning tags (`<think>...</think>`) are now stripped from all output paths: subagent log lines, bid logs, and all final response `TextChunk` emissions. Previously, raw `<think>` blocks leaked into agent activity logs and chat text when using reasoning models.
@@ -35,7 +62,7 @@ Design multi-agent systems visually — create architectures manually or generat
 - **Auto mode config fallback** — When switching from Fully Auto to Auto mode, the system now automatically reuses the YAML architecture created by the previous Fully Auto session, so agents remain available without manually re-selecting a config file.
 - **Orchestrator tool access** — Orchestrator agents now have full access to all tools (web_search, fetch_url, etc.) and can decide whether to handle quick tasks directly or delegate to workers, instead of being restricted to delegation-only tools.
 
-### Previous Releases
+</details>
 
 <details>
 <summary>v0.5.1 — Soul & Identity, output panel, skill browser</summary>
