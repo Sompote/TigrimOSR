@@ -468,6 +468,7 @@ Rules:\n\
 - When a user asks about files, use list_files first to see what's available.\n\
 - Use run_python for data analysis, charts, and calculations.\n\
 - Use run_shell for system commands.\n\
+- When you generate files (charts, images, data), always describe the results in your response. Explain what each figure shows and summarize key findings. Never respond with just a greeting after completing tool work.\n\
 You have access to these tools: {}.{}",
             research_instruction, sandbox_dir, tool_list, sub_agent_prompt
         );
