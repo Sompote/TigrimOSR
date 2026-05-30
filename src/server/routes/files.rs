@@ -82,6 +82,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/chat-upload", post(chat_upload_handler))
         .route("/preview", get(preview_handler))
         .route("/download", get(download_handler))
+        .route("/raw", get(raw_handler))
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +517,79 @@ async fn download_handler(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"{}\"", filename),
         )
+        .body(body)
+        .unwrap()
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// GET /raw?path=... — serve file inline with correct MIME type (for <img> etc.)
+// ---------------------------------------------------------------------------
+
+async fn raw_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(params): axum::extract::Query<PathQuery>,
+) -> Response {
+    if params.path.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+    }
+
+    // If the path is absolute and within the sandbox, strip the sandbox prefix
+    let effective_path = {
+        let sandbox = std::path::Path::new(&state.sandbox_dir)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(&state.sandbox_dir));
+        let req = std::path::Path::new(&params.path);
+        if req.is_absolute() {
+            let canon = req.canonicalize().unwrap_or_else(|_| req.to_path_buf());
+            if canon.starts_with(&sandbox) {
+                canon.strip_prefix(&sandbox)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| params.path.clone())
+            } else {
+                params.path.clone()
+            }
+        } else {
+            params.path.clone()
+        }
+    };
+
+    let resolved = match validate_path(&state.sandbox_dir, &effective_path) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::FORBIDDEN, Json(json!({"error": e}))).into_response(),
+    };
+
+    let file = match tokio::fs::File::open(&resolved).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::NOT_FOUND, Json(json!({"error": "File not found"}))).into_response(),
+    };
+
+    let ext = resolved
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "html" => "text/html",
+        "txt" | "md" | "py" | "rs" | "js" | "ts" => "text/plain",
+        _ => "application/octet-stream",
+    };
+
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    Response::builder()
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CONTENT_DISPOSITION, "inline")
+        .header(header::CACHE_CONTROL, "max-age=60")
         .body(body)
         .unwrap()
         .into_response()

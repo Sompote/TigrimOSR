@@ -32,10 +32,11 @@ struct RunPythonBody {
 async fn resolve_sandbox_dir(state: &AppState) -> String {
     let settings = get_settings().await;
 
-    // 1. Check configured sandbox dir from settings
-    if !settings.sandbox_dir.is_empty() {
-        if fs::metadata(&settings.sandbox_dir).await.is_ok() {
-            return settings.sandbox_dir;
+    // 1. Check configured sandbox dir from settings (resolved to absolute)
+    let resolved = crate::server::data::get_sandbox_dir_sync();
+    if !resolved.is_empty() {
+        if fs::metadata(&resolved).await.is_ok() {
+            return resolved;
         }
     }
 

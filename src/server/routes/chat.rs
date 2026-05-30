@@ -46,6 +46,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/sessions/{id}/activity", get(get_activity_log))
         .route("/sessions/{id}/chatlog", get(get_chat_log))
+        .route("/active-tasks", get(get_active_tasks))
 }
 
 // ---------------------------------------------------------------------------
@@ -374,7 +375,7 @@ async fn send_message(
     } else {
         format!("{}/chat/completions", raw_url.trim_end_matches('/'))
     };
-    let sandbox_dir = settings.sandbox_dir.clone();
+    let sandbox_dir = crate::server::data::get_sandbox_dir_sync();
 
     if api_key.is_empty() {
         let err = "API key not configured. Set it in Settings > AI Configuration.".to_string();
@@ -420,7 +421,7 @@ async fn send_message(
 
     let sub_agent = SubAgentConfig {
         enabled: sub_agent_enabled,
-        mode: effective_mode,
+        mode: effective_mode.clone(),
         session_id: id.clone(),
         agent_id: "web".to_string(),
         agent_ids: vec![],
@@ -432,6 +433,85 @@ async fn send_message(
         depth: 0,
         cancel_flag: Arc::new(AtomicBool::new(false)),
     };
+
+    // Build system prompt — same as native UI (identity, soul, skills, tools)
+    let system_prompt = {
+        let tool_list = if sub_agent_enabled {
+            match effective_mode.as_str() {
+                "auto" => "create_architecture, send_task, wait_result, check_agents, web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill",
+                "fully_auto" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
+                "manual" => "send_task, wait_result, check_agents, run_python, write_file, read_file, list_files",
+                _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
+            }
+        } else {
+            "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent"
+        };
+
+        let sub_agent_prompt = if sub_agent_enabled {
+            "\n- You are the orchestrator. Delegate complex multi-step tasks to sub-agents using send_task."
+        } else {
+            ""
+        };
+
+        let research_instruction = "For research tasks, gather info from multiple sources using web_search/fetch_url, then synthesize results";
+
+        let mut base = format!(
+            "You are TigrimOS, an AI assistant with tools for search, code execution, files, and skills.\n\
+Rules:\n\
+- Always use tools to produce real results — never just describe what you would do.\n\
+- If a tool call fails, analyze the error, fix it, and retry. Try a different approach after two failures.\n\
+- Do not call the same tool with identical arguments repeatedly.\n\
+- Before writing code, check if an installed skill matches the task. If so, call load_skill first and use its implementation.\n\
+- For web search, prefer installed search skills (e.g. web-search, duckduckgo-search) via load_skill + run_python over the built-in web_search tool. If results are limited, follow up with fetch_url.\n\
+- {}\n\
+- Your working directory is the sandbox folder '{}'. All file operations use this directory as the root.\n\
+- When a user asks about files, use list_files first to see what's available.\n\
+- Use run_python for data analysis, charts, and calculations.\n\
+- Use run_shell for system commands.\n\
+You have access to these tools: {}.{}",
+            research_instruction, sandbox_dir, tool_list, sub_agent_prompt
+        );
+
+        // Append installed skills
+        let skills_block = crate::server::services::toolbox::build_enabled_skills_block_pub(None).await;
+        if !skills_block.is_empty() {
+            base.push_str(&skills_block);
+        }
+
+        // Inject Soul & Identity from data dir
+        let data_dir = crate::server::data::data_dir();
+        if let Ok(soul) = std::fs::read_to_string(data_dir.join("SOUL.md")) {
+            if !soul.trim().is_empty() {
+                base.push_str(&format!("\n\n=== SOUL.md (Internal Cognition & Behavioral Prior) ===\n{}", soul));
+            }
+        }
+        if let Ok(identity) = std::fs::read_to_string(data_dir.join("IDENTITY.md")) {
+            if !identity.trim().is_empty() {
+                base.push_str(&format!("\n\n=== IDENTITY.md (External Presentation) ===\n{}", identity));
+            }
+        }
+
+        Some(base)
+    };
+
+    // Register in native UI's active tasks so local Tasks view sees web chats
+    {
+        let title = {
+            let sessions_snap = get_chat_history().await;
+            sessions_snap.iter().find(|s| s.id == id)
+                .map(|s| s.title.clone())
+                .unwrap_or_else(|| "Web Chat".to_string())
+        };
+        let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
+        chats.retain(|c| c.session_id != id);
+        chats.push(crate::ui::tasks_view::ActiveChatSession {
+            session_id: id.clone(),
+            title,
+            started_at: chrono::Utc::now(),
+            agent_count: 0,
+            tool_calls: 0,
+        });
+    }
 
     // Clear activity log before starting
     let log_dir = activity_log_dir();
@@ -446,7 +526,7 @@ async fn send_message(
         &api_url,
         &model,
         llm_messages,
-        None,
+        system_prompt,
         &sandbox_dir,
         move |update: ToolUpdate| {
             use crate::server::services::toolbox::append_session_progress;
@@ -478,7 +558,14 @@ async fn send_message(
         sub_agent,
     ).await;
 
+    // Remove from native UI's active tasks
+    {
+        let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
+        chats.retain(|c| c.session_id != id);
+    }
+
     let assistant_content = result.content;
+    let output_files = result.files.clone();
 
     // Save assistant response
     let mut sessions3 = get_chat_history().await;
@@ -487,7 +574,7 @@ async fn send_message(
             role: "assistant".to_string(),
             content: assistant_content.clone(),
             timestamp: chrono::Utc::now().to_rfc3339(),
-            files: None,
+            files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
             feedback: None,
         });
         s.updated_at = chrono::Utc::now().to_rfc3339();
@@ -498,7 +585,7 @@ async fn send_message(
         StatusCode::OK,
         Json(json!({
             "content": assistant_content,
-            "files": result.files,
+            "files": output_files,
         })),
     )
         .into_response()
@@ -514,6 +601,55 @@ async fn get_activity_log(Path(id): Path<String>) -> impl IntoResponse {
         .await
         .unwrap_or_default();
     Json(json!({"ok": true, "content": content}))
+}
+
+// ---------------------------------------------------------------------------
+// GET /active-tasks — list sessions that are currently processing (recent activity)
+// ---------------------------------------------------------------------------
+
+async fn get_active_tasks() -> impl IntoResponse {
+    let log_dir = activity_log_dir();
+    let _ = std::fs::create_dir_all(&log_dir);
+    let mut active = Vec::new();
+
+    if let Ok(mut entries) = tokio::fs::read_dir(&log_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".log") { continue; }
+            let session_id = name.trim_end_matches(".log").to_string();
+
+            if let Ok(meta) = entry.metadata().await {
+                if let Ok(modified) = meta.modified() {
+                    let age = modified.elapsed().unwrap_or_default().as_secs();
+                    // Consider active if modified in last 120s and file is non-empty
+                    if age < 120 && meta.len() > 0 {
+                        let content = tokio::fs::read_to_string(entry.path())
+                            .await
+                            .unwrap_or_default();
+                        // Look up session title
+                        let sessions = get_chat_history().await;
+                        let title = sessions.iter()
+                            .find(|s| s.id == session_id)
+                            .map(|s| s.title.clone())
+                            .unwrap_or_else(|| session_id.clone());
+                        active.push(json!({
+                            "session_id": session_id,
+                            "title": title,
+                            "activity": content,
+                            "age_secs": age,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by most recent first
+    active.sort_by(|a, b| {
+        a["age_secs"].as_u64().unwrap_or(999).cmp(&b["age_secs"].as_u64().unwrap_or(999))
+    });
+
+    Json(json!({ "tasks": active }))
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,12 @@ use std::sync::Arc;
 use vm::manager::VmManager;
 
 fn main() {
+    // Load .env from data directory (same location as settings.json)
+    let env_path = server::data::data_dir().join(".env");
+    let _ = dotenvy::from_path(&env_path);
+    // Also try .env in current working directory
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::fmt::init();
 
     // Ensure PATH includes common tool locations (critical for .app bundles)

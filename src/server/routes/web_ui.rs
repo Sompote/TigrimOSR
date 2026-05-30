@@ -13,7 +13,10 @@ const INDEX_HTML: &str = include_str!("../../../static/index.html");
 async fn serve_index() -> impl IntoResponse {
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
+        ],
         INDEX_HTML,
     )
 }

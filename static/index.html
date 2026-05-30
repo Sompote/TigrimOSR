@@ -2,367 +2,577 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>TigrimOS Remote</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <style>
 :root {
-  --bg: #1a1a2e;
-  --bg2: #16213e;
-  --bg3: #0f3460;
-  --fg: #e0e0e0;
-  --fg2: #a0a0b0;
-  --accent: #e94560;
-  --accent2: #0f3460;
-  --green: #4ade80;
-  --red: #ef4444;
-  --border: #2a2a4a;
-  --input-bg: #0d1b2a;
-  --radius: 8px;
+  --bg:        #F4EEE5;
+  --surface:   #FBF7F1;
+  --rail:      #EFE7DA;
+  --card:      #FFFFFF;
+  --line:      #E6DCCC;
+  --line-soft: #EFE7DA;
+  --ink:       #34302A;
+  --ink-soft:  #7C7368;
+  --ink-faint: #A89E90;
+  --accent:      #129A91;
+  --accent-deep: #0C817A;
+  --accent-soft: #E1F1EF;
+  --accent-ink:  #0A5F5A;
+  --green: #4FAE55;
+  --red:   #C9554E;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --shadow-card: 0 1px 2px rgba(52,48,42,.04), 0 8px 24px -12px rgba(52,48,42,.18);
+  --shadow-pop:  0 18px 50px -16px rgba(52,48,42,.34);
+  --font: "Plus Jakarta Sans", "Noto Sans Thai", system-ui, sans-serif;
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font);
+  color: var(--ink);
   background: var(--bg);
-  color: var(--fg);
-  min-height: 100vh;
-  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
 }
-button {
-  cursor: pointer;
-  border: none;
-  border-radius: var(--radius);
-  padding: 8px 16px;
-  font-size: 14px;
-  background: var(--accent);
-  color: white;
-  transition: opacity 0.2s;
-}
-button:hover { opacity: 0.85; }
-button:disabled { opacity: 0.4; cursor: default; }
-button.secondary { background: var(--bg3); }
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+::selection { background: var(--accent-soft); }
+.hidden { display: none !important; }
+
 input, textarea, select {
-  background: var(--input-bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  font-family: inherit;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
   padding: 10px 12px;
   font-size: 14px;
   width: 100%;
   outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
-input:focus, textarea:focus { border-color: var(--accent); }
-textarea { resize: vertical; font-family: monospace; }
-.hidden { display: none !important; }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea { resize: vertical; }
 
-/* Login */
+/* ===== Login ===== */
 #login-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  padding: 20px;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 20px; background: var(--bg);
 }
 .login-box {
-  background: var(--bg2);
-  padding: 40px;
-  border-radius: 16px;
-  width: 100%;
-  max-width: 400px;
-  text-align: center;
+  background: var(--card); padding: 40px; border-radius: var(--r-xl);
+  width: 100%; max-width: 380px; text-align: center;
+  box-shadow: var(--shadow-card); border: 1px solid var(--line);
 }
-.login-box h1 { font-size: 28px; margin-bottom: 8px; }
-.login-box p { color: var(--fg2); margin-bottom: 24px; }
-.login-box input { margin-bottom: 16px; }
-#login-error { color: var(--red); font-size: 13px; margin-bottom: 12px; }
+.login-box h1 { font-size: 26px; font-weight: 800; letter-spacing: -.3px; margin-bottom: 4px; }
+.login-box h1 b { color: var(--accent); }
+.login-box p { color: var(--ink-soft); margin-bottom: 24px; font-size: 14px; }
+.login-box input { margin-bottom: 12px; }
+#login-error { color: var(--red); font-size: 13px; margin-bottom: 12px; font-weight: 500; }
+.login-btn {
+  width: 100%; padding: 13px; border-radius: var(--r-md);
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 15px;
+  box-shadow: 0 7px 16px -7px color-mix(in srgb, var(--accent) 70%, transparent);
+  transition: background .14s ease;
+}
+.login-btn:hover { background: var(--accent-deep); }
+.login-btn:disabled { opacity: .4; cursor: default; }
+.backend-btns { display: flex; gap: 8px; margin-bottom: 12px; }
+.backend-btn {
+  flex: 1; padding: 10px 8px; border-radius: var(--r-sm);
+  font-size: 12px; font-weight: 600; color: var(--ink-soft);
+  background: var(--surface); border: 1px solid var(--line);
+  transition: all .15s ease;
+}
+.backend-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-/* App layout */
-#app { display: none; flex-direction: column; height: 100vh; }
-.topbar {
-  display: flex;
-  align-items: center;
-  padding: 8px 16px;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-  gap: 8px;
-  flex-shrink: 0;
-}
-.topbar h2 { font-size: 16px; margin-right: auto; }
-.topbar .tab {
-  padding: 6px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  background: transparent;
-  color: var(--fg2);
-  border: 1px solid transparent;
-}
-.topbar .tab.active { background: var(--accent); color: white; }
-.topbar .tab:hover:not(.active) { background: var(--bg3); }
-#logout-btn { background: var(--bg3); font-size: 12px; padding: 6px 10px; }
+/* ===== App layout ===== */
+#app { display: none; height: 100vh; height: 100dvh; flex-direction: column; overflow: hidden; }
 
-/* Tabs - mobile scroll */
-.tab-scroll {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+/* ===== App bar ===== */
+.appbar {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--rail);
+  border-bottom: 1px solid var(--line); z-index: 5;
 }
-.tab-scroll::-webkit-scrollbar { display: none; }
+.ab-btn {
+  width: 40px; height: 40px; border-radius: 12px; flex: none;
+  display: grid; place-items: center; color: var(--ink-soft);
+  transition: background .13s ease, color .13s ease;
+}
+.ab-btn:active { background: rgba(52,48,42,.08); color: var(--ink); }
+.ab-btn svg { width: 21px; height: 21px; stroke-width: 1.95; }
+.ab-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; align-items: center; }
+.ab-title .name { font-size: 16px; font-weight: 700; letter-spacing: -.2px; display: flex; align-items: center; gap: 7px; }
+.ab-title .name .mk {
+  width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center;
+  background: linear-gradient(150deg, var(--accent), var(--accent-deep));
+  color: #fff; font-size: 11px; font-weight: 800;
+}
+.ab-title .sub { font-size: 11.5px; font-weight: 600; color: var(--ink-faint); white-space: nowrap; }
+.ab-title .sub .live { color: var(--accent); }
+#backend-badge {
+  font-size: 11px; padding: 4px 10px; border-radius: 20px;
+  font-weight: 600; white-space: nowrap; flex: none;
+}
 
-/* Pages */
+/* ===== Pages ===== */
 .page { display: none; flex: 1; overflow: hidden; flex-direction: column; min-height: 0; }
 .page.active { display: flex; }
-.page-content { flex: 1; overflow-y: auto; padding: 16px; }
+.page-content { flex: 1; overflow-y: auto; padding: 16px; background: var(--surface); }
 
-/* Chat */
-#chat-page { display: flex; flex-direction: row; flex: 1; height: 100%; overflow: hidden; }
-#chat-sidebar {
-  width: 240px;
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  background: var(--bg2);
-}
-#chat-sidebar .header {
-  padding: 12px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  gap: 8px;
-}
-#session-list { flex: 1; overflow-y: auto; padding: 8px; }
-.session-item {
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  margin-bottom: 4px;
-  font-size: 13px;
-  color: var(--fg2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.session-item:hover { background: var(--bg3); }
-.session-item.active { background: var(--accent); color: white; }
-#chat-main { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+/* ===== Chat thread ===== */
+#chat-page { display: flex; flex-direction: column; flex: 1; height: 100%; overflow: hidden; }
 #messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  flex: 1; overflow-y: auto; padding: 22px 16px 26px;
+  display: flex; flex-direction: column; gap: 18px;
+  background: var(--surface); -webkit-overflow-scrolling: touch;
 }
-.msg {
-  max-width: 85%;
-  padding: 12px 16px;
-  border-radius: 12px;
-  font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.msg.user {
-  align-self: flex-end;
-  background: var(--accent);
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-.msg.assistant {
-  align-self: flex-start;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-bottom-left-radius: 4px;
-}
-.msg.system {
-  align-self: center;
-  background: var(--bg3);
-  font-size: 12px;
-  color: var(--fg2);
-}
-#chat-input-area {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 8px;
-}
-#chat-input {
-  flex: 1;
-  min-height: 42px;
-  max-height: 120px;
-}
-#send-btn { flex-shrink: 0; }
+#messages::-webkit-scrollbar { width: 0; }
 
-/* Files */
-.file-path-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
+.msg { display: flex; gap: 10px; max-width: 100%; min-width: 0; animation: rise .34s cubic-bezier(.2,.7,.3,1) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.msg .avatar {
+  width: 34px; height: 34px; border-radius: 11px; flex: none;
+  display: grid; place-items: center; font-weight: 800; font-size: 12.5px; color: #fff;
+  background: linear-gradient(150deg, var(--accent), var(--accent-deep));
+  box-shadow: 0 4px 11px -5px color-mix(in srgb, var(--accent) 60%, transparent);
 }
-#file-path-input { flex: 1; }
+.msg .msg-col { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; overflow: hidden; max-width: calc(100% - 44px); }
+.msg .msg-head { display: flex; align-items: baseline; gap: 7px; }
+.msg .msg-name { font-weight: 700; font-size: 13px; white-space: nowrap; }
+.msg .msg-time { font-size: 11px; color: var(--ink-faint); font-weight: 500; margin-left: auto; }
+
+.bubble-ai {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 5px var(--r-lg) var(--r-lg) var(--r-lg);
+  padding: 14px 16px; box-shadow: var(--shadow-card);
+  font-size: 14.5px; line-height: 1.6; color: var(--ink);
+  word-break: break-word; overflow-wrap: break-word;
+  overflow-x: auto; min-width: 0;
+  max-width: 100%;
+  display: flex !important; flex-direction: column !important; gap: 0;
+}
+.bubble-ai > *:not(.td):not(.typing-dots) {
+  display: block !important; width: 100% !important; float: none !important;
+  max-width: 100% !important; box-sizing: border-box;
+  flex-shrink: 0;
+}
+.react-row { display: flex; gap: 3px; margin-top: 2px; }
+.react {
+  width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+  color: var(--ink-faint); transition: background .12s ease, color .12s ease;
+}
+.react svg { width: 15px; height: 15px; stroke-width: 1.9; }
+.react:active { background: rgba(52,48,42,.07); }
+.react.on { color: var(--accent); background: var(--accent-soft); }
+
+.msg:not(.user) .bubble-ai { max-width: min(100%, 700px); }
+.msg.user { flex-direction: row-reverse; }
+.msg.user .msg-col { align-items: flex-end; }
+.msg.user .msg-head { flex-direction: row-reverse; }
+.msg.user .msg-time { margin-left: 0; margin-right: auto; }
+.msg.user .avatar { background: linear-gradient(150deg, #E0A23D, #C97E2E); box-shadow: 0 4px 11px -5px rgba(201,126,46,.5); }
+.bubble-you {
+  background: var(--accent); color: #fff;
+  border-radius: var(--r-lg) 5px var(--r-lg) var(--r-lg);
+  padding: 12px 15px; font-size: 14.5px; line-height: 1.5; font-weight: 500;
+  max-width: 85%; box-shadow: 0 8px 18px -10px color-mix(in srgb, var(--accent) 70%, transparent);
+  white-space: pre-wrap; word-break: break-word;
+}
+.msg.system-msg {
+  justify-content: center; gap: 0;
+}
+.msg.system-msg .bubble-system {
+  background: var(--accent-soft); color: var(--accent-ink);
+  padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 600;
+}
+
+/* Typing indicator */
+.typing-dots { display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-start; gap: 6px; padding: 15px 0; width: auto !important; }
+.td { width: 10px; min-width: 10px; max-width: 10px; height: 10px; min-height: 10px; max-height: 10px; flex: 0 0 10px; border-radius: 50%; background: #f5a623; animation: td-blink 1.2s infinite ease-in-out; display: inline-block; }
+.td:nth-child(2), .td:nth-child(3) { display: none; }
+@keyframes td-blink { 0%,100% { opacity: 1; box-shadow: 0 0 6px #f5a623; } 50% { opacity: .3; box-shadow: none; } }
+
+/* ===== Composer ===== */
+.composer-wrap { flex: none; padding: 8px 12px 9px; background: var(--surface); border-top: 1px solid var(--line-soft); }
+.chips { display: flex; gap: 7px; overflow-x: auto; padding: 0 1px 9px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 6px 11px; border-radius: 20px;
+  font-size: 12px; font-weight: 600; color: var(--ink-soft);
+  background: var(--card); border: 1px solid var(--line);
+  transition: background .12s ease, color .12s ease, border-color .12s;
+}
+.chip svg { width: 13px; height: 13px; stroke-width: 2; color: var(--ink-faint); }
+.chip .lead { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.chip:active { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--accent-ink); }
+
+.composer {
+  display: flex; align-items: flex-end; gap: 7px;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r-xl); box-shadow: var(--shadow-card);
+  padding: 6px 6px 6px 7px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.composer:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 0 0 4px var(--accent-soft); }
+.composer .attach {
+  width: 38px; height: 38px; flex: none; border-radius: 13px; display: grid; place-items: center;
+  color: var(--ink-soft); background: rgba(52,48,42,.04);
+}
+.composer .attach:active { background: rgba(52,48,42,.1); }
+.composer .attach svg { width: 19px; height: 19px; stroke-width: 2; }
+.composer textarea {
+  flex: 1; min-width: 0; border: none; outline: none; resize: none; background: none;
+  font-family: inherit; font-size: 15px; line-height: 1.45; color: var(--ink);
+  padding: 9px 2px 8px; max-height: 120px; box-shadow: none;
+}
+.composer textarea::placeholder { color: var(--ink-faint); }
+.composer textarea:focus { box-shadow: none; }
+.send-btn {
+  width: 40px; height: 40px; border-radius: 14px; flex: none;
+  display: grid; place-items: center; color: #fff; background: var(--accent);
+  transition: background .14s ease, transform .12s ease, opacity .14s ease;
+}
+.send-btn:active { transform: scale(.92); }
+.send-btn:disabled { opacity: .38; }
+.send-btn svg { width: 19px; height: 19px; stroke-width: 2.3; }
+
+/* ===== Bottom tab bar ===== */
+.tabbar {
+  flex: none; display: flex; padding: 7px 8px 12px; gap: 2px;
+  background: var(--rail); border-top: 1px solid var(--line); z-index: 5;
+}
+.tabbar { padding-bottom: max(env(safe-area-inset-bottom, 0px), 12px); }
+.tab-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 6px 2px; border-radius: 14px; color: var(--ink-faint);
+  font-size: 10.5px; font-weight: 600; transition: color .14s ease;
+}
+.tab-item svg { width: 22px; height: 22px; stroke-width: 1.9; }
+.tab-item.active { color: var(--accent); }
+.tab-item.active svg { stroke-width: 2.2; }
+.tab-item .tdot { width: 4px; height: 4px; border-radius: 50%; background: transparent; margin-top: -2px; }
+.tab-item.active .tdot { background: var(--accent); }
+
+/* ===== Drawer ===== */
+.scrim {
+  position: fixed; inset: 0; z-index: 18; background: rgba(20,17,12,.42);
+  opacity: 0; pointer-events: none; transition: opacity .28s ease;
+  backdrop-filter: blur(1px);
+}
+.scrim.show { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 19;
+  width: 312px; max-width: 86%;
+  background: var(--rail); border-right: 1px solid var(--line);
+  transform: translateX(-104%); transition: transform .3s cubic-bezier(.3,.7,.2,1);
+  display: flex; flex-direction: column;
+  box-shadow: var(--shadow-pop);
+}
+.drawer.show { transform: translateX(0); }
+.drawer-head { flex: none; padding: 22px 18px 12px; display: flex; align-items: center; justify-content: space-between; }
+.brand { font-size: 20px; font-weight: 800; letter-spacing: -.4px; display: flex; align-items: center; gap: 9px; }
+.brand .mk { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: linear-gradient(150deg, var(--accent), var(--accent-deep)); color: #fff; font-size: 14px; font-weight: 800; }
+.brand b { color: var(--accent); }
+.drawer-x { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; color: var(--ink-faint); }
+.drawer-x:active { background: rgba(52,48,42,.08); }
+.drawer-x svg { width: 20px; height: 20px; stroke-width: 2; }
+
+.new-chat-btn {
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  margin: 6px 16px 14px; padding: 13px;
+  background: var(--accent); color: #fff;
+  border-radius: var(--r-md); font-weight: 700; font-size: 14.5px;
+  box-shadow: 0 7px 16px -7px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.new-chat-btn:active { background: var(--accent-deep); transform: translateY(1px); }
+.new-chat-btn svg { width: 18px; height: 18px; stroke-width: 2.2; }
+
+.history { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px; }
+.history::-webkit-scrollbar { width: 0; }
+.history-head { padding: 8px 8px 6px; color: var(--ink-faint); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; }
+.history-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 11px 12px; border-radius: 11px; color: var(--ink-soft);
+  font-size: 13.5px; font-weight: 500;
+  white-space: nowrap; overflow: hidden;
+}
+.history-item .ht { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.history-item svg { width: 16px; height: 16px; flex: none; stroke-width: 1.9; color: var(--ink-faint); }
+.history-item:active { background: rgba(52,48,42,.06); }
+.history-item.cur { background: var(--card); color: var(--accent-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(52,48,42,.05); }
+.history-item.cur svg { color: var(--accent); }
+
+.drawer-foot { flex: none; padding: 10px 16px 22px; border-top: 1px solid var(--line); }
+.vm-status { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: var(--r-sm); font-size: 13px; font-weight: 600; color: var(--ink-soft); background: rgba(52,48,42,.04); }
+.vm-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex: none; box-shadow: 0 0 0 3px rgba(201,85,78,.16); }
+.vm-status .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(79,174,85,.18); }
+.drawer-settings {
+  display: flex; align-items: center; gap: 11px; width: 100%; padding: 11px 12px; margin-top: 4px;
+  border-radius: var(--r-sm); color: var(--ink-soft); font-size: 14px; font-weight: 500;
+}
+.drawer-settings svg { width: 18px; height: 18px; stroke-width: 1.9; }
+.drawer-settings:active { background: rgba(52,48,42,.06); color: var(--ink); }
+
+/* ===== Files ===== */
+.file-path-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px; background: var(--rail); border-bottom: 1px solid var(--line);
+}
+.file-path-bar input { flex: 1; }
+.pill-btn {
+  padding: 9px 16px; border-radius: var(--r-md); font-size: 13px; font-weight: 600;
+  background: var(--card); border: 1px solid var(--line); color: var(--ink-soft);
+  transition: all .12s ease;
+}
+.pill-btn:active { background: var(--accent-soft); color: var(--accent-ink); }
+.pill-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pill-btn.primary:active { background: var(--accent-deep); }
+.pill-btn.danger { background: var(--red); color: #fff; border-color: var(--red); }
+
 .file-list { list-style: none; }
 .file-item {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
+  padding: 12px 16px; border-bottom: 1px solid var(--line-soft);
+  cursor: pointer; display: flex; align-items: center; gap: 10px; font-size: 14px;
+  transition: background .1s ease;
 }
-.file-item:hover { background: var(--bg2); }
-.file-icon { font-size: 16px; width: 24px; text-align: center; }
-.file-viewer {
-  flex: 1;
-  overflow: auto;
-  padding: 16px;
-}
+.file-item:hover { background: var(--accent-soft); }
+.file-icon { font-size: 18px; width: 24px; text-align: center; }
+.file-viewer { flex: 1; overflow: auto; padding: 16px; background: var(--surface); }
 .file-viewer pre {
   font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 16px;
 }
 
-/* Terminal */
+/* ===== Terminal ===== */
 #terminal-output {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
+  flex: 1; overflow-y: auto; padding: 16px;
   font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  background: #0a0a1a;
+  font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+  background: #1a1714; color: #e8e0d4;
 }
 .term-entry { margin-bottom: 12px; }
 .term-cmd { color: var(--green); }
-.term-out { color: var(--fg); }
+.term-out { color: #e8e0d4; }
 .term-err { color: var(--red); }
 #terminal-input-area {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 8px;
+  padding: 12px 16px; border-top: 1px solid var(--line);
+  display: flex; gap: 8px; background: var(--rail);
 }
 #term-input { flex: 1; font-family: monospace; }
 
-/* Settings / Agents / Tasks */
+/* ===== Cards ===== */
 .card {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 12px;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 16px; margin-bottom: 12px;
+  box-shadow: var(--shadow-card);
 }
-.card h3 { font-size: 15px; margin-bottom: 8px; }
-.card .detail { font-size: 13px; color: var(--fg2); margin-bottom: 4px; }
+.card h3 { font-size: 15px; margin-bottom: 8px; font-weight: 700; }
+.card .detail { font-size: 13px; color: var(--ink-soft); margin-bottom: 4px; }
 .card .badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
+  display: inline-block; padding: 3px 10px; border-radius: 20px;
+  font-size: 11px; font-weight: 700;
 }
-.badge.running { background: #2563eb; color: white; }
-.badge.completed { background: var(--green); color: #000; }
-.badge.failed { background: var(--red); color: white; }
-.badge.pending { background: #f59e0b; color: #000; }
-.badge.killed { background: #6b7280; color: white; }
+.badge.running { background: #dbeafe; color: #2563eb; }
+.badge.completed { background: #dcfce7; color: #16a34a; }
+.badge.failed { background: #fee2e2; color: #dc2626; }
+.badge.pending { background: #fef3c7; color: #d97706; }
+.badge.killed { background: var(--rail); color: var(--ink-faint); }
 
+/* ===== Active task card ===== */
+.active-task-card {
+  background: var(--card); border: 1px solid var(--accent);
+  border-radius: var(--r-md); padding: 14px 16px; margin-bottom: 10px;
+  box-shadow: 0 2px 12px -4px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.active-task-card .at-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.active-task-card .at-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  animation: pulse-dot 1.4s infinite ease-in-out;
+}
+@keyframes pulse-dot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.7); } }
+.active-task-card .at-title {
+  font-weight: 700; font-size: 14px; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.active-task-card .at-activity {
+  font-size: 12.5px; color: var(--ink-soft); line-height: 1.5;
+  max-height: 100px; overflow-y: auto; margin-bottom: 10px;
+  background: var(--surface); border-radius: var(--r-sm); padding: 8px 10px;
+}
+.active-task-card .at-go {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 20px;
+  background: var(--accent); color: #fff;
+  font-size: 13px; font-weight: 600;
+  transition: background .12s ease;
+}
+.active-task-card .at-go:active { background: var(--accent-deep); }
+.active-task-card .at-go svg { width: 14px; height: 14px; stroke-width: 2.3; }
+
+/* ===== Settings / Agents ===== */
 .settings-group { margin-bottom: 24px; }
-.settings-group h3 { margin-bottom: 12px; color: var(--accent); }
-.settings-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
+.settings-group h3 { margin-bottom: 12px; color: var(--accent); font-size: 15px; font-weight: 700; }
+.settings-row-field {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 8px;
 }
-.settings-row label { width: 160px; font-size: 13px; color: var(--fg2); flex-shrink: 0; }
-.settings-row input, .settings-row select { flex: 1; }
+.settings-row-field label { width: 160px; font-size: 13px; color: var(--ink-soft); flex-shrink: 0; font-weight: 500; }
+.settings-row-field input, .settings-row-field select { flex: 1; }
 
-/* Remote task submit */
+.agent-bar {
+  padding: 12px 16px; background: var(--rail); border-bottom: 1px solid var(--line);
+}
+.agent-bar-inner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.agent-bar-inner label { font-size: 13px; color: var(--ink-soft); white-space: nowrap; font-weight: 500; }
+.agent-bar-inner select { flex: 1; min-width: 160px; max-width: 400px; }
+
 .submit-task-area {
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  gap: 8px;
+  padding: 16px; border-bottom: 1px solid var(--line); background: var(--surface);
+  display: flex; gap: 8px;
 }
 #task-input { flex: 1; }
 
-/* Mobile chat controls (visible when sidebar hidden) */
-#mobile-chat-bar { display: none; padding: 8px 12px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--bg2); align-items: center; }
-#mobile-chat-bar select { flex: 1; background: var(--bg3); color: var(--fg1); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px; font-size: 13px; }
-#sidebar-toggle { display: none; background: var(--bg3); border: 1px solid var(--border); color: var(--fg1); padding: 6px 10px; border-radius: var(--radius); cursor: pointer; font-size: 13px; }
-
-/* Responsive */
-@media (max-width: 768px) {
-  #chat-sidebar { display: none; position: absolute; top: 0; left: 0; width: 260px; height: 100%; z-index: 100; }
-  #chat-sidebar.open { display: flex; }
-  #mobile-chat-bar { display: flex; }
-  #sidebar-toggle { display: inline-block; }
-  .topbar { padding: 6px 8px; }
-  .topbar h2 { font-size: 14px; }
-  .settings-row { flex-direction: column; align-items: stretch; }
-  .settings-row label { width: auto; }
-  .msg { max-width: 95%; }
+/* YAML modal */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(20,17,12,.42); z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  backdrop-filter: blur(2px);
 }
-
-/* Loading spinner */
-.spinner {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--fg2);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
+.modal-card {
+  background: var(--card); border-radius: var(--r-lg);
+  width: 100%; max-width: 700px; max-height: 80vh;
+  display: flex; flex-direction: column;
+  box-shadow: var(--shadow-pop); border: 1px solid var(--line);
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+.modal-head {
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.modal-head h3 { font-size: 16px; font-weight: 700; }
 
-/* Status dot */
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.dot.green { background: var(--green); }
-.dot.red { background: var(--red); }
-/* Markdown styles */
-.msg.assistant { white-space: normal; max-width: 95%; width: 95%; }
+/* ===== Markdown ===== */
+.bubble-ai p, .md-p { margin-bottom: 8px; display: block; }
+.bubble-ai p:last-child, .md-p:last-child { margin-bottom: 0; }
 .md-code {
-  background: #0d1b2a; border: 1px solid var(--border); border-radius: 6px;
+  background: #1a1714; border: 1px solid var(--line); border-radius: var(--r-sm);
   padding: 12px; overflow-x: auto; font-size: 13px; line-height: 1.4;
-  margin: 8px 0; font-family: 'SF Mono', 'Fira Code', monospace;
+  margin: 8px 0; font-family: 'SF Mono', 'Fira Code', monospace; color: #e8e0d4;
 }
 .md-inline {
-  background: #0d1b2a; border: 1px solid var(--border); border-radius: 3px;
+  background: var(--rail); border: 1px solid var(--line); border-radius: 5px;
   padding: 2px 5px; font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--accent-ink);
 }
-.md-table-wrap { overflow-x: auto; margin: 8px 0; }
-.md-table {
-  border-collapse: collapse; width: 100%; font-size: 13px;
-}
-.md-table th, .md-table td {
-  border: 1px solid var(--border); padding: 6px 10px; text-align: left;
-}
-.md-table th { background: var(--bg3); font-weight: 600; }
-.md-table tr:nth-child(even) td { background: rgba(15,52,96,0.3); }
-.md-h { margin: 12px 0 6px; color: var(--accent); }
+.md-table-wrap { overflow-x: auto; margin: 8px 0; max-width: 100%; }
+.md-table { border-collapse: collapse; width: 100%; font-size: 13px; border-radius: var(--r-sm); overflow: hidden; }
+.md-table th, .md-table td { border: 1px solid var(--line); padding: 8px 11px; text-align: left; }
+.md-table th { background: var(--accent); color: #fff; font-weight: 700; font-size: 12px; }
+.md-table tr:nth-child(even) td { background: var(--surface); }
+.md-h { margin: 12px 0 6px; color: var(--accent-ink); }
 h1.md-h { font-size: 1.4em; }
 h2.md-h { font-size: 1.25em; }
 h3.md-h { font-size: 1.1em; }
 h4.md-h { font-size: 1em; }
-.md-hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
-.md-ul, .md-ol { padding-left: 20px; margin: 6px 0; }
-.md-ul li, .md-ol li { margin: 2px 0; }
-.md-math { font-family: 'KaTeX_Main', serif; color: #8be9fd; }
+.md-hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+.md-ul, .md-ol { padding-left: 20px; margin: 6px 0; display: block; }
+.md-ul li, .md-ol li { margin: 2px 0; display: list-item; word-break: break-word; }
+.md-math { font-family: 'KaTeX_Main', serif; color: var(--accent-ink); }
 .katex-display { margin: 12px 0; overflow-x: visible; overflow-y: visible; }
 .katex-display > .katex { text-align: center; }
 .katex { font-size: 1.0em; }
-.msg.assistant .katex-display { padding: 4px 0; }
-.msg.assistant .katex-html { white-space: nowrap; }
+.bubble-ai .katex-display { padding: 4px 0; }
+.bubble-ai .katex-html { white-space: nowrap; }
+
+/* ===== Chat file attachments ===== */
+.chat-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.chat-file-card {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 6px 10px;
+  font-size: 12px; color: var(--ink-soft); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+  max-width: 260px;
+}
+.chat-file-card:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+.chat-file-card svg { width: 14px; height: 14px; flex: none; stroke-width: 2; }
+.chat-file-card .cf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.chat-file-thumb {
+  border-radius: var(--r-sm); border: 1px solid var(--line);
+  max-width: 220px; max-height: 160px; cursor: pointer;
+  object-fit: cover; transition: transform .15s ease, box-shadow .15s ease;
+}
+.chat-file-thumb:hover { transform: scale(1.03); box-shadow: var(--shadow-card); }
+
+/* Lightbox */
+.lightbox {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,.75); backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; cursor: zoom-out;
+  animation: fadeIn .2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.lightbox img {
+  max-width: 95vw; max-height: 90vh; border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5); object-fit: contain;
+}
+.lightbox-label {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,.6); color: #fff; padding: 6px 16px;
+  border-radius: 20px; font-size: 13px; font-weight: 600;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 768px) {
+  .settings-row-field { flex-direction: column; align-items: stretch; }
+  .settings-row-field label { width: auto; }
+}
+
+/* ===== Desktop: sidebar navigation ===== */
+@media (min-width: 769px) {
+  #app {
+    display: grid !important;
+    grid-template-columns: 72px 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .tabbar {
+    grid-column: 1; grid-row: 1 / -1;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding: 14px 6px;
+    gap: 4px;
+    border-top: none;
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+  }
+  .tabbar { padding-bottom: 14px; }
+  .tab-item {
+    flex: none;
+    padding: 10px 4px;
+    border-radius: 12px;
+  }
+  .tab-item:hover { background: rgba(52,48,42,.06); }
+  .appbar { grid-column: 2; grid-row: 1; }
+  .page { grid-column: 2; grid-row: 2; }
+  /* Wider AI bubble on desktop */
+  .msg:not(.user) .bubble-ai { max-width: min(100%, 800px); }
+}
 </style>
 </head>
 <body>
@@ -370,63 +580,61 @@ h4.md-h { font-size: 1em; }
 <!-- LOGIN PAGE -->
 <div id="login-page">
   <div class="login-box">
-    <h1>TigrimOS</h1>
+    <h1>Tigrim<b>OS</b></h1>
     <p>Remote Control</p>
     <div id="login-error"></div>
     <div style="margin-bottom:12px">
-      <label style="font-size:13px;color:var(--fg2)">Backend:</label>
-      <div style="display:flex;gap:8px;margin-top:4px">
-        <button id="btn-local" onclick="setBackend('local')" style="flex:1;font-size:12px;padding:8px" class="secondary">Local (this server)</button>
-        <button id="btn-remote" onclick="setBackend('remote')" style="flex:1;font-size:12px;padding:8px" class="secondary">Remote server</button>
+      <label style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.5px">Backend</label>
+      <div class="backend-btns" style="margin-top:6px">
+        <button id="btn-local" onclick="setBackend('local')" class="backend-btn active">Local (this server)</button>
+        <button id="btn-remote" onclick="setBackend('remote')" class="backend-btn">Remote server</button>
       </div>
     </div>
     <div id="remote-url-field" style="display:none;margin-bottom:12px">
-      <input type="text" id="remote-url-input" placeholder="http://server-ip:3001" autocomplete="off" style="margin-bottom:8px">
+      <input type="text" id="remote-url-input" placeholder="http://server-ip:3001" autocomplete="off">
     </div>
-    <input type="password" id="token-input" placeholder="Enter access token" autocomplete="off">
-    <br><br>
-    <button onclick="doLogin()" style="width:100%">Connect</button>
+    <input type="password" id="token-input" placeholder="Enter access token" autocomplete="off" style="margin-bottom:16px">
+    <button class="login-btn" onclick="doLogin()">Connect</button>
   </div>
 </div>
 
 <!-- APP -->
 <div id="app">
-  <div class="topbar">
-    <h2>TigrimOS</h2>
-    <div class="tab-scroll">
-      <button class="tab active" data-tab="chat">Chat</button>
-      <button class="tab" data-tab="files">Files</button>
-      <button class="tab" data-tab="terminal">Terminal</button>
-      <button class="tab" data-tab="agents">Agents</button>
-      <button class="tab" data-tab="tasks">Tasks</button>
-      <button class="tab" data-tab="settings">Settings</button>
+  <!-- App bar -->
+  <div class="appbar">
+    <button class="ab-btn" id="menuBtn" aria-label="Open menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
+    </button>
+    <div class="ab-title">
+      <div class="name"><span class="mk">T</span><span id="appbar-title">TigrimOS</span></div>
+      <div class="sub"><span id="appbar-sub">Remote</span> · <span class="live" id="appbar-status">online</span></div>
     </div>
-    <span id="backend-badge" style="font-size:11px;padding:4px 8px;border-radius:4px;background:var(--bg3);color:var(--fg2);white-space:nowrap"></span>
-    <button id="switch-btn" onclick="switchBackend()" style="background:var(--bg3);font-size:11px;padding:5px 10px">Switch</button>
-    <button id="logout-btn" onclick="doLogout()" style="background:var(--bg3);font-size:12px;padding:6px 10px">Logout</button>
+    <span id="backend-badge"></span>
+    <button class="ab-btn" id="logBtnTop" aria-label="View log" onclick="openLogViewer()" title="View Log">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="ab-btn" id="newBtnTop" aria-label="New chat" onclick="newSession()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
   </div>
 
   <!-- CHAT PAGE -->
   <div class="page active" id="page-chat">
     <div id="chat-page">
-      <div id="chat-sidebar">
-        <div class="header">
-          <button onclick="newSession()" style="flex:1;font-size:12px">+ New Chat</button>
-        </div>
-        <div id="session-list"></div>
+      <div id="messages">
+        <div class="msg system-msg"><div class="bubble-system">Send a message to start chatting</div></div>
       </div>
-      <div id="chat-main">
-        <div id="mobile-chat-bar">
-          <button id="sidebar-toggle" onclick="toggleSidebar()">&#9776;</button>
-          <select id="mobile-session-select" onchange="selectSession(this.value)"></select>
-          <button onclick="newSession()" style="font-size:12px;padding:6px 10px">+ New</button>
+      <div class="composer-wrap">
+        <div class="chips">
+          <button class="chip" id="agent-mode-chip" onclick="cycleAgentMode()"><span class="lead"></span><span id="agent-mode-label">Single Agent</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button class="chip" onclick="switchTab('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</button>
         </div>
-        <div id="messages">
-          <div class="msg system">Send a message to start chatting</div>
-        </div>
-        <div id="chat-input-area">
+        <div class="composer">
+          <button class="attach" title="Attach file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></button>
           <textarea id="chat-input" rows="1" placeholder="Type a message..."></textarea>
-          <button id="send-btn" onclick="sendMessage()">Send</button>
+          <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled title="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5M5 12l7-7 7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
         </div>
       </div>
     </div>
@@ -435,9 +643,9 @@ h4.md-h { font-size: 1em; }
   <!-- FILES PAGE -->
   <div class="page" id="page-files">
     <div class="file-path-bar">
-      <button class="secondary" onclick="fileUp()" style="padding:8px 12px">&#8593;</button>
+      <button class="pill-btn" onclick="fileUp()">&#8593;</button>
       <input id="file-path-input" value="." placeholder="Path...">
-      <button class="secondary" onclick="loadFiles()">Go</button>
+      <button class="pill-btn primary" onclick="loadFiles()">Go</button>
     </div>
     <div class="page-content" id="files-content">
       <ul class="file-list" id="file-list"></ul>
@@ -449,58 +657,57 @@ h4.md-h { font-size: 1em; }
     <div id="terminal-output"></div>
     <div id="terminal-input-area">
       <input id="term-input" placeholder="$ command..." autocomplete="off">
-      <button onclick="runCommand()">Run</button>
+      <button class="pill-btn primary" onclick="runCommand()">Run</button>
     </div>
   </div>
 
   <!-- AGENTS PAGE -->
   <div class="page" id="page-agents">
-    <!-- Sub-Agent Config Selector -->
-    <div style="padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <label style="font-size:13px;color:var(--fg2);white-space:nowrap">Sub-Agent System:</label>
-        <select id="agent-config-select" onchange="selectAgentConfig()" style="flex:1;min-width:200px;max-width:400px">
+    <div class="agent-bar">
+      <div class="agent-bar-inner">
+        <label>Sub-Agent System:</label>
+        <select id="agent-config-select" onchange="selectAgentConfig()">
           <option value="">None (single agent)</option>
         </select>
-        <label style="font-size:13px;color:var(--fg2);white-space:nowrap">Mode:</label>
-        <select id="agents-mode-select" onchange="selectAgentMode()" style="font-size:13px;padding:6px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg3);color:var(--fg);cursor:pointer">
+        <label>Mode:</label>
+        <select id="agents-mode-select" onchange="selectAgentMode()">
           <option value="single">Single</option>
           <option value="auto">Auto</option>
           <option value="manual">Manual</option>
           <option value="fully_auto">Fully Auto</option>
         </select>
-        <label class="secondary" style="padding:8px 14px;background:var(--bg3);border-radius:var(--radius);cursor:pointer;font-size:13px;display:inline-block">
+        <label class="pill-btn" style="cursor:pointer;flex:none">
           Upload YAML
           <input type="file" accept=".yaml,.yml" onchange="uploadAgentConfig(this)" style="display:none">
         </label>
-        <span id="agent-config-status" style="font-size:12px;color:var(--green)"></span>
+        <span id="agent-config-status" style="font-size:12px;color:var(--green);font-weight:600"></span>
       </div>
-      <!-- Preview selected config -->
       <div id="agent-config-preview" style="margin-top:8px;display:none">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-          <span style="font-size:12px;color:var(--fg2)" id="agent-config-info"></span>
-          <button class="secondary" onclick="viewAgentYaml()" style="font-size:11px;padding:4px 8px">View YAML</button>
-          <button onclick="deleteAgentConfig()" style="font-size:11px;padding:4px 8px;background:var(--red)">Delete</button>
+          <span style="font-size:12px;color:var(--ink-soft)" id="agent-config-info"></span>
+          <button class="pill-btn" onclick="viewAgentYaml()" style="font-size:11px;padding:5px 10px">View YAML</button>
+          <button class="pill-btn danger" onclick="deleteAgentConfig()" style="font-size:11px;padding:5px 10px">Delete</button>
         </div>
       </div>
     </div>
-    <!-- Task submit -->
     <div class="submit-task-area">
       <textarea id="task-input" rows="2" placeholder="Submit a task for AI execution..."></textarea>
-      <button onclick="submitTask()">Submit</button>
+      <button class="pill-btn primary" onclick="submitTask()">Submit</button>
     </div>
     <div class="page-content" id="agents-content">
-      <h3 style="margin-bottom:12px">Remote Tasks</h3>
+      <h3 style="margin-bottom:12px;font-weight:700">Remote Tasks</h3>
       <div id="remote-tasks-list"></div>
     </div>
     <!-- YAML viewer modal -->
-    <div id="yaml-modal" class="hidden" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.classList.add('hidden')">
-      <div style="background:var(--bg2);border-radius:12px;width:100%;max-width:700px;max-height:80vh;display:flex;flex-direction:column">
-        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-          <h3 id="yaml-modal-title" style="font-size:15px">Agent Config</h3>
-          <button class="secondary" onclick="document.getElementById('yaml-modal').classList.add('hidden')" style="padding:4px 10px;font-size:12px">Close</button>
+    <div id="yaml-modal" class="hidden" style="position:fixed;inset:0;z-index:100" onclick="if(event.target===this)this.classList.add('hidden')">
+      <div class="modal-overlay" onclick="if(event.target===this)document.getElementById('yaml-modal').classList.add('hidden')">
+        <div class="modal-card">
+          <div class="modal-head">
+            <h3 id="yaml-modal-title">Agent Config</h3>
+            <button class="pill-btn" onclick="document.getElementById('yaml-modal').classList.add('hidden')">Close</button>
+          </div>
+          <pre id="yaml-modal-content" style="padding:16px;overflow:auto;flex:1;font-size:13px;line-height:1.5;margin:0"></pre>
         </div>
-        <pre id="yaml-modal-content" style="padding:16px;overflow:auto;flex:1;font-size:13px;line-height:1.5;margin:0"></pre>
       </div>
     </div>
   </div>
@@ -508,7 +715,8 @@ h4.md-h { font-size: 1em; }
   <!-- TASKS PAGE -->
   <div class="page" id="page-tasks">
     <div class="page-content" id="tasks-content">
-      <h3 style="margin-bottom:12px">Scheduled Tasks</h3>
+      <div id="active-tasks-section"></div>
+      <h3 style="margin:16px 0 12px;font-weight:700">Scheduled Tasks</h3>
       <div id="tasks-list"></div>
     </div>
   </div>
@@ -517,23 +725,94 @@ h4.md-h { font-size: 1em; }
   <div class="page" id="page-settings">
     <div class="page-content" id="settings-content"></div>
   </div>
+
+  <!-- Bottom tab bar -->
+  <div class="tabbar" id="tabbar">
+    <button class="tab-item active" data-tab="chat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Chat<span class="tdot"></span>
+    </button>
+    <button class="tab-item" data-tab="files">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Files<span class="tdot"></span>
+    </button>
+    <button class="tab-item" data-tab="terminal">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9l3 3-3 3M13 15h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Terminal<span class="tdot"></span>
+    </button>
+    <button class="tab-item" data-tab="agents">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="2.6"/><circle cx="5" cy="6" r="1.8"/><circle cx="19" cy="6" r="1.8"/><circle cx="5" cy="18" r="1.8"/><circle cx="19" cy="18" r="1.8"/><path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/></svg>
+      Agents<span class="tdot"></span>
+    </button>
+    <button class="tab-item" data-tab="tasks">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 12l2.5 2.5L16 9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Tasks<span class="tdot"></span>
+    </button>
+  </div>
+
+  <!-- Drawer (chat history sidebar) -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <div class="brand"><span class="mk">T</span>Tigrim<b>OS</b></div>
+      <button class="drawer-x" id="drawerX" aria-label="Close menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></button>
+    </div>
+    <button class="new-chat-btn" id="newChatDrawer" onclick="newSession(); closeDrawer();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+      New chat
+    </button>
+    <div class="history" id="session-list">
+      <div class="history-head">Chat History</div>
+    </div>
+    <div class="drawer-foot">
+      <div class="vm-status" id="vmStatus">
+        <span class="dot" id="vmdot"></span>
+        <span id="vmlabel">Server</span>
+        <span style="margin-left:auto;font-size:11.5px;font-weight:600;color:var(--ink-faint)" id="vm-ghost">checking...</span>
+      </div>
+      <button class="drawer-settings" onclick="switchTab('settings'); closeDrawer();">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Settings
+      </button>
+      <button class="drawer-settings" onclick="doLogout()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Logout
+      </button>
+    </div>
+  </aside>
+
+  <!-- Log viewer modal -->
+  <div id="log-modal" class="hidden" style="position:fixed;inset:0;z-index:100">
+    <div class="modal-overlay" onclick="if(event.target===this)document.getElementById('log-modal').classList.add('hidden')">
+      <div class="modal-card" style="max-width:900px;max-height:90vh">
+        <div class="modal-head">
+          <div style="display:flex;gap:8px;align-items:center">
+            <h3>Log Viewer</h3>
+            <button class="pill-btn" id="log-tab-activity" onclick="switchLogTab('activity')" style="font-size:11px">Activity</button>
+            <button class="pill-btn" id="log-tab-chat" onclick="switchLogTab('chat')" style="font-size:11px">Chat Log</button>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="pill-btn" onclick="refreshLogViewer()" title="Refresh">↻</button>
+            <button class="pill-btn" onclick="document.getElementById('log-modal').classList.add('hidden')">Close</button>
+          </div>
+        </div>
+        <pre id="log-modal-content" style="padding:16px;overflow:auto;flex:1;font-size:12px;line-height:1.6;margin:0;background:var(--surface);color:var(--ink);white-space:pre-wrap;word-break:break-word"></pre>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
 // ========== API ==========
-let BASE = localStorage.getItem('tigrimos_backend') || location.origin;
-let TOKEN = localStorage.getItem('tigrimos_token') || '';
 let backendMode = localStorage.getItem('tigrimos_backend_mode') || 'local';
+let BASE = backendMode === 'remote' ? (localStorage.getItem('tigrimos_backend') || location.origin) : location.origin;
+let TOKEN = localStorage.getItem('tigrimos_token') || '';
 
-// Backend selector on login page
 function setBackend(mode) {
   backendMode = mode;
-  document.getElementById('btn-local').style.background = mode === 'local' ? 'var(--accent)' : '';
-  document.getElementById('btn-local').style.color = mode === 'local' ? 'white' : '';
-  document.getElementById('btn-remote').style.background = mode === 'remote' ? 'var(--accent)' : '';
-  document.getElementById('btn-remote').style.color = mode === 'remote' ? 'white' : '';
+  document.getElementById('btn-local').classList.toggle('active', mode === 'local');
+  document.getElementById('btn-remote').classList.toggle('active', mode === 'remote');
   document.getElementById('remote-url-field').style.display = mode === 'remote' ? 'block' : 'none';
-  // Restore saved remote URL
   if (mode === 'remote') {
     const saved = localStorage.getItem('tigrimos_remote_url') || '';
     document.getElementById('remote-url-input').value = saved;
@@ -546,16 +825,15 @@ function updateBackendBadge() {
   if (backendMode === 'remote') {
     const url = BASE.replace(/^https?:\/\//, '');
     badge.textContent = 'Remote: ' + url;
-    badge.style.background = '#0f3460';
-    badge.style.color = '#4ade80';
+    badge.style.background = 'var(--accent-soft)';
+    badge.style.color = 'var(--accent-ink)';
   } else {
     badge.textContent = 'Local';
-    badge.style.background = 'var(--bg3)';
-    badge.style.color = 'var(--fg2)';
+    badge.style.background = 'var(--rail)';
+    badge.style.color = 'var(--ink-soft)';
   }
 }
 
-// Init backend selector state on page load
 setBackend(backendMode);
 
 let authRequired = false;
@@ -564,10 +842,7 @@ function api(path, opts = {}) {
   if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
   return fetch(BASE + path, { ...opts, headers: { ...headers, ...(opts.headers||{}) } })
     .then(r => {
-      if (r.status === 401 && authRequired) {
-        doLogout();
-        throw new Error('Unauthorized');
-      }
+      if (r.status === 401 && authRequired) { doLogout(); throw new Error('Unauthorized'); }
       if (!r.ok) {
         return r.text().then(t => {
           try { return JSON.parse(t); } catch(e) { throw new Error(t || 'Request failed'); }
@@ -580,15 +855,9 @@ function api(path, opts = {}) {
 // ========== AUTH ==========
 function doLogin() {
   const t = document.getElementById('token-input').value.trim();
-  if (!t) return;
-
-  // Set backend URL based on selection
   if (backendMode === 'remote') {
     const remoteUrl = document.getElementById('remote-url-input').value.trim().replace(/\/+$/, '');
-    if (!remoteUrl) {
-      document.getElementById('login-error').textContent = 'Enter remote server URL';
-      return;
-    }
+    if (!remoteUrl) { document.getElementById('login-error').textContent = 'Enter remote server URL'; return; }
     BASE = remoteUrl;
     localStorage.setItem('tigrimos_backend', remoteUrl);
     localStorage.setItem('tigrimos_remote_url', remoteUrl);
@@ -598,34 +867,31 @@ function doLogin() {
     localStorage.setItem('tigrimos_backend', location.origin);
     localStorage.setItem('tigrimos_backend_mode', 'local');
   }
-
   TOKEN = t;
   authRequired = true;
-  fetch(BASE + '/api/auth/verify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t },
-    body: JSON.stringify({ token: t })
-  }).then(r => r.json()).then(data => {
-    if (data.valid || data.ok) {
-      localStorage.setItem('tigrimos_token', t);
-      showApp();
-    } else {
-      document.getElementById('login-error').textContent = 'Invalid token';
-    }
-  }).catch(() => {
-    // If verify endpoint doesn't exist, try a settings fetch
+  var errEl = document.getElementById('login-error');
+
+  // Try connecting: first without token, then with token
+  fetch(BASE + '/api/settings').then(function(r) {
+    if (r.ok) { localStorage.setItem('tigrimos_token', t); showApp(); return; }
+    // Server requires auth
+    if (!t) { errEl.textContent = 'Access token required'; return; }
+    // Verify token
+    return fetch(BASE + '/api/settings', {
+      headers: { 'Authorization': 'Bearer ' + t }
+    }).then(function(r2) {
+      if (r2.ok) { localStorage.setItem('tigrimos_token', t); showApp(); }
+      else { errEl.textContent = 'Invalid token'; }
+    });
+  }).catch(function() {
+    if (!t) { errEl.textContent = 'Cannot connect to server'; return; }
+    // Network error on no-auth — try with token directly
     fetch(BASE + '/api/settings', {
       headers: { 'Authorization': 'Bearer ' + t }
-    }).then(r => {
-      if (r.ok) {
-        localStorage.setItem('tigrimos_token', t);
-        showApp();
-      } else {
-        document.getElementById('login-error').textContent = 'Invalid token';
-      }
-    }).catch(() => {
-      document.getElementById('login-error').textContent = 'Cannot connect to server';
-    });
+    }).then(function(r) {
+      if (r.ok) { localStorage.setItem('tigrimos_token', t); showApp(); }
+      else { errEl.textContent = 'Invalid token'; }
+    }).catch(function() { errEl.textContent = 'Cannot connect to server'; });
   });
 }
 
@@ -634,60 +900,88 @@ function doLogout() {
   localStorage.removeItem('tigrimos_token');
   localStorage.removeItem('tigrimos_backend');
   localStorage.removeItem('tigrimos_backend_mode');
-  backendMode = 'local';
-  BASE = location.origin;
+  backendMode = 'local'; BASE = location.origin;
   setBackend('local');
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-page').style.display = 'flex';
 }
 
+function switchBackend() {
+  doLogout();
+}
+
 function showApp() {
+  console.log('[TigrimOS] showApp called, TOKEN=' + (TOKEN ? 'set' : 'empty'));
   document.getElementById('login-page').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   updateBackendBadge();
-  loadSessions();
-  loadFiles();
-  loadAgents();
-  // Restore saved agent mode on agents page selector
-  const savedMode = localStorage.getItem('tigrimos_agent_mode') || 'single';
-  const modeEl = document.getElementById('agents-mode-select');
-  if (modeEl) modeEl.value = savedMode;
+  try {
+    checkServerStatus();
+    loadSessions();
+    loadFiles();
+    loadAgents();
+    updateAgentModeChip();
+  } catch(e) { console.error('[TigrimOS] showApp error:', e); }
 }
 
-// Auto-login: try without token first (no auth mode), then with saved token
-fetch(BASE + '/api/settings')
-  .then(r => {
-    if (r.ok) {
-      // No auth required — skip login
-      showApp();
-    } else if (TOKEN) {
-      // Try saved token
-      fetch(BASE + '/api/settings', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
-        .then(r2 => { if (r2.ok) showApp(); });
-    }
-  })
-  .catch(() => {
-    if (TOKEN) {
-      fetch(BASE + '/api/settings', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
-        .then(r => { if (r.ok) showApp(); })
-        .catch(() => {});
-    }
+function checkServerStatus() {
+  api('/api/settings').then(() => {
+    document.getElementById('vmdot').classList.add('on');
+    document.getElementById('vmlabel').textContent = 'Server';
+    document.getElementById('vm-ghost').textContent = 'connected';
+  }).catch(() => {
+    document.getElementById('vmdot').classList.remove('on');
+    document.getElementById('vm-ghost').textContent = 'offline';
   });
+}
+
+// Auto-login: try no-auth first, then with saved token
+(function autoLogin() {
+  console.log('[TigrimOS] Auto-login attempt, BASE=' + BASE);
+  fetch(BASE + '/api/settings')
+    .then(function(r) {
+      console.log('[TigrimOS] Settings response: ' + r.status);
+      if (r.ok) { showApp(); return; }
+      if (TOKEN) {
+        fetch(BASE + '/api/settings', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
+          .then(function(r2) { if (r2.ok) showApp(); });
+      }
+    })
+    .catch(function(err) {
+      console.log('[TigrimOS] Auto-login error: ' + err.message);
+      if (TOKEN) {
+        fetch(BASE + '/api/settings', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
+          .then(function(r) { if (r.ok) showApp(); }).catch(function() {});
+      }
+    });
+})();
+
+// ========== DRAWER ==========
+function openDrawer() { document.getElementById('drawer').classList.add('show'); document.getElementById('scrim').classList.add('show'); }
+function closeDrawer() { document.getElementById('drawer').classList.remove('show'); document.getElementById('scrim').classList.remove('show'); }
+document.getElementById('menuBtn').addEventListener('click', openDrawer);
+document.getElementById('drawerX').addEventListener('click', closeDrawer);
+document.getElementById('scrim').addEventListener('click', closeDrawer);
 
 // ========== TABS ==========
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('page-' + tab.dataset.tab).classList.add('active');
-    // Load data for tab
-    if (tab.dataset.tab === 'chat') loadSessions();
-    if (tab.dataset.tab === 'agents') { loadAgents(); loadRemoteTasks(); }
-    if (tab.dataset.tab === 'tasks') loadTasks();
-    if (tab.dataset.tab === 'settings') loadSettings();
-    if (tab.dataset.tab === 'files') loadFiles();
-  });
+function switchTab(name) {
+  document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const tabEl = document.querySelector(`.tab-item[data-tab="${name}"]`);
+  if (tabEl) tabEl.classList.add('active');
+  const pageEl = document.getElementById('page-' + name);
+  if (pageEl) pageEl.classList.add('active');
+  if (name === 'chat') loadSessions();
+  if (name === 'agents') { loadAgents(); loadRemoteTasks(); }
+  if (name === 'tasks') loadTasks();
+  if (name === 'settings') loadSettings();
+  if (name === 'files') loadFiles();
+}
+
+document.getElementById('tabbar').addEventListener('click', e => {
+  const t = e.target.closest('.tab-item');
+  if (!t) return;
+  switchTab(t.dataset.tab);
 });
 
 // ========== CHAT ==========
@@ -697,39 +991,27 @@ let sessions = [];
 function loadSessions() {
   api('/api/chat/sessions').then(data => {
     sessions = Array.isArray(data) ? data : (data.sessions || []);
-    // Sort by updatedAt descending
     sessions.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     renderSessions();
   }).catch(() => {});
 }
 
+const chatSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 function renderSessions() {
   const el = document.getElementById('session-list');
-  el.innerHTML = sessions.map(s =>
-    `<div class="session-item ${s.id === currentSessionId ? 'active' : ''}"
-          onclick="selectSession('${s.id}')">
-      ${esc(s.title || s.id.slice(0,8))}
-    </div>`
-  ).join('');
-  // Update mobile dropdown
-  const sel = document.getElementById('mobile-session-select');
-  if (sel) {
-    sel.innerHTML = '<option value="">Select chat...</option>' + sessions.map(s =>
-      `<option value="${s.id}" ${s.id === currentSessionId ? 'selected' : ''}>${esc(s.title || s.id.slice(0,8))}</option>`
+  el.innerHTML = '<div class="history-head">Chat History</div>' +
+    sessions.map(s =>
+      `<button class="history-item ${s.id === currentSessionId ? 'cur' : ''}" onclick="selectSession('${s.id}'); closeDrawer();">
+        ${chatSvg}<span class="ht">${esc(s.title || s.id.slice(0,8))}</span>
+      </button>`
     ).join('');
-  }
-}
-
-function toggleSidebar() {
-  const sb = document.getElementById('chat-sidebar');
-  sb.classList.toggle('open');
 }
 
 function selectSession(id) {
   currentSessionId = id;
   sending = false;
   renderSessions();
-  // Fetch full session with messages
   api('/api/chat/sessions/' + id).then(data => {
     renderMessages(data.messages || []);
   }).catch(() => renderMessages([]));
@@ -738,13 +1020,39 @@ function selectSession(id) {
 function renderMessages(msgs) {
   const el = document.getElementById('messages');
   if (!msgs || !msgs.length) {
-    el.innerHTML = '<div class="msg system">No messages yet</div>';
+    el.innerHTML = '<div class="msg system-msg"><div class="bubble-system">No messages yet</div></div>';
     return;
   }
-  el.innerHTML = msgs.map(m =>
-    `<div class="msg ${m.role}">${m.role === 'assistant' ? md(m.content) : esc(m.content)}</div>`
-  ).join('');
+  el.innerHTML = msgs.map(m => {
+    if (m.role === 'user') {
+      return `<div class="msg user">
+        <div class="avatar" style="background:linear-gradient(150deg,#E0A23D,#C97E2E);box-shadow:0 4px 11px -5px rgba(201,126,46,.5)">Y</div>
+        <div class="msg-col">
+          <div class="msg-head"><span class="msg-name">You</span></div>
+          <div class="bubble-you">${esc(m.content)}</div>
+        </div>
+      </div>`;
+    } else {
+      return `<div class="msg ai">
+        <div class="avatar">T</div>
+        <div class="msg-col">
+          <div class="msg-head"><span class="msg-name">TigrimOS</span></div>
+          <div class="bubble-ai">${md(m.content)}${renderChatFiles(m.files)}</div>
+          <div class="react-row">
+            <button class="react" onclick="copyBubble(this)" title="Copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-linecap="round"/></svg></button>
+          </div>
+        </div>
+      </div>`;
+    }
+  }).join('');
   el.scrollTop = el.scrollHeight;
+}
+
+function copyBubble(btn) {
+  const txt = btn.closest('.msg-col').querySelector('.bubble-ai').innerText;
+  if (navigator.clipboard) navigator.clipboard.writeText(txt);
+  btn.classList.add('on');
+  setTimeout(() => btn.classList.remove('on'), 800);
 }
 
 let creatingSession = false;
@@ -752,36 +1060,107 @@ function newSession() {
   if (creatingSession) return;
   creatingSession = true;
   api('/api/chat/sessions', {
-    method: 'POST',
-    body: JSON.stringify({ title: 'New Chat' })
+    method: 'POST', body: JSON.stringify({ title: 'New Chat' })
   }).then(data => {
-    currentSessionId = data.id;
-    sending = false;
-    loadSessions();
-    renderMessages([]);
+    currentSessionId = data.id; sending = false;
+    loadSessions(); renderMessages([]);
     creatingSession = false;
   }).catch(() => { creatingSession = false; });
 }
 
 let sending = false;
-function getAgentMode() {
-  return localStorage.getItem('tigrimos_agent_mode') || 'single';
+function getAgentMode() { return localStorage.getItem('tigrimos_agent_mode') || 'single'; }
+
+const agentModes = ['single', 'auto', 'manual', 'fully_auto'];
+const agentModeLabels = { single: 'Single Agent', auto: 'Auto Swarm', manual: 'Manual', fully_auto: 'Fully Auto' };
+function cycleAgentMode() {
+  const cur = getAgentMode();
+  const next = agentModes[(agentModes.indexOf(cur) + 1) % agentModes.length];
+  localStorage.setItem('tigrimos_agent_mode', next);
+  updateAgentModeChip();
 }
+function updateAgentModeChip() {
+  const label = document.getElementById('agent-mode-label');
+  if (label) label.textContent = agentModeLabels[getAgentMode()] || 'Single Agent';
+}
+
+let pendingSendSession = null;
+
+// Recovery: poll session messages to see if the assistant responded while we were in background
+function recoverPendingResponse(sessionId, el) {
+  let attempts = 0;
+  const maxAttempts = 120; // up to 10 minutes (every 5s)
+  const poll = setInterval(() => {
+    attempts++;
+    api(`/api/chat/sessions/${sessionId}`).then(data => {
+      const msgs = data.messages || [];
+      // Check if the last message is from the assistant (response arrived)
+      if (msgs.length && msgs[msgs.length - 1].role === 'assistant') {
+        clearInterval(poll);
+        pendingSendSession = null;
+        const last = msgs[msgs.length - 1];
+        replaceLastMsg(el, last.content || 'No response', last.files);
+        sending = false;
+        loadSessions();
+      } else if (attempts >= maxAttempts) {
+        clearInterval(poll);
+        pendingSendSession = null;
+        replaceLastMsg(el, '[Timeout] Response took too long. Check the session later.');
+        sending = false;
+      }
+    }).catch(() => {
+      // Network still down, keep trying
+    });
+  }, 5000);
+}
+
+// When mobile browser regains focus, resume progress polling or recover
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && sending && pendingSendSession) {
+    const el = document.getElementById('messages');
+    // Check if response already arrived
+    api(`/api/chat/sessions/${pendingSendSession}`).then(data => {
+      const msgs = data.messages || [];
+      if (msgs.length && msgs[msgs.length - 1].role === 'assistant') {
+        pendingSendSession = null;
+        const last = msgs[msgs.length - 1];
+        replaceLastMsg(el, last.content || 'No response', last.files);
+        sending = false;
+        loadSessions();
+      }
+      // else: still processing, recovery poll will handle it
+    }).catch(() => {});
+  }
+});
+
 function sendMessage() {
   const input = document.getElementById('chat-input');
   const msg = input.value.trim();
   if (!msg || sending) return;
   sending = true;
   input.value = '';
+  autosizeInput();
 
-  // Auto-create session if none selected
   const doSend = (sessionId) => {
     const el = document.getElementById('messages');
-    el.innerHTML += `<div class="msg user">${esc(msg)}</div>`;
-    el.innerHTML += `<div class="msg assistant" id="thinking-msg"><span class="spinner"></span> Thinking...</div>`;
+    // Add user message
+    el.innerHTML += `<div class="msg user">
+      <div class="avatar" style="background:linear-gradient(150deg,#E0A23D,#C97E2E);box-shadow:0 4px 11px -5px rgba(201,126,46,.5)">Y</div>
+      <div class="msg-col">
+        <div class="msg-head"><span class="msg-name">You</span></div>
+        <div class="bubble-you">${esc(msg)}</div>
+      </div>
+    </div>`;
+    // Add thinking indicator
+    el.innerHTML += `<div class="msg ai" id="thinking-msg">
+      <div class="avatar">T</div>
+      <div class="msg-col">
+        <div class="msg-head"><span class="msg-name">TigrimOS</span></div>
+        <div class="bubble-ai typing-dots"><i class="td"></i></div>
+      </div>
+    </div>`;
     el.scrollTop = el.scrollHeight;
 
-    // Poll activity log for progress updates
     let lastLen = 0;
     const progressPoll = setInterval(() => {
       api(`/api/chat/sessions/${sessionId}/activity`).then(data => {
@@ -789,28 +1168,39 @@ function sendMessage() {
         if (content.length > lastLen) {
           lastLen = content.length;
           const lines = content.trim().split('\n').filter(l => l.trim());
-          const latest = lines.slice(-3).map(l => esc(l)).join('<br>');
+          const latest = lines.slice(-3).map(l => {
+            let t = l.trim();
+            if (t.length > 80) t = t.slice(0, 80) + '…';
+            return esc(t);
+          }).join('<br>');
           const thinkEl = document.getElementById('thinking-msg');
           if (thinkEl) {
-            thinkEl.innerHTML = '<span class="spinner"></span> ' + latest;
+            const bubble = thinkEl.querySelector('.bubble-ai');
+            if (bubble) {
+              bubble.classList.remove('typing-dots');
+              bubble.innerHTML = '<div class="typing-dots" style="margin-bottom:6px"><i class="td"></i></div><div style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;overflow:hidden;word-break:break-word">' + latest + '</div>';
+            }
             el.scrollTop = el.scrollHeight;
           }
         }
       }).catch(() => {});
     }, 1500);
 
+    // Track the pending session so we can recover on focus-return
+    pendingSendSession = sessionId;
+
     api(`/api/chat/sessions/${sessionId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ message: msg, agent_mode: getAgentMode() })
+      method: 'POST', body: JSON.stringify({ message: msg, agent_mode: getAgentMode() })
     }).then(data => {
       clearInterval(progressPoll);
-      replaceLastMsg(el, data.content || 'No response');
-      sending = false;
-      loadSessions();
+      pendingSendSession = null;
+      replaceLastMsg(el, data.content || 'No response', data.files);
+      sending = false; loadSessions();
     }).catch(() => {
       clearInterval(progressPoll);
-      replaceLastMsg(el, '[Error] Failed to send message');
-      sending = false;
+      // Don't show error immediately — the backend may still be running.
+      // Start recovery polling to wait for the response to appear.
+      recoverPendingResponse(sessionId, el);
     });
   };
 
@@ -818,44 +1208,43 @@ function sendMessage() {
     doSend(currentSessionId);
   } else {
     api('/api/chat/sessions', {
-      method: 'POST',
-      body: JSON.stringify({ title: msg.slice(0, 60) })
+      method: 'POST', body: JSON.stringify({ title: msg.slice(0, 60) })
     }).then(data => {
-      currentSessionId = data.id;
-      loadSessions();
-      doSend(currentSessionId);
-    }).catch(() => {
-      sending = false;
-    });
+      currentSessionId = data.id; loadSessions(); doSend(currentSessionId);
+    }).catch(() => { sending = false; });
   }
 }
 
-function replaceLastMsg(el, text) {
-  const msgs = el.querySelectorAll('.msg');
-  const last = msgs[msgs.length - 1];
-  if (last) last.innerHTML = md(text);
+function replaceLastMsg(el, text, files) {
+  const thinkEl = document.getElementById('thinking-msg');
+  if (thinkEl) {
+    thinkEl.removeAttribute('id');
+    const bubble = thinkEl.querySelector('.bubble-ai');
+    if (bubble) {
+      bubble.classList.remove('typing-dots');
+      bubble.innerHTML = md(text) + renderChatFiles(files);
+    }
+    // Add copy button
+    const col = thinkEl.querySelector('.msg-col');
+    if (col && !col.querySelector('.react-row')) {
+      col.innerHTML += `<div class="react-row">
+        <button class="react" onclick="copyBubble(this)" title="Copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-linecap="round"/></svg></button>
+      </div>`;
+    }
+  }
   el.scrollTop = el.scrollHeight;
 }
 
-function pollTask(taskId, onComplete) {
-  const poll = () => {
-    api(`/api/remote/task/${taskId}`).then(data => {
-      if (data.status === 'completed') {
-        onComplete(data.result || 'Task completed');
-      } else if (data.status === 'failed') {
-        onComplete('[Error] ' + (data.result || 'Task failed'));
-      } else if (data.status === 'killed') {
-        onComplete('[Killed]');
-      } else {
-        setTimeout(poll, 2000);
-      }
-    }).catch(() => setTimeout(poll, 3000));
-  };
-  poll();
+// Composer autosize
+const chatInput = document.getElementById('chat-input');
+const sendBtn = document.getElementById('send-btn');
+function autosizeInput() {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+  sendBtn.disabled = chatInput.value.trim() === '';
 }
-
-// Enter to send
-document.getElementById('chat-input').addEventListener('keydown', e => {
+chatInput.addEventListener('input', autosizeInput);
+chatInput.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
@@ -866,12 +1255,11 @@ let viewingFile = false;
 function loadFiles() {
   const path = document.getElementById('file-path-input').value || '.';
   currentFilePath = path;
-  api('/api/files/?path=' + encodeURIComponent(path)).then(data => {
+  api('/api/files?path=' + encodeURIComponent(path)).then(data => {
     viewingFile = false;
     const files = Array.isArray(data) ? data : (data.files || data.entries || []);
-    const el = document.getElementById('file-list');
     if (!files.length) {
-      document.getElementById('files-content').innerHTML = '<div style="padding:20px;color:var(--fg2)">Empty directory</div>';
+      document.getElementById('files-content').innerHTML = '<div style="padding:20px;color:var(--ink-soft)">Empty directory</div>';
       return;
     }
     document.getElementById('files-content').innerHTML = '<ul class="file-list" id="file-list"></ul>';
@@ -880,8 +1268,7 @@ function loadFiles() {
       const isDir = typeof f === 'object' ? f.isDirectory || f.is_dir || false : name.endsWith('/');
       const icon = isDir ? '&#128193;' : '&#128196;';
       return `<li class="file-item" onclick="openFile('${esc(name)}', ${isDir})">
-        <span class="file-icon">${icon}</span>
-        <span>${esc(name)}</span>
+        <span class="file-icon">${icon}</span><span>${esc(name)}</span>
       </li>`;
     }).join('');
   }).catch(() => {});
@@ -898,9 +1285,9 @@ function openFile(name, isDir) {
       viewingFile = true;
       const content = typeof data === 'string' ? data : (data.content || data.data || JSON.stringify(data, null, 2));
       document.getElementById('files-content').innerHTML =
-        `<div style="padding:8px 16px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-          <button class="secondary" onclick="loadFiles()" style="padding:6px 10px;font-size:12px">&#8592; Back</button>
-          <span style="font-size:13px;color:var(--fg2)">${esc(filePath)}</span>
+        `<div style="padding:10px 16px;background:var(--rail);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px">
+          <button class="pill-btn" onclick="loadFiles()">&#8592; Back</button>
+          <span style="font-size:13px;color:var(--ink-soft);font-weight:500">${esc(filePath)}</span>
         </div>
         <div class="file-viewer"><pre>${esc(content)}</pre></div>`;
     }).catch(() => {});
@@ -910,8 +1297,7 @@ function openFile(name, isDir) {
 function fileUp() {
   const parts = currentFilePath.split('/').filter(Boolean);
   parts.pop();
-  const newPath = parts.length ? parts.join('/') : '.';
-  document.getElementById('file-path-input').value = newPath;
+  document.getElementById('file-path-input').value = parts.length ? parts.join('/') : '.';
   loadFiles();
 }
 
@@ -925,21 +1311,14 @@ function runCommand() {
   const cmd = input.value.trim();
   if (!cmd) return;
   input.value = '';
-
   const out = document.getElementById('terminal-output');
   out.innerHTML += `<div class="term-entry"><span class="term-cmd">$ ${esc(cmd)}</span></div>`;
   out.scrollTop = out.scrollHeight;
-
-  api('/api/terminal/exec', {
-    method: 'POST',
-    body: JSON.stringify({ command: cmd })
-  }).then(data => {
+  api('/api/terminal/exec', { method: 'POST', body: JSON.stringify({ command: cmd }) }).then(data => {
     let html = '';
     if (data.stdout) html += `<span class="term-out">${esc(data.stdout)}</span>`;
     if (data.stderr) html += `<span class="term-err">${esc(data.stderr)}</span>`;
-    if (data.exitCode !== undefined && data.exitCode !== 0) {
-      html += `<span class="term-err">[exit: ${data.exitCode}]</span>`;
-    }
+    if (data.exitCode !== undefined && data.exitCode !== 0) html += `<span class="term-err">[exit: ${data.exitCode}]</span>`;
     if (!html && data.error) html = `<span class="term-err">${esc(data.error)}</span>`;
     out.innerHTML += `<div class="term-entry">${html || '<span class="term-out">(no output)</span>'}</div>`;
     out.scrollTop = out.scrollHeight;
@@ -953,12 +1332,10 @@ let agentConfigs = [];
 let currentAgentConfig = '';
 
 function loadAgents() {
-  // Load agent config files
   api('/api/agents').then(data => {
     agentConfigs = Array.isArray(data) ? data : (data.configs || data.agents || []);
     updateAgentSelect();
   }).catch(() => {});
-  // Load current setting
   api('/api/settings').then(data => {
     currentAgentConfig = data.subAgentConfigFile || '';
     updateAgentSelect();
@@ -976,17 +1353,15 @@ function updateAgentSelect() {
       const count = c.agentCount ? ` — ${c.agentCount} agents` : '';
       return `<option value="${esc(fn)}" ${fn === prev ? 'selected' : ''}>${esc(label + count)}</option>`;
     }).join('');
-  // Restore saved mode on agents page selector
   const savedMode = localStorage.getItem('tigrimos_agent_mode') || 'single';
   const modeSel = document.getElementById('agents-mode-select');
   if (modeSel) modeSel.value = savedMode;
-  // Show preview
   const preview = document.getElementById('agent-config-preview');
   const info = document.getElementById('agent-config-info');
   if (sel.value) {
     preview.style.display = 'block';
     const cfg = agentConfigs.find(c => (c.filename || c.name) === sel.value);
-    info.textContent = cfg ? `${cfg.agentCount || 0} agents • ${cfg.updatedAt || ''}` : sel.value;
+    info.textContent = cfg ? `${cfg.agentCount || 0} agents` : sel.value;
   } else {
     preview.style.display = 'none';
   }
@@ -995,7 +1370,7 @@ function updateAgentSelect() {
 function selectAgentMode() {
   const mode = document.getElementById('agents-mode-select').value;
   localStorage.setItem('tigrimos_agent_mode', mode);
-  // Persist mode to settings
+  updateAgentModeChip();
   api('/api/settings').then(data => {
     data.subAgentMode = mode === 'single' ? 'auto' : mode;
     data.subAgentEnabled = mode !== 'single';
@@ -1011,22 +1386,18 @@ function selectAgentConfig() {
   const sel = document.getElementById('agent-config-select');
   const val = sel.value;
   currentAgentConfig = val;
-  // If a config is selected but mode is still single, switch to auto
   const modeSel = document.getElementById('agents-mode-select');
   if (val && modeSel && modeSel.value === 'single') {
     modeSel.value = 'auto';
     localStorage.setItem('tigrimos_agent_mode', 'auto');
+    updateAgentModeChip();
   }
   const mode = modeSel ? modeSel.value : 'auto';
-  // Save to settings
   api('/api/settings').then(data => {
     data.subAgentConfigFile = val || null;
     data.subAgentEnabled = !!val && mode !== 'single';
     data.subAgentMode = mode === 'single' ? 'auto' : mode;
-    return api('/api/settings', {
-      method: 'PUT',
-      body: JSON.stringify(data)
-    });
+    return api('/api/settings', { method: 'PUT', body: JSON.stringify(data) });
   }).then(() => {
     const status = document.getElementById('agent-config-status');
     status.textContent = val ? 'Config activated!' : 'Sub-agent disabled';
@@ -1040,19 +1411,15 @@ function uploadAgentConfig(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = (e) => {
-    const content = e.target.result;
     api('/api/agents/', {
-      method: 'POST',
-      body: JSON.stringify({ filename: file.name, content: content })
+      method: 'POST', body: JSON.stringify({ filename: file.name, content: e.target.result })
     }).then(data => {
       if (data.ok) {
         const status = document.getElementById('agent-config-status');
         status.textContent = 'Uploaded: ' + (data.filename || file.name);
         setTimeout(() => status.textContent = '', 3000);
         loadAgents();
-      } else {
-        alert('Upload failed: ' + (data.error || 'Unknown error'));
-      }
+      } else { alert('Upload failed: ' + (data.error || 'Unknown error')); }
     }).catch(err => alert('Upload failed: ' + err.message));
   };
   reader.readAsText(file);
@@ -1073,10 +1440,7 @@ function deleteAgentConfig() {
   const sel = document.getElementById('agent-config-select').value;
   if (!sel || !confirm('Delete ' + sel + '?')) return;
   api('/api/agents/' + encodeURIComponent(sel), { method: 'DELETE' }).then(() => {
-    if (currentAgentConfig === sel) {
-      currentAgentConfig = '';
-      selectAgentConfig();
-    }
+    if (currentAgentConfig === sel) { currentAgentConfig = ''; selectAgentConfig(); }
     loadAgents();
   }).catch(() => {});
 }
@@ -1085,10 +1449,7 @@ function loadRemoteTasks() {
   api('/api/remote/tasks').then(data => {
     const tasks = Array.isArray(data) ? data : (data.tasks || []);
     const el = document.getElementById('remote-tasks-list');
-    if (!tasks.length) {
-      el.innerHTML = '<div style="color:var(--fg2)">No remote tasks</div>';
-      return;
-    }
+    if (!tasks.length) { el.innerHTML = '<div style="color:var(--ink-soft)">No remote tasks</div>'; return; }
     el.innerHTML = tasks.map(t => `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1097,8 +1458,8 @@ function loadRemoteTasks() {
         </div>
         <div class="detail">ID: ${t.id}</div>
         <div class="detail">Created: ${t.created_at || ''}</div>
-        ${t.result ? `<div style="margin-top:8px;color:var(--fg)">${md(t.result)}</div>` : ''}
-        ${t.status === 'running' ? `<button onclick="killTask('${t.id}')" style="margin-top:8px;background:var(--red);font-size:12px;padding:4px 10px">Kill</button>` : ''}
+        ${t.result ? `<div style="margin-top:8px">${md(t.result)}</div>` : ''}
+        ${t.status === 'running' ? `<button class="pill-btn danger" onclick="killTask('${t.id}')" style="margin-top:8px;font-size:12px">Kill</button>` : ''}
       </div>
     `).join('');
   }).catch(() => {});
@@ -1109,29 +1470,25 @@ function submitTask() {
   const task = input.value.trim();
   if (!task) return;
   input.value = '';
-  api('/api/remote/task', {
-    method: 'POST',
-    body: JSON.stringify({ task })
-  }).then(() => {
-    setTimeout(loadRemoteTasks, 500);
-  }).catch(err => alert('Error: ' + err.message));
+  api('/api/remote/task', { method: 'POST', body: JSON.stringify({ task }) })
+    .then(() => setTimeout(loadRemoteTasks, 500))
+    .catch(err => alert('Error: ' + err.message));
 }
 
 function killTask(id) {
   api(`/api/remote/task/${id}/kill`, { method: 'POST' })
-    .then(() => setTimeout(loadRemoteTasks, 500))
-    .catch(() => {});
+    .then(() => setTimeout(loadRemoteTasks, 500)).catch(() => {});
 }
 
 // ========== TASKS ==========
+let activeTasksPoll = null;
+
 function loadTasks() {
+  loadActiveTasks();
   api('/api/tasks/').then(data => {
     const tasks = Array.isArray(data) ? data : (data.tasks || []);
     const el = document.getElementById('tasks-list');
-    if (!tasks.length) {
-      el.innerHTML = '<div style="color:var(--fg2)">No scheduled tasks</div>';
-      return;
-    }
+    if (!tasks.length) { el.innerHTML = '<div style="color:var(--ink-soft)">No scheduled tasks</div>'; return; }
     el.innerHTML = tasks.map(t => `
       <div class="card">
         <h3>${esc(t.name || t.title || t.id)}</h3>
@@ -1142,6 +1499,57 @@ function loadTasks() {
   }).catch(() => {});
 }
 
+function loadActiveTasks() {
+  if (activeTasksPoll) clearInterval(activeTasksPoll);
+  fetchActiveTasks();
+  // Auto-refresh every 3s while on tasks tab
+  activeTasksPoll = setInterval(() => {
+    const tasksPage = document.getElementById('page-tasks');
+    if (tasksPage && tasksPage.classList.contains('active')) {
+      fetchActiveTasks();
+    } else {
+      clearInterval(activeTasksPoll);
+      activeTasksPoll = null;
+    }
+  }, 3000);
+}
+
+function fetchActiveTasks() {
+  api('/api/chat/active-tasks').then(data => {
+    const tasks = data.tasks || [];
+    const el = document.getElementById('active-tasks-section');
+    if (!tasks.length) {
+      el.innerHTML = '<div style="color:var(--ink-soft);padding:4px 0;font-size:13px">No tasks running</div>';
+      return;
+    }
+    el.innerHTML = tasks.map(t => {
+      const lines = (t.activity || '').trim().split('\n').filter(l => l.trim());
+      const recent = lines.slice(-5).map(l => esc(l)).join('<br>');
+      return `<div class="active-task-card">
+        <div class="at-header">
+          <span class="at-dot"></span>
+          <span class="at-title">${esc(t.title)}</span>
+          <span class="badge running">Running</span>
+        </div>
+        <div class="at-activity">${recent || 'Starting...'}</div>
+        <button class="at-go" onclick="goToChat('${esc(t.session_id)}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Go to Chat
+        </button>
+      </div>`;
+    }).join('');
+  }).catch(() => {});
+}
+
+function goToChat(sessionId) {
+  currentSessionId = sessionId;
+  switchTab('chat');
+  renderSessions();
+  api('/api/chat/sessions/' + sessionId).then(data => {
+    renderMessages(data.messages || []);
+  }).catch(() => {});
+}
+
 // ========== SETTINGS ==========
 function loadSettings() {
   api('/api/settings').then(data => {
@@ -1149,50 +1557,30 @@ function loadSettings() {
     el.innerHTML = `
       <div class="settings-group">
         <h3>AI Configuration</h3>
-        <div class="settings-row">
-          <label>Model</label>
-          <input id="s-model" value="${esc(data.tigerBotModel || '')}">
-        </div>
-        <div class="settings-row">
-          <label>API URL</label>
-          <input id="s-api-url" value="${esc(data.tigerBotApiUrl || '')}">
-        </div>
-        <div class="settings-row">
-          <label>API Key</label>
-          <input id="s-api-key" type="password" value="${esc(data.tigerBotApiKey || '')}">
-        </div>
+        <div class="settings-row-field"><label>Model</label><input id="s-model" value="${esc(data.tigerBotModel || '')}"></div>
+        <div class="settings-row-field"><label>API URL</label><input id="s-api-url" value="${esc(data.tigerBotApiUrl || '')}"></div>
+        <div class="settings-row-field"><label>API Key</label><input id="s-api-key" type="password" value="${esc(data.tigerBotApiKey || '')}"></div>
       </div>
       <div class="settings-group">
         <h3>MCP Tools</h3>
         <div id="s-mcp-list">${(data.mcpTools || []).map(t => `
           <div class="card">
-            <h3>${esc(t.name)} <span class="dot ${t.enabled !== false ? 'green' : 'red'}"></span></h3>
+            <h3>${esc(t.name)} <span class="dot ${t.enabled !== false ? 'on' : ''}" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:${t.enabled !== false ? 'var(--green)' : 'var(--red)'}"></span></h3>
             <div class="detail">URL: ${esc(t.url || '')}</div>
             <div class="detail">Type: ${esc(t.type || 'auto')}</div>
           </div>
-        `).join('') || '<div style="color:var(--fg2)">No MCP tools configured</div>'}</div>
+        `).join('') || '<div style="color:var(--ink-soft)">No MCP tools configured</div>'}</div>
       </div>
       <div class="settings-group">
         <h3>Remote Access</h3>
-        <div class="settings-row">
-          <label>Remote Enabled</label>
-          <span>${data.remoteEnabled ? 'Yes' : 'No'}</span>
-        </div>
-        <div class="settings-row">
-          <label>Sandbox Dir</label>
-          <span style="font-size:13px;color:var(--fg2)">${esc(data.sandboxDir || '')}</span>
-        </div>
+        <div class="settings-row-field"><label>Remote Enabled</label><span style="font-weight:600;color:${data.remoteEnabled ? 'var(--green)' : 'var(--ink-soft)'}">${data.remoteEnabled ? 'Yes' : 'No'}</span></div>
+        <div class="settings-row-field"><label>Sandbox Dir</label><span style="font-size:13px;color:var(--ink-soft)">${esc(data.sandboxDir || '')}</span></div>
       </div>
       <div class="settings-group">
         <h3>General</h3>
-        <div class="settings-row">
-          <label>Web Search</label>
-          <span>${data.webSearchEnabled ? 'Enabled' : 'Disabled'}</span>
-        </div>
+        <div class="settings-row-field"><label>Web Search</label><span style="font-weight:600;color:${data.webSearchEnabled ? 'var(--green)' : 'var(--ink-soft)'}">${data.webSearchEnabled ? 'Enabled' : 'Disabled'}</span></div>
       </div>
-      <div style="margin-top:16px">
-        <button onclick="saveSettings()">Save Settings</button>
-      </div>
+      <div style="margin-top:16px"><button class="pill-btn primary" onclick="saveSettings()" style="padding:12px 28px;font-size:14px">Save Settings</button></div>
     `;
   }).catch(() => {});
 }
@@ -1203,10 +1591,8 @@ function saveSettings() {
     tigerBotApiUrl: document.getElementById('s-api-url').value || null,
     tigerBotApiKey: document.getElementById('s-api-key').value,
   };
-  api('/api/settings', {
-    method: 'PUT',
-    body: JSON.stringify(body)
-  }).then(() => alert('Settings saved!')).catch(() => alert('Failed to save'));
+  api('/api/settings', { method: 'PUT', body: JSON.stringify(body) })
+    .then(() => alert('Settings saved!')).catch(() => alert('Failed to save'));
 }
 
 // ========== HELPERS ==========
@@ -1215,7 +1601,6 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// Render LaTeX with KaTeX (returns HTML string)
 function renderLatex(tex, displayMode) {
   if (typeof katex !== 'undefined') {
     try { return katex.renderToString(tex, { displayMode, throwOnError: false }); }
@@ -1224,91 +1609,138 @@ function renderLatex(tex, displayMode) {
   return displayMode ? `<div class="md-math">${esc(tex)}</div>` : `<span class="md-math">${esc(tex)}</span>`;
 }
 
-// Simple markdown to HTML renderer
 function md(s) {
   if (!s) return '';
-
-  // Extract LaTeX blocks BEFORE escaping (they contain special chars)
+  // Strip <think>...</think> blocks (LLM reasoning tags)
+  let raw = String(s).replace(/<think>[\s\S]*?<\/think>\s*/gi, '');
+  // Also strip unclosed <think> at end
+  raw = raw.replace(/<think>[\s\S]*/gi, '');
+  if (!raw.trim()) return '';
   const placeholders = [];
-  let raw = String(s);
-
-  // Display math: \[...\] or $$...$$
-  raw = raw.replace(/\\\[([\s\S]*?)\\\]/g, (_, tex) => {
-    placeholders.push(renderLatex(tex.trim(), true));
-    return `%%MATH${placeholders.length - 1}%%`;
-  });
-  raw = raw.replace(/\$\$([\s\S]*?)\$\$/g, (_, tex) => {
-    placeholders.push(renderLatex(tex.trim(), true));
-    return `%%MATH${placeholders.length - 1}%%`;
-  });
-
-  // Inline math: \(...\) or $...$
-  raw = raw.replace(/\\\(([\s\S]*?)\\\)/g, (_, tex) => {
-    placeholders.push(renderLatex(tex.trim(), false));
-    return `%%MATH${placeholders.length - 1}%%`;
-  });
-  raw = raw.replace(/(?<!\$)\$(?!\$)([^\n$]+?)\$/g, (_, tex) => {
-    placeholders.push(renderLatex(tex.trim(), false));
-    return `%%MATH${placeholders.length - 1}%%`;
-  });
-
+  raw = raw.replace(/\\\[([\s\S]*?)\\\]/g, (_, tex) => { placeholders.push(renderLatex(tex.trim(), true)); return `%%MATH${placeholders.length - 1}%%`; });
+  raw = raw.replace(/\$\$([\s\S]*?)\$\$/g, (_, tex) => { placeholders.push(renderLatex(tex.trim(), true)); return `%%MATH${placeholders.length - 1}%%`; });
+  raw = raw.replace(/\\\(([\s\S]*?)\\\)/g, (_, tex) => { placeholders.push(renderLatex(tex.trim(), false)); return `%%MATH${placeholders.length - 1}%%`; });
+  raw = raw.replace(/(?<!\$)\$(?!\$)([^\n$]+?)\$/g, (_, tex) => { placeholders.push(renderLatex(tex.trim(), false)); return `%%MATH${placeholders.length - 1}%%`; });
   let h = esc(raw);
-
-  // Restore math placeholders
   h = h.replace(/%%MATH(\d+)%%/g, (_, i) => placeholders[parseInt(i)]);
-
-  // Code blocks (``` ... ```)
   h = h.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="md-code"><code>$2</code></pre>');
-
-  // Inline code
   h = h.replace(/`([^`]+)`/g, '<code class="md-inline">$1</code>');
-
-  // Tables
   h = h.replace(/((?:^\|.+\|\s*$\n?)+)/gm, function(table) {
     const rows = table.trim().split('\n').filter(r => r.trim());
     if (rows.length < 2) return table;
     let html = '<div class="md-table-wrap"><table class="md-table">';
     rows.forEach((row, i) => {
-      // Skip separator row (|---|---|)
-      if (/^\|[\s\-:]+\|$/.test(row.trim()) || /^\|(\s*-+\s*\|)+$/.test(row.trim()) ||
-          /^\|[\s\-:|]+\|$/.test(row.trim())) return;
+      if (/^\|[\s\-:]+\|$/.test(row.trim()) || /^\|(\s*-+\s*\|)+$/.test(row.trim()) || /^\|[\s\-:|]+\|$/.test(row.trim())) return;
       const cells = row.split('|').filter((c, j, a) => j > 0 && j < a.length - 1);
       const tag = i === 0 ? 'th' : 'td';
       html += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
     });
-    html += '</table></div>';
-    return html;
+    return html + '</table></div>';
   });
-
-  // Headings
   h = h.replace(/^#### (.+)$/gm, '<h4 class="md-h">$1</h4>');
   h = h.replace(/^### (.+)$/gm, '<h3 class="md-h">$1</h3>');
   h = h.replace(/^## (.+)$/gm, '<h2 class="md-h">$1</h2>');
   h = h.replace(/^# (.+)$/gm, '<h1 class="md-h">$1</h1>');
-
-  // Horizontal rule
   h = h.replace(/^---+$/gm, '<hr class="md-hr">');
-
-  // Bold and italic
   h = h.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-  // Unordered lists
-  h = h.replace(/^(\s*)[*\-] (.+)$/gm, function(m, indent, content) {
-    return `<li class="md-li">${content}</li>`;
-  });
-  // Wrap consecutive <li> in <ul>
+  h = h.replace(/^(\s*)[*\-•] (.+)$/gm, '<li class="md-li">$2</li>');
   h = h.replace(/((?:<li class="md-li">.*<\/li>\s*)+)/g, '<ul class="md-ul">$1</ul>');
-
-  // Numbered lists
   h = h.replace(/^\d+\. (.+)$/gm, '<li class="md-oli">$1</li>');
   h = h.replace(/((?:<li class="md-oli">.*<\/li>\s*)+)/g, '<ol class="md-ol">$1</ol>');
 
-  // Line breaks (but not inside block elements)
-  h = h.replace(/\n\n/g, '<br><br>');
-
+  // Wrap loose text between block elements in <div> so everything stacks vertically
+  // Split HTML on block-level tags
+  var parts = h.split(/(<ul[\s>][\s\S]*?<\/ul>|<ol[\s>][\s\S]*?<\/ol>|<pre[\s>][\s\S]*?<\/pre>|<div[\s>][\s\S]*?<\/div>|<h[1-4][^>]*>[\s\S]*?<\/h[1-4]>|<hr[^>]*\/?>|<table[\s>][\s\S]*?<\/table>)/gi);
+  h = parts.map(function(p) {
+    // Block elements — keep as-is
+    if (/^<(?:ul|ol|pre|div|h[1-4]|hr|table)/i.test(p.trim())) return p;
+    // Loose text — wrap in <div> if non-empty
+    var t = p.replace(/\n\n+/g, '<br>').replace(/\n/g, '<br>').trim();
+    if (!t || t === '<br>' || t === '<br><br>') return '';
+    return '<div class="md-p">' + t + '</div>';
+  }).join('');
   return h;
+}
+
+// ========== FILE ATTACHMENTS IN CHAT ==========
+const IMG_EXTS = ['png','jpg','jpeg','gif','svg','webp'];
+function isImageFile(path) {
+  const ext = path.split('.').pop().toLowerCase();
+  return IMG_EXTS.includes(ext);
+}
+function fileBasename(path) {
+  return path.split('/').pop();
+}
+function renderChatFiles(files) {
+  if (!files || !files.length) return '';
+  let html = '<div class="chat-files">';
+  for (const f of files) {
+    const name = fileBasename(f);
+    const encPath = encodeURIComponent(f);
+    if (isImageFile(f)) {
+      html += `<div style="display:flex;flex-direction:column;gap:4px;max-width:220px">
+        <img class="chat-file-thumb" src="/api/files/raw?path=${encPath}" alt="${esc(name)}" onclick="openLightbox(this.src,'${esc(name)}')" loading="lazy">
+        <div class="chat-file-card" onclick="goToFile('${esc(f)}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a1 1 0 0 0 1 1h3"/></svg>
+          <span class="cf-name">${esc(name)}</span>
+        </div>
+      </div>`;
+    } else {
+      html += `<div class="chat-file-card" onclick="goToFile('${esc(f)}')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a1 1 0 0 0 1 1h3"/></svg>
+        <span class="cf-name">${esc(name)}</span>
+      </div>`;
+    }
+  }
+  html += '</div>';
+  return html;
+}
+function openLightbox(src, name) {
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox';
+  overlay.innerHTML = `<img src="${src}"><div class="lightbox-label">${esc(name)}</div>`;
+  overlay.onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+function goToFile(path) {
+  // Switch to Files tab and navigate to the file's directory
+  const parts = path.split('/');
+  parts.pop(); // remove filename
+  const dir = parts.join('/') || '.';
+  switchTab('files');
+  setTimeout(() => loadFiles(dir), 200);
+}
+
+// ========== LOG VIEWER ==========
+let currentLogTab = 'activity';
+
+function openLogViewer() {
+  if (!currentSessionId) { alert('No chat session selected'); return; }
+  document.getElementById('log-modal').classList.remove('hidden');
+  switchLogTab('activity');
+}
+
+function switchLogTab(tab) {
+  currentLogTab = tab;
+  document.getElementById('log-tab-activity').classList.toggle('primary', tab === 'activity');
+  document.getElementById('log-tab-chat').classList.toggle('primary', tab === 'chat');
+  refreshLogViewer();
+}
+
+function refreshLogViewer() {
+  if (!currentSessionId) return;
+  const endpoint = currentLogTab === 'activity'
+    ? `/api/chat/sessions/${currentSessionId}/activity`
+    : `/api/chat/sessions/${currentSessionId}/chatlog`;
+  const el = document.getElementById('log-modal-content');
+  el.textContent = 'Loading...';
+  api(endpoint).then(data => {
+    const content = data.content || '';
+    el.textContent = content || '(empty log)';
+    el.scrollTop = el.scrollHeight;
+  }).catch(() => { el.textContent = 'Failed to load log'; });
 }
 
 // Enter key on login
@@ -1318,9 +1750,7 @@ document.getElementById('token-input').addEventListener('keydown', e => {
 
 // Auto-refresh remote tasks every 5s if on agents tab
 setInterval(() => {
-  if (document.getElementById('page-agents').classList.contains('active')) {
-    loadRemoteTasks();
-  }
+  if (document.getElementById('page-agents').classList.contains('active')) loadRemoteTasks();
 }, 5000);
 </script>
 </body>

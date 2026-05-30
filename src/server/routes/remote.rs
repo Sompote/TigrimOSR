@@ -299,11 +299,7 @@ async fn process_remote_task(
     } else {
         settings.tiger_bot_model.clone()
     };
-    let sandbox_dir = if settings.sandbox_dir.is_empty() {
-        "sandbox".to_string()
-    } else {
-        settings.sandbox_dir.clone()
-    };
+    let sandbox_dir = crate::server::data::get_sandbox_dir_sync();
 
     if api_key.is_empty() {
         add_progress(&task_id, "Error: No API key configured").await;

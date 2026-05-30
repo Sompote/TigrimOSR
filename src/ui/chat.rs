@@ -2680,15 +2680,13 @@ You have access to these tools: {}.{}",
                 ui.vertical_centered(|ui| {
                     let top_pad = (welcome_height / 2.0 - 80.0).max(20.0);
                     ui.add_space(top_pad);
-                    // Logo image
-                    let logo_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon.png");
-                    let logo_uri = format!("file://{}", logo_path.display());
-                    ui.add(
-                        egui::Image::new(&logo_uri)
-                            .max_width(64.0)
-                            .max_height(64.0)
-                            .corner_radius(10.0),
-                    );
+                    // Logo image — embed as bytes to preserve alpha transparency
+                    let logo_bytes = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/logo_tigrimos.png"));
+                    let logo_image = egui::Image::from_bytes("bytes://logo_tigrimos", logo_bytes.as_slice())
+                        .max_width(96.0)
+                        .max_height(96.0)
+                        .tint(egui::Color32::from_rgb(52, 48, 42));
+                    ui.add(logo_image);
                     ui.add_space(8.0);
                     ui.heading(
                         egui::RichText::new("TigrimOS")
