@@ -26,6 +26,16 @@ Design multi-agent systems visually — create architectures manually or generat
 
 ![Agent Swarm Editor](assets/screenshot_agents.png)
 
+### Mobile Remote Connection
+
+Connect from your phone to TigrimOS running on a cloud server — full chat with inline charts, tool execution, and file browsing.
+
+<p align="center">
+  <img src="assets/screenshot_mobile_remote_1.jpg" width="300" alt="Mobile Remote Chat">
+  &nbsp;&nbsp;
+  <img src="assets/screenshot_mobile_remote_2.jpg" width="300" alt="Mobile Remote Chart">
+</p>
+
 ## What's New in v0.5.3
 
 - **Web/mobile UI parity** — Remote and mobile web chat now uses the same system prompt, SOUL.md, and IDENTITY.md as the native desktop UI. Responses are consistent regardless of how you connect.
@@ -39,16 +49,6 @@ Design multi-agent systems visually — create architectures manually or generat
 - **`<think>` tag stripping in web UI** — Frontend now strips `<think>` reasoning blocks as a safety net, in addition to backend stripping.
 - **`.env` loading from data directory** — The app now loads `.env` files from both the data directory and the current working directory via `dotenvy`.
 - **Cache-Control on web UI** — Added `no-cache, no-store, must-revalidate` headers to prevent browsers from serving stale cached pages.
-
-### Mobile Remote Connection
-
-Connect from your phone to TigrimOS running on a cloud server — full chat with inline charts, tool execution, and file browsing.
-
-<p align="center">
-  <img src="assets/screenshot_mobile_remote_1.jpg" width="300" alt="Mobile Remote Chat">
-  &nbsp;&nbsp;
-  <img src="assets/screenshot_mobile_remote_2.jpg" width="300" alt="Mobile Remote Chart">
-</p>
 
 ### Previous Releases
 
