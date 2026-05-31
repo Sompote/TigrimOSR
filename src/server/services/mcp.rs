@@ -56,12 +56,23 @@ pub async fn init_mcp_servers() {
             "enabled": tool.enabled,
         });
 
-        // For stdio: parse "command arg1 arg2" from url if no explicit command
-        if transport == "stdio" || (!tool.url.starts_with("http") && transport == "auto") {
-            let parts: Vec<&str> = tool.url.split_whitespace().collect();
-            if !parts.is_empty() {
-                config["command"] = json!(parts[0]);
-                config["args"] = json!(parts[1..]);
+        // Check if this is a stdio server (has command field, or non-HTTP url)
+        let is_stdio = tool.command.is_some()
+            || transport == "stdio"
+            || (!tool.url.starts_with("http") && transport == "auto");
+
+        if is_stdio {
+            // Use explicit command/args if provided (Claude Desktop format)
+            if let Some(cmd) = &tool.command {
+                config["command"] = json!(cmd);
+                config["args"] = json!(tool.args.as_deref().unwrap_or(&[]));
+            } else {
+                // Fallback: parse "command arg1 arg2" from url field
+                let parts: Vec<&str> = tool.url.split_whitespace().collect();
+                if !parts.is_empty() {
+                    config["command"] = json!(parts[0]);
+                    config["args"] = json!(parts[1..]);
+                }
             }
             let result = connect_server_impl(&tool.name, "stdio", &config).await;
             if result["ok"].as_bool().unwrap_or(false) {
@@ -381,6 +392,14 @@ pub async fn disconnect_server(name: &str) {
 pub async fn disconnect_all() {
     connections().lock().await.clear();
     info!("[MCP] All servers disconnected");
+}
+
+/// Get connection status for all servers (for UI display)
+pub async fn get_connection_status() -> Vec<(String, bool, usize, Option<String>)> {
+    let conns = connections().lock().await;
+    conns.values().map(|c| {
+        (c.name.clone(), c.connected, c.tools.len(), c.error.clone())
+    }).collect()
 }
 
 /// Get all MCP tool definitions in OpenAI function-calling format

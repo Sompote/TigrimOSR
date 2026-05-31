@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 
@@ -150,6 +150,7 @@ pub struct SettingsView {
     mcp_json_mode: bool,
     mcp_json_text: String,
     mcp_json_error: Option<String>,
+    mcp_connection_status: Arc<Mutex<Vec<(String, bool, usize, Option<String>)>>>,
 
     // --- Remote Instances ---
     remote_enabled: bool,
@@ -240,6 +241,7 @@ impl Default for SettingsView {
             mcp_json_mode: false,
             mcp_json_text: String::new(),
             mcp_json_error: None,
+            mcp_connection_status: Arc::new(Mutex::new(Vec::new())),
 
             remote_enabled: false,
             remote_token: String::new(),
@@ -533,10 +535,13 @@ impl SettingsView {
         settings.mcp_tools = self.mcp_tools.clone();
 
         // Reconnect MCP servers after saving
-        runtime.spawn(async {
+        let mcp_status = self.mcp_connection_status.clone();
+        runtime.spawn(async move {
             use crate::server::services::mcp;
             mcp::disconnect_all().await;
             mcp::init_mcp_servers().await;
+            let status = mcp::get_connection_status().await;
+            *mcp_status.lock().unwrap() = status;
         });
 
         // Remote
@@ -1372,7 +1377,15 @@ impl SettingsView {
             if let Some(t) = &tool.tool_type {
                 entry.insert("type".into(), serde_json::Value::String(t.clone()));
             }
-            entry.insert("url".into(), serde_json::Value::String(tool.url.clone()));
+            if let Some(cmd) = &tool.command {
+                entry.insert("command".into(), serde_json::Value::String(cmd.clone()));
+            }
+            if let Some(args) = &tool.args {
+                entry.insert("args".into(), serde_json::json!(args));
+            }
+            if !tool.url.is_empty() {
+                entry.insert("url".into(), serde_json::Value::String(tool.url.clone()));
+            }
             if !tool.enabled {
                 entry.insert("enabled".into(), serde_json::Value::Bool(false));
             }
@@ -1412,6 +1425,10 @@ impl SettingsView {
                 .to_string();
             let tool_type = obj.get("type").and_then(|v| v.as_str()).map(String::from);
             let enabled = obj.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let command = obj.get("command").and_then(|v| v.as_str()).map(String::from);
+            let args = obj.get("args").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+            });
             let headers = obj.get("headers").and_then(|v| v.as_object()).map(|h| {
                 h.iter()
                     .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
@@ -1422,6 +1439,8 @@ impl SettingsView {
                 url,
                 enabled,
                 tool_type,
+                command,
+                args,
                 headers,
             });
         }
@@ -1556,6 +1575,28 @@ impl SettingsView {
             }
 
             Self::status_label(ui, &self.api_status_msg);
+
+            // Show connection status for each server
+            let statuses = self.mcp_connection_status.lock().unwrap().clone();
+            if !statuses.is_empty() {
+                ui.add_space(8.0);
+                for (name, connected, tool_count, error) in &statuses {
+                    if *connected {
+                        ui.label(
+                            egui::RichText::new(format!("✅ {} — {} tool(s) connected", name, tool_count))
+                                .size(12.0)
+                                .color(egui::Color32::from_rgb(34, 197, 94)),
+                        );
+                    } else {
+                        let err_msg = error.as_deref().unwrap_or("unknown error");
+                        ui.label(
+                            egui::RichText::new(format!("❌ {} — {}", name, err_msg))
+                                .size(12.0)
+                                .color(egui::Color32::from_rgb(239, 68, 68)),
+                        );
+                    }
+                }
+            }
         });
     }
 
@@ -1587,11 +1628,23 @@ impl SettingsView {
                         }
                     });
                 });
-                ui.label(
-                    egui::RichText::new(&tool.url)
-                        .size(11.0)
-                        .color(egui::Color32::GRAY),
-                );
+                // Show command/args for stdio servers or URL for HTTP
+                if let Some(cmd) = &tool.command {
+                    let args_str = tool.args.as_ref()
+                        .map(|a| a.join(" "))
+                        .unwrap_or_default();
+                    ui.label(
+                        egui::RichText::new(format!("stdio: {} {}", cmd, args_str))
+                            .size(11.0)
+                            .color(egui::Color32::GRAY),
+                    );
+                } else if !tool.url.is_empty() {
+                    ui.label(
+                        egui::RichText::new(&tool.url)
+                            .size(11.0)
+                            .color(egui::Color32::GRAY),
+                    );
+                }
                 if let Some(headers) = &tool.headers {
                     if !headers.is_empty() {
                         ui.label(
@@ -1662,6 +1715,8 @@ impl SettingsView {
                     url: self.new_mcp_url.clone(),
                     enabled: true,
                     tool_type: None,
+                    command: None,
+                    args: None,
                     headers,
                 });
                 self.new_mcp_name.clear();
@@ -1678,6 +1733,28 @@ impl SettingsView {
             }
             Self::status_label(ui, &self.api_status_msg);
         });
+
+        // Show connection status
+        let statuses = self.mcp_connection_status.lock().unwrap().clone();
+        if !statuses.is_empty() {
+            ui.add_space(8.0);
+            for (name, connected, tool_count, error) in &statuses {
+                if *connected {
+                    ui.label(
+                        egui::RichText::new(format!("✅ {} — {} tool(s) connected", name, tool_count))
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(34, 197, 94)),
+                    );
+                } else {
+                    let err_msg = error.as_deref().unwrap_or("unknown error");
+                    ui.label(
+                        egui::RichText::new(format!("❌ {} — {}", name, err_msg))
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(239, 68, 68)),
+                    );
+                }
+            }
+        }
     }
 
     // ==================================================================

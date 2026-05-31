@@ -402,10 +402,15 @@ pub async fn save_tasks(tasks: &[ScheduledTask]) {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpTool {
     pub name: String,
+    #[serde(default)]
     pub url: String,
     pub enabled: bool,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub tool_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<std::collections::HashMap<String, String>>,
 }
