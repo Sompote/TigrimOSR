@@ -436,23 +436,26 @@ pub fn append_session_progress(session_id: &str, text: &str) {
         .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()));
 }
 
-/// Log orchestrator tool call to the Activity panel (mirrors TS socket.ts onToolCall).
-fn log_orchestrator_tool_call(session_id: &str, name: &str, args: &Value) {
+/// Log agent tool call to the Activity panel (mirrors TS socket.ts onToolCall).
+fn log_agent_tool_call(session_id: &str, agent_id: &str, name: &str, args: &Value) {
+    let label = if agent_id.is_empty() || agent_id == "main" { "Orchestrator".to_string() } else { agent_id.to_string() };
     if name.starts_with("proto_") {
         let proto_name = name.replace("proto_", "").split('_').next().unwrap_or("").to_uppercase();
         append_session_progress(session_id,
-            &format!("> **{}** **Orchestrator** → `{}`\n", proto_name, name));
+            &format!("> **{}** **{}** → `{}`\n", proto_name, label, name));
     } else if name == "send_task" {
-        let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("agent");
+        let to = args.get("to").and_then(|v| v.as_str())
+            .or_else(|| args.get("agent_name").and_then(|v| v.as_str()))
+            .unwrap_or("agent");
         append_session_progress(session_id,
-            &format!("> **Orchestrator** delegating task to {}\n", to));
+            &format!("> **{}** delegating task to {}\n", label, to));
     } else if name == "wait_result" {
         let from = args.get("from").and_then(|v| v.as_str()).unwrap_or("agent");
         append_session_progress(session_id,
-            &format!("> **Orchestrator** waiting for {}\n", from));
+            &format!("> **{}** waiting for {}\n", label, from));
     } else {
         append_session_progress(session_id,
-            &format!("> **Orchestrator** → `{}`\n", name));
+            &format!("> **{}** → `{}`\n", label, name));
     }
 }
 
@@ -1060,7 +1063,7 @@ async fn realtime_agent_loop(
                 let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
                 let line = match &update {
                     ToolUpdate::ToolCall { name, args } => {
-                        log_orchestrator_tool_call(&bid_progress_sid, name, args);
+                        log_agent_tool_call(&bid_progress_sid, &bid_log_aid, name, args);
                         let a = serde_json::to_string(args).unwrap_or_default();
                         let a_short = if a.len() > 300 { format!("{}...", &a[..300]) } else { a };
                         format!("[{}] [{}] BID TOOL CALL: {}\n  args: {}", ts, bid_log_aid, name, a_short)
@@ -1159,13 +1162,13 @@ async fn realtime_agent_loop(
         let log_sid = session_id.clone();
         let log_aid = agent_id.clone();
         let progress_sid = session_id.clone(); // for activity log
+        let progress_aid = agent_id.clone(); // agent ID for activity log
         let on_update_cb = move |update: ToolUpdate| {
             let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
             let line = match &update {
                 ToolUpdate::ToolCall { name, args } => {
-                    // Mirror orchestrator tool calls into the Activity panel
-                    // (matches TS appendSessionProgress in socket.ts onToolCall)
-                    log_orchestrator_tool_call(&progress_sid, name, args);
+                    // Mirror agent tool calls into the Activity panel
+                    log_agent_tool_call(&progress_sid, &progress_aid, name, args);
 
                     let args_str = serde_json::to_string(args).unwrap_or_default();
                     let args_short = if args_str.len() > 300 { format!("{}...", &args_str[..300]) } else { args_str };
@@ -1332,11 +1335,16 @@ pub async fn exec_send_task(args: &Value, session_id: &str) -> Value {
 
 /// send_task with caller ID for access control
 pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str) -> Value {
-    let to = match args.get("to").and_then(|v| v.as_str()) {
+    let to = match args.get("to").and_then(|v| v.as_str())
+        .or_else(|| args.get("agent_name").and_then(|v| v.as_str()))
+        .or_else(|| args.get("agentId").and_then(|v| v.as_str()))
+        .or_else(|| args.get("agent_id").and_then(|v| v.as_str())) {
         Some(s) => s.to_string(),
         None => return json!({"ok": false, "error": "Missing 'to' parameter"}),
     };
-    let task = match args.get("task").and_then(|v| v.as_str()) {
+    let task = match args.get("task").and_then(|v| v.as_str())
+        .or_else(|| args.get("task_description").and_then(|v| v.as_str()))
+        .or_else(|| args.get("message").and_then(|v| v.as_str())) {
         Some(s) => s.to_string(),
         None => return json!({"ok": false, "error": "Missing 'task' parameter"}),
     };
@@ -3470,9 +3478,13 @@ async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
 }
 
 async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
-    let skill_name = args.get("skill").and_then(|s| s.as_str()).unwrap_or("");
+    let skill_name = args.get("skill").and_then(|s| s.as_str())
+        .or_else(|| args.get("name").and_then(|s| s.as_str()))
+        .or_else(|| args.get("skill-name").and_then(|s| s.as_str()))
+        .or_else(|| args.get("skill_name").and_then(|s| s.as_str()))
+        .unwrap_or("");
     if skill_name.is_empty() {
-        return json!({"ok": false, "error": "Missing skill name"});
+        return json!({"ok": false, "error": "Missing skill name. Use parameter 'skill' with the skill slug."});
     }
 
     let registry = read_skills_registry();
@@ -6933,6 +6945,9 @@ async fn call_with_tools_inner(
                     tools = tool_definitions_for_mode(&sub_agent, true, true);
                     // Orchestrators have the same tools as workers — they decide when to delegate.
                     info!("[ToolLoop] Session activated via {}, tools refreshed with realtime tools", tool_name);
+
+                    // NOTE: Realtime session boot is handled by the caller (chat.rs / web route)
+                    // to avoid Send trait issues in the tool loop future.
                 }
 
                 // Collect output files

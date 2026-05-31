@@ -1087,9 +1087,9 @@ function updateAgentModeChip() {
 let pendingSendSession = null;
 
 // Recovery: poll session messages to see if the assistant responded while we were in background
-function recoverPendingResponse(sessionId, el) {
+function recoverPendingResponse(sessionId, el, progressPollId) {
   let attempts = 0;
-  const maxAttempts = 120; // up to 10 minutes (every 5s)
+  const maxAttempts = 360; // up to 30 minutes (every 5s)
   const poll = setInterval(() => {
     attempts++;
     api(`/api/chat/sessions/${sessionId}`).then(data => {
@@ -1097,6 +1097,7 @@ function recoverPendingResponse(sessionId, el) {
       // Check if the last message is from the assistant (response arrived)
       if (msgs.length && msgs[msgs.length - 1].role === 'assistant') {
         clearInterval(poll);
+        if (progressPollId) clearInterval(progressPollId);
         pendingSendSession = null;
         const last = msgs[msgs.length - 1];
         replaceLastMsg(el, last.content || 'No response', last.files);
@@ -1104,6 +1105,7 @@ function recoverPendingResponse(sessionId, el) {
         loadSessions();
       } else if (attempts >= maxAttempts) {
         clearInterval(poll);
+        if (progressPollId) clearInterval(progressPollId);
         pendingSendSession = null;
         replaceLastMsg(el, '[Timeout] Response took too long. Check the session later.');
         sending = false;
@@ -1197,10 +1199,10 @@ function sendMessage() {
       replaceLastMsg(el, data.content || 'No response', data.files);
       sending = false; loadSessions();
     }).catch(() => {
-      clearInterval(progressPoll);
-      // Don't show error immediately — the backend may still be running.
+      // Don't clear progress poll — backend may still be running.
       // Start recovery polling to wait for the response to appear.
-      recoverPendingResponse(sessionId, el);
+      // Progress poll keeps showing live activity until recovery succeeds.
+      recoverPendingResponse(sessionId, el, progressPoll);
     });
   };
 
@@ -1532,12 +1534,24 @@ function fetchActiveTasks() {
           <span class="badge running">Running</span>
         </div>
         <div class="at-activity">${recent || 'Starting...'}</div>
-        <button class="at-go" onclick="goToChat('${esc(t.session_id)}')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Go to Chat
-        </button>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button class="at-go" onclick="goToChat('${esc(t.session_id)}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Go to Chat
+          </button>
+          <button class="at-go" style="background:#ef4444" onclick="killChatSession('${esc(t.session_id)}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Kill
+          </button>
+        </div>
       </div>`;
     }).join('');
+  }).catch(() => {});
+}
+
+function killChatSession(sessionId) {
+  api(`/api/chat/sessions/${sessionId}/kill`, { method: 'POST' }).then(data => {
+    if (data.ok) fetchActiveTasks();
   }).catch(() => {});
 }
 

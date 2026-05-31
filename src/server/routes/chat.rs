@@ -12,8 +12,19 @@ use uuid::Uuid;
 
 use crate::server::data::*;
 use crate::server::AppState;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use crate::server::services::toolbox::{call_with_tools, SubAgentConfig, ToolUpdate};
+
+// ---------------------------------------------------------------------------
+// Global cancel flags for running web chat sessions
+// ---------------------------------------------------------------------------
+
+static CANCEL_FLAGS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>> =
+    std::sync::OnceLock::new();
+
+fn cancel_flags() -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>> {
+    CANCEL_FLAGS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
 
 // ---------------------------------------------------------------------------
 // Log directories
@@ -47,6 +58,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/sessions/{id}/activity", get(get_activity_log))
         .route("/sessions/{id}/chatlog", get(get_chat_log))
         .route("/active-tasks", get(get_active_tasks))
+        .route("/sessions/{id}/kill", post(kill_session))
 }
 
 // ---------------------------------------------------------------------------
@@ -419,20 +431,91 @@ async fn send_message(
         m => m.to_string(),
     };
 
-    let sub_agent = SubAgentConfig {
+    // Load agent IDs from YAML config (same as native UI)
+    let agent_ids = if sub_agent_enabled && !config_file.is_empty() {
+        crate::server::services::toolbox::load_agent_yaml(&config_file)
+            .map(|(_, ids)| ids)
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    let sub_agent_model = settings.sub_agent_model.clone()
+        .unwrap_or_else(|| model.clone());
+
+    let mut sub_agent = SubAgentConfig {
         enabled: sub_agent_enabled,
         mode: effective_mode.clone(),
         session_id: id.clone(),
-        agent_id: "web".to_string(),
-        agent_ids: vec![],
-        agent_role: String::new(),
+        agent_id: "main".to_string(),
+        agent_ids,
+        agent_role: "orchestrator".to_string(),
         config_file,
         api_key: api_key.clone(),
         api_url: api_url.clone(),
-        model: model.clone(),
+        model: sub_agent_model,
         depth: 0,
         cancel_flag: Arc::new(AtomicBool::new(false)),
     };
+
+    // Register cancel flag so kill endpoint can abort this session
+    {
+        let mut flags = cancel_flags().lock().unwrap();
+        flags.insert(id.clone(), sub_agent.cancel_flag.clone());
+    }
+
+    // Fully Auto pre-flight: create architecture + boot realtime session (same as native UI)
+    if sub_agent_enabled && effective_mode == "fully_auto" {
+        use crate::server::services::toolbox::{
+            get_session_architecture, force_create_architecture, start_realtime_session,
+        };
+
+        let user_msg = llm_messages.last()
+            .and_then(|m| m["content"].as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Step 1: Get or create architecture
+        let config_file = match get_session_architecture(&id).await {
+            Some(existing) => Some(existing),
+            None => {
+                let (ok, cf, _msg) = force_create_architecture(&user_msg, &sub_agent, &sandbox_dir).await;
+                if ok { cf } else { None }
+            }
+        };
+
+        if let Some(ref cf) = config_file {
+            sub_agent.config_file = cf.clone();
+
+            // Load agent IDs from the created YAML
+            if let Some((_, ids)) = crate::server::services::toolbox::load_agent_yaml(cf) {
+                sub_agent.agent_ids = ids;
+            }
+
+            // Step 2: Boot realtime session
+            start_realtime_session(
+                &sub_agent.session_id,
+                cf,
+                &sub_agent.api_key,
+                &sub_agent.api_url,
+                &sub_agent.model,
+                &sandbox_dir,
+            ).await;
+        }
+    }
+
+    // For manual/auto modes with a config file, boot realtime session
+    if sub_agent_enabled && effective_mode != "fully_auto" && !sub_agent.config_file.is_empty() {
+        use crate::server::services::toolbox::start_realtime_session;
+        start_realtime_session(
+            &sub_agent.session_id,
+            &sub_agent.config_file,
+            &sub_agent.api_key,
+            &sub_agent.api_url,
+            &sub_agent.model,
+            &sandbox_dir,
+        ).await;
+    }
 
     // Build system prompt — same as native UI (identity, soul, skills, tools)
     let system_prompt = {
@@ -520,8 +603,18 @@ You have access to these tools: {}.{}",
     let log_path = log_dir.join(format!("{}.log", id));
     let _ = std::fs::write(&log_path, "");
 
-    // Call the AI tool loop — write progress to activity log
+    // Initialize chat log before starting (so it's not empty during the run)
+    let cl_dir = chat_log_dir();
+    let _ = std::fs::create_dir_all(&cl_dir);
+    let cl_path = cl_dir.join(format!("{}.log", id));
+    let _ = std::fs::write(&cl_path, format!(
+        "[{}] === Web Chat Session ===\n",
+        chrono::Utc::now().format("%H:%M:%S"),
+    ));
+
+    // Call the AI tool loop — write progress to activity log + chat log
     let session_id_for_log = id.clone();
+    let chat_log_path_for_cb = cl_path.clone();
     let result = call_with_tools(
         &api_key,
         &api_url,
@@ -554,15 +647,40 @@ You have access to these tools: {}.{}",
             };
             if !line.is_empty() {
                 append_session_progress(&session_id_for_log, &line);
+                // Also write to chat log in real-time
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .append(true).open(&chat_log_path_for_cb)
+                {
+                    let _ = f.write_all(line.as_bytes());
+                }
             }
         },
         sub_agent,
     ).await;
 
-    // Remove from native UI's active tasks
+    // Remove from native UI's active tasks and cancel flags
     {
         let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
         chats.retain(|c| c.session_id != id);
+    }
+    {
+        let mut flags = cancel_flags().lock().unwrap();
+        flags.remove(&id);
+    }
+
+    // Append completion footer to chat log (content was written in real-time)
+    {
+        let footer = format!(
+            "[{}] === Response complete ===\n\n",
+            chrono::Utc::now().format("%H:%M:%S"),
+        );
+        use tokio::io::AsyncWriteExt;
+        if let Ok(mut f) = tokio::fs::OpenOptions::new()
+            .append(true).open(&cl_path).await
+        {
+            let _ = f.write_all(footer.as_bytes()).await;
+        }
     }
 
     let assistant_content = result.content;
@@ -663,6 +781,33 @@ async fn get_chat_log(Path(id): Path<String>) -> impl IntoResponse {
         .await
         .unwrap_or_default();
     Json(json!({"ok": true, "content": content}))
+}
+
+// ---------------------------------------------------------------------------
+// POST /sessions/:id/kill — cancel a running chat session
+// ---------------------------------------------------------------------------
+
+async fn kill_session(Path(id): Path<String>) -> impl IntoResponse {
+    let killed = {
+        let flags = cancel_flags().lock().unwrap();
+        if let Some(flag) = flags.get(&id) {
+            flag.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    };
+
+    // Also push to native UI's killed list
+    if killed {
+        let killed_ids = crate::ui::tasks_view::killed_chat_ids();
+        let mut ids = killed_ids.lock().unwrap();
+        if !ids.contains(&id) {
+            ids.push(id.clone());
+        }
+    }
+
+    Json(json!({ "ok": killed, "session_id": id }))
 }
 
 // ---------------------------------------------------------------------------

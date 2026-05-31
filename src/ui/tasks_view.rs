@@ -39,6 +39,10 @@ pub fn take_killed_chat_ids() -> Vec<String> {
     std::mem::take(&mut *ids)
 }
 
+pub fn killed_chat_ids() -> &'static Arc<Mutex<Vec<String>>> {
+    KILLED_CHAT_IDS.get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+}
+
 fn push_killed_chat_id(id: &str) {
     KILLED_CHAT_IDS
         .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
