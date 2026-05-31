@@ -6935,19 +6935,39 @@ async fn call_with_tools_inner(
 
                 tool_records.push(ToolCallRecord { tool: tool_name.clone(), result: result.clone() });
 
-                // After create_architecture or select_swarm: refresh tools to include realtime
+                // After create_architecture or select_swarm: update agent_ids + refresh tools
                 if (tool_name == "create_architecture" || tool_name == "select_swarm")
                     && result.get("ok").and_then(|v| v.as_bool()) == Some(true)
                     && !session_activated
                 {
                     session_activated = true;
+
+                    // Update agent_ids from the result so tool_definitions_for_mode works
+                    if tool_name == "select_swarm" {
+                        // select_swarm returns { agents: [{id, ...}, ...], selected: "filename" }
+                        if let Some(selected) = result.get("selected").and_then(|v| v.as_str()) {
+                            sub_agent.config_file = selected.to_string();
+                        }
+                        if let Some(agents) = result.get("agents").and_then(|v| v.as_array()) {
+                            sub_agent.agent_ids = agents.iter()
+                                .filter_map(|a| a["id"].as_str().map(|s| s.to_string()))
+                                .collect();
+                        }
+                    } else {
+                        // create_architecture returns { filename: "..." }
+                        if let Some(filename) = result.get("filename").and_then(|v| v.as_str()) {
+                            sub_agent.config_file = filename.to_string();
+                            if let Some((_, ids)) = load_agent_yaml(filename) {
+                                sub_agent.agent_ids = ids;
+                            }
+                        }
+                    }
+
+                    info!("[ToolLoop] Session activated via {}, agent_ids={:?}", tool_name, sub_agent.agent_ids);
+
                     // Refresh tool set to include send_task/wait_result
                     tools = tool_definitions_for_mode(&sub_agent, true, true);
-                    // Orchestrators have the same tools as workers — they decide when to delegate.
-                    info!("[ToolLoop] Session activated via {}, tools refreshed with realtime tools", tool_name);
-
-                    // NOTE: Realtime session boot is handled by the caller (chat.rs / web route)
-                    // to avoid Send trait issues in the tool loop future.
+                    info!("[ToolLoop] Tools refreshed: {}", tools.iter().filter_map(|td| td["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
                 }
 
                 // Collect output files
