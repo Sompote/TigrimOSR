@@ -1133,6 +1133,135 @@ You have access to these tools: {}.{}",
 
         let ctx_clone = ctx.clone();
 
+        // ── Remote mode: let remote do everything, local is UI only ──
+        if crate::server::data::get_remote_backend().is_some() {
+            let remote_sid = sid.clone();
+            let remote_state = state.clone();
+            let remote_ctx = ctx_clone.clone();
+            let remote_msg = user_message.to_string();
+            let remote_agent_mode = if sub_agent_config.enabled {
+                sub_agent_config.mode.clone()
+            } else {
+                "single".to_string()
+            };
+            runtime.spawn(async move {
+                // get_remote_backend() inside async — re-fetch since it's not Send
+                let rb = crate::server::data::get_remote_backend().unwrap();
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(1800))
+                    .build()
+                    .unwrap_or_default();
+
+                // Poll activity log for real-time progress (same UI as local)
+                let poll_state = remote_state.clone();
+                let poll_ctx = remote_ctx.clone();
+                let poll_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let poll_done2 = poll_done.clone();
+                let poll_rb = rb.clone();
+                let poll_sid = remote_sid.clone();
+                let poll_client = client.clone();
+
+                let poller = tokio::spawn(async move {
+                    let mut last_len = 0usize;
+                    loop {
+                        if poll_done2.load(std::sync::atomic::Ordering::Relaxed) { break; }
+                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                        if poll_done2.load(std::sync::atomic::Ordering::Relaxed) { break; }
+
+                        if let Ok(resp) = poll_client
+                            .get(format!("{}/api/chat/sessions/{}/activity", poll_rb.url, poll_sid))
+                            .bearer_auth(&poll_rb.token)
+                            .timeout(std::time::Duration::from_secs(5))
+                            .send().await
+                        {
+                            if let Ok(val) = resp.json::<serde_json::Value>().await {
+                                if let Some(content) = val["content"].as_str() {
+                                    if content.len() > last_len {
+                                        let new_part = &content[last_len..];
+                                        last_len = content.len();
+
+                                        let mut calls = poll_state.tool_calls.lock().unwrap();
+                                        let mut logs = poll_state.log_lines.lock().unwrap();
+                                        for line in new_part.lines() {
+                                            let trimmed = line.trim();
+                                            if trimmed.is_empty() { continue; }
+                                            if trimmed.contains("Calling **") {
+                                                let name = trimmed.split("**").nth(1).unwrap_or("tool").to_string();
+                                                let preview = trimmed.split(" — ").nth(1).unwrap_or("").to_string();
+                                                calls.push(ToolCallDisplay {
+                                                    name, status: "calling...".to_string(),
+                                                    args_preview: preview, result_preview: String::new(),
+                                                });
+                                            } else if trimmed.contains("** done") {
+                                                let name = trimmed.split("**").nth(1).unwrap_or("").to_string();
+                                                if let Some(c) = calls.iter_mut().rev().find(|c| c.name == name) {
+                                                    c.status = "done".to_string();
+                                                    c.result_preview = trimmed.split(" — ").nth(1).unwrap_or("").to_string();
+                                                }
+                                            }
+                                            logs.push(trimmed.to_string());
+                                        }
+                                        if let Some(last) = logs.last() {
+                                            *poll_state.text.lock().unwrap() = last.clone();
+                                        }
+                                        poll_ctx.request_repaint();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // Send message — remote runs call_with_tools internally
+                let body = serde_json::json!({
+                    "message": remote_msg,
+                    "agent_mode": remote_agent_mode,
+                });
+                let result = client
+                    .post(format!("{}/api/chat/sessions/{}/messages", rb.url, remote_sid))
+                    .bearer_auth(&rb.token)
+                    .json(&body)
+                    .send().await;
+
+                poll_done.store(true, std::sync::atomic::Ordering::Relaxed);
+                let _ = poller.await;
+
+                match result {
+                    Ok(resp) => {
+                        if let Ok(val) = resp.json::<serde_json::Value>().await {
+                            let content = val.get("content")
+                                .or_else(|| val.get("message"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("(no response)");
+                            *remote_state.text.lock().unwrap() = content.to_string();
+
+                            if let Some(files_arr) = val.get("files").and_then(|v| v.as_array()) {
+                                let mut files = remote_state.files.lock().unwrap();
+                                for f in files_arr {
+                                    if let Some(s) = f.as_str() {
+                                        if !files.contains(&s.to_string()) {
+                                            files.push(s.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        *remote_state.error.lock().unwrap() = Some(format!("Remote error: {}", e));
+                    }
+                }
+
+                // Invalidate cache so sidebar picks up the new messages
+                crate::server::data::remote_cache_invalidate("/api/chat/sessions/bulk");
+                crate::server::data::remote_cache_invalidate("/api/chat/sessions");
+
+                *remote_state.done.lock().unwrap() = true;
+                remote_ctx.request_repaint();
+            });
+            return;
+        }
+
         runtime.spawn(async move {
             let state_text = state.text.clone();
             let state_tool_calls = state.tool_calls.clone();
