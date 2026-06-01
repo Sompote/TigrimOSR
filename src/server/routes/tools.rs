@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::server::data::*;
+use crate::server::services::toolbox::validate_url_no_ssrf;
 use crate::server::AppState;
 
 // ---------------------------------------------------------------------------
@@ -77,6 +78,14 @@ async fn fetch_url(Json(body): Json<FetchBody>) -> impl IntoResponse {
             )
         }
     };
+
+    // SSRF protection: block private/internal addresses
+    if let Err(reason) = validate_url_no_ssrf(&url) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": reason})),
+        );
+    }
 
     let method = body.method.as_deref().unwrap_or("GET");
 

@@ -2487,12 +2487,14 @@ fn resolve_path(sandbox_dir: &str, path: &str) -> PathBuf {
     if resolved.starts_with(&sandbox) {
         resolved
     } else {
-        // Path escapes sandbox — force it inside sandbox as a relative name
-        let filename = PathBuf::from(path)
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_else(|| "blocked".to_string());
-        sandbox.join(filename)
+        // Path escapes sandbox — block the attempt
+        warn!(
+            "[SECURITY] Path traversal blocked: '{}' resolves outside sandbox '{}'",
+            path,
+            sandbox.display()
+        );
+        // Return a non-existent sentinel path so callers fail with "file not found"
+        sandbox.join(".blocked_path_traversal")
     }
 }
 
@@ -2702,6 +2704,11 @@ async fn exec_fetch_url(args: &Value) -> Value {
     let url = args["url"].as_str().unwrap_or("");
     let method = args["method"].as_str().unwrap_or("GET").to_uppercase();
 
+    // SSRF protection: block private/internal addresses
+    if let Err(reason) = validate_url_no_ssrf(url) {
+        return json!({ "ok": false, "error": reason });
+    }
+
     let client = Client::new();
     let req = match method.as_str() {
         "POST" => client.post(url),
@@ -2721,6 +2728,63 @@ async fn exec_fetch_url(args: &Value) -> Value {
         }
         Err(e) => json!({ "ok": false, "error": format!("Request failed: {e}") }),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Security: SSRF URL validation
+// ---------------------------------------------------------------------------
+
+/// Validate that a URL does not target private/internal addresses.
+/// Returns `Ok(())` if the URL is safe, or `Err(reason)` if it should be blocked.
+pub(crate) fn validate_url_no_ssrf(url_str: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url_str)
+        .map_err(|e| format!("Invalid URL: {e}"))?;
+
+    // 1. Only allow http and https schemes
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => return Err(format!("URL blocked: scheme '{other}' is not allowed (only http/https)")),
+    }
+
+    let host_str = parsed.host_str().unwrap_or("");
+
+    // 2. Block localhost variants
+    if host_str.eq_ignore_ascii_case("localhost") {
+        return Err("URL blocked: cannot fetch private/internal addresses".into());
+    }
+
+    // 3. Try to parse as IP address and check ranges
+    if let Ok(ip) = host_str.parse::<std::net::IpAddr>() {
+        use std::net::IpAddr;
+        let blocked = match ip {
+            IpAddr::V4(v4) => {
+                v4.is_loopback()                          // 127.0.0.0/8
+                || v4.octets()[0] == 10                    // 10.0.0.0/8
+                || (v4.octets()[0] == 172                  // 172.16.0.0/12
+                    && (v4.octets()[1] >= 16 && v4.octets()[1] <= 31))
+                || (v4.octets()[0] == 192 && v4.octets()[1] == 168) // 192.168.0.0/16
+                || (v4.octets()[0] == 169 && v4.octets()[1] == 254) // 169.254.0.0/16 (link-local / AWS metadata)
+                || v4.is_unspecified()                     // 0.0.0.0
+            }
+            IpAddr::V6(v6) => {
+                v6.is_loopback()                           // ::1
+                || v6.is_unspecified()                     // ::
+            }
+        };
+        if blocked {
+            return Err("URL blocked: cannot fetch private/internal addresses".into());
+        }
+    }
+
+    // 4. Also block well-known cloud metadata hostnames
+    let lower = host_str.to_ascii_lowercase();
+    if lower == "metadata.google.internal"
+        || lower == "metadata.google.internal."
+    {
+        return Err("URL blocked: cannot fetch private/internal addresses".into());
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -3039,10 +3103,24 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
         }
     }
 
-    let cwd = args["cwd"]
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| sandbox_dir.to_string());
+    let cwd = {
+        let raw_cwd = args["cwd"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| sandbox_dir.to_string());
+        let resolved_cwd = resolve_path(sandbox_dir, &raw_cwd);
+        let abs_sandbox_check = std::path::Path::new(sandbox_dir)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
+        if !resolved_cwd.starts_with(&abs_sandbox_check) {
+            warn!(
+                "[SECURITY] Shell cwd blocked: '{}' is outside sandbox '{}'",
+                raw_cwd, sandbox_dir
+            );
+            return json!({ "ok": false, "error": "Security: cwd path is outside the sandbox" });
+        }
+        resolved_cwd.to_string_lossy().to_string()
+    };
 
     #[cfg(target_os = "macos")]
     let abs_sandbox = std::path::Path::new(sandbox_dir)

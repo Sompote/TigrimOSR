@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use axum::{
     extract::Path,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
     routing::{get, post},
     Router,
@@ -36,6 +36,7 @@ struct RemoteTaskEntry {
     created_at: String,
     completed_at: Option<String>,
     progress_seq: u64,
+    owner_token: String,      // token that created this task (for session isolation)
 }
 
 static REMOTE_TASKS: OnceLock<TokioMutex<HashMap<String, RemoteTaskEntry>>> = OnceLock::new();
@@ -75,6 +76,29 @@ fn now_iso() -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Token extraction for session isolation
+// ---------------------------------------------------------------------------
+
+/// Extract the authenticated token from request headers (Bearer) or query string.
+/// Returns an empty string when no token is present (local-only / no-auth mode).
+fn extract_caller_token(headers: &HeaderMap) -> String {
+    if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
+        let t = auth.trim_start_matches("Bearer ").to_string();
+        if !t.is_empty() {
+            return t;
+        }
+    }
+    String::new()
+}
+
+/// Check whether a caller token is allowed to access a task.
+/// - Empty owner or empty caller ⇒ local-only mode, always allowed.
+/// - Otherwise tokens must match exactly.
+fn token_owns_task(caller_token: &str, owner_token: &str) -> bool {
+    caller_token.is_empty() || owner_token.is_empty() || caller_token == owner_token
+}
+
+// ---------------------------------------------------------------------------
 // Request/response types
 // ---------------------------------------------------------------------------
 
@@ -89,7 +113,7 @@ struct SubmitTaskBody {
 // ---------------------------------------------------------------------------
 
 /// POST /remote/task — submit a task for execution
-async fn submit_task(Json(body): Json<SubmitTaskBody>) -> impl IntoResponse {
+async fn submit_task(headers: HeaderMap, Json(body): Json<SubmitTaskBody>) -> impl IntoResponse {
     let settings = get_settings().await;
 
     // Check if remote is enabled
@@ -100,6 +124,7 @@ async fn submit_task(Json(body): Json<SubmitTaskBody>) -> impl IntoResponse {
         );
     }
 
+    let caller_token = extract_caller_token(&headers);
     let task_id = Uuid::new_v4().to_string();
     let session_id = format!("remote_{}", &task_id[..8]);
 
@@ -113,6 +138,7 @@ async fn submit_task(Json(body): Json<SubmitTaskBody>) -> impl IntoResponse {
         created_at: now_iso(),
         completed_at: None,
         progress_seq: 0,
+        owner_token: caller_token,
     };
 
     remote_tasks()
@@ -140,11 +166,13 @@ async fn submit_task(Json(body): Json<SubmitTaskBody>) -> impl IntoResponse {
     )
 }
 
-/// GET /remote/tasks — list all remote tasks
-async fn list_tasks() -> impl IntoResponse {
+/// GET /remote/tasks — list remote tasks owned by the caller
+async fn list_tasks(headers: HeaderMap) -> impl IntoResponse {
+    let caller_token = extract_caller_token(&headers);
     let tasks = remote_tasks().lock().await;
     let mut list: Vec<Value> = tasks
         .values()
+        .filter(|t| token_owns_task(&caller_token, &t.owner_token))
         .map(|t| {
             json!({
                 "id": t.id,
@@ -169,10 +197,11 @@ async fn list_tasks() -> impl IntoResponse {
 }
 
 /// GET /remote/task/:id — poll for task progress/result
-async fn get_task(Path(id): Path<String>) -> impl IntoResponse {
+async fn get_task(headers: HeaderMap, Path(id): Path<String>) -> impl IntoResponse {
+    let caller_token = extract_caller_token(&headers);
     let tasks = remote_tasks().lock().await;
     match tasks.get(&id) {
-        Some(entry) => {
+        Some(entry) if token_owns_task(&caller_token, &entry.owner_token) => {
             let resp = json!({
                 "ok": true,
                 "id": entry.id,
@@ -186,6 +215,10 @@ async fn get_task(Path(id): Path<String>) -> impl IntoResponse {
             });
             (StatusCode::OK, Json(resp))
         }
+        Some(_) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": "Access denied" })),
+        ),
         None => (
             StatusCode::NOT_FOUND,
             Json(json!({ "ok": false, "error": "Task not found" })),
@@ -194,9 +227,14 @@ async fn get_task(Path(id): Path<String>) -> impl IntoResponse {
 }
 
 /// POST /remote/task/:id/kill — kill a running task
-async fn kill_task(Path(id): Path<String>) -> impl IntoResponse {
+async fn kill_task(headers: HeaderMap, Path(id): Path<String>) -> impl IntoResponse {
+    let caller_token = extract_caller_token(&headers);
     let mut tasks = remote_tasks().lock().await;
     match tasks.get_mut(&id) {
+        Some(entry) if !token_owns_task(&caller_token, &entry.owner_token) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": "Access denied" })),
+        ),
         Some(entry) if entry.status == "running" || entry.status == "pending" => {
             entry.status = "killed".to_string();
             entry.completed_at = Some(now_iso());
@@ -515,9 +553,35 @@ pub async fn kill_remote_task(id: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 async fn ws_handler(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::server::AppState>>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
     ws: axum::extract::WebSocketUpgrade,
 ) -> impl IntoResponse {
-    ws.on_upgrade(handle_ws_connection)
+    // Authenticate: require a valid token via ?token= query parameter
+    let settings = get_settings().await;
+    let remote_token = if settings.remote_enabled == Some(true) {
+        settings.remote_token.clone().filter(|t| !t.is_empty())
+    } else {
+        None
+    };
+
+    // If no auth is configured at all, allow (local-only use)
+    let has_any_auth = !state.access_token.is_empty() || remote_token.is_some();
+    if has_any_auth {
+        let token = params.get("token");
+        let authorized = match token {
+            Some(t) => {
+                (!state.access_token.is_empty() && *t == state.access_token)
+                    || remote_token.as_deref().map(|rt| t == rt).unwrap_or(false)
+            }
+            None => false,
+        };
+        if !authorized {
+            return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+        }
+    }
+
+    ws.on_upgrade(handle_ws_connection).into_response()
 }
 
 async fn handle_ws_connection(mut socket: axum::extract::ws::WebSocket) {
