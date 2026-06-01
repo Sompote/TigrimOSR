@@ -2890,6 +2890,22 @@ async fn scan_output_files(sandbox_dir: &str) -> Vec<String> {
 }
 
 async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
+    // Remote mode: proxy to remote server's /api/python/run
+    if let Some(rb) = crate::server::data::get_remote_backend() {
+        let client = crate::server::data::remote_client();
+        match client
+            .post(format!("{}/api/python/run", rb.url))
+            .bearer_auth(&rb.token)
+            .json(&json!({"code": args["code"].as_str().unwrap_or("")}))
+            .timeout(std::time::Duration::from_secs(300))
+            .send()
+            .await
+        {
+            Ok(resp) => return resp.json::<Value>().await.unwrap_or(json!({"ok": false, "error": "Failed to parse remote response"})),
+            Err(e) => return json!({"ok": false, "error": format!("Remote error: {}", e)}),
+        }
+    }
+
     let code = args["code"].as_str().unwrap_or("");
 
     // Security check
@@ -3076,6 +3092,22 @@ def save_output(filename, content=None, mode='w'):
 }
 
 async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
+    // Remote mode: proxy to remote server's /api/terminal/exec
+    if let Some(rb) = crate::server::data::get_remote_backend() {
+        let client = crate::server::data::remote_client();
+        match client
+            .post(format!("{}/api/terminal/exec", rb.url))
+            .bearer_auth(&rb.token)
+            .json(&json!({"command": args["command"].as_str().unwrap_or("")}))
+            .timeout(std::time::Duration::from_secs(120))
+            .send()
+            .await
+        {
+            Ok(resp) => return resp.json::<Value>().await.unwrap_or(json!({"ok": false, "error": "Failed to parse remote response"})),
+            Err(e) => return json!({"ok": false, "error": format!("Remote error: {}", e)}),
+        }
+    }
+
     let command = args["command"].as_str().unwrap_or("");
 
     // Security check
@@ -3236,6 +3268,27 @@ fn pdf_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, St
 }
 
 async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
+    // Remote mode: proxy to remote server
+    if let Some(rb) = crate::server::data::get_remote_backend() {
+        let path = args["path"].as_str().unwrap_or("");
+        let encoded = urlencoding::encode(path);
+        match crate::server::data::remote_client()
+            .get(format!("{}/api/files/read?path={}", rb.url, encoded))
+            .bearer_auth(&rb.token)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                if let Ok(text) = resp.text().await {
+                    return json!({"ok": true, "content": text, "path": path});
+                }
+                return json!({"ok": false, "error": "Failed to read remote response"});
+            }
+            Err(e) => return json!({"ok": false, "error": format!("Remote error: {}", e)}),
+        }
+    }
+
     let path = args["path"].as_str().unwrap_or("");
     let resolved = resolve_path(sandbox_dir, path);
 
@@ -3315,6 +3368,24 @@ async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
 }
 
 async fn exec_write_file(args: &Value, sandbox_dir: &str) -> Value {
+    // Remote mode: proxy to remote server
+    if let Some(rb) = crate::server::data::get_remote_backend() {
+        let path = args["path"].as_str().unwrap_or("");
+        let content = args["content"].as_str().unwrap_or("");
+        let body = json!({"path": path, "content": content});
+        match crate::server::data::remote_client()
+            .post(format!("{}/api/files/write", rb.url))
+            .bearer_auth(&rb.token)
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+        {
+            Ok(_) => return json!({"ok": true, "path": path, "bytes_written": content.len()}),
+            Err(e) => return json!({"ok": false, "error": format!("Remote error: {}", e)}),
+        }
+    }
+
     let path = args["path"].as_str().unwrap_or("");
     let content = args["content"].as_str().unwrap_or("");
     let append = args["append"].as_bool().unwrap_or(false);
@@ -3358,6 +3429,30 @@ async fn exec_write_file(args: &Value, sandbox_dir: &str) -> Value {
 }
 
 async fn exec_list_files(args: &Value, sandbox_dir: &str) -> Value {
+    // Remote mode: proxy to remote server
+    if let Some(rb) = crate::server::data::get_remote_backend() {
+        let path = args["path"].as_str().unwrap_or("");
+        let encoded = urlencoding::encode(path);
+        match crate::server::data::remote_client()
+            .get(format!("{}/api/files?path={}", rb.url, encoded))
+            .bearer_auth(&rb.token)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                if let Ok(files) = resp.json::<Vec<Value>>().await {
+                    let names: Vec<String> = files.iter()
+                        .filter_map(|f| f["name"].as_str().map(|s| s.to_string()))
+                        .collect();
+                    return json!({"ok": true, "entries": names, "count": names.len()});
+                }
+                return json!({"ok": true, "entries": [], "count": 0});
+            }
+            Err(e) => return json!({"ok": false, "error": format!("Remote error: {}", e)}),
+        }
+    }
+
     // Ensure sandbox directory exists
     let _ = fs::create_dir_all(sandbox_dir).await;
 

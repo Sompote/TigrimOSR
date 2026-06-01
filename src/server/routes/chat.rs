@@ -821,6 +821,10 @@ async fn kill_session(Path(id): Path<String>) -> impl IntoResponse {
 // Helper: check if a session has an auto-created architecture file
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Helper: check if a session has an auto-created architecture file
+// ---------------------------------------------------------------------------
+
 fn get_auto_created_architecture(session_id: &str) -> Option<String> {
     // Look for a YAML file in data/agents that matches the session ID
     let agents_dir = crate::server::data::data_dir().join("agents");

@@ -93,7 +93,7 @@ pub fn remote_cache_invalidate(key: &str) {
     }
 }
 
-fn remote_client() -> reqwest::Client {
+pub fn remote_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
