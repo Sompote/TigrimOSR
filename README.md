@@ -116,14 +116,21 @@ Connect from your phone to TigrimOS running on a cloud server — full chat with
 
 </details>
 
-### Remote Access Setup
+### Running Headless in the Cloud
 
-TigrimOS can run on a remote cloud server and be controlled from your Mac or any browser.
+TigrimOS can run on any cloud server (AWS, DigitalOcean, Hetzner, etc.) as a headless AI agent backend. You control it from your Mac desktop app, a mobile browser, or any web browser.
 
-**On the remote server (Linux):**
+#### 1. Deploy to a Cloud Server
 
 ```bash
-# Build
+# SSH into your server
+ssh user@your-server-ip
+
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Clone and build
 git clone https://github.com/Sompote/TigrimOSR.git
 cd TigrimOSR
 cargo build --release
@@ -131,11 +138,11 @@ cargo build --release
 # Run headless — prompts for a security token
 ./target/release/tigrimos --headless
 
-# Or set token via environment variable
-ACCESS_TOKEN=my-secret-token PORT=3001 ./tigrimos --headless
+# Or set token + port via environment variables
+ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/tigrimos --headless
 ```
 
-The server will prompt:
+The server will prompt for a token on first run:
 ```
 ===========================================
   TigrimOS Headless Mode — Security Setup
@@ -148,23 +155,58 @@ Token set. Use this to connect from your Mac or browser.
   Token:   your-token-here
 ```
 
-**Access from a browser:**
-1. Open `http://<server-ip>:3001/web/`
-2. Enter the access token on the login page
-3. Use Chat, Files, Terminal, Agents, Tasks, Settings tabs
+**Quick deploy with the installer (recommended):**
+```bash
+curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
+```
+Select **"Headless mode"** — the installer handles systemd, nginx, firewall, and optional HTTPS.
 
-**Access from your Mac TigrimOS app:**
+After install:
+```bash
+sudo systemctl start tigrimos    # start server
+sudo systemctl stop tigrimos     # stop server
+sudo systemctl restart tigrimos  # restart after config change
+sudo journalctl -u tigrimos -f   # view live logs
+```
+
+#### 2. Configure AI Provider on the Server
+
+Before connecting, set up the AI provider on the headless server:
+1. Open `http://<server-ip>:3001/web/` in a browser
+2. Log in with your access token
+3. Go to **Settings** → set your **API Key**, **Model**, and **API URL**
+4. (Optional) Configure **SOUL.md** and **IDENTITY.md** for agent personality
+
+#### 3. Connect from Your Desktop App (Local/Remote Toggle)
+
+The desktop app can route all chat to the remote server with one click:
+
 1. Go to **Settings → Remote Instances**
 2. Check **"Enable remote agent access"**
-3. Under **Add Remote Instance**, enter:
+3. Add a remote instance:
    - **Name:** My Cloud Server
-   - **URL:** `http://<server-ip>:3001`
+   - **URL:** `http://<server-ip>:3001` (or `https://your-domain.com`)
    - **Token:** the access token from the server
 4. Click **Add Instance**
-5. Go to the **Remote** tab — select the server, see connection status
-6. Submit tasks, browse files, or chat with the remote AI
+5. In the **sidebar** (bottom-left), you'll see **Local** / **Remote** toggle buttons
+6. Click **Remote** to switch — all chat now runs on the remote server
+7. Click **Local** to switch back to local execution
 
-**With nginx (recommended for production):**
+When in Remote mode:
+- Chat messages are sent to the remote server for processing
+- **Live progress** is shown in real-time (tool calls, activity log, reasoning steps)
+- Output files from the remote are collected and displayed locally
+- The remote server uses its own API keys, model, and sandbox
+- You can monitor progress the same way as local execution
+
+#### 4. Connect from a Browser or Mobile
+
+1. Open `http://<server-ip>:3001/web/` on any device
+2. Enter the access token on the login page
+3. Full UI: Chat, Files, Terminal, Agents, Tasks, Settings
+4. Works on mobile — charts, tool calls, and files render inline
+
+#### 5. Production Setup with Nginx + HTTPS
 
 ```nginx
 server {
@@ -179,12 +221,25 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_read_timeout 300s;
+        proxy_read_timeout 1800s;  # 30 min for long AI tasks
     }
 }
 ```
 
-Add HTTPS with Let's Encrypt: `sudo certbot --nginx -d your-domain.com`
+Add HTTPS with Let's Encrypt:
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+```
+
+#### 6. Firewall
+
+```bash
+# Open port 3001 (direct access) or 80/443 (behind nginx)
+sudo ufw allow 3001/tcp   # direct
+sudo ufw allow 80/tcp     # nginx HTTP
+sudo ufw allow 443/tcp    # nginx HTTPS
+```
 
 ### Security
 
