@@ -160,11 +160,21 @@ impl RemoteView {
         !self.instances.is_empty()
     }
 
+    pub fn get_instances(&self) -> &[crate::server::data::RemoteInstance] {
+        &self.instances
+    }
+
     pub fn selected_remote_backend(&self) -> Option<crate::server::data::RemoteBackend> {
         self.selected_instance().map(|i| crate::server::data::RemoteBackend {
             url: i.url.trim_end_matches('/').to_string(),
             token: i.token.clone(),
         })
+    }
+
+    pub fn ensure_instances_loaded(&mut self, runtime: &tokio::runtime::Handle) {
+        if !self.instances_loaded {
+            self.load_instances(runtime);
+        }
     }
 
     pub fn ensure_loaded(&mut self, runtime: &tokio::runtime::Handle) {
@@ -178,7 +188,14 @@ impl RemoteView {
     }
 
     fn base_url(&self) -> Option<String> {
-        self.selected_instance().map(|i| i.url.trim_end_matches('/').to_string())
+        self.selected_instance().map(|i| {
+            let url = i.url.trim_end_matches('/').to_string();
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                format!("http://{}", url)
+            } else {
+                url
+            }
+        })
     }
 
     fn token(&self) -> Option<String> {

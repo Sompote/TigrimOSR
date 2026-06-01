@@ -593,6 +593,59 @@ impl eframe::App for TigrimOSApp {
 
                 ui.add_space(4.0);
 
+                // Run on: Local / Remote toggle
+                if self.sidebar_open {
+                    self.remote_view.ensure_instances_loaded(&self.runtime);
+                    let instances = self.remote_view.get_instances();
+                    if !instances.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            let local_color = if !self.remote_mode {
+                                egui::Color32::from_rgb(18, 154, 145)
+                            } else {
+                                text_dim
+                            };
+                            let remote_color = if self.remote_mode {
+                                egui::Color32::from_rgb(168, 85, 247)
+                            } else {
+                                text_dim
+                            };
+
+                            if ui.add(egui::Button::new(
+                                egui::RichText::new("Local").size(10.0).color(local_color))
+                                .fill(if !self.remote_mode { egui::Color32::from_rgba_premultiplied(18, 154, 145, 30) } else { egui::Color32::TRANSPARENT })
+                                .corner_radius(4.0)
+                                .min_size(egui::vec2(0.0, 20.0))
+                            ).clicked() {
+                                self.remote_mode = false;
+                                crate::server::data::set_remote_backend(None);
+                            }
+
+                            if ui.add(egui::Button::new(
+                                egui::RichText::new("Remote").size(10.0).color(remote_color))
+                                .fill(if self.remote_mode { egui::Color32::from_rgba_premultiplied(168, 85, 247, 30) } else { egui::Color32::TRANSPARENT })
+                                .corner_radius(4.0)
+                                .min_size(egui::vec2(0.0, 20.0))
+                            ).clicked() {
+                                if let Some(inst) = instances.first() {
+                                    let mut url = inst.url.clone();
+                                    if !url.starts_with("http://") && !url.starts_with("https://") {
+                                        url = format!("http://{}", url);
+                                    }
+                                    self.remote_mode = true;
+                                    crate::server::data::set_remote_backend(Some(
+                                        crate::server::data::RemoteBackend {
+                                            url,
+                                            token: inst.token.clone(),
+                                        }
+                                    ));
+                                }
+                            }
+                        });
+                        ui.add_space(2.0);
+                    }
+                }
+
                 // Settings
                 {
                     let (label, tip) = if self.sidebar_open { ("\u{2699}  Settings", "") } else { ("\u{2699}", "Settings") };

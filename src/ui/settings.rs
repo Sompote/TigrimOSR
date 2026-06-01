@@ -1888,10 +1888,14 @@ impl SettingsView {
                 .add_enabled(can_add, egui::Button::new("Add Instance"))
                 .clicked()
             {
+                let mut url = self.new_remote_url.clone();
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    url = format!("http://{}", url);
+                }
                 self.remote_instances.push(RemoteInstance {
                     id: uuid::Uuid::new_v4().to_string(),
                     name: self.new_remote_name.clone(),
-                    url: self.new_remote_url.clone(),
+                    url,
                     token: self.new_remote_token.clone(),
                 });
                 self.new_remote_name.clear();

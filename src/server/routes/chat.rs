@@ -330,17 +330,24 @@ async fn send_message(
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
     let mut sessions = get_chat_history().await;
-    let session = sessions.iter_mut().find(|s| s.id == id);
-    let session = match session {
-        Some(s) => s,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "Session not found"})),
-            )
-                .into_response();
-        }
-    };
+
+    // Auto-create session if it doesn't exist (e.g. desktop remote mode sends with local ID)
+    if !sessions.iter().any(|s| s.id == id) {
+        let now = chrono::Utc::now().to_rfc3339();
+        sessions.push(ChatSession {
+            id: id.clone(),
+            title: "Remote Chat".to_string(),
+            messages: Vec::new(),
+            created_at: now.clone(),
+            updated_at: now,
+            skill_candidate: None,
+            skill_feedback: None,
+            project_id: None,
+        });
+        save_chat_history(&sessions).await;
+    }
+
+    let session = sessions.iter_mut().find(|s| s.id == id).unwrap();
 
     let message = body
         .get("message")
