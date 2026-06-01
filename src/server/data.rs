@@ -494,6 +494,16 @@ pub struct Settings {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
+/// Sync cache-only accessor — returns cached settings without blocking.
+pub fn get_settings_cached() -> Option<Settings> {
+    remote_cache_try_get::<Settings>("/api/settings")
+}
+
+/// Sync cache-only accessor — returns cached projects without blocking.
+pub fn get_projects_cached() -> Option<Vec<Project>> {
+    remote_cache_try_get::<Vec<Project>>("/api/projects")
+}
+
 pub async fn get_settings() -> Settings {
     if let Some(rb) = get_remote_backend() {
         // Sync fast-path

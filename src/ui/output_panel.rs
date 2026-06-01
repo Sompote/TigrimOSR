@@ -183,6 +183,33 @@ impl OutputPanel {
                 return candidate;
             }
         }
+
+        // Remote mode: download file from remote server into local cache
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let cache_dir = crate::server::data::data_dir().join("remote_cache");
+            let _ = std::fs::create_dir_all(&cache_dir);
+            let cached = cache_dir.join(rel.replace('/', "_"));
+            if cached.exists() {
+                return cached;
+            }
+            // Try to download synchronously (output panel runs on UI thread)
+            let encoded = urlencoding::encode(rel);
+            let url = format!("{}/api/files/download?path={}", rb.url, encoded);
+            if let Ok(resp) = reqwest::blocking::Client::new()
+                .get(&url)
+                .bearer_auth(&rb.token)
+                .timeout(std::time::Duration::from_secs(15))
+                .send()
+            {
+                if resp.status().is_success() {
+                    if let Ok(bytes) = resp.bytes() {
+                        let _ = std::fs::write(&cached, &bytes);
+                        return cached;
+                    }
+                }
+            }
+        }
+
         p
     }
 

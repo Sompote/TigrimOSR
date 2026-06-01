@@ -664,21 +664,6 @@ impl ChatView {
         }
         let file_names_opt = if file_names.is_empty() { None } else { Some(file_names) };
 
-        // Auto-create remote session if needed (separate API call)
-        if self.selected_session_id.is_none() && crate::server::data::get_remote_backend().is_some() {
-            let pid = self.selected_project_id.as_deref();
-            let new_id = runtime.block_on(async {
-                crate::server::data::remote_create_chat_session("New Chat", pid).await
-                    .map(|s| s.id)
-            });
-            if let Some(id) = new_id {
-                self.selected_session_id = Some(id);
-                self.needs_refresh = true;
-            } else {
-                return;
-            }
-        }
-
         // Create local session in memory if needed
         let need_new = self.selected_session_id.is_none();
         let sid = if need_new {
@@ -729,12 +714,21 @@ impl ChatView {
         session_id: &str,
         user_message: &str,
     ) {
-        // Batch-load settings + projects in one block_on (small files, fast)
-        let (settings, cached_projects) = runtime.block_on(async {
-            let s = get_settings().await;
-            let p = get_projects().await;
-            (s, p)
-        });
+        // Batch-load settings + projects (cache fast-path avoids HTTP when remote)
+        let (settings, cached_projects) = {
+            // Try cache first to avoid blocking UI thread
+            let cached_s = crate::server::data::get_settings_cached();
+            let cached_p = crate::server::data::get_projects_cached();
+            if let Some(s) = cached_s {
+                (s, cached_p.unwrap_or_default())
+            } else {
+                runtime.block_on(async {
+                    let s = get_settings().await;
+                    let p = get_projects().await;
+                    (s, p)
+                })
+            }
+        };
         let api_key = settings.tiger_bot_api_key.clone();
         let model = if settings.tiger_bot_model.is_empty() {
             "deepseek-chat".to_string()
@@ -1138,149 +1132,6 @@ You have access to these tools: {}.{}",
         }
 
         let ctx_clone = ctx.clone();
-
-        // ── Remote mode: send to remote, let remote do all the work ──
-        if let Some(rb) = crate::server::data::get_remote_backend() {
-            let remote_sid = sid.clone();
-            let remote_state = state.clone();
-            let remote_ctx = ctx_clone.clone();
-            let remote_msg = user_message.to_string();
-            runtime.spawn(async move {
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(1800))
-                    .build()
-                    .unwrap_or_default();
-
-                {
-                    let mut text = remote_state.text.lock().unwrap();
-                    *text = "Sending to remote server...".to_string();
-                }
-                remote_ctx.request_repaint();
-
-                // Ensure session exists on remote
-                let _ = client
-                    .post(format!("{}/api/chat/sessions", rb.url))
-                    .bearer_auth(&rb.token)
-                    .json(&serde_json::json!({"title": "Remote Chat", "id": &remote_sid}))
-                    .send().await;
-
-                // POST message — remote runs call_with_tools
-                let poll_state = remote_state.clone();
-                let poll_ctx = remote_ctx.clone();
-                let poll_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let poll_done2 = poll_done.clone();
-                let poll_rb = rb.clone();
-                let poll_sid = remote_sid.clone();
-                let poll_client = client.clone();
-
-                // Poll activity log for real-time updates
-                let poller = tokio::spawn(async move {
-                    let mut last_len = 0usize;
-                    loop {
-                        if poll_done2.load(std::sync::atomic::Ordering::Relaxed) { break; }
-                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                        if poll_done2.load(std::sync::atomic::Ordering::Relaxed) { break; }
-
-                        if let Ok(resp) = poll_client
-                            .get(format!("{}/api/chat/sessions/{}/activity", poll_rb.url, poll_sid))
-                            .bearer_auth(&poll_rb.token)
-                            .timeout(std::time::Duration::from_secs(5))
-                            .send().await
-                        {
-                            if let Ok(val) = resp.json::<serde_json::Value>().await {
-                                if let Some(content) = val["content"].as_str() {
-                                    if content.len() > last_len {
-                                        let new_part = &content[last_len..];
-                                        last_len = content.len();
-
-                                        let mut calls = poll_state.tool_calls.lock().unwrap();
-                                        let mut logs = poll_state.log_lines.lock().unwrap();
-                                        for line in new_part.lines() {
-                                            let trimmed = line.trim();
-                                            if trimmed.is_empty() { continue; }
-                                            if trimmed.contains("Calling **") {
-                                                let name = trimmed.split("**").nth(1).unwrap_or("tool").to_string();
-                                                let preview = trimmed.split(" — ").nth(1).unwrap_or("").to_string();
-                                                calls.push(ToolCallDisplay {
-                                                    name, status: "calling...".to_string(),
-                                                    args_preview: preview, result_preview: String::new(),
-                                                });
-                                            } else if trimmed.contains("** done") {
-                                                let name = trimmed.split("**").nth(1).unwrap_or("").to_string();
-                                                if let Some(c) = calls.iter_mut().rev().find(|c| c.name == name) {
-                                                    c.status = "done".to_string();
-                                                    c.result_preview = trimmed.split(" — ").nth(1).unwrap_or("").to_string();
-                                                }
-                                            }
-                                            logs.push(trimmed.to_string());
-                                        }
-                                        // Show latest activity as streaming text
-                                        if let Some(last) = logs.last() {
-                                            *poll_state.text.lock().unwrap() = last.clone();
-                                        }
-                                        poll_ctx.request_repaint();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-
-                // Send message (blocks until remote finishes)
-                let body = serde_json::json!({"message": remote_msg});
-                let result = client
-                    .post(format!("{}/api/chat/sessions/{}/messages", rb.url, remote_sid))
-                    .bearer_auth(&rb.token)
-                    .json(&body)
-                    .send().await;
-
-                poll_done.store(true, std::sync::atomic::Ordering::Relaxed);
-                let _ = poller.await;
-
-                match result {
-                    Ok(resp) => {
-                        if let Ok(val) = resp.json::<serde_json::Value>().await {
-                            let content = val.get("content")
-                                .or_else(|| val.get("message"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("(no response)");
-                            *remote_state.text.lock().unwrap() = content.to_string();
-
-                            if let Some(files_arr) = val.get("files").and_then(|v| v.as_array()) {
-                                let mut files = remote_state.files.lock().unwrap();
-                                for f in files_arr {
-                                    if let Some(s) = f.as_str() {
-                                        if !files.contains(&s.to_string()) {
-                                            files.push(s.to_string());
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Save to local history
-                            let mut sessions = get_chat_history().await;
-                            if let Some(s) = sessions.iter_mut().find(|s| s.id == remote_sid) {
-                                s.messages.push(ChatMessage {
-                                    role: "assistant".to_string(),
-                                    content: content.to_string(),
-                                    timestamp: chrono::Utc::now().to_rfc3339(),
-                                    files: None, feedback: None,
-                                });
-                                s.updated_at = chrono::Utc::now().to_rfc3339();
-                            }
-                            save_chat_history(&sessions).await;
-                        }
-                    }
-                    Err(e) => {
-                        *remote_state.error.lock().unwrap() = Some(format!("Remote error: {}", e));
-                    }
-                }
-
-                *remote_state.done.lock().unwrap() = true;
-                remote_ctx.request_repaint();
-            });
-            return;
-        }
 
         runtime.spawn(async move {
             let state_text = state.text.clone();
@@ -2046,7 +1897,8 @@ You have access to these tools: {}.{}",
             // which may point to a different chat if the user clicked "New Chat".
             let mem_session = self.stream_session_snapshots.remove(sid)
                 .or_else(|| self.selected_session.clone());
-            runtime.block_on(async {
+            // Save assistant message — non-blocking spawn to avoid UI stutter
+            runtime.spawn(async move {
                 let mut sessions = get_chat_history().await;
 
                 // If session exists on disk, replace with in-memory version (has user msgs)
