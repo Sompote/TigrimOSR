@@ -24,11 +24,15 @@ pub fn set_remote_backend(backend: Option<RemoteBackend>) {
     remote_cache_clear();
     // Pre-warm cache for the new backend
     if let Some(ref rb) = backend {
+        eprintln!("[remote] Connecting to remote: {} (token={}...)", rb.url, &rb.token[..rb.token.len().min(4)]);
+        let _ = std::fs::write("/tmp/tigrimos_remote.log", format!("CONNECT url={} token={}\n", rb.url, &rb.token[..rb.token.len().min(8)]));
         remote_bg_fetch(rb, "/api/chat/sessions/bulk", 10);
         remote_bg_fetch(rb, "/api/settings", 15);
         remote_bg_fetch(rb, "/api/projects", 10);
         remote_bg_fetch(rb, "/api/tasks", 10);
         remote_bg_fetch(rb, "/api/skills", 15);
+    } else {
+        eprintln!("[remote] Disconnected from remote");
     }
     *lock.lock().unwrap() = backend;
 }
@@ -149,14 +153,27 @@ async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
     path: &str,
     ttl_secs: u64,
 ) -> T {
+    let url = format!("{}{}", rb.url, path);
+    eprintln!("[remote] GET {}", url);
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tigrimos_remote.log")
+        .and_then(|mut f| { use std::io::Write; writeln!(f, "GET {}", url) });
     match remote_client()
-        .get(format!("{}{}", rb.url, path))
+        .get(&url)
         .bearer_auth(&rb.token)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
     {
         Ok(resp) => {
+            let status = resp.status();
+            eprintln!("[remote] GET {} → {}", path, status);
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tigrimos_remote.log")
+                .and_then(|mut f| { use std::io::Write; writeln!(f, "RESULT {} → {}", path, status) });
+            if !status.is_success() {
+                // Cache a short-lived empty marker to avoid hammering the server
+                remote_cache_set(path, String::new(), 5);
+                return T::default();
+            }
             if let Ok(text) = resp.text().await {
                 remote_cache_set(path, text.clone(), ttl_secs);
                 serde_json::from_str::<T>(&text).unwrap_or_default()
@@ -164,7 +181,12 @@ async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
                 T::default()
             }
         }
-        Err(_) => T::default(),
+        Err(e) => {
+            eprintln!("[remote] GET {} FAILED: {}", path, e);
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tigrimos_remote.log")
+                .and_then(|mut f| { use std::io::Write; writeln!(f, "FAILED {} → {}", path, e) });
+            T::default()
+        }
     }
 }
 

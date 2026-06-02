@@ -1139,8 +1139,9 @@ You have access to these tools: {}.{}",
             let remote_state = state.clone();
             let remote_ctx = ctx_clone.clone();
             let remote_msg = user_message.to_string();
-            let remote_agent_mode = if sub_agent_config.enabled {
-                sub_agent_config.mode.clone()
+            // Use the mode directly from settings — remote server validates config files itself
+            let remote_agent_mode = if settings.sub_agent_enabled.unwrap_or(false) {
+                settings.sub_agent_mode.clone().unwrap_or_else(|| "single".to_string())
             } else {
                 "single".to_string()
             };
