@@ -420,6 +420,9 @@ pub struct ChatView {
     // --- Tool approval ---
     pending_approval: Option<(String, String)>, // (tool_name, args_preview)
 
+    // --- Remote activity log (for graphic monitor in remote mode) ---
+    remote_activity_logs: std::collections::HashMap<String, String>, // session_id -> activity text
+
     // --- Graphic monitor ---
     graphic_agents: Vec<GraphicAgent>,
     graphic_edges: Vec<GraphicEdge>,
@@ -474,6 +477,7 @@ impl ChatView {
             log_agent_history: String::new(),
             log_tab: 0,
             pending_approval: None,
+            remote_activity_logs: std::collections::HashMap::new(),
             graphic_agents: Vec::new(),
             graphic_edges: Vec::new(),
             graphic_signals: Vec::new(),
@@ -1145,6 +1149,7 @@ You have access to these tools: {}.{}",
             } else {
                 "single".to_string()
             };
+            let remote_config_file = settings.sub_agent_config_file.clone().unwrap_or_default();
             runtime.spawn(async move {
                 // get_remote_backend() inside async — re-fetch since it's not Send
                 let rb = crate::server::data::get_remote_backend().unwrap();
@@ -1217,6 +1222,7 @@ You have access to these tools: {}.{}",
                 let body = serde_json::json!({
                     "message": remote_msg,
                     "agent_mode": remote_agent_mode,
+                    "config_file": remote_config_file,
                 });
                 let result = client
                     .post(format!("{}/api/chat/sessions/{}/messages", rb.url, remote_sid))
@@ -1994,6 +2000,14 @@ You have access to these tools: {}.{}",
             let error = state.get_error();
             let tool_calls = state.get_tool_calls();
             let output_files = state.get_files();
+
+            // In remote mode, save the activity log for graphic monitor
+            if crate::server::data::get_remote_backend().is_some() {
+                let log = state.get_log();
+                if !log.is_empty() {
+                    self.remote_activity_logs.insert(sid.clone(), log);
+                }
+            }
 
             let base_content = if let Some(err) = error {
                 if response_text.is_empty() {
@@ -3860,6 +3874,18 @@ You have access to these tools: {}.{}",
     // -----------------------------------------------------------------
 
     fn load_graphic_data(&mut self, session_id: &str) {
+        // In remote mode, use activity log text instead of local spawn.jsonl
+        if crate::server::data::get_remote_backend().is_some() {
+            // Try live streaming state first, then cached
+            let log_text = if let Some(s) = self.active_streams.get(session_id) {
+                s.get_log()
+            } else {
+                self.remote_activity_logs.get(session_id).cloned().unwrap_or_default()
+            };
+            self.load_graphic_data_from_activity_log(session_id, &log_text);
+            return;
+        }
+
         self.graphic_agents.clear();
         self.graphic_edges.clear();
         self.graphic_signals.clear();
@@ -4211,6 +4237,174 @@ You have access to these tools: {}.{}",
         }
 
         // Build edges from final_edges
+        for (from, to, label, protocol) in &final_edges {
+            self.graphic_edges.push(GraphicEdge {
+                from: from.clone(),
+                to: to.clone(),
+                label: label.clone(),
+                protocol: protocol.clone(),
+                state: "idle".to_string(),
+            });
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Graphic monitor — build from activity log text (for remote mode)
+    // -----------------------------------------------------------------
+
+    fn load_graphic_data_from_activity_log(&mut self, session_id: &str, log_text: &str) {
+        self.graphic_agents.clear();
+        self.graphic_edges.clear();
+        self.graphic_signals.clear();
+        self.graphic_loaded_config = session_id.to_string();
+
+        // Parse activity log lines to extract agents and connections.
+        // Format from toolbox.rs log_agent_tool_call:
+        //   > **AgentName** → `tool_name`
+        //   > **Orchestrator** delegating task to agent_name
+        //   > **Orchestrator** waiting for agent_name
+        //   > **PROTO** **AgentName** → `proto_tool`
+        //   Calling **tool** — preview
+        //   **tool** done — result
+
+        let mut agent_map: std::collections::HashMap<String, (String, String, Vec<String>)> =
+            std::collections::HashMap::new(); // id -> (role, status, tools)
+        let mut edge_set: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+
+        // Always add main orchestrator
+        agent_map.entry("main".to_string())
+            .or_insert_with(|| ("orchestrator".to_string(), "idle".to_string(), Vec::new()));
+
+        for line in log_text.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { continue; }
+
+            // Pattern: > **AgentName** delegating task to target_agent
+            if trimmed.contains("delegating task to ") {
+                if let Some(agent) = trimmed.split("**").nth(1) {
+                    let agent = agent.trim();
+                    let agent_id = if agent == "Orchestrator" { "main" } else { agent };
+                    agent_map.entry(agent_id.to_string())
+                        .or_insert_with(|| {
+                            let role = if agent == "Orchestrator" { "orchestrator" } else { "worker" };
+                            (role.to_string(), "working".to_string(), Vec::new())
+                        });
+                    if let Some(target) = trimmed.rsplit("delegating task to ").next() {
+                        let target = target.trim();
+                        if !target.is_empty() {
+                            agent_map.entry(target.to_string())
+                                .or_insert_with(|| ("worker".to_string(), "working".to_string(), Vec::new()));
+                            edge_set.insert((agent_id.to_string(), target.to_string()));
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Pattern: > **AgentName** waiting for source_agent
+            if trimmed.contains("waiting for ") && trimmed.starts_with(">") {
+                if let Some(agent) = trimmed.split("**").nth(1) {
+                    let agent = agent.trim();
+                    let agent_id = if agent == "Orchestrator" { "main" } else { agent };
+                    if let Some(source) = trimmed.rsplit("waiting for ").next() {
+                        let source = source.trim();
+                        if !source.is_empty() {
+                            edge_set.insert((source.to_string(), agent_id.to_string()));
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Pattern: > **PROTO** **AgentName** → `tool`
+            // Pattern: > **AgentName** → `tool_name`
+            if trimmed.starts_with("> **") && trimmed.contains("→") {
+                let parts: Vec<&str> = trimmed.split("**").collect();
+                // Proto format: > ** PROTO ** ** AgentName ** → `tool`
+                // parts[0]="> ", parts[1]="PROTO", parts[2]=" ", parts[3]="AgentName", ...
+                // Normal format: > ** AgentName ** → `tool`
+                // parts[0]="> ", parts[1]="AgentName", parts[2]=" → ..."
+                if parts.len() >= 4 && trimmed.contains("** **") {
+                    // Proto: agent is parts[3]
+                    let agent = parts[3].trim();
+                    let agent_id = if agent == "Orchestrator" { "main" } else { agent };
+                    let tool = trimmed.split('`').nth(1).unwrap_or("").to_string();
+                    agent_map.entry(agent_id.to_string())
+                        .or_insert_with(|| ("worker".to_string(), "working".to_string(), Vec::new()));
+                    if let Some(e) = agent_map.get_mut(agent_id) {
+                        e.2.push(tool);
+                        e.1 = "working".to_string();
+                    }
+                } else if parts.len() >= 2 {
+                    // Normal tool call
+                    let agent = parts[1].trim();
+                    let agent_id = if agent == "Orchestrator" { "main" } else { agent };
+                    let tool = trimmed.split('`').nth(1).unwrap_or("").to_string();
+                    agent_map.entry(agent_id.to_string())
+                        .or_insert_with(|| ("worker".to_string(), "working".to_string(), Vec::new()));
+                    if let Some(e) = agent_map.get_mut(agent_id) {
+                        e.2.push(tool);
+                        e.1 = "working".to_string();
+                    }
+                }
+                continue;
+            }
+        }
+
+        // Build edges
+        let final_edges: Vec<(String, String, String, String)> = edge_set
+            .into_iter()
+            .map(|(f, t)| (f, t, String::new(), "delegate".to_string()))
+            .collect();
+
+        // Layout agents
+        let canvas_w: f32 = 700.0;
+        let mut names: Vec<String> = agent_map.keys().cloned().collect();
+        names.sort_by(|a, b| {
+            let ra = &agent_map[a].0;
+            let rb = &agent_map[b].0;
+            let oa = if ra == "orchestrator" { 0 } else { 1 };
+            let ob = if rb == "orchestrator" { 0 } else { 1 };
+            oa.cmp(&ob).then(a.cmp(b))
+        });
+
+        let worker_count = names.iter().filter(|n| {
+            agent_map.get(*n).map(|e| e.0 != "orchestrator").unwrap_or(true)
+        }).count();
+        let cols = (worker_count as f32).sqrt().ceil().max(1.0) as usize;
+        let spacing_x = canvas_w / (cols as f32 + 1.0);
+        let mut row = 0usize;
+        let mut col = 0usize;
+
+        for (i, name) in names.iter().enumerate() {
+            let (ref role, ref status, ref tools) = agent_map.get(name)
+                .cloned()
+                .unwrap_or(("worker".to_string(), "idle".to_string(), Vec::new()));
+            let is_orch = role == "orchestrator";
+
+            let (x, y) = if is_orch {
+                (canvas_w / 2.0 - 50.0, 30.0)
+            } else {
+                let x = spacing_x * (col as f32 + 1.0) - 50.0;
+                let y = 140.0 + row as f32 * 100.0;
+                col += 1;
+                if col >= cols { col = 0; row += 1; }
+                (x, y)
+            };
+
+            self.graphic_agents.push(GraphicAgent {
+                id: name.clone(),
+                name: name.clone(),
+                role: role.clone(),
+                status: status.clone(),
+                x,
+                y,
+                color: agent_node_color(i),
+                last_tool: tools.last().cloned().unwrap_or_default(),
+            });
+        }
+
         for (from, to, label, protocol) in &final_edges {
             self.graphic_edges.push(GraphicEdge {
                 from: from.clone(),

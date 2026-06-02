@@ -59,6 +59,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/sessions/{id}/chatlog", get(get_chat_log))
         .route("/active-tasks", get(get_active_tasks))
         .route("/sessions/{id}/kill", post(kill_session))
+        .route("/agent-configs", get(list_agent_configs))
 }
 
 // ---------------------------------------------------------------------------
@@ -425,18 +426,35 @@ async fn send_message(
         })
         .unwrap_or_default();
 
-    let config_file = settings.sub_agent_config_file.clone().unwrap_or_default();
+    // config_file: prefer request body, fall back to server settings
+    let config_file = body.get("config_file")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| settings.sub_agent_config_file.clone())
+        .unwrap_or_default();
     // Per-request agent_mode overrides settings: "single" disables sub-agents,
     // "auto"/"manual"/"fully_auto" enable them (requires config file).
     let request_mode = body.get("agent_mode").and_then(|v| v.as_str()).unwrap_or("single");
     let sub_agent_enabled = match request_mode {
         "single" => false,
         "fully_auto" | "auto_swarm" => true, // these create their own config
+        "auto" | "manual" => {
+            if !config_file.is_empty() {
+                true
+            } else {
+                // No config file → fall back to fully_auto behavior
+                tracing::info!("[chat] mode='{}' but no config file, falling back to fully_auto", request_mode);
+                true
+            }
+        }
         _ => !config_file.is_empty(),
     };
     tracing::info!("[chat] request_mode={}, config_file='{}', sub_agent_enabled={}", request_mode, config_file, sub_agent_enabled);
     let effective_mode = match request_mode {
         "single" => settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string()),
+        // auto/manual without config file → use fully_auto
+        "auto" | "manual" if config_file.is_empty() => "fully_auto".to_string(),
         m => m.to_string(),
     };
 
@@ -539,13 +557,87 @@ async fn send_message(
             "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent"
         };
 
-        let sub_agent_prompt = if sub_agent_enabled {
-            "\n- You are the orchestrator. Delegate complex multi-step tasks to sub-agents using send_task."
+        let agents_list = sub_agent.agent_ids.join(", ");
+        let sub_agent_prompt = if sub_agent_enabled && !agents_list.is_empty() {
+            let yaml_orch_mode = if !sub_agent.config_file.is_empty() {
+                crate::server::services::toolbox::load_agent_yaml(&sub_agent.config_file)
+                    .and_then(|(y, _)| y.get("system")?.get("orchestration_mode")?.as_str().map(|s| s.to_string()))
+                    .unwrap_or_default()
+            } else { String::new() };
+            let is_pipeline = yaml_orch_mode == "pipeline";
+
+            match effective_mode.as_str() {
+                "fully_auto" => {
+                    if is_pipeline {
+                        format!(
+                            "\n\nFULLY AUTO MODE (PIPELINE): An agent pipeline has been created and all agents are LIVE. \
+Pipeline agents: [{}]. \
+This is a SEQUENTIAL PIPELINE — send the task to the FIRST agent only. \
+The first agent will process and forward to the next stage automatically via send_task. \
+Workflow: send_task({{to: \"<first_agent>\", task: \"...\"}}) → wait_result({{from: \"<last_agent>\"}}) to get the final output. \
+Do NOT send tasks to intermediate or final agents directly — the pipeline flows automatically.",
+                            agents_list
+                        )
+                    } else {
+                        format!(
+                            "\n\nFULLY AUTO MODE: An agent team has been created and all agents are LIVE. \
+Available agents: [{}]. \
+You MUST delegate ALL work to agents via send_task/wait_result. \
+Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
+Only use run_python/write_file for formatting the final output. \
+Do NOT do research or analysis yourself — agents handle that. \
+If an orchestrator exists, send tasks ONLY to the orchestrator.",
+                            agents_list
+                        )
+                    }
+                }
+                "manual" => {
+                    if is_pipeline {
+                        format!(
+                            "\n\nMANUAL AGENT MODE (PIPELINE): All agents are alive in a sequential pipeline. \
+Pipeline agents: [{}]. \
+Send the task to the FIRST agent only — it will automatically forward through the chain via send_task. \
+Workflow: send_task({{to: \"<first_agent>\", task: \"...\"}}) → wait_result({{from: \"<last_agent>\"}}) to get the final output. \
+Do NOT send tasks to intermediate or final agents directly.",
+                            agents_list
+                        )
+                    } else {
+                        format!(
+                            "\n\nMANUAL AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
+Available agents: [{}]. \
+Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
+Only use run_python/write_file for formatting the final output. \
+Always delegate, even for simple tasks. If an orchestrator exists, send tasks ONLY to the orchestrator.",
+                            agents_list
+                        )
+                    }
+                }
+                "auto" | _ => {
+                    format!(
+                        "\n\nMULTI-AGENT SYSTEM ACTIVE: You have specialist sub-agents available: [{}]. \
+IMPORTANT: For research, analysis, marketing, data gathering, or any complex multi-step task, you MUST use send_task to delegate to the appropriate specialist agent. \
+Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
+Do NOT use web_search or run_python directly for tasks that sub-agents can handle. \
+Only use your own tools for quick lookups or tasks not covered by any sub-agent.",
+                        agents_list
+                    )
+                }
+            }
+        } else if sub_agent_enabled {
+            // enabled but no agents yet (fully_auto creates them)
+            "\n\nFULLY AUTO MODE: An agent team is being created for this task. \
+Use send_task/wait_result to delegate work once agents are ready. \
+If no agents are available yet, call create_architecture to design and boot a team. \
+Do NOT attempt to do work yourself — delegate everything to agents.".to_string()
         } else {
-            ""
+            String::new()
         };
 
-        let research_instruction = "For research tasks, gather info from multiple sources using web_search/fetch_url, then synthesize results";
+        let research_instruction = if sub_agent_enabled {
+            "Delegate ALL tasks to agents via send_task/wait_result."
+        } else {
+            "For research tasks, gather info from multiple sources using web_search/fetch_url, then synthesize results"
+        };
 
         let mut base = format!(
             "You are TigrimOS, an AI assistant with tools for search, code execution, files, and skills.\n\
@@ -729,6 +821,25 @@ async fn get_activity_log(Path(id): Path<String>) -> impl IntoResponse {
         .await
         .unwrap_or_default();
     Json(json!({"ok": true, "content": content}))
+}
+
+// ---------------------------------------------------------------------------
+// GET /agent-configs — list available YAML agent config files
+// ---------------------------------------------------------------------------
+
+async fn list_agent_configs() -> impl IntoResponse {
+    let dir = crate::server::data::data_dir().join("agents");
+    let mut files = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".yaml") || name.ends_with(".yml") {
+                files.push(name);
+            }
+        }
+    }
+    files.sort();
+    Json(json!({"ok": true, "files": files}))
 }
 
 // ---------------------------------------------------------------------------

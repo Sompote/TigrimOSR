@@ -435,8 +435,12 @@ impl SettingsView {
         self.sub_agent_model = settings.sub_agent_model.unwrap_or_default();
         self.selected_agent_config = settings.sub_agent_config_file.unwrap_or_default();
 
-        // Scan for agent config YAML files
-        self.agent_config_files = Self::scan_agent_configs();
+        // Scan for agent config YAML files (local or remote)
+        if crate::server::data::get_remote_backend().is_some() {
+            self.agent_config_files = Self::scan_agent_configs_remote();
+        } else {
+            self.agent_config_files = Self::scan_agent_configs();
+        }
 
         // MCP Tools
         self.mcp_tools = settings.mcp_tools;
@@ -622,6 +626,30 @@ impl SettingsView {
         }
         files.sort();
         files
+    }
+
+    fn scan_agent_configs_remote() -> Vec<String> {
+        let Some(rb) = crate::server::data::get_remote_backend() else {
+            return Vec::new();
+        };
+        let url = format!("{}/api/chat/agent-configs", rb.url);
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        match client.get(&url).bearer_auth(&rb.token).send() {
+            Ok(resp) => {
+                if let Ok(val) = resp.json::<serde_json::Value>() {
+                    if let Some(arr) = val["files"].as_array() {
+                        return arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect();
+                    }
+                }
+                Vec::new()
+            }
+            Err(_) => Vec::new(),
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1342,8 +1370,13 @@ impl SettingsView {
 
         if self.agent_config_files.is_empty() {
             ui.add_space(4.0);
+            let msg = if crate::server::data::get_remote_backend().is_some() {
+                "No YAML files found on remote server. Place agent configs in data/agents/ on the remote."
+            } else {
+                "No YAML files found in data/agents/. Place agent configs there."
+            };
             ui.label(
-                egui::RichText::new("No YAML files found in data/agents/. Place agent configs there.")
+                egui::RichText::new(msg)
                     .size(11.0)
                     .color(egui::Color32::GRAY),
             );
@@ -1351,7 +1384,11 @@ impl SettingsView {
 
         ui.horizontal(|ui| {
             if ui.button("Refresh Configs").clicked() {
-                self.agent_config_files = Self::scan_agent_configs();
+                if crate::server::data::get_remote_backend().is_some() {
+                    self.agent_config_files = Self::scan_agent_configs_remote();
+                } else {
+                    self.agent_config_files = Self::scan_agent_configs();
+                }
             }
         });
 
