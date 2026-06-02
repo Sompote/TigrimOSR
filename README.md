@@ -169,52 +169,47 @@ sudo systemctl restart tigrimos  # restart after config change
 sudo journalctl -u tigrimos -f   # view live logs
 ```
 
-**Running with pm2 (alternative to systemd):**
+**Setting up systemd service (recommended for production):**
 
-pm2 is a Node.js process manager that works great for keeping TigrimOS alive, auto-restarting on crash, and managing logs. Useful if you prefer pm2 over systemd or don't have root access.
+Create a systemd unit file so TigrimOS starts on boot and auto-restarts on crash:
 
 ```bash
-# Install pm2 (requires Node.js)
-npm install -g pm2
-
-# Build TigrimOS
-cd TigrimOSR
-cargo build --release
-
-# Start with pm2
-ACCESS_TOKEN=my-secret-token PORT=3001 pm2 start ./target/release/tigrimos --name tigrimos -- --headless
-
-# Or use an ecosystem file for cleaner config
-cat > ecosystem.config.js << 'EOF'
-module.exports = {
-  apps: [{
-    name: 'tigrimos',
-    script: './target/release/tigrimos',
-    args: '--headless',
-    env: {
-      ACCESS_TOKEN: 'my-secret-token',
-      PORT: '3001',
-    },
-    autorestart: true,
-    max_restarts: 10,
-    restart_delay: 3000,
-  }]
-};
-EOF
-pm2 start ecosystem.config.js
+sudo nano /etc/systemd/system/tigrimos.service
 ```
 
-Managing with pm2:
-```bash
-pm2 status              # check if running
-pm2 logs tigrimos       # view live logs
-pm2 restart tigrimos    # restart after rebuild or config change
-pm2 stop tigrimos       # stop server
-pm2 delete tigrimos     # remove from pm2
+```ini
+[Unit]
+Description=TigrimOS Headless AI Agent Server
+After=network.target
 
-# Auto-start on boot
-pm2 startup             # generates startup script (run the command it prints)
-pm2 save                # save current process list for auto-start
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/TigrimOSR
+ExecStart=/root/TigrimOSR/target/release/tigrimos --headless
+Environment=ACCESS_TOKEN=my-secret-token
+Environment=PORT=3002
+Environment=SANDBOX_DIR=/root/TigrimOS/sandbox
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable tigrimos   # start on boot
+sudo systemctl start tigrimos    # start now
+```
+
+Managing the server:
+```bash
+systemctl status tigrimos        # check status
+systemctl restart tigrimos       # restart (after rebuild or config change)
+systemctl stop tigrimos          # stop server
+journalctl -u tigrimos -f        # follow live logs
 ```
 
 Rebuilding after a `git pull`:
@@ -222,7 +217,7 @@ Rebuilding after a `git pull`:
 cd TigrimOSR
 git pull origin main
 cargo build --release
-pm2 restart tigrimos
+sudo systemctl restart tigrimos
 ```
 
 #### 2. Configure AI Provider on the Server
