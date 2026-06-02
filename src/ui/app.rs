@@ -48,6 +48,7 @@ pub struct TigrimOSApp {
     remote_view: RemoteView,
     pub remote_mode: bool,
     logo_texture: Option<egui::TextureHandle>,
+    sidebar_logo_texture: Option<egui::TextureHandle>,
     // Kimi-style sidebar state
     sidebar_open: bool,
     chat_history_expanded: bool,
@@ -264,9 +265,37 @@ impl TigrimOSApp {
             remote_view: RemoteView::new(),
             remote_mode: false,
             logo_texture: None,
+            sidebar_logo_texture: None,
             sidebar_open: false,
             chat_history_expanded: false,
         }
+    }
+
+    fn get_sidebar_logo(&mut self, ctx: &egui::Context) -> Option<&egui::TextureHandle> {
+        if self.sidebar_logo_texture.is_none() {
+            // Try multiple paths for the sidebar logo
+            let paths = [
+                "assets/logo_sidebar.png",
+                &format!("{}/assets/logo_sidebar.png", env!("CARGO_MANIFEST_DIR")),
+            ];
+            for path in &paths {
+                if let Ok(bytes) = std::fs::read(path) {
+                    if let Ok(image) = image::load_from_memory(&bytes) {
+                        let rgba = image.to_rgba8();
+                        let size = [rgba.width() as usize, rgba.height() as usize];
+                        let pixels = rgba.into_raw();
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                        self.sidebar_logo_texture = Some(ctx.load_texture(
+                            "sidebar_logo",
+                            color_image,
+                            egui::TextureOptions::LINEAR,
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+        self.sidebar_logo_texture.as_ref()
     }
 
     fn get_logo_texture(&mut self, ctx: &egui::Context) -> Option<&egui::TextureHandle> {
@@ -359,9 +388,18 @@ impl eframe::App for TigrimOSApp {
                 ui.set_min_width(sidebar_w - 16.0);
                 ui.spacing_mut().item_spacing.y = 2.0;
 
-                // ── Header: Logo + collapse toggle ──
+                // ── Header: Logo icon + text + collapse toggle ──
+                // Pre-load sidebar logo texture
+                let sidebar_logo_id = self.get_sidebar_logo(ctx).map(|t| t.id());
                 ui.horizontal(|ui| {
                     if self.sidebar_open {
+                        // Small tiger icon before text (aspect ratio ~1.32)
+                        if let Some(tex_id) = sidebar_logo_id {
+                            let h = 20.0_f32;
+                            let icon_size = egui::vec2(h * 1.32, h);
+                            ui.add(egui::Image::new(egui::load::SizedTexture::new(tex_id, icon_size)));
+                            ui.add_space(-2.0);
+                        }
                         // "Tigrim" in dark + "OS" in accent bold (matching template)
                         ui.label(egui::RichText::new("Tigrim").size(19.0).strong().color(text_dark));
                         ui.add_space(-6.0);

@@ -539,7 +539,15 @@ impl ChatView {
         // Refresh selected session data (skip while streaming to preserve in-memory user message)
         if let Some(ref sel_id) = self.selected_session_id {
             if !self.active_streams.contains_key(sel_id) {
-                self.selected_session = all_sessions.into_iter().find(|s| &s.id == sel_id);
+                if let Some(found) = all_sessions.into_iter().find(|s| &s.id == sel_id) {
+                    // Only replace if disk version is at least as complete as in-memory
+                    // (async save may still be in flight with newer messages)
+                    let mem_count = self.selected_session.as_ref().map(|s| s.messages.len()).unwrap_or(0);
+                    if found.messages.len() >= mem_count {
+                        self.selected_session = Some(found);
+                    }
+                }
+                // If not found, keep existing in-memory session
             }
         } else {
             self.selected_session = None;
@@ -2035,6 +2043,27 @@ You have access to these tools: {}.{}",
                 format!("[Used tools: {}]\n\n{}", unique_labels.join(", "), base_content)
             };
 
+            // Update in-memory selected session directly so UI shows response immediately
+            if self.selected_session_id.as_deref() == Some(sid) {
+                if let Some(ref mut s) = self.selected_session {
+                    s.messages.push(ChatMessage {
+                        role: "assistant".to_string(),
+                        content: final_content.clone(),
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                        files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
+                        feedback: None,
+                    });
+                    s.updated_at = chrono::Utc::now().to_rfc3339();
+                    if s.title == "New Chat" {
+                        if let Some(first_user) = s.messages.iter().find(|m| m.role == "user") {
+                            let raw = &first_user.content;
+                            let title_source = raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
+                            s.title = truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
+                        }
+                    }
+                }
+            }
+
             // Save assistant message + merge in-memory session (user msgs may not be on disk yet)
             let sid_clone = sid.clone();
             // Use the snapshot taken when streaming started — not self.selected_session,
@@ -2716,11 +2745,13 @@ You have access to these tools: {}.{}",
         // Handle delete confirmation
         self.delete_dialog(ui, runtime);
 
-        let has_session = self.selected_session.is_some();
+        // Show chat view if session exists OR if a session ID is set (chat was started)
+        let has_session = self.selected_session.is_some() || self.selected_session_id.is_some();
+        let fallback_id = self.selected_session_id.clone().unwrap_or_else(|| "__new__".to_string());
         let session = self.selected_session.clone().unwrap_or_else(|| {
-            // Dummy session for the empty/new-chat state
+            // Dummy session — use the real session ID so streaming lookup works
             ChatSession {
-                id: "__new__".to_string(),
+                id: fallback_id,
                 title: "New Chat".to_string(),
                 messages: Vec::new(),
                 created_at: String::new(),
