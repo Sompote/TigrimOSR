@@ -431,8 +431,10 @@ async fn send_message(
     let request_mode = body.get("agent_mode").and_then(|v| v.as_str()).unwrap_or("single");
     let sub_agent_enabled = match request_mode {
         "single" => false,
+        "fully_auto" | "auto_swarm" => true, // these create their own config
         _ => !config_file.is_empty(),
     };
+    tracing::info!("[chat] request_mode={}, config_file='{}', sub_agent_enabled={}", request_mode, config_file, sub_agent_enabled);
     let effective_mode = match request_mode {
         "single" => settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string()),
         m => m.to_string(),
