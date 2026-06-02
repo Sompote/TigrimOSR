@@ -161,12 +161,68 @@ curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux
 ```
 Select **"Headless mode"** — the installer handles systemd, nginx, firewall, and optional HTTPS.
 
-After install:
+After install (systemd):
 ```bash
 sudo systemctl start tigrimos    # start server
 sudo systemctl stop tigrimos     # stop server
 sudo systemctl restart tigrimos  # restart after config change
 sudo journalctl -u tigrimos -f   # view live logs
+```
+
+**Running with pm2 (alternative to systemd):**
+
+pm2 is a Node.js process manager that works great for keeping TigrimOS alive, auto-restarting on crash, and managing logs. Useful if you prefer pm2 over systemd or don't have root access.
+
+```bash
+# Install pm2 (requires Node.js)
+npm install -g pm2
+
+# Build TigrimOS
+cd TigrimOSR
+cargo build --release
+
+# Start with pm2
+ACCESS_TOKEN=my-secret-token PORT=3001 pm2 start ./target/release/tigrimos --name tigrimos -- --headless
+
+# Or use an ecosystem file for cleaner config
+cat > ecosystem.config.js << 'EOF'
+module.exports = {
+  apps: [{
+    name: 'tigrimos',
+    script: './target/release/tigrimos',
+    args: '--headless',
+    env: {
+      ACCESS_TOKEN: 'my-secret-token',
+      PORT: '3001',
+    },
+    autorestart: true,
+    max_restarts: 10,
+    restart_delay: 3000,
+  }]
+};
+EOF
+pm2 start ecosystem.config.js
+```
+
+Managing with pm2:
+```bash
+pm2 status              # check if running
+pm2 logs tigrimos       # view live logs
+pm2 restart tigrimos    # restart after rebuild or config change
+pm2 stop tigrimos       # stop server
+pm2 delete tigrimos     # remove from pm2
+
+# Auto-start on boot
+pm2 startup             # generates startup script (run the command it prints)
+pm2 save                # save current process list for auto-start
+```
+
+Rebuilding after a `git pull`:
+```bash
+cd TigrimOSR
+git pull origin main
+cargo build --release
+pm2 restart tigrimos
 ```
 
 #### 2. Configure AI Provider on the Server
