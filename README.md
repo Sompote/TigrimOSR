@@ -7,6 +7,7 @@
 - **Multi-agent orchestration** — Build teams of AI agents with 6 orchestration modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator). Agents communicate through real protocols and coordinate via a shared blackboard.
 - **Any LLM, any provider** — Works with OpenAI, Anthropic, DeepSeek, Kimi, Google Gemini, local Ollama, or any OpenAI-compatible API. Also supports 3 local CLI agents (Claude Code, Gemini CLI, Codex) with zero API keys.
 - **Full tool calling** — Web search, Python execution, file read/write, shell commands, MCP tool servers, and a skill marketplace (ClawHub). Output panel renders images, markdown, CSV, PDF, charts, and more inline.
+- **Plugin system** — Install zip-based plugins that bundle skills, MCP servers, agent configs, and service connectors. Compatible with Claude Desktop Extensions, Claude Code Plugins, and npm MCP packages.
 - **Run anywhere** — Native macOS desktop app, headless Linux server, or access from any browser via the built-in web UI. Toggle Local/Remote seamlessly from the same interface.
 - **Built in Rust** — Fast startup, low memory, single binary. No Node.js or Python runtime needed to run the app itself. Rewritten from the original [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
 
@@ -36,347 +37,14 @@ Connect from your phone to TigrimOS running on a cloud server — full chat with
   <img src="assets/screenshot_mobile_remote_2.jpg" width="300" alt="Mobile Remote Chart">
 </p>
 
-## What's New in v0.5.3
-
-- **Web/mobile UI parity** — Remote and mobile web chat now uses the same system prompt, SOUL.md, and IDENTITY.md as the native desktop UI. Responses are consistent regardless of how you connect.
-- **Inline image rendering** — Generated images (charts, figures, plots) now display inline in web chat with click-to-enlarge lightbox. Auth tokens are passed as query params so `<img>` tags can load from authenticated endpoints.
-- **Web tasks in native Tasks view** — Chat sessions initiated from the web/mobile UI now appear in the native desktop Tasks view while running, and are removed when complete.
-- **Amber blinking indicator** — Replaced the 3-dot typing animation with a single amber blinking dot with glow effect for a cleaner waiting state.
-- **Mobile background recovery** — Added `visibilitychange` listener and recovery polling so mobile browsers don't lose the AI response when the tab goes to background.
-- **Desktop sidebar layout** — On desktop-width browsers (≥769px), the tab bar moves to a sidebar instead of bottom tabs.
-- **Activity log viewer** — New log viewer modal (top-right button) to inspect activity and chat logs in real time.
-- **Sandbox path fix for .app bundles** — Web routes now use `get_sandbox_dir_sync()` to resolve relative sandbox paths correctly when running from a macOS `.app` bundle.
-- **`<think>` tag stripping in web UI** — Frontend now strips `<think>` reasoning blocks as a safety net, in addition to backend stripping.
-- **`.env` loading from data directory** — The app now loads `.env` files from both the data directory and the current working directory via `dotenvy`.
-- **Cache-Control on web UI** — Added `no-cache, no-store, must-revalidate` headers to prevent browsers from serving stale cached pages.
-
-### Previous Releases
-
-<details>
-<summary>v0.5.2 — Agent Activity panel, think-tag stripping, Auto mode enforcement</summary>
-
-- **Side-by-side Agent Activity panel** — The Graphic monitor tab now displays the agent network diagram on the left and the Agent Activity panel on the right, in a single-screen layout with no page-level scrolling. Activity cards use the same soft-blue theme as the main chat.
-- **`<think>` tag stripping** — LLM reasoning tags (`<think>...</think>`) are now stripped from all output paths: subagent log lines, bid logs, and all final response `TextChunk` emissions. Previously, raw `<think>` blocks leaked into agent activity logs and chat text when using reasoning models.
-- **Stale subagent log isolation** — The subagent broadcast listener now skips relay when sub-agents are disabled, preventing ghost agent output from a previous Fully Auto session (same session ID) from leaking into subsequent Single Agent sessions.
-- **Auto mode YAML-only enforcement** — Auto mode now strictly uses agents defined in the YAML config file. The `create_architecture` and `select_swarm` tools have been removed from Auto mode — only `spawn_subagent` is available, ensuring agents come exclusively from the selected YAML configuration.
-- **Auto mode config fallback** — When switching from Fully Auto to Auto mode, the system now automatically reuses the YAML architecture created by the previous Fully Auto session, so agents remain available without manually re-selecting a config file.
-- **Orchestrator tool access** — Orchestrator agents now have full access to all tools (web_search, fetch_url, etc.) and can decide whether to handle quick tasks directly or delegate to workers, instead of being restricted to delegation-only tools.
-
-</details>
-
-<details>
-<summary>v0.5.1 — Soul & Identity, output panel, skill browser</summary>
-
-- **Orchestrator Soul & Identity** — New Settings section to define the orchestrator's internal cognition (SOUL.md) and external presentation (IDENTITY.md). Saved as standalone markdown files, injected into the system prompt. No character limits — write as much behavioral context as needed.
-- **Output panel for agent-created files** — Files created via `write_file` now automatically appear in the output panel with inline rendering (markdown, images, CSV, PDF, etc.). Previously only `run_python` output files were detected.
-- **Skill file browser** — Skill detail view now shows all files in the skill's subfolder with collapsible preview cards. See scripts, references, and supporting files without leaving the app.
-- **Skill script path resolution** — `load_skill` now replaces relative paths (e.g. `scripts/run_search.sh`) with absolute paths to the skill install directory, so agents can find and execute skill scripts directly.
-- **CLI agent output file scanning** — `claude_code_agent` and `gemini_cli_agent` now scan the sandbox for output files after execution, so files created by CLI agents appear in the output panel.
-- **Skill synthesizer CLI provider guard** — Skill auto-update now returns a clear error when using CLI providers (Claude Code, Gemini CLI, Codex) instead of crashing with "builder error".
-- **Security: .env false positive fix** — The `.env` file security check no longer blocks legitimate Python calls like `os.environ` or `printenv`.
-
-</details>
-
-<details>
-<summary>v0.5.0 — Kimi-style files, agent swarm light theme, zero-lag chat</summary>
-
-- **Kimi-style Files browser** — Complete redesign of the Files tab with a left sidebar (Library / Places), white background, colored extension badges (DOCX=blue, XLSX=green, PNG=orange, etc.), breadcrumb navigation, relative dates ("Today", "Yesterday", "3 days ago"), and a selection action bar with Download/Delete buttons.
-- **Agent Swarm light theme** — Agent Swarm view redesigned with white canvas, light sidebar, floating Node Properties and Connection Properties windows, blue selection borders, and hover glow effects with tooltip cards showing agent name/role/persona.
-- **Claude Code identity headers** — All LLM call sites now send full Claude Code identity headers (User-Agent, X-Client-Name, X-Client-Version, HTTP-Referer, X-Traffic-Source) for Kimi API compatibility. Applied across toolbox, skill synthesizer, compact, settings validation, and MCP services.
-- **Logo image in About & Chat** — About section and chat welcome screen now display the TigrimOS logo as a rendered image instead of text emoji.
-- **Zero-lag chat send** — In-memory messages with atomic save on stream complete for instant chat responsiveness.
-- **WebSocket live updates** — Remote tasks now receive live updates via WebSocket, plus UTF-8 crash fix and improved chat input.
-- **Fast remote sync** — Sync cache fast-path with background fetch and pre-warming for snappy remote mode.
-
-</details>
-
-<details>
-<summary>v0.4.1 — Transparent remote toggle, remote caching, live web progress</summary>
-
-- **Transparent Local/Remote toggle** — Switch between Local and Remote mode from the topbar. When Remote is active, all tabs (Chat, Projects, Agents, Files, Tasks, Terminal, Settings) transparently work against the remote server — same familiar UI, no separate "Remote" view needed.
-- **Remote caching** — In-memory cache with TTL avoids repeated HTTP calls on every UI frame, making remote mode fast and responsive.
-- **Live progress in web chat** — Web UI now shows real-time tool call progress while the AI is thinking (tool names, results preview, errors) instead of just a static "Thinking..." spinner.
-- **Web UI chat fix** — Fixed chat not working in web UI: removed broken remote task detour, fixed 403 auth interception, added auto-session creation when no session is selected.
-- **Bulk sync endpoints** — Added `GET/PUT /api/*/bulk` endpoints for efficient full-array sync between local and remote instances.
-- **Remote-aware views** — Chat, Agents, Projects, Terminal, and Files views all route through the data layer proxy when remote mode is active.
-- **Zero compiler warnings** — All platform-conditional code properly gated with `#[cfg]`.
-
-</details>
-
-<details>
-<summary>v0.4.0 — Headless mode, remote web UI, remote server dashboard, auth security</summary>
-
-- **Headless mode** — Run TigrimOS on a remote Linux server without GUI: `./tigrimos --headless`. Interactive token prompt ensures security — empty tokens are blocked.
-- **Remote Web UI** — Full embedded web interface at `/web/` for controlling TigrimOS from any browser or mobile phone. Includes Chat, Files, Terminal, Agents, Tasks, and Settings pages. No Node.js or build tools needed — the SPA is compiled into the binary.
-- **Remote Server tab** — Native Mac app can connect to and control remote TigrimOS instances. Browse files, submit tasks, chat, and view settings on the remote server from your local desktop.
-- **Remote authentication** — Set a Remote Token in Settings to secure API access. When enabled, all API endpoints require the token. The web UI shows a login page — no data accessible without authentication.
-- **LaTeX math rendering** — Web UI renders LaTeX equations via KaTeX (`\[...\]`, `\(...\)`, `$$...$$`, `$...$`). Supports fractions, subscripts, Greek letters, and display math.
-- **Markdown rendering** — Web UI renders tables, headings, bold/italic, code blocks, lists, and horizontal rules in chat and task results.
-- **MCP tool integration** — MCP tools configured in Settings are now injected into the AI agent's tool loop. The agent can discover and call MCP tools during execution.
-
-</details>
-
-### Running Headless in the Cloud
-
-TigrimOS can run on any cloud server (AWS, DigitalOcean, Hetzner, etc.) as a headless AI agent backend. You control it from your Mac desktop app, a mobile browser, or any web browser.
-
-#### 1. Deploy to a Cloud Server
-
-```bash
-# SSH into your server
-ssh user@your-server-ip
-
-# Install Rust (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-
-# Clone and build
-git clone https://github.com/Sompote/TigrimOSR.git
-cd TigrimOSR
-cargo build --release
-
-# Run headless — prompts for a security token
-./target/release/tigrimos --headless
-
-# Or set token + port via environment variables
-ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/tigrimos --headless
-```
-
-The server will prompt for a token on first run:
-```
-===========================================
-  TigrimOS Headless Mode — Security Setup
-===========================================
-
-Enter access token (min 8 chars): ********
-
-Token set. Use this to connect from your Mac or browser.
-  Web UI:  http://<server-ip>:3001/web/
-  Token:   your-token-here
-```
-
-**Quick deploy with the installer (recommended):**
-```bash
-curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
-```
-Select **"Headless mode"** — the installer handles systemd, nginx, firewall, and optional HTTPS.
-
-After install (systemd):
-```bash
-sudo systemctl start tigrimos    # start server
-sudo systemctl stop tigrimos     # stop server
-sudo systemctl restart tigrimos  # restart after config change
-sudo journalctl -u tigrimos -f   # view live logs
-```
-
-**Setting up systemd service (recommended for production):**
-
-Create a systemd unit file so TigrimOS starts on boot and auto-restarts on crash:
-
-```bash
-sudo nano /etc/systemd/system/tigrimos.service
-```
-
-```ini
-[Unit]
-Description=TigrimOS Headless AI Agent Server
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/TigrimOSR
-ExecStart=/root/TigrimOSR/target/release/tigrimos --headless
-Environment=ACCESS_TOKEN=my-secret-token
-Environment=PORT=3002
-Environment=SANDBOX_DIR=/root/TigrimOS/sandbox
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable tigrimos   # start on boot
-sudo systemctl start tigrimos    # start now
-```
-
-Managing the server:
-```bash
-systemctl status tigrimos        # check status
-systemctl restart tigrimos       # restart (after rebuild or config change)
-systemctl stop tigrimos          # stop server
-journalctl -u tigrimos -f        # follow live logs
-```
-
-Rebuilding after a `git pull`:
-```bash
-cd TigrimOSR
-git pull origin main
-cargo build --release
-sudo systemctl restart tigrimos
-```
-
-#### 2. Configure AI Provider on the Server
-
-Before connecting, set up the AI provider on the headless server:
-1. Open `http://<server-ip>:3001/web/` in a browser
-2. Log in with your access token
-3. Go to **Settings** → set your **API Key**, **Model**, and **API URL**
-4. (Optional) Configure **SOUL.md** and **IDENTITY.md** for agent personality
-
-#### 3. Connect from Your Desktop App (Local/Remote Toggle)
-
-The desktop app can route all chat to the remote server with one click:
-
-1. Go to **Settings → Remote Instances**
-2. Check **"Enable remote agent access"**
-3. Add a remote instance:
-   - **Name:** My Cloud Server
-   - **URL:** `http://<server-ip>:3001` (or `https://your-domain.com`)
-   - **Token:** the access token from the server
-4. Click **Add Instance**
-5. In the **sidebar** (bottom-left), you'll see **Local** / **Remote** toggle buttons
-6. Click **Remote** to switch — all chat now runs on the remote server
-7. Click **Local** to switch back to local execution
-
-When in Remote mode:
-- Chat messages are sent to the remote server for processing
-- **Live progress** is shown in real-time (tool calls, activity log, reasoning steps)
-- Output files from the remote are collected and displayed locally
-- The remote server uses its own API keys, model, and sandbox
-- You can monitor progress the same way as local execution
-
-#### 4. Connect from a Browser or Mobile
-
-1. Open `http://<server-ip>:3001/web/` on any device
-2. Enter the access token on the login page
-3. Full UI: Chat, Files, Terminal, Agents, Tasks, Settings
-4. Works on mobile — charts, tool calls, and files render inline
-
-#### 5. Production Setup with Nginx + HTTPS
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:3001;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 1800s;  # 30 min for long AI tasks
-    }
-}
-```
-
-Add HTTPS with Let's Encrypt:
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
-
-#### 6. Firewall
-
-```bash
-# Open port 3001 (direct access) or 80/443 (behind nginx)
-sudo ufw allow 3001/tcp   # direct
-sudo ufw allow 80/tcp     # nginx HTTP
-sudo ufw allow 443/tcp    # nginx HTTPS
-```
-
-### Security
-
-| Method | How to Set | When Auth is Required |
-|--------|-----------|----------------------|
-| `ACCESS_TOKEN` env var | `ACCESS_TOKEN=xxx ./tigrimos` | Always (headless or GUI) |
-| Remote Token (Settings) | Settings → Remote Instances → set token + enable | When "Enable remote agent access" is checked |
-| `--headless` prompt | Interactive prompt on startup | Always in headless mode |
-| No token set | — | No auth (local desktop use only) |
-
-<details>
-<summary>v0.3.0 — Pipeline architecture, checkpoint/resume, 9-step compression</summary>
-
-- **Pipeline architecture mode** — True sequential pipeline orchestration: user task flows from agent1 → agent2 → agent3 automatically via `send_task`. Architecture generation now produces correct linear chain connections with `workflow.sequence` and `outputs_to`.
-- **Pipeline-aware dispatch** — Fully Auto and Manual modes auto-route user tasks to the first pipeline agent and wait for the last agent's result, instead of treating all agents as orchestrator targets.
-- **Checkpoint/Resume on abort** — Tool loop now saves a full checkpoint (messages, tool history, errors, early content) when cancelled, matching tiger_cowork's abort-save behavior. Resumed sessions restore complete state including `tool_call_history`, `consecutive_errors`, and `early_content`.
-- **Kimi API compatibility** — Fixed Agents tab "Auto Architecture" failing with Kimi by adding Claude Code identity headers (`User-Agent`, `X-Client-Name`, `X-Client-Version`) to all Kimi API calls.
-- **Improved graph layout** — Agent nodes in the System Editor now fit within the visible canvas with proper padding. Animated signal dots in the Graphic view use correct time synchronization and show faint lines for runtime connections.
-- **9-step compression pipeline** — Full context compaction system ported from tiger_cowork: LLM-based summarization, smart tool-result compression by type, post-compact context restoration, checkpoint save/resume, circuit breaker, and cooldown.
-- **Cancel flag for tool loops** — `SubAgentConfig.cancel_flag` allows external cancellation of running tool loops with automatic checkpoint save.
-
-</details>
-
-<details>
-<summary>v0.2.4 — Gemini CLI, live agent progress, 6 orchestration modes</summary>
-
-- **Gemini CLI (Local)** — Use Google's Gemini CLI as an AI backend, no API key needed (same as Claude Code and Codex)
-- **Live agent progress in chat** — Fully Auto mode now shows step-by-step progress (architecture → boot → delegate → wait) with live agent activity updates instead of just "thinking..."
-- **Live agent graphic monitor** — Agent Log graphic tab shows real-time agent nodes, delegation edges, and working status during execution
-- **6 orchestration modes** — Hierarchical, hybrid, mesh, pipeline, P2P, and P2P orchestrator modes cloned from tiger_cowork with exact behavioral parity
-- **Apply to Chat button** — Agents tab now has "Apply to Chat" button to use the selected architecture in Manual mode
-- **Smarter loop detection** — Monitoring tools (check_agents, bb_read) exempt from loop detection; realtime agents get higher limits (30 rounds, 60 tool calls)
-- **Agent history fix** — spawn.jsonl now writes to the correct data directory so the graphic view works from .app bundles
-
-</details>
-
-<details>
-<summary>v0.2.3 — Local CLI providers, agent harness settings, VM terminal</summary>
-
-- **Local CLI providers** — Use Claude Code or OpenAI Codex CLI installed on your machine as AI backends, no API key needed
-- **Agent harness settings** — Configurable max turns, max tool calls, temperature, max tokens, context limit, compression interval, and reflection toggle in Settings
-- **VM Terminal via SSH** — Terminal tab connects to Ubuntu VM via SSH (`sshpass`) instead of local bash
-- **VM tool routing** — `run_python` and `run_shell` execute inside the VM via SSH when VM is running
-- **Mode rename** — "Realtime" mode renamed to "Manual"; mode order starts with Fully Auto
-- **Robust CLI spawning** — Node.js-based CLIs (claude, codex) launched via `node script.js` directly, bypassing shebang issues in .app bundles
-- **Environment fixes** — Proper PATH/HOME injection for .app bundle launches where env vars are minimal
-
-</details>
-
-<details>
-<summary>v0.2.1 — Cross-platform, .app fixes, parallel streaming</summary>
-
-- **Cross-platform support** — Windows and Linux compatibility for sandbox execution, Python/shell discovery, and subprocess spawning
-- **.app bundle fixes** — Resolved issues with data directories, sandbox paths, Python/shell not found when launched from macOS `.app` bundle
-- **Persistent chat logs** — Agent activity logs now persist after chat completes instead of disappearing
-- **Parallel chat streaming** — Multiple chat sessions can stream responses simultaneously via HashMap-based state
-- **Installer improvements** — Robust `curl | bash` support with proper cwd handling, terminal prompt fallbacks
-- **Zero compiler warnings** — All 162 warnings resolved (deprecated egui APIs, unused imports, dead code)
-
-</details>
-
-<details>
-<summary>v0.2.0 — Multi-agent core, MCP, Cloudflare tunnel</summary>
-
-- **Agent modes** — Auto, Fully Auto, Auto Swarm, and Manual modes for flexible agent orchestration
-- **Connection editor** — Click agent connection lines to change protocol type (TCP, Queue, Bus, Blackboard)
-- **Chat info card** — Shows active architecture name, swarm mode, and model in the chat view
-- **Security settings** — Per-tool approval toggles for shell, Python, file write, file delete, and agent spawn
-- **Sandbox file browser** — Files tab shows only the sandbox folder with image file preview support
-- **Task management** — Kill button for active sessions, reordered tabs (Active before Scheduled)
-- **Remote task API** — Submit, poll, and kill tasks via HTTP endpoints (`/api/remote/*`)
-- **Inter-agent protocols** — TCP, Bus, Queue, and Blackboard communication between agents
-- **MCP client** — Model Context Protocol support with stdio, SSE, and HTTP transports
-- **Cloudflare tunnel** — Built-in tunnel management for remote access
-- **ClawHub marketplace** — Search, install, and manage skills from the ClawHub skill marketplace
-- **Custom app icon** — Program icon replaces emoji in the title bar
-
-</details>
-
 ## Features
 
 - **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
+- **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
+- **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
 - **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
-- **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
 - **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
 - **Output panel** — inline preview for images (PNG/JPG), markdown reports, CSV tables, JSON, PDF, HTML
 - **Agent history log** — JSONL logs per session in `data/agent_history/`
@@ -386,27 +54,9 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 - **Session management** — persistent chat history with project context
 - **LaTeX math** — KaTeX rendering in web UI for equations and formulas
 
-## Requirements
+---
 
-- Rust 1.75+ (`rustup` recommended)
-- Python 3.8+ with pip (for tool execution)
-- macOS 12+ (primary target; Linux supported for headless mode)
-
-### Optional local CLI agents
-
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `npm install -g @anthropic-ai/claude-code`
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) — `npm install -g @anthropic-ai/gemini-cli`
-- [OpenAI Codex](https://github.com/openai/codex) — `npm install -g @openai/codex`
-
-### Python packages (optional but recommended)
-
-```bash
-pip install duckduckgo-search matplotlib numpy pandas requests
-```
-
-## Installation
-
-### Quick Install (recommended)
+## Quick Install
 
 One-command installer that clones, builds, and sets up the app for you.
 
@@ -427,26 +77,6 @@ curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux
 ```
 Select **"Desktop mode"** when prompted.
 
-**Linux (Headless / Remote Server):**
-```bash
-curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
-```
-Select **"Headless mode"** when prompted. The installer will:
-- Ask for a port (default 3001) and access token (min 8 chars)
-- Create a **systemd service** (auto-start on boot)
-- Optionally set up **nginx** reverse proxy (port 80)
-- Optionally configure **HTTPS** via Let's Encrypt
-- Open **firewall** ports (ufw)
-
-After install, manage the server with:
-```bash
-sudo systemctl start tigrimos    # start server
-sudo systemctl stop tigrimos     # stop server
-sudo journalctl -u tigrimos -f   # view logs
-```
-
-Access the web UI at `http://<server-ip>/web/` and log in with your token.
-
 **Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.ps1 | iex
@@ -459,19 +89,13 @@ The installer will:
 1. Check prerequisites (git, Rust)
 2. Let you choose an install location
 3. Clone and build in release mode
-4. **Desktop**: Create a native app (macOS `.app` / Linux `.desktop` / Windows shortcut)
-5. **Headless (Linux)**: Create systemd service + nginx + firewall + HTTPS
-6. Optionally launch the app or start the server
+4. Create a native app (macOS `.app` / Linux `.desktop` / Windows shortcut)
+5. Optionally launch the app
 
----
-
-### Manual Install
-
-If you prefer to install manually, follow the steps below.
+<details>
+<summary>Manual Install (step-by-step)</summary>
 
 #### Step 1 — Install Rust
-
-Rust is required to build the app. Install it via `rustup` (the official Rust installer):
 
 **macOS / Linux:**
 ```bash
@@ -482,22 +106,17 @@ source $HOME/.cargo/env
 **Windows:**
 Download and run [rustup-init.exe](https://win.rustup.rs/) from https://rustup.rs
 
-Verify the installation:
+Verify:
 ```bash
 rustc --version
 cargo --version
 ```
 
----
-
 #### Step 2 — Install Python
 
 Python is used for code execution, web search, and data analysis tools inside the app.
 
-**macOS (recommended via Homebrew):**
-```bash
-brew install python
-```
+**macOS:** `brew install python`
 
 **Linux (Ubuntu/Debian):**
 ```bash
@@ -516,58 +135,47 @@ sudo dnf install libxcb-devel libxkbcommon-devel gtk3-devel
 sudo pacman -S libxcb libxkbcommon gtk3
 ```
 
-**Windows:**
-Download from https://www.python.org/downloads/ — make sure to check **"Add Python to PATH"** during install.
+**Windows:** Download from https://www.python.org/downloads/ — check **"Add Python to PATH"** during install.
 
-Verify:
+Install recommended Python packages:
 ```bash
-python3 --version
-pip3 --version
+pip3 install duckduckgo-search matplotlib numpy pandas requests
 ```
 
-Install required Python packages:
-```bash
-pip3 install -r requirements.txt
-```
-
----
-
-#### Step 3 — Clone the repository
+#### Step 3 — Clone, build, run
 
 ```bash
 git clone https://github.com/Sompote/TigrimOSR.git
 cd TigrimOSR
-```
-
-#### Step 4 — Build
-
-```bash
 cargo build --release
+./target/release/tigrimos
 ```
 
 > First build downloads all Rust dependencies and may take 2-5 minutes.
 
-#### Step 5 — Run
+</details>
 
-**Desktop mode (with GUI):**
+---
+
+## Requirements
+
+- Rust 1.75+ (`rustup` recommended)
+- Python 3.8+ with pip (for tool execution)
+- macOS 12+ (primary target; Linux and Windows supported)
+
+### Optional local CLI agents
+
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `npm install -g @anthropic-ai/claude-code`
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli) — `npm install -g @anthropic-ai/gemini-cli`
+- [OpenAI Codex](https://github.com/openai/codex) — `npm install -g @openai/codex`
+
+### Python packages (optional but recommended)
+
 ```bash
-cargo run --release
+pip install duckduckgo-search matplotlib numpy pandas requests
 ```
 
-**Headless mode (remote server, no GUI):**
-```bash
-./target/release/tigrimos --headless
-```
-
-Or run the compiled binary directly:
-```bash
-./target/release/tigrimos
-```
-
-**Windows:**
-```bash
-target\release\tigrimos.exe
-```
+---
 
 ## Configuration
 
@@ -582,8 +190,11 @@ On first launch, go to **Settings** to configure:
 | Sub-agent system | Enable multi-agent mode |
 | Agent config file | Select a YAML file from `data/agents/` |
 | Agent mode | Fully Auto, Auto, Auto Swarm, or Manual |
-| Remote access | Enable remote + set token for web UI and remote connections |
+| Plugins | Install zip-based plugins with skills, MCP servers, and connectors |
 | MCP tools | Configure external tool servers (stdio/HTTP) in JSON format |
+| Remote access | Enable remote + set token for web UI and remote connections |
+
+---
 
 ## Multi-Agent System
 
@@ -656,6 +267,8 @@ connections:
     protocol: tcp
 ```
 
+---
+
 ## Plugin System
 
 TigrimOS supports a **zip-based plugin system** that bundles skills, MCP servers, agent configs, and service connectors into a single distributable package. Install one zip — get everything registered automatically.
@@ -698,6 +311,329 @@ my-plugin.zip
 
 See **[PLUGINS.md](PLUGINS.md)** for the full developer guide — manifest format, connector config fields, MCP server config, Claude format compatibility, and the REST API reference.
 
+---
+
+## Remote / Headless Setup
+
+TigrimOS can run on any cloud server (AWS, DigitalOcean, Hetzner, etc.) as a headless AI agent backend. You control it from your Mac desktop app, a mobile browser, or any web browser.
+
+### Quick Deploy (recommended)
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
+```
+Select **"Headless mode"** — the installer handles systemd, nginx, firewall, and optional HTTPS.
+
+After install:
+```bash
+sudo systemctl start tigrimos    # start server
+sudo systemctl stop tigrimos     # stop server
+sudo systemctl restart tigrimos  # restart after config change
+sudo journalctl -u tigrimos -f   # view live logs
+```
+
+### Manual Headless Setup
+
+```bash
+# SSH into your server
+ssh user@your-server-ip
+
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Clone and build
+git clone https://github.com/Sompote/TigrimOSR.git
+cd TigrimOSR
+cargo build --release
+
+# Run headless — prompts for a security token
+./target/release/tigrimos --headless
+
+# Or set token + port via environment variables
+ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/tigrimos --headless
+```
+
+The server will prompt for a token on first run:
+```
+===========================================
+  TigrimOS Headless Mode — Security Setup
+===========================================
+
+Enter access token (min 8 chars): ********
+
+Token set. Use this to connect from your Mac or browser.
+  Web UI:  http://<server-ip>:3001/web/
+  Token:   your-token-here
+```
+
+### systemd Service (production)
+
+Create a systemd unit file so TigrimOS starts on boot and auto-restarts on crash:
+
+```bash
+sudo nano /etc/systemd/system/tigrimos.service
+```
+
+```ini
+[Unit]
+Description=TigrimOS Headless AI Agent Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/TigrimOSR
+ExecStart=/root/TigrimOSR/target/release/tigrimos --headless
+Environment=ACCESS_TOKEN=my-secret-token
+Environment=PORT=3002
+Environment=SANDBOX_DIR=/root/TigrimOS/sandbox
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable tigrimos   # start on boot
+sudo systemctl start tigrimos    # start now
+```
+
+Rebuilding after a `git pull`:
+```bash
+cd TigrimOSR && git pull origin main && cargo build --release
+sudo systemctl restart tigrimos
+```
+
+### Configure AI Provider on the Server
+
+1. Open `http://<server-ip>:3001/web/` in a browser
+2. Log in with your access token
+3. Go to **Settings** → set your **API Key**, **Model**, and **API URL**
+4. (Optional) Configure **SOUL.md** and **IDENTITY.md** for agent personality
+
+### Connect from Desktop App (Local/Remote Toggle)
+
+1. Go to **Settings → Remote Instances**
+2. Check **"Enable remote agent access"**
+3. Add a remote instance:
+   - **Name:** My Cloud Server
+   - **URL:** `http://<server-ip>:3001` (or `https://your-domain.com`)
+   - **Token:** the access token from the server
+4. Click **Add Instance**
+5. In the **sidebar** (bottom-left), click **Remote** to switch — all chat now runs on the remote server
+6. Click **Local** to switch back to local execution
+
+When in Remote mode:
+- Chat messages are sent to the remote server for processing
+- **Live progress** is shown in real-time (tool calls, activity log, reasoning steps)
+- Output files from the remote are collected and displayed locally
+- The remote server uses its own API keys, model, and sandbox
+
+### Connect from Browser or Mobile
+
+1. Open `http://<server-ip>:3001/web/` on any device
+2. Enter the access token on the login page
+3. Full UI: Chat, Files, Terminal, Agents, Tasks, Settings
+4. Works on mobile — charts, tool calls, and files render inline
+
+### Nginx + HTTPS
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 1800s;  # 30 min for long AI tasks
+    }
+}
+```
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+```
+
+### Firewall
+
+```bash
+sudo ufw allow 3001/tcp   # direct access
+sudo ufw allow 80/tcp     # nginx HTTP
+sudo ufw allow 443/tcp    # nginx HTTPS
+```
+
+### Security
+
+| Method | How to Set | When Auth is Required |
+|--------|-----------|----------------------|
+| `ACCESS_TOKEN` env var | `ACCESS_TOKEN=xxx ./tigrimos` | Always (headless or GUI) |
+| Remote Token (Settings) | Settings → Remote Instances → set token + enable | When "Enable remote agent access" is checked |
+| `--headless` prompt | Interactive prompt on startup | Always in headless mode |
+| No token set | — | No auth (local desktop use only) |
+
+---
+
+## Changelog
+
+### v0.5.3
+
+- **Web/mobile UI parity** — Remote and mobile web chat now uses the same system prompt, SOUL.md, and IDENTITY.md as the native desktop UI. Responses are consistent regardless of how you connect.
+- **Inline image rendering** — Generated images (charts, figures, plots) now display inline in web chat with click-to-enlarge lightbox. Auth tokens are passed as query params so `<img>` tags can load from authenticated endpoints.
+- **Web tasks in native Tasks view** — Chat sessions initiated from the web/mobile UI now appear in the native desktop Tasks view while running, and are removed when complete.
+- **Amber blinking indicator** — Replaced the 3-dot typing animation with a single amber blinking dot with glow effect for a cleaner waiting state.
+- **Mobile background recovery** — Added `visibilitychange` listener and recovery polling so mobile browsers don't lose the AI response when the tab goes to background.
+- **Desktop sidebar layout** — On desktop-width browsers (>=769px), the tab bar moves to a sidebar instead of bottom tabs.
+- **Activity log viewer** — New log viewer modal (top-right button) to inspect activity and chat logs in real time.
+- **Sandbox path fix for .app bundles** — Web routes now use `get_sandbox_dir_sync()` to resolve relative sandbox paths correctly when running from a macOS `.app` bundle.
+- **`<think>` tag stripping in web UI** — Frontend now strips `<think>` reasoning blocks as a safety net, in addition to backend stripping.
+- **`.env` loading from data directory** — The app now loads `.env` files from both the data directory and the current working directory via `dotenvy`.
+- **Cache-Control on web UI** — Added `no-cache, no-store, must-revalidate` headers to prevent browsers from serving stale cached pages.
+
+<details>
+<summary>v0.5.2 — Agent Activity panel, think-tag stripping, Auto mode enforcement</summary>
+
+- **Side-by-side Agent Activity panel** — The Graphic monitor tab now displays the agent network diagram on the left and the Agent Activity panel on the right, in a single-screen layout with no page-level scrolling. Activity cards use the same soft-blue theme as the main chat.
+- **`<think>` tag stripping** — LLM reasoning tags (`<think>...</think>`) are now stripped from all output paths: subagent log lines, bid logs, and all final response `TextChunk` emissions. Previously, raw `<think>` blocks leaked into agent activity logs and chat text when using reasoning models.
+- **Stale subagent log isolation** — The subagent broadcast listener now skips relay when sub-agents are disabled, preventing ghost agent output from a previous Fully Auto session (same session ID) from leaking into subsequent Single Agent sessions.
+- **Auto mode YAML-only enforcement** — Auto mode now strictly uses agents defined in the YAML config file. The `create_architecture` and `select_swarm` tools have been removed from Auto mode — only `spawn_subagent` is available, ensuring agents come exclusively from the selected YAML configuration.
+- **Auto mode config fallback** — When switching from Fully Auto to Auto mode, the system now automatically reuses the YAML architecture created by the previous Fully Auto session, so agents remain available without manually re-selecting a config file.
+- **Orchestrator tool access** — Orchestrator agents now have full access to all tools (web_search, fetch_url, etc.) and can decide whether to handle quick tasks directly or delegate to workers, instead of being restricted to delegation-only tools.
+
+</details>
+
+<details>
+<summary>v0.5.1 — Soul & Identity, output panel, skill browser</summary>
+
+- **Orchestrator Soul & Identity** — New Settings section to define the orchestrator's internal cognition (SOUL.md) and external presentation (IDENTITY.md). Saved as standalone markdown files, injected into the system prompt. No character limits — write as much behavioral context as needed.
+- **Output panel for agent-created files** — Files created via `write_file` now automatically appear in the output panel with inline rendering (markdown, images, CSV, PDF, etc.). Previously only `run_python` output files were detected.
+- **Skill file browser** — Skill detail view now shows all files in the skill's subfolder with collapsible preview cards. See scripts, references, and supporting files without leaving the app.
+- **Skill script path resolution** — `load_skill` now replaces relative paths (e.g. `scripts/run_search.sh`) with absolute paths to the skill install directory, so agents can find and execute skill scripts directly.
+- **CLI agent output file scanning** — `claude_code_agent` and `gemini_cli_agent` now scan the sandbox for output files after execution, so files created by CLI agents appear in the output panel.
+- **Skill synthesizer CLI provider guard** — Skill auto-update now returns a clear error when using CLI providers (Claude Code, Gemini CLI, Codex) instead of crashing with "builder error".
+- **Security: .env false positive fix** — The `.env` file security check no longer blocks legitimate Python calls like `os.environ` or `printenv`.
+
+</details>
+
+<details>
+<summary>v0.5.0 — Kimi-style files, agent swarm light theme, zero-lag chat</summary>
+
+- **Kimi-style Files browser** — Complete redesign of the Files tab with a left sidebar (Library / Places), white background, colored extension badges (DOCX=blue, XLSX=green, PNG=orange, etc.), breadcrumb navigation, relative dates ("Today", "Yesterday", "3 days ago"), and a selection action bar with Download/Delete buttons.
+- **Agent Swarm light theme** — Agent Swarm view redesigned with white canvas, light sidebar, floating Node Properties and Connection Properties windows, blue selection borders, and hover glow effects with tooltip cards showing agent name/role/persona.
+- **Claude Code identity headers** — All LLM call sites now send full Claude Code identity headers (User-Agent, X-Client-Name, X-Client-Version, HTTP-Referer, X-Traffic-Source) for Kimi API compatibility. Applied across toolbox, skill synthesizer, compact, settings validation, and MCP services.
+- **Logo image in About & Chat** — About section and chat welcome screen now display the TigrimOS logo as a rendered image instead of text emoji.
+- **Zero-lag chat send** — In-memory messages with atomic save on stream complete for instant chat responsiveness.
+- **WebSocket live updates** — Remote tasks now receive live updates via WebSocket, plus UTF-8 crash fix and improved chat input.
+- **Fast remote sync** — Sync cache fast-path with background fetch and pre-warming for snappy remote mode.
+
+</details>
+
+<details>
+<summary>v0.4.1 — Transparent remote toggle, remote caching, live web progress</summary>
+
+- **Transparent Local/Remote toggle** — Switch between Local and Remote mode from the topbar. When Remote is active, all tabs (Chat, Projects, Agents, Files, Tasks, Terminal, Settings) transparently work against the remote server — same familiar UI, no separate "Remote" view needed.
+- **Remote caching** — In-memory cache with TTL avoids repeated HTTP calls on every UI frame, making remote mode fast and responsive.
+- **Live progress in web chat** — Web UI now shows real-time tool call progress while the AI is thinking (tool names, results preview, errors) instead of just a static "Thinking..." spinner.
+- **Web UI chat fix** — Fixed chat not working in web UI: removed broken remote task detour, fixed 403 auth interception, added auto-session creation when no session is selected.
+- **Bulk sync endpoints** — Added `GET/PUT /api/*/bulk` endpoints for efficient full-array sync between local and remote instances.
+- **Remote-aware views** — Chat, Agents, Projects, Terminal, and Files views all route through the data layer proxy when remote mode is active.
+- **Zero compiler warnings** — All platform-conditional code properly gated with `#[cfg]`.
+
+</details>
+
+<details>
+<summary>v0.4.0 — Headless mode, remote web UI, remote server dashboard, auth security</summary>
+
+- **Headless mode** — Run TigrimOS on a remote Linux server without GUI: `./tigrimos --headless`. Interactive token prompt ensures security — empty tokens are blocked.
+- **Remote Web UI** — Full embedded web interface at `/web/` for controlling TigrimOS from any browser or mobile phone. Includes Chat, Files, Terminal, Agents, Tasks, and Settings pages. No Node.js or build tools needed — the SPA is compiled into the binary.
+- **Remote Server tab** — Native Mac app can connect to and control remote TigrimOS instances. Browse files, submit tasks, chat, and view settings on the remote server from your local desktop.
+- **Remote authentication** — Set a Remote Token in Settings to secure API access. When enabled, all API endpoints require the token. The web UI shows a login page — no data accessible without authentication.
+- **LaTeX math rendering** — Web UI renders LaTeX equations via KaTeX (`\[...\]`, `\(...\)`, `$$...$$`, `$...$`). Supports fractions, subscripts, Greek letters, and display math.
+- **Markdown rendering** — Web UI renders tables, headings, bold/italic, code blocks, lists, and horizontal rules in chat and task results.
+- **MCP tool integration** — MCP tools configured in Settings are now injected into the AI agent's tool loop. The agent can discover and call MCP tools during execution.
+
+</details>
+
+<details>
+<summary>v0.3.0 — Pipeline architecture, checkpoint/resume, 9-step compression</summary>
+
+- **Pipeline architecture mode** — True sequential pipeline orchestration: user task flows from agent1 → agent2 → agent3 automatically via `send_task`. Architecture generation now produces correct linear chain connections with `workflow.sequence` and `outputs_to`.
+- **Pipeline-aware dispatch** — Fully Auto and Manual modes auto-route user tasks to the first pipeline agent and wait for the last agent's result, instead of treating all agents as orchestrator targets.
+- **Checkpoint/Resume on abort** — Tool loop now saves a full checkpoint (messages, tool history, errors, early content) when cancelled, matching tiger_cowork's abort-save behavior. Resumed sessions restore complete state including `tool_call_history`, `consecutive_errors`, and `early_content`.
+- **Kimi API compatibility** — Fixed Agents tab "Auto Architecture" failing with Kimi by adding Claude Code identity headers (`User-Agent`, `X-Client-Name`, `X-Client-Version`) to all Kimi API calls.
+- **Improved graph layout** — Agent nodes in the System Editor now fit within the visible canvas with proper padding. Animated signal dots in the Graphic view use correct time synchronization and show faint lines for runtime connections.
+- **9-step compression pipeline** — Full context compaction system ported from tiger_cowork: LLM-based summarization, smart tool-result compression by type, post-compact context restoration, checkpoint save/resume, circuit breaker, and cooldown.
+- **Cancel flag for tool loops** — `SubAgentConfig.cancel_flag` allows external cancellation of running tool loops with automatic checkpoint save.
+
+</details>
+
+<details>
+<summary>v0.2.4 — Gemini CLI, live agent progress, 6 orchestration modes</summary>
+
+- **Gemini CLI (Local)** — Use Google's Gemini CLI as an AI backend, no API key needed (same as Claude Code and Codex)
+- **Live agent progress in chat** — Fully Auto mode now shows step-by-step progress (architecture → boot → delegate → wait) with live agent activity updates instead of just "thinking..."
+- **Live agent graphic monitor** — Agent Log graphic tab shows real-time agent nodes, delegation edges, and working status during execution
+- **6 orchestration modes** — Hierarchical, hybrid, mesh, pipeline, P2P, and P2P orchestrator modes cloned from tiger_cowork with exact behavioral parity
+- **Apply to Chat button** — Agents tab now has "Apply to Chat" button to use the selected architecture in Manual mode
+- **Smarter loop detection** — Monitoring tools (check_agents, bb_read) exempt from loop detection; realtime agents get higher limits (30 rounds, 60 tool calls)
+- **Agent history fix** — spawn.jsonl now writes to the correct data directory so the graphic view works from .app bundles
+
+</details>
+
+<details>
+<summary>v0.2.3 — Local CLI providers, agent harness settings, VM terminal</summary>
+
+- **Local CLI providers** — Use Claude Code or OpenAI Codex CLI installed on your machine as AI backends, no API key needed
+- **Agent harness settings** — Configurable max turns, max tool calls, temperature, max tokens, context limit, compression interval, and reflection toggle in Settings
+- **VM Terminal via SSH** — Terminal tab connects to Ubuntu VM via SSH (`sshpass`) instead of local bash
+- **VM tool routing** — `run_python` and `run_shell` execute inside the VM via SSH when VM is running
+- **Mode rename** — "Realtime" mode renamed to "Manual"; mode order starts with Fully Auto
+- **Robust CLI spawning** — Node.js-based CLIs (claude, codex) launched via `node script.js` directly, bypassing shebang issues in .app bundles
+- **Environment fixes** — Proper PATH/HOME injection for .app bundle launches where env vars are minimal
+
+</details>
+
+<details>
+<summary>v0.2.1 — Cross-platform, .app fixes, parallel streaming</summary>
+
+- **Cross-platform support** — Windows and Linux compatibility for sandbox execution, Python/shell discovery, and subprocess spawning
+- **.app bundle fixes** — Resolved issues with data directories, sandbox paths, Python/shell not found when launched from macOS `.app` bundle
+- **Persistent chat logs** — Agent activity logs now persist after chat completes instead of disappearing
+- **Parallel chat streaming** — Multiple chat sessions can stream responses simultaneously via HashMap-based state
+- **Installer improvements** — Robust `curl | bash` support with proper cwd handling, terminal prompt fallbacks
+- **Zero compiler warnings** — All 162 warnings resolved (deprecated egui APIs, unused imports, dead code)
+
+</details>
+
+<details>
+<summary>v0.2.0 — Multi-agent core, MCP, Cloudflare tunnel</summary>
+
+- **Agent modes** — Auto, Fully Auto, Auto Swarm, and Manual modes for flexible agent orchestration
+- **Connection editor** — Click agent connection lines to change protocol type (TCP, Queue, Bus, Blackboard)
+- **Chat info card** — Shows active architecture name, swarm mode, and model in the chat view
+- **Security settings** — Per-tool approval toggles for shell, Python, file write, file delete, and agent spawn
+- **Sandbox file browser** — Files tab shows only the sandbox folder with image file preview support
+- **Task management** — Kill button for active sessions, reordered tabs (Active before Scheduled)
+- **Remote task API** — Submit, poll, and kill tasks via HTTP endpoints (`/api/remote/*`)
+- **Inter-agent protocols** — TCP, Bus, Queue, and Blackboard communication between agents
+- **MCP client** — Model Context Protocol support with stdio, SSE, and HTTP transports
+- **Cloudflare tunnel** — Built-in tunnel management for remote access
+- **ClawHub marketplace** — Search, install, and manage skills from the ClawHub skill marketplace
+- **Custom app icon** — Program icon replaces emoji in the title bar
+
+</details>
+
+---
+
 ## Project Structure
 
 ```
@@ -732,6 +668,7 @@ TigrimOSR/
 │   └── vm/
 │       ├── manager.rs        # QEMU VM lifecycle management
 │       └── config.rs         # VM configuration constants
+├── PLUGINS.md               # Plugin developer guide
 ├── static/
 │   └── index.html            # Embedded web UI (SPA with KaTeX)
 ├── data/
