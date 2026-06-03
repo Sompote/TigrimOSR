@@ -393,13 +393,6 @@ impl eframe::App for TigrimOSApp {
                 let sidebar_logo_id = self.get_sidebar_logo(ctx).map(|t| t.id());
                 ui.horizontal(|ui| {
                     if self.sidebar_open {
-                        // Small tiger icon before text (aspect ratio ~1.32)
-                        if let Some(tex_id) = sidebar_logo_id {
-                            let h = 20.0_f32;
-                            let icon_size = egui::vec2(h * 1.32, h);
-                            ui.add(egui::Image::new(egui::load::SizedTexture::new(tex_id, icon_size)));
-                            ui.add_space(-2.0);
-                        }
                         // "Tigrim" in dark + "OS" in accent bold (matching template)
                         ui.label(egui::RichText::new("Tigrim").size(19.0).strong().color(text_dark));
                         ui.add_space(-6.0);
