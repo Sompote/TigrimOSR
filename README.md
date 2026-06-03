@@ -93,18 +93,14 @@ The installer will:
 5. Optionally launch the app
 
 <details>
-<summary>Manual Install (step-by-step)</summary>
+<summary>Manual Install on macOS (step-by-step)</summary>
 
 #### Step 1 — Install Rust
 
-**macOS / Linux:**
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 ```
-
-**Windows:**
-Download and run [rustup-init.exe](https://win.rustup.rs/) from https://rustup.rs
 
 Verify:
 ```bash
@@ -112,33 +108,15 @@ rustc --version
 cargo --version
 ```
 
+> Xcode Command Line Tools provide the C compiler/linker Rust needs. If they're
+> missing, run `xcode-select --install`.
+
 #### Step 2 — Install Python
 
-Python is used for code execution, web search, and data analysis tools inside the app.
+Used for code execution, web search, and data analysis tools inside the app.
 
-**macOS:** `brew install python`
-
-**Linux (Ubuntu/Debian):**
 ```bash
-sudo apt update && sudo apt install python3 python3-pip
-```
-
-**Linux (extra dev libraries for GUI):**
-```bash
-# Debian/Ubuntu
-sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev
-
-# Fedora
-sudo dnf install libxcb-devel libxkbcommon-devel gtk3-devel
-
-# Arch
-sudo pacman -S libxcb libxkbcommon gtk3
-```
-
-**Windows:** Download from https://www.python.org/downloads/ — check **"Add Python to PATH"** during install.
-
-Install recommended Python packages:
-```bash
+brew install python
 pip3 install duckduckgo-search matplotlib numpy pandas requests
 ```
 
@@ -152,6 +130,62 @@ cargo build --release
 ```
 
 > First build downloads all Rust dependencies and may take 2-5 minutes.
+
+</details>
+
+<details>
+<summary>Manual Install on Ubuntu / Linux (step-by-step)</summary>
+
+#### Step 1 — Install Rust
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+
+Verify:
+```bash
+rustc --version
+cargo --version
+```
+
+#### Step 2 — Install GUI build dependencies
+
+The desktop app links against system GUI libraries — install them first:
+
+```bash
+# Debian / Ubuntu
+sudo apt update
+sudo apt install build-essential libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev
+
+# Fedora
+sudo dnf install @development-tools libxcb-devel libxkbcommon-devel gtk3-devel
+
+# Arch
+sudo pacman -S base-devel libxcb libxkbcommon gtk3
+```
+
+#### Step 3 — Install Python
+
+Used for code execution, web search, and data analysis tools inside the app.
+
+```bash
+# Debian / Ubuntu
+sudo apt install python3 python3-pip
+pip3 install duckduckgo-search matplotlib numpy pandas requests
+```
+
+#### Step 4 — Clone, build, run
+
+```bash
+git clone https://github.com/Sompote/TigrimOSR.git
+cd TigrimOSR
+cargo build --release
+./target/release/tigrimos
+```
+
+> First build downloads all Rust dependencies and may take 2-5 minutes.
+> For a headless server (no GUI), see [Remote / Headless Setup](#remote--headless-setup).
 
 </details>
 
