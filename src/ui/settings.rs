@@ -192,6 +192,7 @@ pub struct SettingsView {
     agent_compression_interval: u64,
     agent_reflection_enabled: bool,
     agent_tool_result_max_len: u64,
+    agent_wait_result_timeout: u64,
 
     // --- Soul & Identity ---
     orchestrator_soul: String,
@@ -287,6 +288,7 @@ impl Default for SettingsView {
             agent_compression_interval: 5,
             agent_reflection_enabled: false,
             agent_tool_result_max_len: 6000,
+            agent_wait_result_timeout: 120,
 
             orchestrator_soul: String::new(),
             orchestrator_identity: String::new(),
@@ -500,6 +502,8 @@ impl SettingsView {
             .and_then(|v| v.as_bool()).unwrap_or(false);
         self.agent_tool_result_max_len = settings.extra.get("agentToolResultMaxLen")
             .and_then(|v| v.as_u64()).unwrap_or(6000);
+        self.agent_wait_result_timeout = settings.extra.get("agentWaitResultTimeout")
+            .and_then(|v| v.as_u64()).unwrap_or(120);
 
         // Soul & Identity (stored in SOUL.md / IDENTITY.md files)
         let data_dir = crate::server::data::data_dir();
@@ -606,6 +610,7 @@ impl SettingsView {
         settings.extra.insert("agentCompressionInterval".into(), serde_json::json!(self.agent_compression_interval));
         settings.extra.insert("agentReflectionEnabled".into(), serde_json::json!(self.agent_reflection_enabled));
         settings.extra.insert("agentToolResultMaxLen".into(), serde_json::json!(self.agent_tool_result_max_len));
+        settings.extra.insert("agentWaitResultTimeout".into(), serde_json::json!(self.agent_wait_result_timeout));
 
         // Soul & Identity (saved to SOUL.md / IDENTITY.md files)
         let data_dir = crate::server::data::data_dir();
@@ -1300,6 +1305,10 @@ impl SettingsView {
 
                 ui.label("Tool Result Max Length:");
                 ui.add(egui::DragValue::new(&mut self.agent_tool_result_max_len).range(1000..=100_000).speed(500));
+                ui.end_row();
+
+                ui.label("Wait Result Timeout:");
+                ui.add(egui::Slider::new(&mut self.agent_wait_result_timeout, 30..=1800).text("sec"));
                 ui.end_row();
             });
 

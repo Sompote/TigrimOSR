@@ -1480,7 +1480,8 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
         Some(s) => s.to_string(),
         None => return json!({"ok": false, "error": "Missing 'from' parameter"}),
     };
-    let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(120);
+    let default_timeout = load_agent_settings()["agentWaitResultTimeout"].as_u64().unwrap_or(120);
+    let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(default_timeout);
 
     let (results, result_notify) = {
         let map = realtime_sessions().lock().await;
@@ -2263,7 +2264,7 @@ fn realtime_tools(agent_list: &str) -> Vec<Value> {
                     "type": "object",
                     "properties": {
                         "from": { "type": "string", "description": format!("ID of the agent to wait for. Must be one of: {}", agent_list) },
-                        "timeout": { "type": "integer", "description": "Optional timeout in seconds (default: 120)" }
+                        "timeout": { "type": "integer", "description": "Optional timeout in seconds (default: from Agent Harness settings, typically 120)" }
                     },
                     "required": ["from"]
                 }
