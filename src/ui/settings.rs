@@ -19,6 +19,7 @@ enum SettingsSection {
     AI,
     SubAgent,
     McpTools,
+    Plugins,
     Remote,
     FileTokens,
     FileMounts,
@@ -33,6 +34,7 @@ impl SettingsSection {
         Self::AI,
         Self::SubAgent,
         Self::McpTools,
+        Self::Plugins,
         Self::Remote,
         Self::FileTokens,
         Self::FileMounts,
@@ -47,6 +49,7 @@ impl SettingsSection {
             Self::AI => "AI / API",
             Self::SubAgent => "Sub-Agent",
             Self::McpTools => "MCP Tools",
+            Self::Plugins => "Plugins",
             Self::Remote => "Remote",
             Self::FileTokens => "File Tokens",
             Self::FileMounts => "File Mounts",
@@ -201,6 +204,15 @@ pub struct SettingsView {
     skill_auto_update_max_candidates: u64,
     skill_auto_update_require_approval: bool,
     skill_auto_update_human_feedback_enabled: bool,
+
+    // --- Plugins ---
+    plugins: Vec<crate::server::services::plugin::InstalledPlugin>,
+    plugins_loaded: bool,
+    selected_plugin_id: Option<String>,
+    plugin_readme_cache: HashMap<String, String>,
+    plugin_status_msg: Option<String>,
+    plugin_connector_configs: HashMap<String, HashMap<String, String>>,
+    show_uninstall_confirm: Option<String>,
 }
 
 impl Default for SettingsView {
@@ -285,6 +297,14 @@ impl Default for SettingsView {
             skill_auto_update_max_candidates: 10,
             skill_auto_update_require_approval: true,
             skill_auto_update_human_feedback_enabled: true,
+
+            plugins: Vec::new(),
+            plugins_loaded: false,
+            selected_plugin_id: None,
+            plugin_readme_cache: HashMap::new(),
+            plugin_status_msg: None,
+            plugin_connector_configs: HashMap::new(),
+            show_uninstall_confirm: None,
         }
     }
 }
@@ -365,6 +385,7 @@ impl SettingsView {
                             SettingsSection::AI => self.section_ai(ui, ctx, runtime),
                             SettingsSection::SubAgent => self.section_sub_agent(ui, runtime),
                             SettingsSection::McpTools => self.section_mcp_tools(ui, runtime),
+                            SettingsSection::Plugins => self.section_plugins(ui, ctx, runtime),
                             SettingsSection::Remote => self.section_remote(ui, runtime),
                             SettingsSection::FileTokens => {
                                 self.section_file_tokens(ui, ctx, runtime)
@@ -2656,7 +2677,495 @@ impl SettingsView {
     }
 
     // ==================================================================
-    // 10. About (unchanged)
+    // 10. Plugins
+    // ==================================================================
+
+    fn section_plugins(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        runtime: &tokio::runtime::Handle,
+    ) {
+        use crate::server::services::plugin;
+
+        // Load plugins list on first view
+        if !self.plugins_loaded {
+            self.plugins_loaded = true;
+            self.plugins = runtime.block_on(plugin::list_plugins());
+        }
+
+        ui.add_space(8.0);
+
+        // Header with Install button
+        ui.horizontal(|ui| {
+            ui.heading("Plugins");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let accent = egui::Color32::from_rgb(18, 154, 145);
+                let btn = egui::Button::new(
+                    egui::RichText::new("Install Plugin")
+                        .size(13.0)
+                        .strong()
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(accent)
+                .corner_radius(14.0)
+                .min_size(egui::vec2(120.0, 28.0));
+
+                if ui.add(btn).clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Plugin ZIP", &["zip"])
+                        .pick_file()
+                    {
+                        match std::fs::read(&path) {
+                            Ok(bytes) => {
+                                match runtime.block_on(plugin::install_plugin(&bytes)) {
+                                    Ok(installed) => {
+                                        self.plugin_status_msg = Some(format!(
+                                            "Installed '{}' v{}",
+                                            installed.name, installed.version
+                                        ));
+                                        self.plugins = runtime.block_on(plugin::list_plugins());
+                                    }
+                                    Err(e) => {
+                                        self.plugin_status_msg = Some(format!("Error: {}", e));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.plugin_status_msg = Some(format!("Read error: {}", e));
+                            }
+                        }
+                    }
+                }
+            });
+        });
+
+        // Status message
+        if let Some(ref msg) = self.plugin_status_msg {
+            ui.add_space(4.0);
+            let color = if msg.starts_with("Error") {
+                egui::Color32::from_rgb(239, 68, 68)
+            } else {
+                egui::Color32::from_rgb(34, 197, 94)
+            };
+            ui.label(egui::RichText::new(msg).size(12.0).color(color));
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        if self.plugins.is_empty() {
+            ui.label(
+                egui::RichText::new("No plugins installed. Click 'Install Plugin' to add one.")
+                    .size(13.0)
+                    .color(egui::Color32::GRAY),
+            );
+            return;
+        }
+
+        // Uninstall confirmation dialog
+        if let Some(ref uninstall_id) = self.show_uninstall_confirm.clone() {
+            egui::Window::new("Uninstall Plugin?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!("Remove plugin '{}' and all its components?", uninstall_id));
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.show_uninstall_confirm = None;
+                        }
+                        if ui
+                            .add(egui::Button::new(
+                                egui::RichText::new("Uninstall")
+                                    .color(egui::Color32::from_rgb(239, 68, 68)),
+                            ))
+                            .clicked()
+                        {
+                            let id = uninstall_id.clone();
+                            let _ = runtime.block_on(plugin::uninstall_plugin(&id));
+                            self.plugins = runtime.block_on(plugin::list_plugins());
+                            if self.selected_plugin_id.as_deref() == Some(&id) {
+                                self.selected_plugin_id = None;
+                            }
+                            self.show_uninstall_confirm = None;
+                            self.plugin_status_msg = Some(format!("Uninstalled '{}'", id));
+                        }
+                    });
+                });
+        }
+
+        // Two-column: list left, detail right
+        let selected_id = self.selected_plugin_id.clone();
+
+        ui.columns(2, |cols| {
+            // Left column: plugin list
+            egui::ScrollArea::vertical()
+                .id_salt("plugin_list")
+                .auto_shrink([false, false])
+                .max_height(400.0)
+                .show(&mut cols[0], |ui| {
+                    let plugins_snapshot = self.plugins.clone();
+                    let mut toggle_id: Option<(String, bool)> = None;
+                    let mut select_id: Option<String> = None;
+
+                    for p in &plugins_snapshot {
+                        let is_selected = selected_id.as_deref() == Some(&p.id);
+                        let frame_fill = if is_selected {
+                            egui::Color32::from_rgba_premultiplied(18, 154, 145, 20)
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+
+                        egui::Frame::new()
+                            .fill(frame_fill)
+                            .corner_radius(6.0)
+                            .inner_margin(egui::Margin::same(8))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    // Name + version
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(&p.name)
+                                                    .size(14.0)
+                                                    .strong(),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(&format!("v{}", p.version))
+                                                    .size(11.0)
+                                                    .color(egui::Color32::GRAY),
+                                            );
+                                            if let Some(ref cat) = p.category {
+                                                let cat_color = match cat.as_str() {
+                                                    "connector" => egui::Color32::from_rgb(59, 130, 246),
+                                                    "toolkit" => egui::Color32::from_rgb(168, 85, 247),
+                                                    "swarm" => egui::Color32::from_rgb(249, 115, 22),
+                                                    _ => egui::Color32::GRAY,
+                                                };
+                                                ui.label(
+                                                    egui::RichText::new(cat)
+                                                        .size(10.0)
+                                                        .color(cat_color),
+                                                );
+                                            }
+                                        });
+                                        ui.label(
+                                            egui::RichText::new(&p.description)
+                                                .size(11.0)
+                                                .color(egui::Color32::GRAY),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(&format!("by {}", p.author))
+                                                .size(10.0)
+                                                .color(egui::Color32::from_rgb(160, 160, 160)),
+                                        );
+                                    });
+
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            let mut enabled = p.enabled;
+                                            if ui.checkbox(&mut enabled, "").changed() {
+                                                toggle_id = Some((p.id.clone(), enabled));
+                                            }
+                                        },
+                                    );
+                                });
+                            });
+
+                        // Click to select
+                        let resp = ui.interact(
+                            ui.min_rect(),
+                            ui.id().with(&p.id),
+                            egui::Sense::click(),
+                        );
+                        if resp.clicked() {
+                            select_id = Some(p.id.clone());
+                        }
+
+                        ui.add_space(2.0);
+                    }
+
+                    // Apply toggle
+                    if let Some((id, enabled)) = toggle_id {
+                        let _ = runtime.block_on(plugin::toggle_plugin(&id, enabled));
+                        self.plugins = runtime.block_on(plugin::list_plugins());
+                    }
+                    // Apply selection
+                    if let Some(id) = select_id {
+                        self.selected_plugin_id = Some(id);
+                    }
+                });
+
+            // Right column: detail view
+            egui::ScrollArea::vertical()
+                .id_salt("plugin_detail")
+                .auto_shrink([false, false])
+                .max_height(400.0)
+                .show(&mut cols[1], |ui| {
+                    let sel_id = self.selected_plugin_id.clone();
+                    if let Some(ref id) = sel_id {
+                        if let Some(p) = self.plugins.iter().find(|p| p.id == *id).cloned() {
+                            self.render_plugin_detail(ui, &p, runtime);
+                        } else {
+                            ui.label("Select a plugin from the list.");
+                        }
+                    } else {
+                        ui.label(
+                            egui::RichText::new("Select a plugin to view details.")
+                                .color(egui::Color32::GRAY),
+                        );
+                    }
+                });
+        });
+    }
+
+    fn render_plugin_detail(
+        &mut self,
+        ui: &mut egui::Ui,
+        plugin: &crate::server::services::plugin::InstalledPlugin,
+        runtime: &tokio::runtime::Handle,
+    ) {
+        use crate::server::services::plugin;
+
+        ui.label(egui::RichText::new(&plugin.name).size(18.0).strong());
+        ui.label(
+            egui::RichText::new(&format!("v{} by {}", plugin.version, plugin.author))
+                .size(12.0)
+                .color(egui::Color32::GRAY),
+        );
+        ui.add_space(4.0);
+        ui.label(&plugin.description);
+        ui.add_space(8.0);
+
+        // README
+        if plugin.has_readme {
+            let readme = self
+                .plugin_readme_cache
+                .entry(plugin.id.clone())
+                .or_insert_with(|| {
+                    runtime
+                        .block_on(plugin::get_plugin_readme(&plugin.id))
+                        .unwrap_or_else(|| "(No README)".to_string())
+                })
+                .clone();
+
+            egui::CollapsingHeader::new("README")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(&readme)
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(80, 80, 80)),
+                    );
+                });
+            ui.add_space(4.0);
+        }
+
+        // Components
+        ui.separator();
+        ui.label(egui::RichText::new("Components").size(13.0).strong());
+        ui.add_space(4.0);
+
+        if !plugin.components.skills.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("Skills ({})", plugin.components.skills.len()))
+                    .size(12.0)
+                    .strong(),
+            );
+            for s in &plugin.components.skills {
+                ui.horizontal(|ui| {
+                    ui.label("  ");
+                    ui.label(
+                        egui::RichText::new(&s.name)
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(18, 154, 145)),
+                    );
+                    if let Some(ref desc) = s.description {
+                        ui.label(
+                            egui::RichText::new(format!("- {}", desc))
+                                .size(11.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    }
+                });
+            }
+            ui.add_space(4.0);
+        }
+
+        if !plugin.components.agents.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("Agents ({})", plugin.components.agents.len()))
+                    .size(12.0)
+                    .strong(),
+            );
+            for a in &plugin.components.agents {
+                ui.label(
+                    egui::RichText::new(format!("  {}", a.name))
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(168, 85, 247)),
+                );
+            }
+            ui.add_space(4.0);
+        }
+
+        if !plugin.components.mcp_servers.is_empty() {
+            ui.label(
+                egui::RichText::new(format!(
+                    "MCP Servers ({})",
+                    plugin.components.mcp_servers.len()
+                ))
+                .size(12.0)
+                .strong(),
+            );
+            for m in &plugin.components.mcp_servers {
+                ui.label(
+                    egui::RichText::new(format!("  {}", m.name))
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(59, 130, 246)),
+                );
+            }
+            ui.add_space(4.0);
+        }
+
+        // Connectors with config forms
+        if !plugin.components.connectors.is_empty() {
+            ui.separator();
+            ui.label(
+                egui::RichText::new(format!(
+                    "Connectors ({})",
+                    plugin.components.connectors.len()
+                ))
+                .size(13.0)
+                .strong(),
+            );
+            ui.add_space(4.0);
+
+            for conn in &plugin.components.connectors {
+                egui::CollapsingHeader::new(
+                    egui::RichText::new(&format!("{} ({})", conn.name, conn.service))
+                        .size(12.0),
+                )
+                .default_open(false)
+                .show(ui, |ui| {
+                    if let Some(ref desc) = conn.description {
+                        ui.label(
+                            egui::RichText::new(desc)
+                                .size(11.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    }
+                    ui.add_space(4.0);
+
+                    // Config fields
+                    let config_key = format!("{}:{}", plugin.id, conn.service);
+                    if !self.plugin_connector_configs.contains_key(&config_key) {
+                        let cfg = runtime
+                            .block_on(plugin::get_connector_config(&plugin.id, &conn.service));
+                        let mut map = HashMap::new();
+                        if let Some(obj) = cfg.as_object() {
+                            for (k, v) in obj {
+                                map.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
+                            }
+                        }
+                        self.plugin_connector_configs
+                            .insert(config_key.clone(), map);
+                    }
+
+                    let fields_map = self
+                        .plugin_connector_configs
+                        .get_mut(&config_key)
+                        .unwrap();
+
+                    egui::Grid::new(format!("connector_grid_{}", config_key))
+                        .num_columns(2)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            for field in &conn.config_fields {
+                                let required_marker =
+                                    if field.required == Some(true) { " *" } else { "" };
+                                ui.label(format!("{}{}", field.label, required_marker));
+
+                                let val = fields_map
+                                    .entry(field.key.clone())
+                                    .or_insert_with(|| {
+                                        field.default.clone().unwrap_or_default()
+                                    });
+
+                                if field.field_type == "password" {
+                                    ui.add(
+                                        egui::TextEdit::singleline(val)
+                                            .password(true)
+                                            .desired_width(200.0),
+                                    );
+                                } else {
+                                    ui.add(
+                                        egui::TextEdit::singleline(val).desired_width(200.0),
+                                    );
+                                }
+                                ui.end_row();
+                            }
+                        });
+
+                    ui.add_space(6.0);
+                    if ui.button("Save Config").clicked() {
+                        let mut json_map = serde_json::Map::new();
+                        for (k, v) in fields_map.iter() {
+                            json_map.insert(
+                                k.clone(),
+                                serde_json::Value::String(v.clone()),
+                            );
+                        }
+                        let _ = runtime.block_on(plugin::save_connector_config(
+                            &plugin.id,
+                            &conn.service,
+                            serde_json::Value::Object(json_map),
+                        ));
+                        self.plugin_status_msg =
+                            Some(format!("Saved config for {}", conn.service));
+                    }
+                });
+            }
+            ui.add_space(4.0);
+        }
+
+        // Permissions
+        if !plugin.permissions.is_empty() {
+            ui.separator();
+            ui.label(egui::RichText::new("Permissions").size(12.0).strong());
+            for perm in &plugin.permissions {
+                ui.label(
+                    egui::RichText::new(format!("  {}", perm))
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(249, 115, 22)),
+                );
+            }
+            ui.add_space(8.0);
+        }
+
+        // Uninstall button
+        ui.add_space(8.0);
+        let uninstall_btn = egui::Button::new(
+            egui::RichText::new("Uninstall")
+                .size(13.0)
+                .color(egui::Color32::from_rgb(239, 68, 68)),
+        )
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(239, 68, 68),
+        ))
+        .corner_radius(6.0);
+
+        if ui.add(uninstall_btn).clicked() {
+            self.show_uninstall_confirm = Some(plugin.id.clone());
+        }
+    }
+
+    // ==================================================================
+    // 11. About (unchanged)
     // ==================================================================
 
     fn section_about(ui: &mut egui::Ui) {

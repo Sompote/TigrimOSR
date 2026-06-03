@@ -656,6 +656,48 @@ connections:
     protocol: tcp
 ```
 
+## Plugin System
+
+TigrimOS supports a **zip-based plugin system** that bundles skills, MCP servers, agent configs, and service connectors into a single distributable package. Install one zip — get everything registered automatically.
+
+### Installing Plugins
+
+**From the UI:** Settings → Plugins → "Install Plugin" → select a `.zip` file.
+
+**Via API:**
+```bash
+curl -X POST http://localhost:3001/api/plugins/upload \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@my-plugin.zip"
+```
+
+### Supported Formats
+
+| Format | Detection | Description |
+|--------|-----------|-------------|
+| **TigrimOS native** | `plugin.yaml` | Full plugin manifest with skills, agents, MCP, connectors |
+| **Claude Desktop Extension (MCPB)** | `manifest.json` with `manifest_version` + `server` | Auto-converts MCP config and `user_config` fields |
+| **Claude Code Plugin** | `.claude-plugin/plugin.json` | Auto-detects skills (`SKILL.md`), `.mcp.json`, and `userConfig` |
+| **Claude Desktop Config** | `claude_desktop_config.json` with `mcpServers` | Imports all MCP server entries directly |
+| **npm MCP package** | `package.json` with `@modelcontextprotocol/sdk` | Auto-generates stdio MCP config |
+
+### Quick Example
+
+```
+my-plugin.zip
+├── plugin.yaml
+├── skills/
+│   └── my-skill/
+│       └── SKILL.md
+├── mcp/
+│   └── server.json
+├── connectors/
+│   └── service.py
+└── README.md
+```
+
+See **[PLUGINS.md](PLUGINS.md)** for the full developer guide — manifest format, connector config fields, MCP server config, Claude format compatibility, and the REST API reference.
+
 ## Project Structure
 
 ```
@@ -680,8 +722,10 @@ TigrimOSR/
 │   │   │   ├── protocols.rs  # TCP, Bus, Queue, Blackboard protocols
 │   │   │   ├── clawhub.rs    # ClawHub skill marketplace
 │   │   │   ├── mcp.rs        # MCP client (stdio/SSE/HTTP)
+│   │   │   ├── plugin.rs     # Zip-based plugin system
 │   │   │   └── tunnel.rs     # Cloudflare tunnel management
 │   │   ├── routes/
+│   │   │   ├── plugins.rs    # Plugin REST API endpoints
 │   │   │   ├── remote.rs     # Remote task API endpoints
 │   │   │   └── web_ui.rs     # Embedded web UI serving
 │   │   └── data.rs           # Data models and persistence

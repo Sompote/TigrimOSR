@@ -118,6 +118,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         "skills".to_string(),
         format!("{}/output_file", sandbox_dir),
         format!("{}/agents", data_dir),
+        format!("{}/plugins", data_dir),
     ];
     for dir in &dirs {
         let _ = fs::create_dir_all(dir).await;
@@ -140,6 +141,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         ("skills.json", "[]"),
         ("projects.json", "[]"),
         ("file_tokens.json", "[]"),
+        ("plugins.json", "[]"),
     ];
     for (file, default) in &data_files {
         let fp = format!("{}/{}", data_dir, file);

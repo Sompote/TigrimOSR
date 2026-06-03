@@ -14,3 +14,4 @@ pub mod mcp;
 pub mod tunnel;
 #[allow(dead_code)]
 pub mod compact;
+pub mod plugin;
