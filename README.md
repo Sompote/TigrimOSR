@@ -155,6 +155,87 @@ cargo build --release
 
 </details>
 
+<details>
+<summary>Manual Install on Windows (step-by-step)</summary>
+
+Building on Windows needs three things: **git**, **Rust**, and the **MSVC C++ Build Tools**
+(the linker). The third one is easy to miss — without it the build fails with
+`error: linker 'link.exe' not found`. The commands below use
+[winget](https://learn.microsoft.com/windows/package-manager/winget/) (built into
+Windows 10/11); manual download links are given as a fallback.
+
+> **Disk space:** the MSVC C++ Build Tools need roughly **3–7 GB** free, and the
+> Rust build's `target\` folder adds a few GB more. Make sure you have **~10 GB free**
+> before starting.
+
+#### Step 1 — Install git
+
+```powershell
+winget install --id Git.Git -e
+```
+Or download from https://git-scm.com/download/win
+
+#### Step 2 — Install Rust
+
+```powershell
+winget install --id Rustlang.Rustup -e
+```
+Or download and run [rustup-init.exe](https://win.rustup.rs/) from https://rustup.rs
+
+#### Step 3 — Install the MSVC C++ Build Tools (required for linking)
+
+Rust's default Windows toolchain (`x86_64-pc-windows-msvc`) compiles your code but
+hands the final linking step to Microsoft's `link.exe`. Install the C++ build tools
+(this is a large download and **requires Administrator approval / UAC**):
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
+  --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Or download the **Build Tools for Visual Studio 2022** installer from
+https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022 and
+check the **"Desktop development with C++"** workload.
+
+> The free **VS Code** editor is *not* sufficient — you need the C++ Build Tools.
+
+#### Step 4 — Open a NEW terminal and verify
+
+Open a fresh PowerShell window so the updated `PATH` is picked up, then:
+
+```powershell
+rustc --version
+cargo --version
+```
+
+#### Step 5 — (Optional) Install Python
+
+Used for the code execution, web search, and data analysis tools inside the app.
+
+```powershell
+winget install --id Python.Python.3.12 -e
+pip install duckduckgo-search matplotlib numpy pandas requests
+```
+Or download from https://www.python.org/downloads/ — check **"Add Python to PATH"**.
+
+#### Step 6 — Clone, build, run
+
+```powershell
+git clone https://github.com/Sompote/TigrimOSR.git
+cd TigrimOSR
+cargo build --release
+.\target\release\tigrimos.exe
+```
+
+> The first release build compiles ~600 crates and can take **10+ minutes**.
+> A run of harmless warnings (unused imports, deprecated methods) is expected — only
+> `error:` lines stop the build.
+
+**Tip:** to reclaim disk space after building, run `cargo clean` (deletes the
+multi-GB `target\` folder; the built `.exe` you already copied out is unaffected).
+
+</details>
+
 ---
 
 ## Requirements
