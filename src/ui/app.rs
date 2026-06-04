@@ -128,6 +128,21 @@ impl TigrimOSApp {
                 }
             }
 
+            // Emoji fallback (monochrome Noto Emoji — bundled)
+            let emoji_path = assets_dir.join("NotoEmoji-Regular.ttf");
+            if let Ok(data) = std::fs::read(&emoji_path) {
+                fonts.font_data.insert(
+                    "NotoEmoji".to_owned(),
+                    egui::FontData::from_owned(data).into(),
+                );
+                if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    v.push("NotoEmoji".to_owned());
+                }
+                if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                    v.push("NotoEmoji".to_owned());
+                }
+            }
+
             // Symbol fallback for sidebar icons
             let symbol_paths = [
                 "/System/Library/Fonts/Apple Symbols.ttf",
@@ -435,16 +450,16 @@ impl eframe::App for TigrimOSApp {
 
                 // ── Navigation items (clean line-icon style matching template) ──
                 let nav_items: &[(Tab, &str, &str)] = &[
-                    (Tab::Chat,         "\u{1D362}","Chat"),         // 𝍢 chat bubble
-                    (Tab::Projects,     "\u{25FB}", "Projects"),     // ◻ folder
-                    (Tab::Agents,       "\u{2042}", "Agent Swarm"),  // ⁂ asterism = network
-                    (Tab::Files,        "\u{25F7}", "Files"),        // ◷ document
-                    (Tab::Tasks,        "\u{2610}", "Tasks"),        // ☐ ballot box
-                    (Tab::Skills,       "\u{2606}", "Skills"),       // ☆ white star
-                    (Tab::Terminal,     "\u{2395}", "Terminal"),     // ⎕ terminal screen
-                    (Tab::RemoteServer, "\u{25CE}", "Remote"),       // ◎ bullseye = signal
-                    (Tab::Console,      "\u{2261}", "VM Log"),       // ≡ triple bar = log
-                    (Tab::Folders,      "\u{21C6}", "Shared"),       // ⇆ leftright arrows = share
+                    (Tab::Chat,         "\u{1F4AC}", "Chat"),         // 💬 speech bubble
+                    (Tab::Projects,     "\u{1F4C2}", "Projects"),     // 📂 open folder
+                    (Tab::Agents,       "\u{1F578}", "Agent Swarm"),  // 🕸 spider web = network
+                    (Tab::Files,        "\u{1F4C4}", "Files"),        // 📄 document
+                    (Tab::Tasks,        "\u{2611}",  "Tasks"),        // ☑ ballot box with check
+                    (Tab::Skills,       "\u{2728}",  "Skills"),       // ✨ sparkles
+                    (Tab::Terminal,     "\u{1F4BB}", "Terminal"),     // 💻 computer
+                    (Tab::RemoteServer, "\u{1F4E1}", "Remote"),       // 📡 satellite antenna
+                    (Tab::Console,      "\u{1F4CB}", "VM Log"),       // 📋 clipboard
+                    (Tab::Folders,      "\u{1F517}", "Shared"),       // 🔗 share/link
                 ];
 
                 for &(tab, icon, label) in nav_items {
