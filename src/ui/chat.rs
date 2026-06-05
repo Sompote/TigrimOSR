@@ -540,10 +540,15 @@ impl ChatView {
         if let Some(ref sel_id) = self.selected_session_id {
             if !self.active_streams.contains_key(sel_id) {
                 if let Some(found) = all_sessions.into_iter().find(|s| &s.id == sel_id) {
-                    // Only replace if disk version is at least as complete as in-memory
+                    // Only guard message count when refreshing the SAME session
                     // (async save may still be in flight with newer messages)
-                    let mem_count = self.selected_session.as_ref().map(|s| s.messages.len()).unwrap_or(0);
-                    if found.messages.len() >= mem_count {
+                    let same_session = self.selected_session.as_ref().map(|s| s.id == *sel_id).unwrap_or(false);
+                    if same_session {
+                        let mem_count = self.selected_session.as_ref().map(|s| s.messages.len()).unwrap_or(0);
+                        if found.messages.len() >= mem_count {
+                            self.selected_session = Some(found);
+                        }
+                    } else {
                         self.selected_session = Some(found);
                     }
                 }
