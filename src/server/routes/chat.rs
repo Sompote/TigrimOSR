@@ -713,102 +713,115 @@ You have access to these tools: {}.{}",
         chrono::Utc::now().format("%H:%M:%S"),
     ));
 
-    // Call the AI tool loop — write progress to activity log + chat log
+    // Spawn AI work in a detached task so it survives client disconnect.
+    // Use a oneshot channel to return the result if the connection stays alive.
+    let (tx, rx) = tokio::sync::oneshot::channel::<(String, Vec<String>)>();
     let session_id_for_log = id.clone();
+    let session_id_bg = id.clone();
     let chat_log_path_for_cb = cl_path.clone();
-    let result = call_with_tools(
-        &api_key,
-        &api_url,
-        &model,
-        llm_messages,
-        system_prompt,
-        &sandbox_dir,
-        move |update: ToolUpdate| {
-            use crate::server::services::toolbox::append_session_progress;
-            let line = match &update {
-                ToolUpdate::ToolCall { name, args } => {
-                    let preview: String = args.to_string().chars().take(120).collect();
-                    format!("🔧 Calling **{}** — {}\n", name, preview)
-                }
-                ToolUpdate::ToolResult { name, result } => {
-                    let preview: String = result.to_string().chars().take(200).collect();
-                    format!("✅ **{}** done — {}\n", name, preview)
-                }
-                ToolUpdate::TextChunk(text) => {
-                    if text.starts_with("[reasoning]") {
-                        format!("💭 Reasoning...\n")
-                    } else {
-                        String::new() // final text, skip
+    let cl_path_bg = cl_path.clone();
+
+    tokio::spawn(async move {
+        let result = call_with_tools(
+            &api_key,
+            &api_url,
+            &model,
+            llm_messages,
+            system_prompt,
+            &sandbox_dir,
+            move |update: ToolUpdate| {
+                use crate::server::services::toolbox::append_session_progress;
+                let line = match &update {
+                    ToolUpdate::ToolCall { name, args } => {
+                        let preview: String = args.to_string().chars().take(120).collect();
+                        format!("🔧 Calling **{}** — {}\n", name, preview)
+                    }
+                    ToolUpdate::ToolResult { name, result } => {
+                        let preview: String = result.to_string().chars().take(200).collect();
+                        format!("✅ **{}** done — {}\n", name, preview)
+                    }
+                    ToolUpdate::TextChunk(text) => {
+                        if text.starts_with("[reasoning]") {
+                            format!("💭 Reasoning...\n")
+                        } else {
+                            String::new() // final text, skip
+                        }
+                    }
+                    ToolUpdate::Error(err) => format!("❌ {}\n", err),
+                    ToolUpdate::ApprovalRequired { name, .. } => {
+                        format!("⚠️ Approval needed for **{}**\n", name)
+                    }
+                };
+                if !line.is_empty() {
+                    append_session_progress(&session_id_for_log, &line);
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .append(true).open(&chat_log_path_for_cb)
+                    {
+                        let _ = f.write_all(line.as_bytes());
                     }
                 }
-                ToolUpdate::Error(err) => format!("❌ {}\n", err),
-                ToolUpdate::ApprovalRequired { name, .. } => {
-                    format!("⚠️ Approval needed for **{}**\n", name)
-                }
-            };
-            if !line.is_empty() {
-                append_session_progress(&session_id_for_log, &line);
-                // Also write to chat log in real-time
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .append(true).open(&chat_log_path_for_cb)
-                {
-                    let _ = f.write_all(line.as_bytes());
-                }
-            }
-        },
-        sub_agent,
-    ).await;
+            },
+            sub_agent,
+        ).await;
 
-    // Remove from native UI's active tasks and cancel flags
-    {
-        let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
-        chats.retain(|c| c.session_id != id);
-    }
-    {
-        let mut flags = cancel_flags().lock().unwrap();
-        flags.remove(&id);
-    }
-
-    // Append completion footer to chat log (content was written in real-time)
-    {
-        let footer = format!(
-            "[{}] === Response complete ===\n\n",
-            chrono::Utc::now().format("%H:%M:%S"),
-        );
-        use tokio::io::AsyncWriteExt;
-        if let Ok(mut f) = tokio::fs::OpenOptions::new()
-            .append(true).open(&cl_path).await
+        // Remove from native UI's active tasks and cancel flags
         {
-            let _ = f.write_all(footer.as_bytes()).await;
+            let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
+            chats.retain(|c| c.session_id != session_id_bg);
         }
+        {
+            let mut flags = cancel_flags().lock().unwrap();
+            flags.remove(&session_id_bg);
+        }
+
+        // Append completion footer to chat log
+        {
+            let footer = format!(
+                "[{}] === Response complete ===\n\n",
+                chrono::Utc::now().format("%H:%M:%S"),
+            );
+            use tokio::io::AsyncWriteExt;
+            if let Ok(mut f) = tokio::fs::OpenOptions::new()
+                .append(true).open(&cl_path_bg).await
+            {
+                let _ = f.write_all(footer.as_bytes()).await;
+            }
+        }
+
+        let assistant_content = result.content;
+        let output_files = result.files.clone();
+
+        // Save assistant response to session history
+        let mut sessions3 = get_chat_history().await;
+        if let Some(s) = sessions3.iter_mut().find(|s| s.id == session_id_bg) {
+            s.messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: assistant_content.clone(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
+                feedback: None,
+            });
+            s.updated_at = chrono::Utc::now().to_rfc3339();
+            save_chat_history(&sessions3).await;
+        }
+
+        // Try to send result back to HTTP handler (may have disconnected — that's OK)
+        let _ = tx.send((assistant_content, output_files));
+    });
+
+    // Wait for the spawned task's result. If the client disconnects and axum
+    // drops this future, the spawned task above keeps running to completion.
+    match rx.await {
+        Ok((content, files)) => (
+            StatusCode::OK,
+            Json(json!({ "content": content, "files": files })),
+        ).into_response(),
+        Err(_) => (
+            StatusCode::OK,
+            Json(json!({ "content": "Processing completed (result saved to session)", "files": [] })),
+        ).into_response(),
     }
-
-    let assistant_content = result.content;
-    let output_files = result.files.clone();
-
-    // Save assistant response
-    let mut sessions3 = get_chat_history().await;
-    if let Some(s) = sessions3.iter_mut().find(|s| s.id == id) {
-        s.messages.push(ChatMessage {
-            role: "assistant".to_string(),
-            content: assistant_content.clone(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
-            feedback: None,
-        });
-        s.updated_at = chrono::Utc::now().to_rfc3339();
-        save_chat_history(&sessions3).await;
-    }
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "content": assistant_content,
-            "files": output_files,
-        })),
-    )
-        .into_response()
 }
 
 // ---------------------------------------------------------------------------
