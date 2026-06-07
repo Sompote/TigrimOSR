@@ -441,6 +441,16 @@ textarea { resize: vertical; }
 .agent-bar-inner label { font-size: 13px; color: var(--ink-soft); white-space: nowrap; font-weight: 500; }
 .agent-bar-inner select { flex: 1; min-width: 160px; max-width: 400px; }
 
+#agent-diagram-container {
+  padding: 16px; border-bottom: 1px solid var(--line); background: var(--surface); display: none;
+}
+#agent-diagram-container.visible { display: block; }
+#agent-diagram-container h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+#agent-diagram-svg {
+  width: 100%; border-radius: var(--r-md); background: var(--rail);
+  border: 1px solid var(--line); min-height: 200px;
+}
+
 .submit-task-area {
   padding: 16px; border-bottom: 1px solid var(--line); background: var(--surface);
   display: flex; gap: 8px;
@@ -689,6 +699,10 @@ h4.md-h { font-size: 1em; }
           <button class="pill-btn danger" onclick="deleteAgentConfig()" style="font-size:11px;padding:5px 10px">Delete</button>
         </div>
       </div>
+    </div>
+    <div id="agent-diagram-container">
+      <h4>Architecture Diagram</h4>
+      <svg id="agent-diagram-svg" viewBox="0 0 800 500"></svg>
     </div>
     <div class="submit-task-area">
       <textarea id="task-input" rows="2" placeholder="Submit a task for AI execution..."></textarea>
@@ -1364,8 +1378,10 @@ function updateAgentSelect() {
     preview.style.display = 'block';
     const cfg = agentConfigs.find(c => (c.filename || c.name) === sel.value);
     info.textContent = cfg ? `${cfg.agentCount || 0} agents` : sel.value;
+    loadAgentDiagram();
   } else {
     preview.style.display = 'none';
+    document.getElementById('agent-diagram-container').classList.remove('visible');
   }
 }
 
@@ -1405,6 +1421,7 @@ function selectAgentConfig() {
     status.textContent = val ? 'Config activated!' : 'Sub-agent disabled';
     setTimeout(() => status.textContent = '', 3000);
     updateAgentSelect();
+    loadAgentDiagram();
   }).catch(() => {});
 }
 
@@ -1445,6 +1462,147 @@ function deleteAgentConfig() {
     if (currentAgentConfig === sel) { currentAgentConfig = ''; selectAgentConfig(); }
     loadAgents();
   }).catch(() => {});
+}
+
+// ---- Agent Architecture Diagram ----
+const ROLE_COLORS = {
+  human: '#6B8E23', orchestrator: '#D2691E', worker: '#4682B4',
+  checker: '#9370DB', reporter: '#20B2AA', researcher: '#CD853F', peer: '#708090'
+};
+const ROLE_SHAPES = { human: 'diamond', orchestrator: 'hexagon' };
+const PROTO_COLORS = { tcp: '#D2691E', queue: '#4682B4', bus: '#9370DB' };
+const PROTO_DASH = { tcp: '', queue: '6,4', bus: '3,3' };
+
+function renderAgentDiagram(parsed) {
+  const container = document.getElementById('agent-diagram-container');
+  const svg = document.getElementById('agent-diagram-svg');
+  if (!parsed || !parsed.agents || parsed.agents.length === 0) {
+    container.classList.remove('visible');
+    return;
+  }
+  container.classList.add('visible');
+
+  const agents = parsed.agents || [];
+  const connections = parsed.connections || [];
+  const W = 800, nodeR = 28;
+
+  // Layout: role-based layered
+  const layers = { human: [], orchestrator: [], worker: [], checker: [], reporter: [], researcher: [], peer: [] };
+  const other = [];
+  agents.forEach(a => {
+    const r = (a.role || 'worker').toLowerCase();
+    if (layers[r]) layers[r].push(a);
+    else other.push(a);
+  });
+  const orderedLayers = ['human', 'orchestrator', 'worker', 'peer', 'checker', 'researcher', 'reporter'];
+  const rows = orderedLayers.map(r => layers[r]).filter(l => l.length > 0);
+  if (other.length) rows.push(other);
+
+  const rowGap = 110;
+  const H = Math.max(300, rows.length * rowGap + 80);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const positions = {};
+  rows.forEach((row, ri) => {
+    const y = 60 + ri * rowGap;
+    const spacing = W / (row.length + 1);
+    row.forEach((a, ci) => {
+      positions[a.id] = { x: spacing * (ci + 1), y, agent: a };
+    });
+  });
+
+  // Build SVG
+  let defs = `<defs>
+    <marker id="ah" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#888"/>
+    </marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.15"/>
+    </filter>
+  </defs>`;
+
+  // Draw connections
+  let edgeSvg = '';
+  connections.forEach(c => {
+    const from = positions[c.from], to = positions[c.to];
+    if (!from || !to) return;
+    const proto = (c.protocol || 'tcp').toLowerCase();
+    const color = PROTO_COLORS[proto] || '#888';
+    const dash = PROTO_DASH[proto] || '';
+    // Offset line to avoid overlapping node
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+    const sx = from.x + dx/dist * (nodeR + 4), sy = from.y + dy/dist * (nodeR + 4);
+    const ex = to.x - dx/dist * (nodeR + 8), ey = to.y - dy/dist * (nodeR + 8);
+    // Curve for bidirectional visual clarity
+    const mx = (sx+ex)/2 - dy*0.1, my = (sy+ey)/2 + dx*0.1;
+    edgeSvg += `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${color}" stroke-width="1.8" stroke-dasharray="${dash}" marker-end="url(#ah)" opacity="0.7"/>`;
+    // Protocol label
+    const lx = (sx+ex)/2 - dy*0.05, ly = (sy+ey)/2 + dx*0.05;
+    edgeSvg += `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="9" fill="${color}" font-weight="600" opacity="0.8">${esc(proto)}</text>`;
+  });
+
+  // Draw nodes
+  let nodeSvg = '';
+  Object.values(positions).forEach(({x, y, agent}) => {
+    const role = (agent.role || 'worker').toLowerCase();
+    const fill = ROLE_COLORS[role] || '#708090';
+    const shape = ROLE_SHAPES[role];
+    const name = agent.name || agent.id;
+
+    if (shape === 'diamond') {
+      const s = nodeR * 0.9;
+      nodeSvg += `<polygon points="${x},${y-s} ${x+s},${y} ${x},${y+s} ${x-s},${y}" fill="${fill}" stroke="#fff" stroke-width="2" filter="url(#shadow)" opacity="0.92"/>`;
+    } else if (shape === 'hexagon') {
+      const s = nodeR;
+      const pts = [0,1,2,3,4,5].map(i => {
+        const a = Math.PI/6 + i*Math.PI/3;
+        return `${x+s*Math.cos(a)},${y+s*Math.sin(a)}`;
+      }).join(' ');
+      nodeSvg += `<polygon points="${pts}" fill="${fill}" stroke="#fff" stroke-width="2" filter="url(#shadow)" opacity="0.92"/>`;
+    } else {
+      nodeSvg += `<circle cx="${x}" cy="${y}" r="${nodeR}" fill="${fill}" stroke="#fff" stroke-width="2" filter="url(#shadow)" opacity="0.92"/>`;
+    }
+    // Icon letter
+    nodeSvg += `<text x="${x}" y="${y+1}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="13" font-weight="700">${esc(name.charAt(0).toUpperCase())}</text>`;
+    // Name label
+    nodeSvg += `<text x="${x}" y="${y+nodeR+14}" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="600">${esc(name)}</text>`;
+    // Role badge
+    nodeSvg += `<text x="${x}" y="${y+nodeR+26}" text-anchor="middle" font-size="9" fill="var(--ink-soft)">${esc(role)}</text>`;
+  });
+
+  // Legend
+  const usedRoles = [...new Set(agents.map(a => (a.role||'worker').toLowerCase()))];
+  const usedProtos = [...new Set(connections.map(c => (c.protocol||'tcp').toLowerCase()))];
+  let legend = `<g transform="translate(12,${H-40})">`;
+  usedRoles.forEach((r, i) => {
+    const lx = i * 100;
+    legend += `<circle cx="${lx+6}" cy="6" r="5" fill="${ROLE_COLORS[r]||'#708090'}"/>`;
+    legend += `<text x="${lx+15}" y="10" font-size="10" fill="var(--ink-soft)">${r}</text>`;
+  });
+  usedProtos.forEach((p, i) => {
+    const lx = usedRoles.length * 100 + i * 80;
+    const dash = PROTO_DASH[p] || '';
+    legend += `<line x1="${lx}" y1="6" x2="${lx+18}" y2="6" stroke="${PROTO_COLORS[p]||'#888'}" stroke-width="2" stroke-dasharray="${dash}"/>`;
+    legend += `<text x="${lx+22}" y="10" font-size="10" fill="var(--ink-soft)">${p}</text>`;
+  });
+  legend += '</g>';
+
+  svg.innerHTML = defs + edgeSvg + nodeSvg + legend;
+}
+
+function loadAgentDiagram() {
+  const sel = document.getElementById('agent-config-select').value;
+  if (!sel) {
+    document.getElementById('agent-diagram-container').classList.remove('visible');
+    return;
+  }
+  api('/api/agents/' + encodeURIComponent(sel)).then(data => {
+    if (data.parsed) renderAgentDiagram(data.parsed);
+    else document.getElementById('agent-diagram-container').classList.remove('visible');
+  }).catch(() => {
+    document.getElementById('agent-diagram-container').classList.remove('visible');
+  });
 }
 
 function loadRemoteTasks() {
