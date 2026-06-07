@@ -713,9 +713,9 @@ You have access to these tools: {}.{}",
         chrono::Utc::now().format("%H:%M:%S"),
     ));
 
-    // Spawn AI work in a detached task so it survives client disconnect.
-    // Use a oneshot channel to return the result if the connection stays alive.
-    let (tx, rx) = tokio::sync::oneshot::channel::<(String, Vec<String>)>();
+    // Spawn AI work in a fully detached task — returns immediately so the
+    // HTTP response is not tied to the long-running AI loop. The client polls
+    // for completion via GET /sessions/:id (checks last message role).
     let session_id_for_log = id.clone();
     let session_id_bg = id.clone();
     let chat_log_path_for_cb = cl_path.clone();
@@ -806,22 +806,15 @@ You have access to these tools: {}.{}",
             save_chat_history(&sessions3).await;
         }
 
-        // Try to send result back to HTTP handler (may have disconnected — that's OK)
-        let _ = tx.send((assistant_content, output_files));
+        tracing::info!("[chat] Session {} completed ({} chars)", session_id_bg, assistant_content.len());
     });
 
-    // Wait for the spawned task's result. If the client disconnects and axum
-    // drops this future, the spawned task above keeps running to completion.
-    match rx.await {
-        Ok((content, files)) => (
-            StatusCode::OK,
-            Json(json!({ "content": content, "files": files })),
-        ).into_response(),
-        Err(_) => (
-            StatusCode::OK,
-            Json(json!({ "content": "Processing completed (result saved to session)", "files": [] })),
-        ).into_response(),
-    }
+    // Return immediately — client will poll for the result
+    (
+        StatusCode::OK,
+        Json(json!({ "status": "processing", "session_id": id })),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------

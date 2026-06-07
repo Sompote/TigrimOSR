@@ -1100,15 +1100,15 @@ function updateAgentModeChip() {
 
 let pendingSendSession = null;
 
-// Recovery: poll session messages to see if the assistant responded while we were in background
-function recoverPendingResponse(sessionId, el, progressPollId) {
+// Poll for AI completion — checks session messages until assistant response appears.
+// Used as the primary completion mechanism (server returns immediately, AI runs in background).
+function pollForCompletion(sessionId, el, progressPollId) {
   let attempts = 0;
-  const maxAttempts = 360; // up to 30 minutes (every 5s)
+  const maxAttempts = 720; // up to 60 minutes (every 5s)
   const poll = setInterval(() => {
     attempts++;
     api(`/api/chat/sessions/${sessionId}`).then(data => {
       const msgs = data.messages || [];
-      // Check if the last message is from the assistant (response arrived)
       if (msgs.length && msgs[msgs.length - 1].role === 'assistant') {
         clearInterval(poll);
         if (progressPollId) clearInterval(progressPollId);
@@ -1125,9 +1125,14 @@ function recoverPendingResponse(sessionId, el, progressPollId) {
         sending = false;
       }
     }).catch(() => {
-      // Network still down, keep trying
+      // Network blip — keep trying, server task is still running
     });
   }, 5000);
+}
+
+// Legacy alias used by visibilitychange handler
+function recoverPendingResponse(sessionId, el, progressPollId) {
+  pollForCompletion(sessionId, el, progressPollId);
 }
 
 // When mobile browser regains focus, resume progress polling or recover
@@ -1205,18 +1210,27 @@ function sendMessage() {
     // Track the pending session so we can recover on focus-return
     pendingSendSession = sessionId;
 
+    // Fire-and-forget: POST returns immediately, then poll for completion.
+    // This ensures the AI task runs to completion even if the browser tab
+    // loses focus or the network connection drops temporarily.
     api(`/api/chat/sessions/${sessionId}/messages`, {
       method: 'POST', body: JSON.stringify({ message: msg, agent_mode: getAgentMode() })
     }).then(data => {
-      clearInterval(progressPoll);
-      pendingSendSession = null;
-      replaceLastMsg(el, data.content || 'No response', data.files);
-      sending = false; loadSessions();
+      // Server returns { status: "processing" } immediately.
+      // If server returned a direct content response (old server), use it.
+      if (data.content && data.status !== 'processing') {
+        clearInterval(progressPoll);
+        pendingSendSession = null;
+        replaceLastMsg(el, data.content, data.files);
+        sending = false; loadSessions();
+        return;
+      }
+      // Start polling for the assistant response
+      pollForCompletion(sessionId, el, progressPoll);
     }).catch(() => {
-      // Don't clear progress poll — backend may still be running.
-      // Start recovery polling to wait for the response to appear.
-      // Progress poll keeps showing live activity until recovery succeeds.
-      recoverPendingResponse(sessionId, el, progressPoll);
+      // Network error on POST — server may still have received and spawned the task.
+      // Poll for completion anyway.
+      pollForCompletion(sessionId, el, progressPoll);
     });
   };
 
