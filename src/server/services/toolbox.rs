@@ -1482,13 +1482,14 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
     };
     let default_timeout = load_agent_settings()["agentWaitResultTimeout"].as_u64().unwrap_or(300);
     let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(default_timeout);
+    // Hard limit: auto-retry up to 15 minutes total even if individual timeouts are shorter
+    let hard_limit_secs: u64 = 900;
 
     let (results, result_notify) = {
         let map = realtime_sessions().lock().await;
         match map.get(session_id) {
             Some(s) => {
                 let session = s.lock().await;
-                // Verify agent exists
                 if !session.agents.contains_key(&from) {
                     let available: Vec<&str> = session.agents.keys().map(|s| s.as_str()).collect();
                     return json!({"ok": false, "error": format!("Agent '{}' not found. Available: {}", from, available.join(", "))});
@@ -1499,11 +1500,65 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
         }
     };
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+    let hard_deadline = tokio::time::Instant::now() + Duration::from_secs(hard_limit_secs);
+    let mut total_waited: u64 = 0;
 
     loop {
-        // Check if result is already available
-        {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+
+        loop {
+            // Check if result is already available
+            {
+                let mut map = results.lock().await;
+                if let Some(result) = map.remove(&from) {
+                    info!("[wait_result] Got result from '{}' after ~{}s", from, total_waited);
+                    return json!({
+                        "ok": result.ok,
+                        "agentId": from,
+                        "result": result.result,
+                        "output_files": result.output_files,
+                    });
+                }
+            }
+
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() { break; } // inner timeout → check if agent still working
+
+            tokio::select! {
+                _ = result_notify.notified() => continue,
+                _ = tokio::time::sleep(remaining) => { break; }
+            }
+        }
+
+        total_waited += timeout_secs;
+
+        // Check if agent is still working — if so, auto-retry the wait
+        let still_working = {
+            let map = realtime_sessions().lock().await;
+            if let Some(s) = map.get(session_id) {
+                let session = s.lock().await;
+                if let Some(handle) = session.agents.get(&from) {
+                    let status = handle.status.lock().await;
+                    status.as_str() == "working"
+                } else { false }
+            } else { false }
+        };
+
+        if still_working && tokio::time::Instant::now() < hard_deadline {
+            info!("[wait_result] Agent '{}' still working after {}s — auto-retrying wait", from, total_waited);
+            continue; // auto-retry
+        }
+
+        // Agent stopped or hard limit reached
+        if still_working {
+            return json!({
+                "ok": false,
+                "error": format!("Agent '{}' is still working but hard timeout ({}s) reached.", from, hard_limit_secs),
+                "agentId": from,
+                "hint": "Call wait_result again to continue waiting. Do NOT resend the task."
+            });
+        } else {
+            // Agent finished but no result in map — check one more time
             let mut map = results.lock().await;
             if let Some(result) = map.remove(&from) {
                 return json!({
@@ -1513,29 +1568,12 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
                     "output_files": result.output_files,
                 });
             }
-        }
-
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
             return json!({
                 "ok": false,
-                "error": format!("Timeout waiting for result from '{}' after {}s — the agent is STILL WORKING.", from, timeout_secs),
+                "error": format!("Agent '{}' finished but no result was produced after {}s.", from, total_waited),
                 "agentId": from,
-                "hint": "Do NOT resend the task. Just call wait_result again with the same 'from' to continue waiting. The agent is still processing."
+                "hint": "The agent may have encountered an error. Check with check_agents or send a new task."
             });
-        }
-
-        // Wait for any result notification or deadline
-        tokio::select! {
-            _ = result_notify.notified() => continue,
-            _ = tokio::time::sleep(remaining) => {
-                return json!({
-                    "ok": false,
-                    "error": format!("Timeout waiting for result from '{}' after {}s — the agent is STILL WORKING.", from, timeout_secs),
-                    "agentId": from,
-                    "hint": "Do NOT resend the task. Just call wait_result again with the same 'from' to continue waiting. The agent is still processing."
-                });
-            }
         }
     }
 }
