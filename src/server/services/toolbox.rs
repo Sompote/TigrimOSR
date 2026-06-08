@@ -1480,7 +1480,7 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
         Some(s) => s.to_string(),
         None => return json!({"ok": false, "error": "Missing 'from' parameter"}),
     };
-    let default_timeout = load_agent_settings()["agentWaitResultTimeout"].as_u64().unwrap_or(120);
+    let default_timeout = load_agent_settings()["agentWaitResultTimeout"].as_u64().unwrap_or(300);
     let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(default_timeout);
 
     let (results, result_notify) = {
@@ -1519,9 +1519,9 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
         if remaining.is_zero() {
             return json!({
                 "ok": false,
-                "error": format!("Timeout waiting for result from '{}'", from),
+                "error": format!("Timeout waiting for result from '{}' after {}s — the agent is STILL WORKING.", from, timeout_secs),
                 "agentId": from,
-                "hint": "The agent may still be working. Try wait_result again or check with check_agents."
+                "hint": "Do NOT resend the task. Just call wait_result again with the same 'from' to continue waiting. The agent is still processing."
             });
         }
 
@@ -1531,8 +1531,9 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
             _ = tokio::time::sleep(remaining) => {
                 return json!({
                     "ok": false,
-                    "error": format!("Timeout waiting for result from '{}'", from),
+                    "error": format!("Timeout waiting for result from '{}' after {}s — the agent is STILL WORKING.", from, timeout_secs),
                     "agentId": from,
+                    "hint": "Do NOT resend the task. Just call wait_result again with the same 'from' to continue waiting. The agent is still processing."
                 });
             }
         }
@@ -2259,12 +2260,12 @@ fn realtime_tools(agent_list: &str) -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "wait_result",
-                "description": "Wait for a result from an agent that was previously sent a task via send_task. Blocks until the agent finishes.",
+                "description": "Wait for a result from an agent that was previously sent a task via send_task. Blocks until the agent finishes. If it times out, the agent is STILL WORKING — just call wait_result again to keep waiting. Do NOT resend the task.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "from": { "type": "string", "description": format!("ID of the agent to wait for. Must be one of: {}", agent_list) },
-                        "timeout": { "type": "integer", "description": "Optional timeout in seconds (default: from Agent Harness settings, typically 120)" }
+                        "timeout": { "type": "integer", "description": "Timeout in seconds (default: 300). If timeout occurs, call wait_result again — do NOT resend the task." }
                     },
                     "required": ["from"]
                 }
@@ -6494,8 +6495,13 @@ async fn call_with_tools_inner(
     let settings = load_agent_settings();
     let base_max_rounds = settings["agentMaxToolRounds"].as_u64().unwrap_or(DEFAULT_MAX_ROUNDS as u64) as usize;
     let base_max_tool_calls = settings["agentMaxToolCalls"].as_u64().unwrap_or(DEFAULT_MAX_TOOL_CALLS as u64) as usize;
-    let max_rounds = if realtime { base_max_rounds.max(30) } else { base_max_rounds };
-    let max_tool_calls = if realtime { base_max_tool_calls.max(60) } else { base_max_tool_calls };
+    let is_multi_agent_coordinator = !realtime && sub_agent.enabled && !sub_agent.agent_ids.is_empty();
+    let max_rounds = if realtime { base_max_rounds.max(30) }
+        else if is_multi_agent_coordinator { base_max_rounds.max(40) }
+        else { base_max_rounds };
+    let max_tool_calls = if realtime { base_max_tool_calls.max(60) }
+        else if is_multi_agent_coordinator { base_max_tool_calls.max(80) }
+        else { base_max_tool_calls };
     let max_consecutive_errors = settings["agentMaxConsecutiveErrors"].as_u64().unwrap_or(DEFAULT_MAX_CONSECUTIVE_ERRORS as u64) as usize;
     let max_error_recoveries = settings["agentMaxErrorRecoveries"].as_u64().unwrap_or(DEFAULT_MAX_ERROR_RECOVERIES as u64) as usize;
     let compression_interval = settings["agentCompressionInterval"].as_u64().unwrap_or(DEFAULT_COMPRESSION_INTERVAL as u64) as usize;
