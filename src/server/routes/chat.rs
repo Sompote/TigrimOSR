@@ -558,77 +558,132 @@ async fn send_message(
         };
 
         let agents_list = sub_agent.agent_ids.join(", ");
+
+        // Build detailed agent roster and extract orchestration metadata from YAML
+        let (yaml_orch_mode, agent_roster, orchestrator_id) = if sub_agent_enabled && !sub_agent.config_file.is_empty() {
+            if let Some((yaml, _)) = crate::server::services::toolbox::load_agent_yaml(&sub_agent.config_file) {
+                let orch_mode = yaml.get("system")
+                    .and_then(|s| s.get("orchestration_mode"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let agents_arr = yaml.get("agents").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+                let mut orch_id = String::new();
+                let roster: Vec<String> = agents_arr.iter()
+                    .filter(|a| a.get("role").and_then(|r| r.as_str()) != Some("human"))
+                    .map(|a| {
+                        let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                        let name = a.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                        let role = a.get("role").and_then(|v| v.as_str()).unwrap_or("worker");
+                        if role == "orchestrator" { orch_id = id.to_string(); }
+                        let resp = a.get("responsibilities").and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("; "))
+                            .unwrap_or_default();
+                        if resp.is_empty() {
+                            format!("  - {} (name: \"{}\", role: {})", id, name, role)
+                        } else {
+                            format!("  - {} (name: \"{}\", role: {}, tasks: {})", id, name, role, resp)
+                        }
+                    }).collect();
+                (orch_mode, roster.join("\n"), orch_id)
+            } else {
+                (String::new(), String::new(), String::new())
+            }
+        } else {
+            (String::new(), String::new(), String::new())
+        };
+        let is_pipeline = yaml_orch_mode == "pipeline";
+
         let sub_agent_prompt = if sub_agent_enabled && !agents_list.is_empty() {
-            let yaml_orch_mode = if !sub_agent.config_file.is_empty() {
-                crate::server::services::toolbox::load_agent_yaml(&sub_agent.config_file)
-                    .and_then(|(y, _)| y.get("system")?.get("orchestration_mode")?.as_str().map(|s| s.to_string()))
-                    .unwrap_or_default()
+            let routing_rule = if !orchestrator_id.is_empty() && matches!(yaml_orch_mode.as_str(), "hierarchical" | "hybrid") {
+                format!(
+                    "\n\n🔴 ROUTING RULE: This is a {} architecture. You MUST send ALL tasks to the orchestrator '{}'. \
+Do NOT send tasks directly to worker agents — the orchestrator will delegate to them.",
+                    yaml_orch_mode, orchestrator_id
+                )
             } else { String::new() };
-            let is_pipeline = yaml_orch_mode == "pipeline";
 
             match effective_mode.as_str() {
                 "fully_auto" => {
                     if is_pipeline {
                         format!(
-                            "\n\nFULLY AUTO MODE (PIPELINE): An agent pipeline has been created and all agents are LIVE. \
-Pipeline agents: [{}]. \
-This is a SEQUENTIAL PIPELINE — send the task to the FIRST agent only. \
-The first agent will process and forward to the next stage automatically via send_task. \
-Workflow: send_task({{to: \"<first_agent>\", task: \"...\"}}) → wait_result({{from: \"<last_agent>\"}}) to get the final output. \
-Do NOT send tasks to intermediate or final agents directly — the pipeline flows automatically.",
-                            agents_list
+                            "\n\n═══ FULLY AUTO MODE (PIPELINE) ═══\n\
+An agent pipeline is LIVE. You are the COORDINATOR — your primary job is to delegate.\n\n\
+Agent Roster:\n{}\n\n\
+RULES (MANDATORY — violating these is a system error):\n\
+1. Send the task to the FIRST agent only — the pipeline flows automatically.\n\
+2. Use wait_result on the LAST agent to get the final output.\n\
+3. You may use your own tools (web_search, run_python, etc.) to supplement agent work if needed.\n\
+4. After collecting results, write a clear synthesis as your final answer.\n\n\
+Workflow: send_task({{\"to\": \"<first_agent>\", \"task\": \"<detailed task>\"}}) → wait_result({{\"from\": \"<last_agent>\"}}) → synthesize.",
+                            agent_roster
                         )
                     } else {
                         format!(
-                            "\n\nFULLY AUTO MODE: An agent team has been created and all agents are LIVE. \
-Available agents: [{}]. \
-You MUST delegate ALL work to agents via send_task/wait_result. \
-Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
-Only use run_python/write_file for formatting the final output. \
-Do NOT do research or analysis yourself — agents handle that. \
-If an orchestrator exists, send tasks ONLY to the orchestrator.",
-                            agents_list
+                            "\n\n═══ FULLY AUTO MODE ═══\n\
+An agent team is LIVE. You are the COORDINATOR — your primary job is to delegate.\n\n\
+Agent Roster:\n{}\n\n\
+RULES (MANDATORY — violating these is a system error):\n\
+1. You MUST delegate work to agents via send_task / wait_result.\n\
+2. Give each agent a DETAILED task description — include all context they need.\n\
+3. You may also use your own tools (web_search, run_python, etc.) to supplement agent work.\n\
+4. After collecting ALL results, write a comprehensive synthesis as your final answer.{}\n\n\
+Workflow: send_task({{\"to\": \"<agentId>\", \"task\": \"<detailed task>\"}}) → wait_result({{\"from\": \"<agentId>\"}}) → synthesize all results.",
+                            agent_roster, routing_rule
                         )
                     }
                 }
                 "manual" => {
                     if is_pipeline {
                         format!(
-                            "\n\nMANUAL AGENT MODE (PIPELINE): All agents are alive in a sequential pipeline. \
-Pipeline agents: [{}]. \
-Send the task to the FIRST agent only — it will automatically forward through the chain via send_task. \
-Workflow: send_task({{to: \"<first_agent>\", task: \"...\"}}) → wait_result({{from: \"<last_agent>\"}}) to get the final output. \
-Do NOT send tasks to intermediate or final agents directly.",
-                            agents_list
+                            "\n\n═══ MANUAL AGENT MODE (PIPELINE) ═══\n\
+All agents are LIVE in a sequential pipeline. You are the COORDINATOR.\n\n\
+Agent Roster:\n{}\n\n\
+RULES (MANDATORY):\n\
+1. Send the task to the FIRST agent — the pipeline forwards automatically.\n\
+2. Use wait_result on the LAST agent for the final output.\n\
+3. Give a DETAILED task description with full context.\n\
+4. You may use your own tools to supplement agent work if needed.\n\n\
+Workflow: send_task({{\"to\": \"<first_agent>\", \"task\": \"<detailed task>\"}}) → wait_result({{\"from\": \"<last_agent>\"}}) → synthesize.",
+                            agent_roster
                         )
                     } else {
                         format!(
-                            "\n\nMANUAL AGENT MODE: All agents are already alive. You MUST delegate ALL work to the agent team via send_task/wait_result. \
-Available agents: [{}]. \
-Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
-Only use run_python/write_file for formatting the final output. \
-Always delegate, even for simple tasks. If an orchestrator exists, send tasks ONLY to the orchestrator.",
-                            agents_list
+                            "\n\n═══ MANUAL AGENT MODE ═══\n\
+All agents are LIVE. You are the COORDINATOR — your primary job is to delegate.\n\n\
+Agent Roster:\n{}\n\n\
+RULES (MANDATORY — violating these is a system error):\n\
+1. You MUST delegate work to agents via send_task / wait_result.\n\
+2. Give each agent a DETAILED task description — include all context they need.\n\
+3. Always delegate, even for seemingly simple tasks — the agents are specialists.\n\
+4. You may also use your own tools to supplement agent work.\n\
+5. After collecting ALL results, write a comprehensive synthesis.{}\n\n\
+Workflow: send_task({{\"to\": \"<agentId>\", \"task\": \"<detailed task>\"}}) → wait_result({{\"from\": \"<agentId>\"}}) → synthesize all results.",
+                            agent_roster, routing_rule
                         )
                     }
                 }
                 "auto" | _ => {
                     format!(
-                        "\n\nMULTI-AGENT SYSTEM ACTIVE: You have specialist sub-agents available: [{}]. \
-IMPORTANT: For research, analysis, marketing, data gathering, or any complex multi-step task, you MUST use send_task to delegate to the appropriate specialist agent. \
-Workflow: send_task({{to: \"<agentId>\", task: \"...\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize response. \
-Do NOT use web_search or run_python directly for tasks that sub-agents can handle. \
-Only use your own tools for quick lookups or tasks not covered by any sub-agent.",
-                        agents_list
+                        "\n\n═══ MULTI-AGENT SYSTEM ACTIVE ═══\n\
+You have specialist sub-agents. You are the COORDINATOR — prefer delegation over doing work yourself.\n\n\
+Agent Roster:\n{}\n\n\
+RULES (MANDATORY):\n\
+1. For ANY research, analysis, data gathering, writing, or complex task — you MUST delegate to the appropriate agent.\n\
+2. Give each agent a DETAILED task description with full context.\n\
+3. You may also use your own tools (web_search, run_python, etc.) to supplement agent work.\n\
+4. After collecting results, write a comprehensive synthesis.{}\n\n\
+Workflow: send_task({{\"to\": \"<agentId>\", \"task\": \"<detailed task>\"}}) → wait_result({{\"from\": \"<agentId>\"}}) → synthesize.",
+                        agent_roster, routing_rule
                     )
                 }
             }
         } else if sub_agent_enabled {
-            // enabled but no agents yet (fully_auto creates them)
-            "\n\nFULLY AUTO MODE: An agent team is being created for this task. \
-Use send_task/wait_result to delegate work once agents are ready. \
-If no agents are available yet, call create_architecture to design and boot a team. \
-Do NOT attempt to do work yourself — delegate everything to agents.".to_string()
+            "\n\n═══ FULLY AUTO MODE ═══\n\
+An agent team is being created for this task. You are the COORDINATOR.\n\
+1. Call create_architecture to design and boot a team if no agents are available yet.\n\
+2. Then use send_task/wait_result to delegate work to agents.\n\
+3. You may also use your own tools to supplement agent work.".to_string()
         } else {
             String::new()
         };
