@@ -6521,6 +6521,9 @@ async fn call_with_tools_inner(
     let mut _uses_skill = false;
     let mut early_content = String::new();
     let mut start_round: usize = 0;
+    // Track whether the AI has successfully delegated to any agent
+    let mut agent_task_sent = false;
+    let mut agent_stop_nudged = false;
     // For loop detection: track recent (tool_name, args_signature) tuples
     let mut recent_signatures: Vec<String> = Vec::new();
     // For tracking tool call history (loop detection)
@@ -6974,6 +6977,11 @@ async fn call_with_tools_inner(
                     tool_name, tool_args, sandbox_dir, &sub_agent, on_update.clone(), realtime,
                 ).await;
 
+                // Track successful agent delegation
+                if tool_name == "send_task" && result.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                    agent_task_sent = true;
+                }
+
                 // Track consecutive errors (skip agent timeouts)
                 let is_agent_timeout = matches!(tool_name.as_str(), "wait_result" | "send_task")
                     && result.get("error").and_then(|v| v.as_str())
@@ -7224,6 +7232,38 @@ async fn call_with_tools_inner(
                     { consecutive_errors = 0; }
                     continue;
                 }
+            }
+
+            // Nudge: if in multi-agent mode and AI never successfully delegated, push it to retry
+            if sub_agent.enabled && !agent_task_sent && !agent_stop_nudged && !sub_agent.agent_ids.is_empty() {
+                agent_stop_nudged = true;
+                let agents_list = sub_agent.agent_ids.join(", ");
+                // Find the orchestrator if it exists
+                let orch_hint = if let Some((yaml, _)) = load_agent_yaml(&sub_agent.config_file) {
+                    yaml.get("agents").and_then(|a| a.as_array()).and_then(|arr|
+                        arr.iter().find(|a| a["role"].as_str() == Some("orchestrator"))
+                            .and_then(|a| a["id"].as_str().map(|s| s.to_string()))
+                    )
+                } else { None };
+                let orch_msg = if let Some(orch_id) = orch_hint {
+                    format!("The orchestrator is '{}'. Send your task to the orchestrator using: send_task({{\"to\": \"{}\", \"task\": \"...\"}})", orch_id, orch_id)
+                } else {
+                    format!("Available agents: [{}]. Use send_task to delegate your task.", agents_list)
+                };
+                warn!("[ToolLoop] AI tried to stop without delegating in multi-agent mode. Nudging to retry.");
+                all_messages.push(json!({
+                    "role": "user",
+                    "content": format!(
+                        "⚠️ SYSTEM: You are in MULTI-AGENT mode but you have NOT delegated any task to your agents yet. \
+                        Do NOT give up or answer directly — you MUST delegate the user's task to agents. \
+                        {}. \
+                        After sending the task, use wait_result to collect the response. \
+                        Then synthesize the agent's results into your final answer.",
+                        orch_msg
+                    )
+                }));
+                consecutive_errors = 0;
+                continue;
             }
 
             // Truly done — return final response

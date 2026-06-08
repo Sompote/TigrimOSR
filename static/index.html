@@ -1135,12 +1135,14 @@ function recoverPendingResponse(sessionId, el, progressPollId) {
   pollForCompletion(sessionId, el, progressPollId);
 }
 
-// When mobile browser regains focus, resume progress polling or recover
+// When browser regains focus, immediately check if the response arrived.
+// Browsers throttle setInterval in background tabs (1/min in Chrome),
+// so the poll may not have fired. Do an immediate check + restart polling.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && sending && pendingSendSession) {
+    const sid = pendingSendSession;
     const el = document.getElementById('messages');
-    // Check if response already arrived
-    api(`/api/chat/sessions/${pendingSendSession}`).then(data => {
+    api(`/api/chat/sessions/${sid}`).then(data => {
       const msgs = data.messages || [];
       if (msgs.length && msgs[msgs.length - 1].role === 'assistant') {
         pendingSendSession = null;
@@ -1148,8 +1150,10 @@ document.addEventListener('visibilitychange', () => {
         replaceLastMsg(el, last.content || 'No response', last.files);
         sending = false;
         loadSessions();
+      } else {
+        // Still processing — ensure a fresh poll is running (old one may be throttled)
+        pollForCompletion(sid, el, null);
       }
-      // else: still processing, recovery poll will handle it
     }).catch(() => {});
   }
 });
