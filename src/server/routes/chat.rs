@@ -830,6 +830,12 @@ You have access to these tools: {}.{}",
             flags.remove(&session_id_bg);
         }
 
+        // Clean up activity log so finished tasks don't appear in active-tasks
+        {
+            let log_path = activity_log_dir().join(format!("{}.log", session_id_bg));
+            let _ = tokio::fs::remove_file(&log_path).await;
+        }
+
         // Append completion footer to chat log
         {
             let footer = format!(
@@ -1010,11 +1016,9 @@ async fn kill_session(Path(id): Path<String>) -> impl IntoResponse {
         }
     }
 
-    // Clean up: remove cancel flag and activity log
-    if killed {
-        let mut flags = cancel_flags().lock().unwrap();
-        flags.remove(&id);
-    }
+    // NOTE: Do NOT remove the cancel flag here — the spawned task reads it
+    // to know it should stop. The spawned task removes it when it finishes.
+    // Clean up the activity log so the task disappears from active-tasks immediately.
     let log_path = activity_log_dir().join(format!("{}.log", id));
     let _ = tokio::fs::remove_file(&log_path).await;
 

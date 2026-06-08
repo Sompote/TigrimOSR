@@ -872,15 +872,44 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
     match orch_mode {
         "hierarchical" => {
             if role == "orchestrator" {
+                // Build worker roster with responsibilities for the orchestrator
+                let agents_arr = system_config["agents"].as_array();
+                let worker_roster: String = agents_arr.map(|arr| {
+                    arr.iter()
+                        .filter(|a| {
+                            let r = a["role"].as_str().unwrap_or("worker");
+                            r == "worker" && a["id"].as_str().unwrap_or("") != agent_id
+                        })
+                        .map(|a| {
+                            let wid = a["id"].as_str().unwrap_or("?");
+                            let wname = a["name"].as_str().unwrap_or(wid);
+                            let resp = a["responsibilities"].as_array()
+                                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("; "))
+                                .unwrap_or_default();
+                            if resp.is_empty() {
+                                format!("  - {} (\"{}\")", wid, wname)
+                            } else {
+                                format!("  - {} (\"{}\") — {}", wid, wname, resp)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }).unwrap_or_default();
+
                 prompt += &format!(
-                    "\n\nHIERARCHICAL MODE (ORCHESTRATOR): You control the team and coordinate all work.\n\
-                    Your downstream agents: [{}]\n\
-                    DELEGATION: Use send_task({{to: \"<agentId>\", task: \"...\"}}) then wait_result({{from: \"<agentId>\"}}).\n\
-                    Send tasks to MULTIPLE agents in a SINGLE response for parallel execution.\n\
-                    You have full access to all tools. Use your judgement: delegate complex or parallelizable work to workers, \
-                    but feel free to handle quick tasks (reading files, checking data) yourself when it's more efficient.\n\
-                    Synthesize agent results into a comprehensive final response.",
-                    downstream.join(", ")
+                    "\n\n═══ HIERARCHICAL MODE — YOU ARE THE ORCHESTRATOR ═══\n\
+                    You control the team and coordinate ALL work. Your PRIMARY job is to DELEGATE.\n\n\
+                    Your worker agents:\n{}\n\n\
+                    RULES (MANDATORY — violating these is a system error):\n\
+                    1. You MUST delegate ALL substantive work to worker agents via send_task / wait_result.\n\
+                    2. Give each worker a DETAILED task description — include ALL context they need.\n\
+                    3. Send tasks to MULTIPLE agents in a SINGLE response for parallel execution when possible.\n\
+                    4. After collecting ALL worker results via wait_result, synthesize into a comprehensive final response.\n\
+                    5. You may use your own tools (web_search, read_file, etc.) ONLY for quick supplementary checks.\n\
+                    6. NEVER do a worker's job yourself — that defeats the purpose of multi-agent delegation.\n\n\
+                    Workflow: send_task({{to: \"<agentId>\", task: \"<detailed task>\"}}) → wait_result({{from: \"<agentId>\"}}) → synthesize.\n\
+                    Reachable agents: [{}]",
+                    worker_roster, downstream.join(", ")
                 );
             } else {
                 prompt += "\n\nHIERARCHICAL MODE (WORKER): You receive tasks from the orchestrator.\n\
@@ -898,14 +927,17 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
             let mesh_ids = mesh_agent_ids(system_config);
             if role == "orchestrator" {
                 prompt += &format!(
-                    "\n\nHYBRID MODE (ORCHESTRATOR): You control the team and coordinate all work.\n\
+                    "\n\n═══ HYBRID MODE — YOU ARE THE ORCHESTRATOR ═══\n\
+                    You control the team and coordinate ALL work. Your PRIMARY job is to DELEGATE.\n\
                     Your connected agents: [{}]\n\
-                    Mesh-enabled agents (can collaborate freely): [{}]\n\
-                    You are responsible for:\n\
-                      1. Delegating tasks to your connected agents via send_task\n\
-                      2. Monitoring mesh agents' progress via check_agents\n\
-                      3. Collecting results via wait_result and synthesizing the final output\n\
-                      4. Ensuring work completes — if mesh agents loop or stall, reassign the task",
+                    Mesh-enabled agents (can collaborate freely): [{}]\n\n\
+                    RULES (MANDATORY):\n\
+                    1. You MUST delegate ALL substantive work to agents via send_task / wait_result.\n\
+                    2. Give each agent a DETAILED task description with ALL context they need.\n\
+                    3. Monitor mesh agents' progress via check_agents.\n\
+                    4. Collect ALL results via wait_result and synthesize a comprehensive final response.\n\
+                    5. If mesh agents loop or stall, reassign the task.\n\
+                    6. NEVER do a worker's job yourself — delegate everything.",
                     downstream.join(", "),
                     mesh_ids.join(", ")
                 );
@@ -951,11 +983,13 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
         "p2p" | "p2p_orchestrator" => {
             if role == "orchestrator" {
                 prompt += &format!(
-                    "\n\nP2P ORCHESTRATOR MODE: You can delegate tasks in two ways:\n\
+                    "\n\n═══ P2P ORCHESTRATOR MODE ═══\n\
+                    You coordinate the team. Your PRIMARY job is to DELEGATE — NEVER do workers' jobs yourself.\n\
+                    Delegate tasks in two ways:\n\
                     1. DIRECT: send_task to connected agents: [{}]\n\
                     2. BIDDING: bb_propose → bb_read (check bids) → bb_award → send_task to winner\n\
                     After bb_award, you MUST send_task to the winner — award alone does NOT send.\n\
-                    Use check_agents to monitor progress.",
+                    Use check_agents to monitor progress. Synthesize ALL results into your final response.",
                     downstream.join(", ")
                 );
             } else {
