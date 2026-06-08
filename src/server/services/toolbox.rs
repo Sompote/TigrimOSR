@@ -6998,6 +6998,14 @@ async fn call_with_tools_inner(
 
                 on_update(ToolUpdate::ToolResult { name: tool_name.clone(), result: result.clone() });
 
+                // Check cancel flag after each tool execution (not just at round start)
+                if sub_agent.cancel_flag.load(Ordering::Relaxed) {
+                    info!("[ToolLoop] Abort signal after tool '{}' — stopping", tool_name);
+                    on_update(ToolUpdate::Error("Task cancelled by user.".to_string()));
+                    let content = if early_content.is_empty() { "Task was cancelled.".to_string() } else { early_content };
+                    return ToolLoopResult { content, tool_results: tool_records, files: collected_files };
+                }
+
                 // Log tool result to agent history
                 {
                     let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);

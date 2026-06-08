@@ -1726,9 +1726,15 @@ function fetchActiveTasks() {
 }
 
 function killChatSession(sessionId) {
+  if (!confirm('Kill this running task?')) return;
   api(`/api/chat/sessions/${sessionId}/kill`, { method: 'POST' }).then(data => {
-    if (data.ok) fetchActiveTasks();
-  }).catch(() => {});
+    fetchActiveTasks();
+    // Also clear any pending send state for this session
+    if (pendingSendSession === sessionId) {
+      pendingSendSession = null;
+      sending = false;
+    }
+  }).catch(() => { fetchActiveTasks(); });
 }
 
 function goToChat(sessionId) {

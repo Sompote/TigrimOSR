@@ -943,6 +943,9 @@ async fn kill_session(Path(id): Path<String>) -> impl IntoResponse {
         }
     };
 
+    // Also abort any realtime sub-agent session
+    crate::server::services::toolbox::shutdown_realtime_session(&id).await;
+
     // Also push to native UI's killed list
     if killed {
         let killed_ids = crate::ui::tasks_view::killed_chat_ids();
@@ -951,6 +954,16 @@ async fn kill_session(Path(id): Path<String>) -> impl IntoResponse {
             ids.push(id.clone());
         }
     }
+
+    // Clean up: remove cancel flag and activity log
+    if killed {
+        let mut flags = cancel_flags().lock().unwrap();
+        flags.remove(&id);
+    }
+    let log_path = activity_log_dir().join(format!("{}.log", id));
+    let _ = tokio::fs::remove_file(&log_path).await;
+
+    tracing::info!("[kill] Session {} killed={}", id, killed);
 
     Json(json!({ "ok": killed, "session_id": id }))
 }
