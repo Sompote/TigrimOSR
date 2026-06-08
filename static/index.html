@@ -448,7 +448,7 @@ textarea { resize: vertical; }
 #agent-diagram-container h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
 #agent-diagram-svg {
   width: 100%; border-radius: var(--r-md); background: var(--rail);
-  border: 1px solid var(--line); min-height: 200px;
+  border: 1px solid var(--line); max-height: 360px;
 }
 
 .submit-task-area {
@@ -1502,7 +1502,14 @@ function renderAgentDiagram(parsed) {
 
   const agents = parsed.agents || [];
   const connections = parsed.connections || [];
-  const W = 800, nodeR = 28;
+
+  // Scale node size and spacing based on agent count
+  const n = agents.length;
+  const nodeR = n <= 4 ? 22 : n <= 6 ? 18 : n <= 10 ? 15 : 12;
+  const fontSize = n <= 4 ? 11 : n <= 6 ? 9.5 : 8;
+  const letterSize = n <= 4 ? 12 : n <= 6 ? 10 : 8;
+  const labelGap = nodeR + 10;
+  const roleGap = labelGap + (fontSize + 2);
 
   // Layout: role-based layered
   const layers = { human: [], orchestrator: [], worker: [], checker: [], reporter: [], researcher: [], peer: [] };
@@ -1516,13 +1523,15 @@ function renderAgentDiagram(parsed) {
   const rows = orderedLayers.map(r => layers[r]).filter(l => l.length > 0);
   if (other.length) rows.push(other);
 
-  const rowGap = 110;
-  const H = Math.max(300, rows.length * rowGap + 80);
+  const maxPerRow = Math.max(...rows.map(r => r.length));
+  const W = Math.max(400, Math.min(800, maxPerRow * (nodeR * 2 + 80) + 60));
+  const rowGap = nodeR * 2 + 50;
+  const H = Math.max(180, rows.length * rowGap + 50);
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
   const positions = {};
   rows.forEach((row, ri) => {
-    const y = 60 + ri * rowGap;
+    const y = 30 + nodeR + ri * rowGap;
     const spacing = W / (row.length + 1);
     row.forEach((a, ci) => {
       positions[a.id] = { x: spacing * (ci + 1), y, agent: a };
@@ -1531,11 +1540,11 @@ function renderAgentDiagram(parsed) {
 
   // Build SVG
   let defs = `<defs>
-    <marker id="ah" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto" markerUnits="strokeWidth">
-      <polygon points="0 0, 10 3.5, 0 7" fill="#888"/>
+    <marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <polygon points="0 0, 8 3, 0 6" fill="#999"/>
     </marker>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.15"/>
+      <feDropShadow dx="0.5" dy="1" stdDeviation="1.5" flood-opacity="0.12"/>
     </filter>
   </defs>`;
 
@@ -1547,17 +1556,14 @@ function renderAgentDiagram(parsed) {
     const proto = (c.protocol || 'tcp').toLowerCase();
     const color = PROTO_COLORS[proto] || '#888';
     const dash = PROTO_DASH[proto] || '';
-    // Offset line to avoid overlapping node
     const dx = to.x - from.x, dy = to.y - from.y;
     const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-    const sx = from.x + dx/dist * (nodeR + 4), sy = from.y + dy/dist * (nodeR + 4);
-    const ex = to.x - dx/dist * (nodeR + 8), ey = to.y - dy/dist * (nodeR + 8);
-    // Curve for bidirectional visual clarity
-    const mx = (sx+ex)/2 - dy*0.1, my = (sy+ey)/2 + dx*0.1;
-    edgeSvg += `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${color}" stroke-width="1.8" stroke-dasharray="${dash}" marker-end="url(#ah)" opacity="0.7"/>`;
-    // Protocol label
-    const lx = (sx+ex)/2 - dy*0.05, ly = (sy+ey)/2 + dx*0.05;
-    edgeSvg += `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="9" fill="${color}" font-weight="600" opacity="0.8">${esc(proto)}</text>`;
+    const sx = from.x + dx/dist * (nodeR + 3), sy = from.y + dy/dist * (nodeR + 3);
+    const ex = to.x - dx/dist * (nodeR + 6), ey = to.y - dy/dist * (nodeR + 6);
+    const mx = (sx+ex)/2 - dy*0.08, my = (sy+ey)/2 + dx*0.08;
+    edgeSvg += `<path d="M${sx},${sy} Q${mx},${my} ${ex},${ey}" fill="none" stroke="${color}" stroke-width="1.2" stroke-dasharray="${dash}" marker-end="url(#ah)" opacity="0.6"/>`;
+    const lx = (sx+ex)/2 - dy*0.04, ly = (sy+ey)/2 + dx*0.04;
+    edgeSvg += `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="${fontSize*0.75}" fill="${color}" font-weight="600" opacity="0.7">${esc(proto)}</text>`;
   });
 
   // Draw nodes
@@ -1567,42 +1573,44 @@ function renderAgentDiagram(parsed) {
     const fill = ROLE_COLORS[role] || '#708090';
     const shape = ROLE_SHAPES[role];
     const name = agent.name || agent.id;
+    const sw = 1.5;
 
     if (shape === 'diamond') {
-      const s = nodeR * 0.9;
-      nodeSvg += `<polygon points="${x},${y-s} ${x+s},${y} ${x},${y+s} ${x-s},${y}" fill="${fill}" stroke="#fff" stroke-width="2" filter="url(#shadow)" opacity="0.92"/>`;
+      const s = nodeR * 0.85;
+      nodeSvg += `<polygon points="${x},${y-s} ${x+s},${y} ${x},${y+s} ${x-s},${y}" fill="${fill}" stroke="#fff" stroke-width="${sw}" filter="url(#shadow)" opacity="0.92"/>`;
     } else if (shape === 'hexagon') {
       const s = nodeR;
       const pts = [0,1,2,3,4,5].map(i => {
         const a = Math.PI/6 + i*Math.PI/3;
         return `${x+s*Math.cos(a)},${y+s*Math.sin(a)}`;
       }).join(' ');
-      nodeSvg += `<polygon points="${pts}" fill="${fill}" stroke="#fff" stroke-width="2" filter="url(#shadow)" opacity="0.92"/>`;
+      nodeSvg += `<polygon points="${pts}" fill="${fill}" stroke="#fff" stroke-width="${sw}" filter="url(#shadow)" opacity="0.92"/>`;
     } else {
-      nodeSvg += `<circle cx="${x}" cy="${y}" r="${nodeR}" fill="${fill}" stroke="#fff" stroke-width="2" filter="url(#shadow)" opacity="0.92"/>`;
+      nodeSvg += `<circle cx="${x}" cy="${y}" r="${nodeR}" fill="${fill}" stroke="#fff" stroke-width="${sw}" filter="url(#shadow)" opacity="0.92"/>`;
     }
-    // Icon letter
-    nodeSvg += `<text x="${x}" y="${y+1}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="13" font-weight="700">${esc(name.charAt(0).toUpperCase())}</text>`;
-    // Name label
-    nodeSvg += `<text x="${x}" y="${y+nodeR+14}" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="600">${esc(name)}</text>`;
-    // Role badge
-    nodeSvg += `<text x="${x}" y="${y+nodeR+26}" text-anchor="middle" font-size="9" fill="var(--ink-soft)">${esc(role)}</text>`;
+    nodeSvg += `<text x="${x}" y="${y+1}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${letterSize}" font-weight="700">${esc(name.charAt(0).toUpperCase())}</text>`;
+    // Truncate long names
+    const shortName = name.length > 16 ? name.slice(0, 15) + '…' : name;
+    nodeSvg += `<text x="${x}" y="${y+labelGap}" text-anchor="middle" font-size="${fontSize}" fill="var(--ink)" font-weight="600">${esc(shortName)}</text>`;
+    nodeSvg += `<text x="${x}" y="${y+roleGap}" text-anchor="middle" font-size="${fontSize*0.8}" fill="var(--ink-soft)">${esc(role)}</text>`;
   });
 
-  // Legend
+  // Legend — compact
   const usedRoles = [...new Set(agents.map(a => (a.role||'worker').toLowerCase()))];
   const usedProtos = [...new Set(connections.map(c => (c.protocol||'tcp').toLowerCase()))];
-  let legend = `<g transform="translate(12,${H-40})">`;
-  usedRoles.forEach((r, i) => {
-    const lx = i * 100;
-    legend += `<circle cx="${lx+6}" cy="6" r="5" fill="${ROLE_COLORS[r]||'#708090'}"/>`;
-    legend += `<text x="${lx+15}" y="10" font-size="10" fill="var(--ink-soft)">${r}</text>`;
+  const lgFs = Math.max(7, fontSize * 0.85);
+  let legend = `<g transform="translate(8,${H-18})">`;
+  let lx = 0;
+  usedRoles.forEach(r => {
+    legend += `<circle cx="${lx+4}" cy="4" r="3.5" fill="${ROLE_COLORS[r]||'#708090'}"/>`;
+    legend += `<text x="${lx+11}" y="7" font-size="${lgFs}" fill="var(--ink-soft)">${r}</text>`;
+    lx += r.length * lgFs * 0.65 + 20;
   });
-  usedProtos.forEach((p, i) => {
-    const lx = usedRoles.length * 100 + i * 80;
+  usedProtos.forEach(p => {
     const dash = PROTO_DASH[p] || '';
-    legend += `<line x1="${lx}" y1="6" x2="${lx+18}" y2="6" stroke="${PROTO_COLORS[p]||'#888'}" stroke-width="2" stroke-dasharray="${dash}"/>`;
-    legend += `<text x="${lx+22}" y="10" font-size="10" fill="var(--ink-soft)">${p}</text>`;
+    legend += `<line x1="${lx}" y1="4" x2="${lx+14}" y2="4" stroke="${PROTO_COLORS[p]||'#888'}" stroke-width="1.5" stroke-dasharray="${dash}"/>`;
+    legend += `<text x="${lx+17}" y="7" font-size="${lgFs}" fill="var(--ink-soft)">${p}</text>`;
+    lx += p.length * lgFs * 0.65 + 24;
   });
   legend += '</g>';
 
