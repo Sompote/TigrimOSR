@@ -857,22 +857,46 @@ async fn get_active_tasks() -> impl IntoResponse {
     let _ = std::fs::create_dir_all(&log_dir);
     let mut active = Vec::new();
 
+    // Primary source: cancel_flags map tracks sessions with running AI tasks
+    let running_ids: Vec<String> = {
+        let flags = cancel_flags().lock().unwrap();
+        flags.keys().cloned().collect()
+    };
+
+    let sessions = get_chat_history().await;
+
+    for session_id in &running_ids {
+        let title = sessions.iter()
+            .find(|s| &s.id == session_id)
+            .map(|s| s.title.clone())
+            .unwrap_or_else(|| session_id.clone());
+
+        let log_path = log_dir.join(format!("{}.log", session_id));
+        let content = tokio::fs::read_to_string(&log_path).await.unwrap_or_default();
+
+        active.push(json!({
+            "session_id": session_id,
+            "title": title,
+            "activity": content,
+            "age_secs": 0,
+        }));
+    }
+
+    // Fallback: also check activity logs modified recently (catches edge cases)
     if let Ok(mut entries) = tokio::fs::read_dir(&log_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
             if !name.ends_with(".log") { continue; }
             let session_id = name.trim_end_matches(".log").to_string();
+            if running_ids.contains(&session_id) { continue; } // already added
 
             if let Ok(meta) = entry.metadata().await {
                 if let Ok(modified) = meta.modified() {
                     let age = modified.elapsed().unwrap_or_default().as_secs();
-                    // Consider active if modified in last 120s and file is non-empty
-                    if age < 120 && meta.len() > 0 {
+                    if age < 60 && meta.len() > 0 {
                         let content = tokio::fs::read_to_string(entry.path())
                             .await
                             .unwrap_or_default();
-                        // Look up session title
-                        let sessions = get_chat_history().await;
                         let title = sessions.iter()
                             .find(|s| s.id == session_id)
                             .map(|s| s.title.clone())
@@ -888,11 +912,6 @@ async fn get_active_tasks() -> impl IntoResponse {
             }
         }
     }
-
-    // Sort by most recent first
-    active.sort_by(|a, b| {
-        a["age_secs"].as_u64().unwrap_or(999).cmp(&b["age_secs"].as_u64().unwrap_or(999))
-    });
 
     Json(json!({ "tasks": active }))
 }
