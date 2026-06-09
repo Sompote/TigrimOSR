@@ -6680,7 +6680,8 @@ async fn call_with_tools_inner(
             };
         }
 
-        info!("Tool loop round {}/{}", round + 1, max_rounds);
+        let ctx_chars = compact::estimate_messages_chars(&all_messages);
+        info!("Tool loop round {}/{} — {} messages, ~{} chars (~{} tokens)", round + 1, max_rounds, all_messages.len(), ctx_chars, ctx_chars / 4);
 
         // --- Context compression ---
         // Periodic compression every N rounds
@@ -6819,7 +6820,16 @@ async fn call_with_tools_inner(
         }
 
         let resp_json = match data {
-            Some(d) => d,
+            Some(d) => {
+                // Log key response info for diagnostics
+                if let Some(usage) = d.get("usage") {
+                    info!("[ToolLoop] API usage: prompt_tokens={}, completion_tokens={}, total={}",
+                        usage["prompt_tokens"].as_u64().unwrap_or(0),
+                        usage["completion_tokens"].as_u64().unwrap_or(0),
+                        usage["total_tokens"].as_u64().unwrap_or(0));
+                }
+                d
+            },
             None => continue,
         };
 
@@ -6972,6 +6982,7 @@ async fn call_with_tools_inner(
             if calls.is_empty() {
                 // No tool calls -- treat as final response
                 let content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
+                info!("[ToolLoop] LLM returned text-only (no tools) at round {}: {} chars", round, content.len());
                 on_update(ToolUpdate::TextChunk(content.clone()));
                 clear_checkpoint(&sub_agent.session_id).await;
                 return ToolLoopResult {
@@ -7365,6 +7376,7 @@ async fn call_with_tools_inner(
 
             // Truly done — return final response
             let content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
+            info!("[ToolLoop] No tool_calls from LLM at round {} — returning text ({} chars)", round, content.len());
             on_update(ToolUpdate::TextChunk(content.clone()));
             clear_checkpoint(&sub_agent.session_id).await;
 

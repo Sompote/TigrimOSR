@@ -799,7 +799,13 @@ You have access to these tools: {}.{}",
                         if text.starts_with("[reasoning]") {
                             format!("💭 Reasoning...\n")
                         } else {
-                            String::new() // final text, skip
+                            // Log a summary of text-only responses for diagnostics
+                            let preview: String = text.chars().take(200).collect();
+                            if !preview.is_empty() {
+                                format!("💬 Response: {}\n", preview)
+                            } else {
+                                String::new()
+                            }
                         }
                     }
                     ToolUpdate::Error(err) => format!("❌ {}\n", err),
