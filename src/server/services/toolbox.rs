@@ -1516,8 +1516,9 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
     };
     let default_timeout = load_agent_settings()["agentWaitResultTimeout"].as_u64().unwrap_or(300);
     let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(default_timeout);
-    // Hard limit: auto-retry up to 15 minutes total even if individual timeouts are shorter
-    let hard_limit_secs: u64 = 900;
+    // Hard limit: auto-retry up to 1 hour total — orchestrators that delegate to workers
+    // can take a very long time. The coordinator can always call wait_result again.
+    let hard_limit_secs: u64 = 3600;
 
     let (results, result_notify) = {
         let map = realtime_sessions().lock().await;
@@ -1592,15 +1593,22 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
                 "hint": "Call wait_result again to continue waiting. Do NOT resend the task."
             });
         } else {
-            // Agent finished but no result in map — check one more time
-            let mut map = results.lock().await;
-            if let Some(result) = map.remove(&from) {
-                return json!({
-                    "ok": result.ok,
-                    "agentId": from,
-                    "result": result.result,
-                    "output_files": result.output_files,
-                });
+            // Agent finished but no result in map — retry a few times with brief delays
+            // (race: status set to idle slightly after result insertion)
+            for retry in 0..5 {
+                if retry > 0 {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                let mut map = results.lock().await;
+                if let Some(result) = map.remove(&from) {
+                    info!("[wait_result] Got result from '{}' on idle-retry {}", from, retry);
+                    return json!({
+                        "ok": result.ok,
+                        "agentId": from,
+                        "result": result.result,
+                        "output_files": result.output_files,
+                    });
+                }
             }
             return json!({
                 "ok": false,
@@ -6568,10 +6576,13 @@ async fn call_with_tools_inner(
     let base_max_rounds = settings["agentMaxToolRounds"].as_u64().unwrap_or(DEFAULT_MAX_ROUNDS as u64) as usize;
     let base_max_tool_calls = settings["agentMaxToolCalls"].as_u64().unwrap_or(DEFAULT_MAX_TOOL_CALLS as u64) as usize;
     let is_multi_agent_coordinator = !realtime && sub_agent.enabled && !sub_agent.agent_ids.is_empty();
-    let max_rounds = if realtime { base_max_rounds.max(30) }
+    let is_realtime_delegator = realtime && sub_agent.enabled && !sub_agent.agent_ids.is_empty();
+    let max_rounds = if is_realtime_delegator { base_max_rounds.max(50) }
+        else if realtime { base_max_rounds.max(30) }
         else if is_multi_agent_coordinator { base_max_rounds.max(40) }
         else { base_max_rounds };
-    let max_tool_calls = if realtime { base_max_tool_calls.max(60) }
+    let max_tool_calls = if is_realtime_delegator { base_max_tool_calls.max(100) }
+        else if realtime { base_max_tool_calls.max(60) }
         else if is_multi_agent_coordinator { base_max_tool_calls.max(80) }
         else { base_max_tool_calls };
     let max_consecutive_errors = settings["agentMaxConsecutiveErrors"].as_u64().unwrap_or(DEFAULT_MAX_CONSECUTIVE_ERRORS as u64) as usize;
