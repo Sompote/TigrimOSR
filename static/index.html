@@ -130,7 +130,7 @@ textarea { resize: vertical; }
 .page-content { flex: 1; overflow-y: auto; padding: 16px; background: var(--surface); }
 
 /* ===== Chat thread ===== */
-#chat-page { display: flex; flex-direction: column; flex: 1; height: 100%; overflow: hidden; }
+#chat-page { display: flex; flex-direction: column; flex: 1; height: 100%; overflow: hidden; position: relative; }
 #messages {
   flex: 1; overflow-y: auto; padding: 22px 16px 26px;
   display: flex; flex-direction: column; gap: 18px;
@@ -509,6 +509,38 @@ h4.md-h { font-size: 1em; }
 .bubble-ai .katex-display { padding: 4px 0; }
 .bubble-ai .katex-html { white-space: nowrap; }
 
+/* ===== Composer attachments (pending uploads) ===== */
+.attach-bar { display: none; flex-wrap: wrap; gap: 6px; padding: 0 4px 7px; }
+.attach-bar.has-files { display: flex; }
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 999px; padding: 4px 6px 4px 10px;
+  font-size: 12px; color: var(--accent-ink); font-weight: 600;
+  max-width: 220px;
+}
+.attach-chip .ac-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip.uploading { opacity: .55; }
+.attach-chip .ac-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; border: none;
+  background: rgba(0,0,0,.12); color: inherit; cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 0;
+}
+.attach-chip .ac-x:hover { background: rgba(0,0,0,.25); }
+
+/* Drag-and-drop overlay */
+.drop-overlay {
+  position: absolute; inset: 0; z-index: 50; display: none;
+  align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.85));
+  border: 2px dashed var(--accent); border-radius: var(--r-sm);
+  pointer-events: none;
+}
+.drop-overlay.active { display: flex; }
+.drop-overlay-inner { text-align: center; color: var(--accent-ink); font-weight: 700; font-size: 15px; }
+.drop-overlay-inner svg { width: 38px; height: 38px; stroke-width: 1.8; margin-bottom: 8px; }
+
 /* ===== Chat file attachments ===== */
 .chat-files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .chat-file-card {
@@ -631,6 +663,12 @@ h4.md-h { font-size: 1em; }
   <!-- CHAT PAGE -->
   <div class="page active" id="page-chat">
     <div id="chat-page">
+      <div class="drop-overlay" id="drop-overlay">
+        <div class="drop-overlay-inner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div>Drop files to upload</div>
+        </div>
+      </div>
       <div id="messages">
         <div class="msg system-msg"><div class="bubble-system">Send a message to start chatting</div></div>
       </div>
@@ -639,8 +677,10 @@ h4.md-h { font-size: 1em; }
           <button class="chip" id="agent-mode-chip" onclick="cycleAgentMode()"><span class="lead"></span><span id="agent-mode-label">Single Agent</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <button class="chip" onclick="switchTab('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</button>
         </div>
+        <div class="attach-bar" id="attach-bar"></div>
         <div class="composer">
-          <button class="attach" title="Attach file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></button>
+          <button class="attach" title="Attach file" onclick="document.getElementById('file-upload-input').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></button>
+          <input type="file" id="file-upload-input" multiple style="display:none" onchange="uploadChatFiles(this.files); this.value='';">
           <textarea id="chat-input" rows="1" placeholder="Type a message..."></textarea>
           <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled title="Send">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5M5 12l7-7 7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1158,22 +1198,115 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// ========== CHAT FILE UPLOAD ==========
+let pendingAttachments = []; // {name, path, size}
+
+function renderAttachBar() {
+  const bar = document.getElementById('attach-bar');
+  bar.classList.toggle('has-files', pendingAttachments.length > 0);
+  bar.innerHTML = pendingAttachments.map((f, i) =>
+    `<span class="attach-chip${f.uploading ? ' uploading' : ''}">
+      <span class="ac-name">${esc(f.name)}</span>
+      ${f.uploading ? '…' : `<button class="ac-x" onclick="removeAttachment(${i})" title="Remove">&times;</button>`}
+    </span>`
+  ).join('');
+  autosizeInput();
+}
+
+function removeAttachment(i) {
+  pendingAttachments.splice(i, 1);
+  renderAttachBar();
+}
+
+function uploadChatFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f, f.name));
+  // Placeholder chips while uploading
+  const placeholders = files.map(f => ({ name: f.name, path: '', size: f.size, uploading: true }));
+  pendingAttachments.push(...placeholders);
+  renderAttachBar();
+
+  const headers = {};
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  fetch(BASE + '/api/files/chat-upload', { method: 'POST', body: fd, headers })
+    .then(r => r.json())
+    .then(data => {
+      // Replace placeholders with real entries
+      pendingAttachments = pendingAttachments.filter(p => !p.uploading);
+      if (data && data.files) {
+        data.files.forEach(f => pendingAttachments.push({ name: f.name, path: f.path, size: f.size }));
+      }
+      if (!data || !data.files || !data.files.length) {
+        alert((data && data.error) || 'Upload failed — file type may not be allowed.');
+      }
+      renderAttachBar();
+    })
+    .catch(err => {
+      pendingAttachments = pendingAttachments.filter(p => !p.uploading);
+      renderAttachBar();
+      alert('Upload failed: ' + err.message);
+    });
+}
+
+// Drag & drop onto the chat page
+(() => {
+  const page = document.getElementById('chat-page');
+  const overlay = document.getElementById('drop-overlay');
+  if (!page || !overlay) return;
+  let dragDepth = 0;
+  page.addEventListener('dragenter', e => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+    e.preventDefault(); dragDepth++; overlay.classList.add('active');
+  });
+  page.addEventListener('dragover', e => { e.preventDefault(); });
+  page.addEventListener('dragleave', e => {
+    e.preventDefault();
+    if (--dragDepth <= 0) { dragDepth = 0; overlay.classList.remove('active'); }
+  });
+  page.addEventListener('drop', e => {
+    e.preventDefault(); dragDepth = 0; overlay.classList.remove('active');
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+      uploadChatFiles(e.dataTransfer.files);
+    }
+  });
+})();
+
 function sendMessage() {
   const input = document.getElementById('chat-input');
-  const msg = input.value.trim();
-  if (!msg || sending) return;
+  let msg = input.value.trim();
+  const ready = pendingAttachments.filter(f => !f.uploading && f.path);
+  if ((!msg && !ready.length) || sending) return;
+
+  // Fold attachments into the message so the agent knows where the files live
+  const attachedNote = ready.length
+    ? '\n\n[Attached files — read them from the sandbox with read_file / run_python]\n'
+      + ready.map(f => `- ${f.path} (${f.name})`).join('\n')
+    : '';
+  const displayMsg = msg || `(sent ${ready.length} file${ready.length > 1 ? 's' : ''})`;
+  msg = (msg || 'Please look at the attached file(s).') + attachedNote;
+  const sentFiles = ready.slice();
+
   sending = true;
   input.value = '';
+  pendingAttachments = [];
+  renderAttachBar();
   autosizeInput();
 
   const doSend = (sessionId) => {
     const el = document.getElementById('messages');
-    // Add user message
+    // Add user message (clean text + chips for any attached files)
+    const fileChips = sentFiles.length
+      ? `<div class="chat-files">` + sentFiles.map(f =>
+          `<span class="chat-file-card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="cf-name">${esc(f.name)}</span></span>`
+        ).join('') + `</div>`
+      : '';
     el.innerHTML += `<div class="msg user">
       <div class="avatar" style="background:linear-gradient(150deg,#E0A23D,#C97E2E);box-shadow:0 4px 11px -5px rgba(201,126,46,.5)">Y</div>
       <div class="msg-col">
         <div class="msg-head"><span class="msg-name">You</span></div>
-        <div class="bubble-you">${esc(msg)}</div>
+        <div class="bubble-you">${esc(displayMsg)}${fileChips}</div>
       </div>
     </div>`;
     // Add thinking indicator
@@ -1242,7 +1375,7 @@ function sendMessage() {
     doSend(currentSessionId);
   } else {
     api('/api/chat/sessions', {
-      method: 'POST', body: JSON.stringify({ title: msg.slice(0, 60) })
+      method: 'POST', body: JSON.stringify({ title: displayMsg.slice(0, 60) })
     }).then(data => {
       currentSessionId = data.id; loadSessions(); doSend(currentSessionId);
     }).catch(() => { sending = false; });
@@ -1275,7 +1408,8 @@ const sendBtn = document.getElementById('send-btn');
 function autosizeInput() {
   chatInput.style.height = 'auto';
   chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
-  sendBtn.disabled = chatInput.value.trim() === '';
+  const hasAttachment = pendingAttachments.some(f => !f.uploading && f.path);
+  sendBtn.disabled = chatInput.value.trim() === '' && !hasAttachment;
 }
 chatInput.addEventListener('input', autosizeInput);
 chatInput.addEventListener('keydown', e => {

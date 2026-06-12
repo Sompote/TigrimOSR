@@ -83,6 +83,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/preview", get(preview_handler))
         .route("/download", get(download_handler))
         .route("/raw", get(raw_handler))
+        // Axum's default body limit is 2MB — far too small for PDFs/datasets
+        // uploaded from the web/mobile chat.
+        .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024))
 }
 
 // ---------------------------------------------------------------------------
