@@ -159,6 +159,7 @@ async fn run_in_vm(cmd: &str, timeout_secs: u64) -> Result<(String, String, bool
                 "tigris@localhost",
                 cmd,
             ])
+            .kill_on_drop(true)
             .output(),
     )
     .await;
@@ -444,6 +445,11 @@ pub fn append_session_progress(session_id: &str, text: &str) {
     let log_dir = crate::server::data::data_dir().join("activity_logs");
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join(format!("{}.log", session_id));
+    // Disk-fill guard: a looping agent can append forever — cap each session's
+    // activity log at 20MB and stop appending past that.
+    if let Ok(meta) = std::fs::metadata(&log_path) {
+        if meta.len() > 20 * 1024 * 1024 { return; }
+    }
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -3255,6 +3261,36 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "defaults write", "csrutil",
 ];
 
+/// Unsandboxed direct execution is opt-in: only when the user explicitly sets
+/// agentAllowUnsandboxedExec=true in settings.json. Default is to FAIL when no
+/// sandbox is available rather than silently running on the bare host.
+#[cfg(target_os = "macos")]
+fn allow_unsandboxed_exec() -> bool {
+    load_agent_settings()["agentAllowUnsandboxedExec"].as_bool().unwrap_or(false)
+}
+
+/// SBPL deny rules for secret-bearing paths. sandbox-exec allows file-read*
+/// everywhere (python needs system libs/site-packages), so explicitly deny
+/// credentials. In SBPL the LAST matching rule wins — these must come after
+/// the (allow file-read*) line.
+#[cfg(target_os = "macos")]
+fn secret_read_deny_rules() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if home.is_empty() || home == "/" {
+        return String::new();
+    }
+    let subpaths = [".ssh", ".aws", ".gnupg", ".config/gh", "Library/Keychains"];
+    let literals = [".netrc", ".npmrc", ".pypirc"];
+    let mut rules = String::new();
+    for p in subpaths {
+        rules.push_str(&format!("(deny file-read* (subpath \"{}/{}\"))\n", home, p));
+    }
+    for p in literals {
+        rules.push_str(&format!("(deny file-read* (literal \"{}/{}\"))\n", home, p));
+    }
+    rules
+}
+
 /// Check if code/command contains dangerous patterns
 fn check_dangerous(code: &str) -> Option<String> {
     let lower = code.to_lowercase();
@@ -3325,6 +3361,12 @@ async fn scan_output_files(sandbox_dir: &str) -> Vec<String> {
         }
     }
     output_files
+}
+
+/// Public entry for HTTP routes: run Python through the full sandboxed tier
+/// chain (dangerous-pattern check, container/sandbox-exec, 60s timeout).
+pub async fn run_python_sandboxed(code: &str, sandbox_dir: &str) -> Value {
+    exec_run_python(&json!({"code": code}), sandbox_dir).await
 }
 
 async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
@@ -3413,6 +3455,9 @@ def save_output(filename, content=None, mode='w'):
         .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
 
     // On macOS, try sandboxed execution first; on other platforms, execute directly.
+    // Tier rules: a TIMEOUT in any tier is final (never re-run elsewhere — the
+    // code already ran for the full window inside the sandbox); only a SPAWN
+    // failure moves to the next tier. Unsandboxed direct execution is opt-in.
     #[cfg(target_os = "macos")]
     let result = {
         // Primary: Apple container CLI (macOS containerization)
@@ -3426,22 +3471,26 @@ def save_output(filename, content=None, mode='w'):
                     "python:3.11-slim",
                     "python3", "-c", code,
                 ])
+                .kill_on_drop(true)
                 .output(),
         )
         .await;
 
-        // Fallback 1: sandbox-exec (macOS legacy)
-        let r = match &r {
-            Ok(Ok(o)) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty() => r,
-            _ => {
-                warn!("[sandbox] container CLI not available, trying sandbox-exec");
-                let sandbox_profile = format!(
-                    r#"(version 1)
+        let container_worked = matches!(&r,
+            Ok(Ok(o)) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty());
+
+        if container_worked || matches!(&r, Err(_)) {
+            r // container ran (or timed out inside the container) — final
+        } else {
+            // Fallback 1: sandbox-exec (macOS legacy)
+            warn!("[sandbox] container CLI not available, trying sandbox-exec");
+            let sandbox_profile = format!(
+                r#"(version 1)
 (deny default)
 (allow process-exec)
 (allow process-fork)
 (allow file-read*)
-(allow file-write* (subpath "{}"))
+{denies}(allow file-write* (subpath "{sandbox}"))
 (allow file-write* (subpath "/tmp"))
 (allow file-write* (subpath "/private/tmp"))
 (allow file-write* (subpath "/dev/null"))
@@ -3451,41 +3500,51 @@ def save_output(filename, content=None, mode='w'):
 (allow network-outbound)
 (allow network-inbound)
 (allow signal)"#,
-                    abs_sandbox.display()
-                );
-                timeout(
-                    Duration::from_secs(60),
-                    Command::new("/usr/bin/sandbox-exec")
-                        .arg("-p")
-                        .arg(&sandbox_profile)
-                        .arg(&find_python())
-                        .arg("-c")
-                        .arg(code)
-                        .current_dir(sandbox_dir)
-                        .env("MPLCONFIGDIR", &mpl_config_dir)
-                        .env("HOME", sandbox_dir)
-                        .output(),
-                )
-                .await
-            }
-        };
+                denies = secret_read_deny_rules(),
+                sandbox = abs_sandbox.display()
+            );
+            let r2 = timeout(
+                Duration::from_secs(60),
+                Command::new("/usr/bin/sandbox-exec")
+                    .arg("-p")
+                    .arg(&sandbox_profile)
+                    .arg(&find_python())
+                    .arg("-c")
+                    .arg(code)
+                    .current_dir(sandbox_dir)
+                    .env("MPLCONFIGDIR", &mpl_config_dir)
+                    .env("HOME", sandbox_dir)
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await;
 
-        // Fallback 2: direct execution
-        match &r {
-            Ok(Ok(_)) => r,
-            _ => {
-                warn!("[sandbox] sandbox-exec failed, falling back to direct execution");
-                timeout(
-                    Duration::from_secs(60),
-                    python_command()
-                        .arg("-c")
-                        .arg(code)
-                        .current_dir(sandbox_dir)
-                        .env("MPLCONFIGDIR", &mpl_config_dir)
-                        .env("HOME", sandbox_dir)
-                        .output(),
-                )
-                .await
+            match &r2 {
+                Ok(Ok(_)) | Err(_) => r2, // ran or timed out inside the sandbox — final
+                Ok(Err(_)) if allow_unsandboxed_exec() => {
+                    // Fallback 2 (opt-in): direct unsandboxed execution
+                    warn!("[sandbox] sandbox-exec unavailable — direct execution (agentAllowUnsandboxedExec=true)");
+                    timeout(
+                        Duration::from_secs(60),
+                        python_command()
+                            .arg("-c")
+                            .arg(code)
+                            .current_dir(sandbox_dir)
+                            .env("MPLCONFIGDIR", &mpl_config_dir)
+                            .env("HOME", sandbox_dir)
+                            .kill_on_drop(true)
+                            .output(),
+                    )
+                    .await
+                }
+                Ok(Err(_)) => {
+                    return json!({
+                        "ok": false,
+                        "error": "No sandbox available: both the Apple container CLI and sandbox-exec \
+                                  failed to start. Unsandboxed execution is disabled \
+                                  (set agentAllowUnsandboxedExec=true in settings.json to override)."
+                    });
+                }
             }
         }
     };
@@ -3499,6 +3558,7 @@ def save_output(filename, content=None, mode='w'):
             .current_dir(sandbox_dir)
             .env("MPLCONFIGDIR", &mpl_config_dir)
             .env("HOME", sandbox_dir)
+            .kill_on_drop(true)
             .output(),
     )
     .await;
@@ -3584,6 +3644,8 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
         .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
 
     // On macOS, try sandboxed execution first; on other platforms, execute directly.
+    // Tier rules: a TIMEOUT in any tier is final (never re-run elsewhere); only a
+    // SPAWN failure moves to the next tier. Unsandboxed direct execution is opt-in.
     #[cfg(target_os = "macos")]
     let result = {
         // Primary: Apple container CLI
@@ -3597,22 +3659,26 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
                     "alpine:latest",
                     "sh", "-c", command,
                 ])
+                .kill_on_drop(true)
                 .output(),
         )
         .await;
 
-        // Fallback 1: sandbox-exec (macOS legacy)
-        let r = match &r {
-            Ok(Ok(o)) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty() => r,
-            _ => {
-                warn!("[sandbox] container CLI not available, trying sandbox-exec");
-                let sandbox_profile = format!(
-                    r#"(version 1)
+        let container_worked = matches!(&r,
+            Ok(Ok(o)) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty());
+
+        if container_worked || matches!(&r, Err(_)) {
+            r // container ran (or timed out inside the container) — final
+        } else {
+            // Fallback 1: sandbox-exec (macOS legacy)
+            warn!("[sandbox] container CLI not available, trying sandbox-exec");
+            let sandbox_profile = format!(
+                r#"(version 1)
 (deny default)
 (allow process-exec)
 (allow process-fork)
 (allow file-read*)
-(allow file-write* (subpath "{}"))
+{denies}(allow file-write* (subpath "{sandbox}"))
 (allow file-write* (subpath "/tmp"))
 (allow file-write* (subpath "/private/tmp"))
 (allow file-write* (subpath "/dev/null"))
@@ -3620,37 +3686,47 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
 (allow mach-lookup)
 (allow network-outbound)
 (allow signal)"#,
-                    abs_sandbox.display()
-                );
-                timeout(
-                    Duration::from_secs(30),
-                    Command::new("/usr/bin/sandbox-exec")
-                        .arg("-p")
-                        .arg(&sandbox_profile)
-                        .arg("/bin/sh")
-                        .arg("-c")
-                        .arg(command)
-                        .current_dir(&cwd)
-                        .output(),
-                )
-                .await
-            }
-        };
+                denies = secret_read_deny_rules(),
+                sandbox = abs_sandbox.display()
+            );
+            let r2 = timeout(
+                Duration::from_secs(30),
+                Command::new("/usr/bin/sandbox-exec")
+                    .arg("-p")
+                    .arg(&sandbox_profile)
+                    .arg("/bin/sh")
+                    .arg("-c")
+                    .arg(command)
+                    .current_dir(&cwd)
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await;
 
-        // Fallback 2: direct execution
-        match &r {
-            Ok(Ok(_)) => r,
-            _ => {
-                warn!("[sandbox] sandbox-exec failed, falling back to direct execution");
-                timeout(
-                    Duration::from_secs(30),
-                    shell_command()
-                        .arg("-c")
-                        .arg(command)
-                        .current_dir(&cwd)
-                        .output(),
-                )
-                .await
+            match &r2 {
+                Ok(Ok(_)) | Err(_) => r2, // ran or timed out inside the sandbox — final
+                Ok(Err(_)) if allow_unsandboxed_exec() => {
+                    // Fallback 2 (opt-in): direct unsandboxed execution
+                    warn!("[sandbox] sandbox-exec unavailable — direct execution (agentAllowUnsandboxedExec=true)");
+                    timeout(
+                        Duration::from_secs(30),
+                        shell_command()
+                            .arg("-c")
+                            .arg(command)
+                            .current_dir(&cwd)
+                            .kill_on_drop(true)
+                            .output(),
+                    )
+                    .await
+                }
+                Ok(Err(_)) => {
+                    return json!({
+                        "ok": false,
+                        "error": "No sandbox available: both the Apple container CLI and sandbox-exec \
+                                  failed to start. Unsandboxed execution is disabled \
+                                  (set agentAllowUnsandboxedExec=true in settings.json to override)."
+                    });
+                }
             }
         }
     };
@@ -3662,7 +3738,7 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
         cmd.arg("/c").arg(command);
         #[cfg(not(target_os = "windows"))]
         cmd.arg("-c").arg(command);
-        timeout(Duration::from_secs(30), cmd.current_dir(&cwd).output()).await
+        timeout(Duration::from_secs(30), cmd.current_dir(&cwd).kill_on_drop(true).output()).await
     };
 
     match result {
@@ -3715,7 +3791,11 @@ async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
             match result {
                 Ok(Ok(t)) => {
                     compact::track_file_read(&key, &t);
-                    pdf_cache().lock().unwrap().insert(key.clone(), t.clone());
+                    let mut cache = pdf_cache().lock().unwrap();
+                    // Memory guard: extracted PDF text accumulates forever in a
+                    // long-running server — reset the cache past 24 entries.
+                    if cache.len() >= 24 { cache.clear(); }
+                    cache.insert(key.clone(), t.clone());
                     t
                 }
                 Ok(Err(e)) => return json!({ "ok": false, "error": format!("Failed to extract PDF text: {e}") }),
@@ -4313,6 +4393,7 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
             Duration::from_secs(30),
             Command::new(&npx_bin)
                 .args(["--yes", "esbuild", jsx_tmp.to_str().unwrap_or(""), "--bundle=false", "--loader=jsx"])
+                .kill_on_drop(true)
                 .output(),
         ).await;
         let _ = tokio::fs::remove_file(&jsx_tmp).await;
@@ -4474,7 +4555,7 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
 
     info!("[ClaudeCode] Spawning in {} (timeout: {}s, maxTurns: {})", sandbox_dir, timeout_secs, max_turns);
 
-    match timeout(Duration::from_secs(timeout_secs), Command::new("claude").args(&cli_args).current_dir(sandbox_dir).output()).await {
+    match timeout(Duration::from_secs(timeout_secs), Command::new("claude").args(&cli_args).current_dir(sandbox_dir).kill_on_drop(true).output()).await {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut result_text = String::new();
@@ -4541,6 +4622,7 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
             .current_dir(sandbox_dir)
             .env("PATH", cli_env_path())
             .env("HOME", &home)
+            .kill_on_drop(true)
             .output()
     ).await {
         Ok(Ok(output)) => {
@@ -5874,6 +5956,7 @@ async fn llm_call_claude_code(
             .env("PATH", cli_env_path())
             .env("HOME", &home)
             .env("CLAUDE_MAX_OUTPUT_TOKENS", max_tokens.to_string())
+            .kill_on_drop(true)
             .output(),
     ).await;
 
@@ -6052,6 +6135,7 @@ async fn llm_call_gemini_cli(
             .env("PATH", cli_env_path())
             .env("HOME", &home)
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .output(),
     ).await;
 
@@ -6261,6 +6345,7 @@ async fn llm_call_codex_cli(
             .env("HOME", &home)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .output(),
     ).await;
 

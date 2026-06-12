@@ -12,7 +12,6 @@ use serde_json::json;
 use tokio::fs;
 
 use crate::server::data::*;
-use crate::server::services::toolbox::find_python;
 use crate::server::AppState;
 
 // ---------------------------------------------------------------------------
@@ -92,60 +91,28 @@ async fn run_python(
 
     let sandbox_dir = resolve_sandbox_dir(&state).await;
 
-    // Write code to a temporary file
-    let tmp_file = format!(
-        "/tmp/tigrimos_py_{}_{}.py",
-        std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-    );
-    if let Err(e) = fs::write(&tmp_file, &code).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to write temp file: {}", e)})),
-        );
+    // Route through the same sandboxed runner the agents use: dangerous-pattern
+    // check, container/sandbox-exec tiers, 60s timeout, kill-on-timeout. The
+    // previous direct `python3 file.py` here had NO sandbox and NO timeout.
+    let result = crate::server::services::toolbox::run_python_sandboxed(&code, &sandbox_dir).await;
+
+    let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let stdout = result.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut stderr = result.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if let Some(err) = result.get("error").and_then(|v| v.as_str()) {
+        if stderr.is_empty() { stderr = err.to_string(); }
     }
+    let exit_code = result.get("exit_code").and_then(|v| v.as_i64())
+        .unwrap_or(if ok { 0 } else { 1 });
 
-    // Determine python binary — use settings override, else robust find_python()
-    let settings = get_settings().await;
-    let python_bin = settings
-        .python_path
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(find_python);
-
-    // Execute
-    let result = tokio::process::Command::new(&python_bin)
-        .arg(&tmp_file)
-        .current_dir(&sandbox_dir)
-        .output()
-        .await;
-
-    // Clean up temp file
-    let _ = fs::remove_file(&tmp_file).await;
-
-    match result {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let exit_code = output.status.code().unwrap_or(1);
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "stdout": stdout,
-                    "stderr": stderr,
-                    "code": exit_code,
-                })),
-            )
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": e.to_string(),
-                "stdout": "",
-                "stderr": e.to_string(),
-                "code": 1,
-            })),
-        ),
-    }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "stdout": stdout,
+            "stderr": stderr,
+            "code": exit_code,
+        })),
+    )
 }
 
 // ---------------------------------------------------------------------------

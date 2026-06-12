@@ -48,13 +48,34 @@ async fn exec_command(
         state.sandbox_dir.clone()
     };
 
-    let result = tokio::process::Command::new("/bin/bash")
-        .arg("-c")
-        .arg(&command)
-        .current_dir(&cwd)
-        .env("TERM", "dumb")
-        .output()
-        .await;
+    // Hard timeout + kill_on_drop: an interactive/hung command (top, vim, a
+    // server) would otherwise block this handler forever and leak the child
+    // process — enough of those accumulate to exhaust the host.
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        tokio::process::Command::new("/bin/bash")
+            .arg("-c")
+            .arg(&command)
+            .current_dir(&cwd)
+            .env("TERM", "dumb")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
+
+    let result = match result {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "stdout": "",
+                    "stderr": "Command timed out after 120s and was killed.",
+                    "exitCode": 124,
+                })),
+            )
+        }
+    };
 
     match result {
         Ok(output) => {

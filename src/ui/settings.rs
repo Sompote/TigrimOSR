@@ -199,6 +199,7 @@ pub struct SettingsView {
     agent_tool_result_max_len: u64,
     agent_wait_result_timeout: u64,
     agent_wait_result_hard_timeout: u64,
+    agent_allow_unsandboxed_exec: bool,
 
     // --- Soul & Identity ---
     orchestrator_soul: String,
@@ -301,6 +302,7 @@ impl Default for SettingsView {
             agent_tool_result_max_len: 6000,
             agent_wait_result_timeout: 120,
             agent_wait_result_hard_timeout: 1800,
+            agent_allow_unsandboxed_exec: false,
 
             orchestrator_soul: String::new(),
             orchestrator_identity: String::new(),
@@ -528,6 +530,8 @@ impl SettingsView {
             .and_then(|v| v.as_u64()).unwrap_or(120);
         self.agent_wait_result_hard_timeout = settings.extra.get("agentWaitResultHardTimeout")
             .and_then(|v| v.as_u64()).unwrap_or(1800);
+        self.agent_allow_unsandboxed_exec = settings.extra.get("agentAllowUnsandboxedExec")
+            .and_then(|v| v.as_bool()).unwrap_or(false);
 
         // Soul & Identity (stored in SOUL.md / IDENTITY.md files)
         let data_dir = crate::server::data::data_dir();
@@ -641,6 +645,7 @@ impl SettingsView {
         settings.extra.insert("agentToolResultMaxLen".into(), serde_json::json!(self.agent_tool_result_max_len));
         settings.extra.insert("agentWaitResultTimeout".into(), serde_json::json!(self.agent_wait_result_timeout));
         settings.extra.insert("agentWaitResultHardTimeout".into(), serde_json::json!(self.agent_wait_result_hard_timeout));
+        settings.extra.insert("agentAllowUnsandboxedExec".into(), serde_json::json!(self.agent_allow_unsandboxed_exec));
 
         // Soul & Identity (saved to SOUL.md / IDENTITY.md files)
         let data_dir = crate::server::data::data_dir();
@@ -1348,6 +1353,13 @@ impl SettingsView {
                 ui.add(egui::Slider::new(&mut self.agent_wait_result_hard_timeout, 300..=7200).text("sec"));
                 ui.end_row();
             });
+
+        ui.add_space(4.0);
+        ui.checkbox(&mut self.agent_allow_unsandboxed_exec,
+            "Allow UNSANDBOXED execution fallback (not recommended)")
+            .on_hover_text("When the Apple container CLI and sandbox-exec are both unavailable, \
+                run agent shell/python commands directly on the host with no sandbox. \
+                Off (default): such commands fail with an error instead of escaping the sandbox.");
 
         ui.add_space(4.0);
         ui.checkbox(&mut self.agent_reflection_enabled, "Enable self-reflection / evaluation")
