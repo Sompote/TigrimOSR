@@ -106,27 +106,38 @@ fn token_owns_task(caller_token: &str, owner_token: &str) -> bool {
 struct SubmitTaskBody {
     task: String,
     config_file: Option<String>,
+    mode: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// POST /remote/task — submit a task for execution
+/// POST /remote/task — submit a task for execution.
+/// Access is governed by the auth middleware — this endpoint also serves the
+/// local web UI's Agents page, so it must not require remote_enabled.
 async fn submit_task(headers: HeaderMap, Json(body): Json<SubmitTaskBody>) -> impl IntoResponse {
     let settings = get_settings().await;
-
-    // Check if remote is enabled
-    if settings.remote_enabled != Some(true) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "ok": false, "error": "Remote tasks are not enabled" })),
-        );
-    }
 
     let caller_token = extract_caller_token(&headers);
     let task_id = Uuid::new_v4().to_string();
     let session_id = format!("remote_{}", &task_id[..8]);
+
+    let mode = body.mode.clone().unwrap_or_else(|| "auto".to_string());
+    // Resolve the agent team: explicit in the request, else the server's
+    // configured sub-agent system (so older clients still get the team).
+    // "single" mode means: no team, run a plain single agent.
+    let config_file = if mode == "single" {
+        None
+    } else {
+        body.config_file.clone().filter(|f| !f.is_empty()).or_else(|| {
+            if settings.sub_agent_enabled == Some(true) {
+                settings.sub_agent_config_file.clone().filter(|f| !f.is_empty())
+            } else {
+                None
+            }
+        })
+    };
 
     let entry = RemoteTaskEntry {
         id: task_id.clone(),
@@ -150,10 +161,11 @@ async fn submit_task(headers: HeaderMap, Json(body): Json<SubmitTaskBody>) -> im
     let task = body.task.clone();
     let tid = task_id.clone();
     let sid = session_id.clone();
-    let config_file = body.config_file.clone();
+    let cf = config_file.clone();
+    let task_mode = mode.clone();
 
     tokio::spawn(async move {
-        process_remote_task(tid, sid, task, config_file).await;
+        process_remote_task(tid, sid, task, cf, task_mode).await;
     });
 
     (
@@ -176,12 +188,14 @@ async fn list_tasks(headers: HeaderMap) -> impl IntoResponse {
         .map(|t| {
             json!({
                 "id": t.id,
-                "task": if t.task.len() > 200 { let mut i = 200; while i > 0 && !t.task.is_char_boundary(i) { i -= 1; } format!("{}...", &t.task[..i]) } else { t.task.clone() },
+                "task": crate::util::truncate_utf8_ellipsis(&t.task, 200),
                 "status": t.status,
                 "sessionId": t.session_id,
                 "createdAt": t.created_at,
                 "completedAt": t.completed_at,
                 "progressCount": t.progress.len(),
+                "result": t.result.as_deref().map(|r| crate::util::truncate_utf8_ellipsis(r, 2000)),
+                "lastProgress": t.progress.last().and_then(|p| p["message"].as_str()).unwrap_or(""),
             })
         })
         .collect();
@@ -322,6 +336,7 @@ async fn process_remote_task(
     session_id: String,
     task: String,
     config_file: Option<String>,
+    mode: String,
 ) {
     set_status(&task_id, "running").await;
     add_progress(&task_id, "Task started").await;
@@ -392,7 +407,7 @@ async fn process_remote_task(
                     depth: 0,
                     session_id: session_id.clone(),
                     agent_id: "main".to_string(),
-                    mode: "auto".to_string(),
+                    mode: if mode == "single" { "auto".to_string() } else { mode.clone() },
                     agent_role: "orchestrator".to_string(),
                     cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 }

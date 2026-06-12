@@ -932,8 +932,12 @@ function api(path, opts = {}) {
     .then(r => {
       if (r.status === 401 && authRequired) { doLogout(); throw new Error('Unauthorized'); }
       if (!r.ok) {
+        // Surface HTTP errors to callers — silently resolving with the error
+        // body made failures (e.g. 403s) look like success.
         return r.text().then(t => {
-          try { return JSON.parse(t); } catch(e) { throw new Error(t || 'Request failed'); }
+          let msg = t || ('HTTP ' + r.status);
+          try { const j = JSON.parse(t); msg = j.error || j.message || msg; } catch(e) {}
+          throw new Error(msg);
         });
       }
       return r.json();
@@ -1806,14 +1810,14 @@ function loadRemoteTasks() {
     if (!tasks.length) { el.innerHTML = '<div style="color:var(--ink-soft)">No remote tasks</div>'; return; }
     el.innerHTML = tasks.map(t => `
       <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <h3>${esc((t.task||'').slice(0,60))}</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <h3>${esc((t.task||'').slice(0,80))}</h3>
           <span class="badge ${t.status}">${t.status}</span>
         </div>
-        <div class="detail">ID: ${t.id}</div>
-        <div class="detail">Created: ${t.created_at || ''}</div>
+        <div class="detail">Created: ${esc((t.createdAt || t.created_at || '').replace('T',' ').slice(0,19))}</div>
+        ${t.status === 'running' && t.lastProgress ? `<div class="detail">⏳ ${esc(t.lastProgress)}</div>` : ''}
         ${t.result ? `<div style="margin-top:8px">${md(t.result)}</div>` : ''}
-        ${t.status === 'running' ? `<button class="pill-btn danger" onclick="killTask('${t.id}')" style="margin-top:8px;font-size:12px">Kill</button>` : ''}
+        ${(t.status === 'running' || t.status === 'pending') ? `<button class="pill-btn danger" onclick="killTask('${t.id}')" style="margin-top:8px;font-size:12px">Kill</button>` : ''}
       </div>
     `).join('');
   }).catch(() => {});
@@ -1823,10 +1827,27 @@ function submitTask() {
   const input = document.getElementById('task-input');
   const task = input.value.trim();
   if (!task) return;
+  // Send the selected agent team + mode — without these the server ran a
+  // plain single agent regardless of what was picked in the toolbar.
+  const modeSel = document.getElementById('agents-mode-select');
+  const body = {
+    task,
+    config_file: currentAgentConfig || null,
+    mode: modeSel ? modeSel.value : 'auto',
+  };
   input.value = '';
-  api('/api/remote/task', { method: 'POST', body: JSON.stringify({ task }) })
-    .then(() => setTimeout(loadRemoteTasks, 500))
-    .catch(err => alert('Error: ' + err.message));
+  const status = document.getElementById('agent-config-status');
+  if (status) status.textContent = 'Task submitted…';
+  api('/api/remote/task', { method: 'POST', body: JSON.stringify(body) })
+    .then(() => {
+      if (status) setTimeout(() => status.textContent = '', 2000);
+      setTimeout(loadRemoteTasks, 500);
+    })
+    .catch(err => {
+      if (status) status.textContent = '';
+      input.value = task; // give the text back so it isn't lost
+      alert('Submit failed: ' + err.message);
+    });
 }
 
 function killTask(id) {
