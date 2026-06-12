@@ -1612,7 +1612,7 @@ You have access to these tools: {}.{}",
                         if !target.is_empty() {
                             let ts = chrono::Utc::now().format("%H:%M:%S").to_string();
                             autocreate_log_lines.lock().unwrap().push(
-                                format!("[{}] FULLY_AUTO: send_task → {} : {}", ts, target, &user_msg[..user_msg.len().min(100)])
+                                format!("[{}] FULLY_AUTO: send_task → {} : {}", ts, target, crate::util::truncate_utf8(&user_msg, 100))
                             );
                             let task_preview = if user_msg.len() > 80 { format!("{}...", &user_msg[..floor_char_boundary(&user_msg, 80)]) } else { user_msg.clone() };
                             fa_add_tool("send_task", "calling...", &format!("→ {} | {}", target, task_preview), &fa_calls);

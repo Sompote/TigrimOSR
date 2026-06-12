@@ -420,7 +420,7 @@ ARCHITECTURE RULES:
 - Generate between 3-8 agents (including human) unless user specifies otherwise"#
     );
 
-    info!("[AutoArch] Generating {} system: {}", arch_type, &description[..description.len().min(80)]);
+    info!("[AutoArch] Generating {} system: {}", arch_type, crate::util::truncate_utf8(&description, 80));
 
     match call_llm_simple(
         api_key,

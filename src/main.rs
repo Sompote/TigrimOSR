@@ -1,6 +1,7 @@
 mod security;
 mod server;
 mod ui;
+mod util;
 mod vm;
 
 use std::sync::Arc;

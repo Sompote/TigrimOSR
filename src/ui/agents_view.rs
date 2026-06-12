@@ -663,11 +663,7 @@ impl AgentsView {
                         let tip_x = node_rect.right() + 8.0;
                         let tip_y = node_rect.min.y;
                         let tip_w = 200.0_f32;
-                        let persona_preview = if node.persona.len() > 60 {
-                            format!("{}...", &node.persona[..60])
-                        } else {
-                            node.persona.clone()
-                        };
+                        let persona_preview = crate::util::truncate_utf8_ellipsis(&node.persona, 60);
                         let line_count = 2 + if persona_preview.is_empty() { 0 } else { 1 } + if node.bus_enabled { 1 } else { 0 };
                         let tip_h = line_count as f32 * 16.0 + 16.0;
                         let tip_rect = Rect::from_min_size(Pos2::new(tip_x, tip_y), Vec2::new(tip_w, tip_h));

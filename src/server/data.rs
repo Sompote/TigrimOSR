@@ -24,8 +24,8 @@ pub fn set_remote_backend(backend: Option<RemoteBackend>) {
     remote_cache_clear();
     // Pre-warm cache for the new backend
     if let Some(ref rb) = backend {
-        eprintln!("[remote] Connecting to remote: {} (token={}...)", rb.url, &rb.token[..rb.token.len().min(4)]);
-        let _ = std::fs::write("/tmp/tigrimos_remote.log", format!("CONNECT url={} token={}\n", rb.url, &rb.token[..rb.token.len().min(8)]));
+        eprintln!("[remote] Connecting to remote: {} (token={}...)", rb.url, crate::util::truncate_utf8(&rb.token, 4));
+        let _ = std::fs::write("/tmp/tigrimos_remote.log", format!("CONNECT url={} token={}\n", rb.url, crate::util::truncate_utf8(&rb.token, 8)));
         remote_bg_fetch(rb, "/api/chat/sessions/bulk", 10);
         remote_bg_fetch(rb, "/api/settings", 15);
         remote_bg_fetch(rb, "/api/projects", 10);

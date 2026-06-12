@@ -163,10 +163,10 @@ pub async fn get_synth_status() -> SynthesizerStatus {
 // ---------------------------------------------------------------------------
 
 fn skills_dir() -> PathBuf {
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("data")
-        .join("skills")
+    // Must match where the rest of the app reads/writes skills. The old
+    // current_dir()-based path broke the whole feature when launched from an
+    // .app bundle (cwd = "/", so it silently targeted /data/skills).
+    crate::server::data::data_dir().join("skills")
 }
 
 fn sanitize_slug(name: &str) -> String {
@@ -191,7 +191,9 @@ async fn list_existing_skill_summaries() -> Vec<ExistingSkillInfo> {
     let skills = get_skills().await;
     let mut out = Vec::new();
     for s in &skills {
-        let body = if s.source == "auto" {
+        // Include bodies for updatable skills so the LLM can propose
+        // meaningful diffs (auto + custom; marketplace skills stay name-only).
+        let body = if s.source == "auto" || s.source == "custom" {
             read_auto_skill_content(&s.name).await
         } else {
             None
@@ -262,12 +264,16 @@ async fn read_chat_log_tail(session_id: &str) -> String {
             };
             if let Ok(content) = tokio::fs::read_to_string(&file).await {
                 if start > 0 {
-                    // Skip the first partial line
-                    let skip = start as usize;
-                    if skip < content.len() {
-                        content[skip..].to_string()
-                    } else {
-                        content
+                    // Skip to a char boundary (byte slicing panics on UTF-8,
+                    // e.g. Thai logs), then to the next full line.
+                    let mut skip = (start as usize).min(content.len());
+                    while skip < content.len() && !content.is_char_boundary(skip) {
+                        skip += 1;
+                    }
+                    let tail = &content[skip..];
+                    match tail.find('\n') {
+                        Some(nl) => tail[nl + 1..].to_string(),
+                        None => tail.to_string(),
                     }
                 } else {
                     content
@@ -282,15 +288,33 @@ async fn read_chat_log_tail(session_id: &str) -> String {
 
 /// Parse the chat-log into per-agent traces.
 /// Sees AGENT_SPAWN/DONE, AGENT_WORKING/COMPLETE, and tool calls.
+/// Parse the chat-log into per-agent traces.
+///
+/// Handles the two formats this app actually writes:
+///
+/// Desktop / realtime agents (ui/chat.rs + toolbox.rs log closures):
+///   [22:06:18] [design_orchestrator] TOOL CALL: send_task
+///     args: {"to":"geotechnical_engineer","task":"..."}
+///   [22:06:18] [design_orchestrator] TOOL RESULT: send_task
+///     {"agentId":"geotechnical_engineer","ok":true,...}
+///   [22:05:57] TOOL CALL: check_agents          <- no [agent] = main agent
+///
+/// Web chat (routes/chat.rs on_update):
+///   🔧 Calling **run_shell** — {"command":"..."}
+///   ✅ **run_shell** done — {"exit_code":0,"ok":true,...}
 fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
     if log.is_empty() {
         return Vec::new();
     }
 
     let mut traces: HashMap<String, SubagentTrace> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
 
     macro_rules! ensure_trace {
-        ($map:expr, $label:expr) => {
+        ($map:expr, $order:expr, $label:expr) => {{
+            if !$map.contains_key($label) {
+                $order.push($label.to_string());
+            }
             $map.entry($label.to_string()).or_insert_with(|| SubagentTrace {
                 label: $label.to_string(),
                 task: None,
@@ -299,71 +323,147 @@ fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
                 completed: false,
                 error: None,
             })
-        };
+        }};
     }
 
-    // AGENT_SPAWN/WORKING
-    let re_spawn = Regex::new(r"AGENT_(?:SPAWN|WORKING): ([^\n]+)\n(?:\s+TASK:\s*([^\n]+))?").unwrap();
-    for cap in re_spawn.captures_iter(log) {
-        let label = cap[1].trim().to_string();
-        let t = ensure_trace!(traces, label);
-        if let Some(task_match) = cap.get(2) {
-            if t.task.is_none() {
-                let task: String = task_match.as_str().trim().chars().take(240).collect();
-                t.task = Some(task);
+    fn json_field<'a>(s: &'a str, key: &str) -> Option<String> {
+        // Cheap extraction of "key":"value" from a (possibly truncated) JSON line
+        let needle = format!("\"{}\":", key);
+        let start = s.find(&needle)? + needle.len();
+        let rest = s[start..].trim_start();
+        let rest = rest.strip_prefix('"')?;
+        let mut out = String::new();
+        let mut chars = rest.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => { if let Some(n) = chars.next() { out.push(n); } }
+                '"' => break,
+                _ => out.push(c),
+            }
+        }
+        Some(out)
+    }
+
+    // Desktop format: "[ts] TOOL CALL: name" or "[ts] [agent] TOOL CALL: name",
+    // with "  args: {...}" on the following line. Same shape for TOOL RESULT.
+    let re_call = Regex::new(r"(?m)^\[[^\]]+\]\s*(?:\[([^\]]+)\]\s*)?TOOL (CALL|RESULT): (\S+)\s*$").unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    let mut line_starts: HashMap<usize, usize> = HashMap::new(); // byte offset -> line index
+    {
+        let mut off = 0usize;
+        for (i, l) in lines.iter().enumerate() {
+            line_starts.insert(off, i);
+            off += l.len() + 1;
+        }
+    }
+
+    for cap in re_call.captures_iter(log) {
+        let label = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("main").to_string();
+        let kind = &cap[2];
+        let tool = cap[3].trim().to_string();
+        // Payload is on the next line ("  args: {...}" for CALL, "  {...}" for RESULT)
+        let payload: &str = cap.get(0)
+            .and_then(|m| line_starts.get(&m.start()))
+            .and_then(|i| lines.get(i + 1))
+            .map(|l| l.trim().trim_start_matches("args:").trim())
+            .unwrap_or("");
+
+        let t = ensure_trace!(traces, order, label.as_str());
+
+        if kind == "CALL" {
+            if !t.tools_used.contains(&tool) {
+                t.tools_used.push(tool.clone());
+            }
+            if tool == "load_skill" {
+                if let Some(skill) = json_field(payload, "skill") {
+                    if !t.skills_loaded.contains(&skill) {
+                        t.skills_loaded.push(skill);
+                    }
+                }
+            }
+            // send_task: record the task on the RECEIVING agent
+            if tool == "send_task" {
+                let target = json_field(payload, "to")
+                    .or_else(|| json_field(payload, "agent_name"))
+                    .or_else(|| json_field(payload, "agentId"));
+                let task = json_field(payload, "task")
+                    .or_else(|| json_field(payload, "task_description"));
+                if let (Some(target), Some(task)) = (target, task) {
+                    let rt = ensure_trace!(traces, order, target.as_str());
+                    if rt.task.is_none() {
+                        rt.task = Some(task.chars().take(240).collect());
+                    }
+                }
+            }
+        } else {
+            // RESULT: failures and completions
+            if payload.contains("\"ok\":false") {
+                if t.error.is_none() {
+                    let err = json_field(payload, "error").unwrap_or_else(|| "tool failed".into());
+                    t.error = Some(err.chars().take(200).collect());
+                }
+            }
+            // wait_result returning ok marks the source agent as completed
+            if tool == "wait_result" && payload.contains("\"ok\":true") {
+                if let Some(agent) = json_field(payload, "agentId") {
+                    let at = ensure_trace!(traces, order, agent.as_str());
+                    at.completed = true;
+                }
             }
         }
     }
 
-    // Tool calls per agent
-    let re_tool = Regex::new(r"(?m)^\[[^\]]+\]\s+([^\n]+?) → tool: ([^\n]+)$").unwrap();
-    for cap in re_tool.captures_iter(log) {
-        let label = cap[1].trim().to_string();
-        let tool = cap[2].trim().to_string();
-        let t = ensure_trace!(traces, label);
+    // Web format: 🔧 Calling **name** — {...} / ✅ **name** done — {...}
+    let re_web_call = Regex::new(r"(?m)^🔧 Calling \*\*([^*]+)\*\* — (.*)$").unwrap();
+    for cap in re_web_call.captures_iter(log) {
+        let tool = cap[1].trim().to_string();
+        let payload = cap[2].trim();
+        let t = ensure_trace!(traces, order, "main");
         if !t.tools_used.contains(&tool) {
-            t.tools_used.push(tool);
+            t.tools_used.push(tool.clone());
+        }
+        if tool == "load_skill" {
+            if let Some(skill) = json_field(payload, "skill") {
+                if !t.skills_loaded.contains(&skill) {
+                    t.skills_loaded.push(skill);
+                }
+            }
+        }
+        if tool == "send_task" {
+            let target = json_field(payload, "to");
+            let task = json_field(payload, "task");
+            if let (Some(target), Some(task)) = (target, task) {
+                let rt = ensure_trace!(traces, order, target.as_str());
+                if rt.task.is_none() {
+                    rt.task = Some(task.chars().take(240).collect());
+                }
+            }
+        }
+    }
+    let re_web_result = Regex::new(r"(?m)^✅ \*\*([^*]+)\*\* done — (.*)$").unwrap();
+    for cap in re_web_result.captures_iter(log) {
+        let payload = cap[2].trim();
+        if payload.contains("\"ok\":false") {
+            let t = ensure_trace!(traces, order, "main");
+            if t.error.is_none() {
+                let err = json_field(payload, "error")
+                    .or_else(|| json_field(payload, "stderr"))
+                    .unwrap_or_else(|| "tool failed".into());
+                t.error = Some(err.chars().take(200).collect());
+            }
         }
     }
 
-    // load_skill calls
-    let re_skill = Regex::new(r#"TOOL_CALL: load_skill(?: \(([^)]+)\))?[\s\S]{0,500}?"skill"\s*:\s*"([^"]+)""#).unwrap();
-    for cap in re_skill.captures_iter(log) {
-        let label = cap
-            .get(1)
-            .map(|m| m.as_str().trim())
-            .unwrap_or("main")
-            .to_string();
-        let skill = cap[2].to_string();
-        let t = ensure_trace!(traces, label);
-        if !t.skills_loaded.contains(&skill) {
-            t.skills_loaded.push(skill);
-        }
-        if !t.tools_used.contains(&"load_skill".to_string()) {
-            t.tools_used.push("load_skill".to_string());
-        }
-    }
-
-    // AGENT_DONE/COMPLETE
-    let re_done = Regex::new(r"AGENT_(?:DONE|COMPLETE): ([^\n]+)").unwrap();
-    for cap in re_done.captures_iter(log) {
-        let label = cap[1].trim().to_string();
-        if let Some(t) = traces.get_mut(&label) {
+    // A finished session means the main agent completed
+    if log.contains("=== Response complete ===") {
+        if let Some(t) = traces.get_mut("main") {
             t.completed = true;
         }
     }
 
-    // AGENT_ERROR
-    let re_error = Regex::new(r"AGENT_ERROR: ([^:\n]+): ([^\n]+)").unwrap();
-    for cap in re_error.captures_iter(log) {
-        let label = cap[1].trim().to_string();
-        let err: String = cap[2].trim().chars().take(200).collect();
-        let t = ensure_trace!(traces, label);
-        t.error = Some(err);
-    }
-
-    traces
-        .into_values()
+    // Preserve first-seen order (main first, then agents in spawn order)
+    order.into_iter()
+        .filter_map(|label| traces.remove(&label))
         .filter(|t| !t.tools_used.is_empty() || !t.skills_loaded.is_empty() || t.task.is_some() || t.error.is_some())
         .collect()
 }
@@ -566,7 +666,7 @@ Return STRICT JSON in this exact shape, with NO surrounding prose, NO markdown f
 Rules:
 - name must match [a-zA-Z0-9_-]+, max 64 chars.
 - For update, name MUST exactly match an EXISTING skill below.
-- NEVER overwrite a skill whose source is custom, clawhub, claude, or openclaw — only propose updates to skills with source "auto".
+- Only propose updates to skills with source "auto" or "custom" (custom updates require human approval). NEVER propose updates to clawhub, claude, or openclaw skills.
 - Skip casual chats / one-off Q&A that don't generalise. Quality > quantity.
 - If nothing is worth capturing, return {{"proposals":[]}}.
 - content is REQUIRED and MUST NOT be empty. It MUST be a complete SKILL.md including YAML frontmatter (name + description) followed by markdown body. The content field must start with "---\nname:". Body <= 100,000 chars. A proposal without content is INVALID.
@@ -819,8 +919,10 @@ fn validate_proposal(
     if kind == "update" {
         match matched {
             None => return Err(format!("{name}: update target does not exist")),
-            Some((_, src)) if src != "auto" => {
-                return Err(format!("{name}: refuse to update non-auto skill"))
+            // auto + custom skills can receive updates (custom always goes
+            // through the .proposed approval path); marketplace skills never.
+            Some((_, src)) if src != "auto" && src != "custom" => {
+                return Err(format!("{name}: refuse to update {src} skill (only auto/custom)"))
             }
             _ => {}
         }
@@ -897,12 +999,14 @@ async fn write_new_auto_skill(p: &Proposal, model: &str) {
 async fn write_proposed_update(p: &Proposal, model: &str) {
     let slug = sanitize_slug(&p.name);
     let settings = get_settings().await;
-    let require_approval = settings
+    let mut require_approval = settings
         .skill_auto_update_require_approval
         .unwrap_or(true);
 
     let mut skills = get_skills().await;
-    let idx = skills.iter().position(|s| s.name == p.name && s.source == "auto");
+    let idx = skills.iter().position(|s| {
+        s.name == p.name && (s.source == "auto" || s.source == "custom")
+    });
 
     if idx.is_none() {
         // Target doesn't exist — create instead
@@ -910,6 +1014,11 @@ async fn write_proposed_update(p: &Proposal, model: &str) {
         return;
     }
     let idx = idx.unwrap();
+
+    // User-authored (custom) skills are never overwritten silently
+    if skills[idx].source == "custom" {
+        require_approval = true;
+    }
 
     if !require_approval {
         if let Err(e) = write_skill_file(&slug, &p.content, false).await {
@@ -1159,15 +1268,14 @@ async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value
         .unwrap_or_default();
 
     let raw_str = resp_json.to_string();
-    let preview_len = raw_str.len().min(1000);
-    info!("[SkillSynth] Raw LLM response (first 1000): {}", &raw_str[..preview_len]);
+    info!("[SkillSynth] Raw LLM response (first 1000): {}", crate::util::truncate_utf8(&raw_str, 1000));
 
     if content.is_empty() {
         error!("[SkillSynth] LLM returned empty content! Full raw response (first 2000): {}",
-            &raw_str[..raw_str.len().min(2000)]);
+            crate::util::truncate_utf8(&raw_str, 2000));
     } else {
         info!("[SkillSynth] Extracted content length={}, first 300: {}",
-            content.len(), &content[..content.len().min(300)]);
+            content.len(), crate::util::truncate_utf8(&content, 300));
     }
 
     Ok(content)
@@ -1209,7 +1317,7 @@ fn select_remediation_target(
             "{} {} {}",
             name,
             desc,
-            contents.get(name).map(|c| &c[..c.len().min(4000)]).unwrap_or("")
+            contents.get(name).map(|c| crate::util::truncate_utf8(&c, 4000)).unwrap_or("")
         );
         let hay_tokens = tokenize(&hay_str);
         let hits = needle.iter().filter(|t| hay_tokens.contains(*t)).count();
@@ -1271,9 +1379,10 @@ async fn run_remediations(
     }
 
     let all_skills = get_skills().await;
+    // auto + custom skills are remediation targets (custom fixes go through approval)
     let auto_skills: Vec<(String, String)> = all_skills
         .iter()
-        .filter(|s| s.source == "auto")
+        .filter(|s| s.source == "auto" || s.source == "custom")
         .map(|s| (s.name.clone(), s.description.clone()))
         .collect();
 
@@ -1281,7 +1390,7 @@ async fn run_remediations(
         for t in &targets {
             out.skipped += 1;
             out.reasons
-                .push(format!("remediation skipped ({}): no auto skill exists to update", t.session_id));
+                .push(format!("remediation skipped ({}): no updatable (auto/custom) skill exists", t.session_id));
         }
         return out;
     }
@@ -1408,10 +1517,10 @@ async fn run_remediations(
             "basedOn": [t.session_id],
             "rationale": format!(
                 "remediation from disliked comment: {}{}",
-                &t.comment[..t.comment.len().min(160)],
+                crate::util::truncate_utf8(&t.comment, 160),
                 parsed["rationale"]
                     .as_str()
-                    .map(|r| format!(" | {}", &r[..r.len().min(200)]))
+                    .map(|r| format!(" | {}", crate::util::truncate_utf8(&r, 200)))
                     .unwrap_or_default()
             ),
         });
@@ -1601,7 +1710,7 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
             "created=0 updated={} skipped={} candidates={} (all consumed by remediation)",
             remediation.updated, remediation.skipped, candidates.len()
         );
-        update_settings_after_run(new_cursor, &summary_msg, &remediation.reasons).await;
+        update_settings_after_run(Some(new_cursor), &summary_msg, &remediation.reasons).await;
         finish_status(&summary_msg).await;
         return Ok(summary_msg);
     }
@@ -1627,11 +1736,11 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     {
         Ok(r) => r,
         Err(e) => {
-            let summary_msg = format!("LLM error: {}", &e[..e.len().min(200)]);
-            let new_cursor = &candidates.last().unwrap().updated_at;
+            // Keep the cursor: these sessions should be retried next run
+            let summary_msg = format!("LLM error: {}", crate::util::truncate_utf8(&e, 200));
             let mut reasons = remediation.reasons.clone();
             reasons.push(summary_msg.clone());
-            update_settings_after_run(new_cursor, &summary_msg, &reasons).await;
+            update_settings_after_run(None, &summary_msg, &reasons).await;
             finish_status(&summary_msg).await;
             return Err(e);
         }
@@ -1640,10 +1749,9 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     if is_error_reply(&reply) {
         let preview: String = reply.chars().take(200).collect();
         let summary_msg = format!("LLM error: {}", preview);
-        let new_cursor = &candidates.last().unwrap().updated_at;
         let mut reasons = remediation.reasons.clone();
         reasons.push(summary_msg.clone());
-        update_settings_after_run(new_cursor, &summary_msg, &reasons).await;
+        update_settings_after_run(None, &summary_msg, &reasons).await;
         finish_status(&summary_msg).await;
         return Err(summary_msg);
     }
@@ -1653,8 +1761,9 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     let stripped_preview = strip_reasoning(&reply);
     info!("[SkillSynth] after strip length={}", stripped_preview.len());
     // Write full reply to debug file
-    let _ = std::fs::write("data/debug_skill_llm_reply.txt", &reply);
-    let _ = std::fs::write("data/debug_skill_llm_stripped.txt", &stripped_preview);
+    let data = crate::server::data::data_dir();
+    let _ = std::fs::write(data.join("debug_skill_llm_reply.txt"), &reply);
+    let _ = std::fs::write(data.join("debug_skill_llm_stripped.txt"), &stripped_preview);
     let parsed = match extract_json(&reply) {
         Ok(v) => v,
         Err(e) => {
@@ -1674,10 +1783,9 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
                 let reply_preview: String = reply.chars().take(500).collect();
                 error!("[SkillSynth] JSON parse failed. LLM reply (first 500 chars): {}", reply_preview);
                 let summary_msg = format!("LLM JSON parse failed: {}", e);
-                let new_cursor = &candidates.last().unwrap().updated_at;
                 let mut reasons = remediation.reasons.clone();
                 reasons.push(summary_msg.clone());
-                update_settings_after_run(new_cursor, &summary_msg, &reasons).await;
+                update_settings_after_run(None, &summary_msg, &reasons).await;
                 finish_status(&summary_msg).await;
                 return Err(summary_msg);
             }
@@ -1746,7 +1854,7 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
         "created={} updated={} skipped={} candidates={}",
         created, updated, skipped, candidates.len()
     );
-    update_settings_after_run(new_cursor, &summary_msg, &reasons).await;
+    update_settings_after_run(Some(new_cursor), &summary_msg, &reasons).await;
     finish_status(&summary_msg).await;
 
     info!("[SkillSynth] {}", summary_msg);
@@ -1770,11 +1878,16 @@ async fn add_proposal_to_status(proposal: &Proposal, model: &str, existing_conte
     });
 }
 
-async fn update_settings_after_run(cursor: &str, summary: &str, reasons: &[String]) {
+/// `cursor: None` leaves the cursor untouched — used on LLM/parse failures so
+/// the affected sessions are retried on the next run instead of being skipped
+/// forever.
+async fn update_settings_after_run(cursor: Option<&str>, summary: &str, reasons: &[String]) {
     let mut settings = get_settings().await;
-    settings
-        .extra
-        .insert("skillAutoUpdateCursor".to_string(), json!(cursor));
+    if let Some(cursor) = cursor {
+        settings
+            .extra
+            .insert("skillAutoUpdateCursor".to_string(), json!(cursor));
+    }
     settings.extra.insert(
         "skillAutoUpdateLastRunAt".to_string(),
         json!(chrono::Utc::now().to_rfc3339()),
@@ -1830,4 +1943,67 @@ pub fn start_cron(runtime: tokio::runtime::Handle) {
             tokio::time::sleep(Duration::from_secs(interval_mins * 60)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_real_desktop_log_format() {
+        let log = r#"[2026-05-07 22:05:50 UTC] === Session: f7321748 ===
+[2026-05-07 22:05:50 UTC] USER: Design shallow foundation
+[22:05:57] TOOL CALL: check_agents
+  args: {}
+[22:05:57] TOOL RESULT: check_agents
+  {"agents":[],"ok":true,"total":7}
+[22:06:07] TOOL CALL: send_task
+  args: {"task":"Design a shallow foundation for 10,000 kN","to":"design_orchestrator"}
+[22:06:18] [design_orchestrator] TOOL CALL: send_task
+  args: {"task":"Perform geotechnical analysis","to":"geotechnical_engineer"}
+[22:06:21] [geotechnical_engineer] TOOL CALL: load_skill
+  args: {"skill":"shallow_foundation"}
+[22:06:21] [geotechnical_engineer] TOOL RESULT: load_skill
+  {"error":"Skill not found","ok":false}
+[22:09:00] TOOL CALL: wait_result
+  args: {"from":"design_orchestrator"}
+[22:09:00] TOOL RESULT: wait_result
+  {"agentId":"design_orchestrator","ok":true,"result":"done"}
+[22:09:01] === Response complete ===
+"#;
+        let traces = parse_subagent_workflow(log);
+        let main = traces.iter().find(|t| t.label == "main").expect("main trace");
+        assert!(main.tools_used.contains(&"check_agents".to_string()));
+        assert!(main.tools_used.contains(&"send_task".to_string()));
+        assert!(main.completed);
+
+        let orch = traces.iter().find(|t| t.label == "design_orchestrator").expect("orch trace");
+        assert!(orch.task.as_deref().unwrap().contains("shallow foundation"));
+        assert!(orch.completed); // via wait_result ok
+
+        let geo = traces.iter().find(|t| t.label == "geotechnical_engineer").expect("geo trace");
+        assert_eq!(geo.skills_loaded, vec!["shallow_foundation".to_string()]);
+        assert!(geo.error.as_deref().unwrap().contains("Skill not found"));
+        assert!(geo.task.as_deref().unwrap().contains("geotechnical analysis"));
+    }
+
+    #[test]
+    fn parses_web_log_format() {
+        let log = r#"[10:57:38] === Web Chat Session ===
+🔧 Calling **run_python** — {"code":"print(1)"}
+✅ **run_python** done — {"exit_code":0,"ok":true,"stdout":"1"}
+🔧 Calling **load_skill** — {"skill":"web-search"}
+✅ **load_skill** done — {"ok":true}
+🔧 Calling **run_shell** — {"command":"python x.py"}
+✅ **run_shell** done — {"exit_code":127,"ok":false,"stderr":"python: not found"}
+[11:00:04] === Response complete ===
+"#;
+        let traces = parse_subagent_workflow(log);
+        assert_eq!(traces.len(), 1);
+        let main = &traces[0];
+        assert!(main.tools_used.contains(&"run_python".to_string()));
+        assert!(main.skills_loaded.contains(&"web-search".to_string()));
+        assert!(main.error.is_some());
+        assert!(main.completed);
+    }
 }

@@ -1053,7 +1053,7 @@ impl SkillsView {
                     ui.add_space(8.0);
                     ui.label("Content Preview:");
                     let preview_text = if preview.content.len() > 2000 {
-                        format!("{}...\n\n(truncated)", &preview.content[..2000])
+                        format!("{}...\n\n(truncated)", crate::util::truncate_utf8(&preview.content, 2000))
                     } else {
                         preview.content.clone()
                     };

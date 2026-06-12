@@ -1534,7 +1534,7 @@ impl TasksView {
                                         } else if task.output.len() > 200 {
                                             format!(
                                                 "{}...",
-                                                &task.output[..200]
+                                                crate::util::truncate_utf8(&task.output, 200)
                                             )
                                         } else {
                                             task.output.clone()

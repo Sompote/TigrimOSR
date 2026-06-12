@@ -191,6 +191,11 @@ pub struct SettingsView {
     agent_max_consecutive_errors: u64,
     agent_compression_interval: u64,
     agent_reflection_enabled: bool,
+    agent_reflection_threshold: f64,
+    agent_max_reflection_retries: u64,
+    agent_step_verify_enabled: bool,
+    agent_step_verify_threshold: f64,
+    agent_step_verify_max_retries: u64,
     agent_tool_result_max_len: u64,
     agent_wait_result_timeout: u64,
 
@@ -287,6 +292,11 @@ impl Default for SettingsView {
             agent_max_consecutive_errors: 3,
             agent_compression_interval: 5,
             agent_reflection_enabled: false,
+            agent_reflection_threshold: 0.7,
+            agent_max_reflection_retries: 2,
+            agent_step_verify_enabled: true,
+            agent_step_verify_threshold: 0.7,
+            agent_step_verify_max_retries: 1,
             agent_tool_result_max_len: 6000,
             agent_wait_result_timeout: 120,
 
@@ -500,6 +510,16 @@ impl SettingsView {
             .and_then(|v| v.as_u64()).unwrap_or(5);
         self.agent_reflection_enabled = settings.extra.get("agentReflectionEnabled")
             .and_then(|v| v.as_bool()).unwrap_or(false);
+        self.agent_reflection_threshold = settings.extra.get("agentReflectionThreshold")
+            .and_then(|v| v.as_f64()).unwrap_or(0.7);
+        self.agent_max_reflection_retries = settings.extra.get("agentMaxReflectionRetries")
+            .and_then(|v| v.as_u64()).unwrap_or(2);
+        self.agent_step_verify_enabled = settings.extra.get("agentStepVerifyEnabled")
+            .and_then(|v| v.as_bool()).unwrap_or(true);
+        self.agent_step_verify_threshold = settings.extra.get("agentStepVerifyThreshold")
+            .and_then(|v| v.as_f64()).unwrap_or(0.7);
+        self.agent_step_verify_max_retries = settings.extra.get("agentStepVerifyMaxRetries")
+            .and_then(|v| v.as_u64()).unwrap_or(1);
         self.agent_tool_result_max_len = settings.extra.get("agentToolResultMaxLen")
             .and_then(|v| v.as_u64()).unwrap_or(6000);
         self.agent_wait_result_timeout = settings.extra.get("agentWaitResultTimeout")
@@ -609,6 +629,11 @@ impl SettingsView {
         settings.extra.insert("agentMaxConsecutiveErrors".into(), serde_json::json!(self.agent_max_consecutive_errors));
         settings.extra.insert("agentCompressionInterval".into(), serde_json::json!(self.agent_compression_interval));
         settings.extra.insert("agentReflectionEnabled".into(), serde_json::json!(self.agent_reflection_enabled));
+        settings.extra.insert("agentReflectionThreshold".into(), serde_json::json!(self.agent_reflection_threshold));
+        settings.extra.insert("agentMaxReflectionRetries".into(), serde_json::json!(self.agent_max_reflection_retries));
+        settings.extra.insert("agentStepVerifyEnabled".into(), serde_json::json!(self.agent_step_verify_enabled));
+        settings.extra.insert("agentStepVerifyThreshold".into(), serde_json::json!(self.agent_step_verify_threshold));
+        settings.extra.insert("agentStepVerifyMaxRetries".into(), serde_json::json!(self.agent_step_verify_max_retries));
         settings.extra.insert("agentToolResultMaxLen".into(), serde_json::json!(self.agent_tool_result_max_len));
         settings.extra.insert("agentWaitResultTimeout".into(), serde_json::json!(self.agent_wait_result_timeout));
 
@@ -1313,7 +1338,52 @@ impl SettingsView {
             });
 
         ui.add_space(4.0);
-        ui.checkbox(&mut self.agent_reflection_enabled, "Enable self-reflection / evaluation");
+        ui.checkbox(&mut self.agent_reflection_enabled, "Enable self-reflection / evaluation")
+            .on_hover_text("After the agent finishes, a judge scores the answer against the user's objective. \
+                Below the threshold, the agent re-enters the loop to fix the gaps.");
+        if self.agent_reflection_enabled {
+            egui::Grid::new("reflection_grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Reflection Threshold:");
+                    ui.add(egui::Slider::new(&mut self.agent_reflection_threshold, 0.1..=1.0)
+                        .text("score"))
+                        .on_hover_text("Answers scoring below this (0-1) trigger a gap-fixing retry. Higher = stricter.");
+                    ui.end_row();
+
+                    ui.label("Max Reflection Retries:");
+                    ui.add(egui::Slider::new(&mut self.agent_max_reflection_retries, 1..=5)
+                        .text("rounds"))
+                        .on_hover_text("How many judge-and-fix cycles to run before accepting the answer.");
+                    ui.end_row();
+                });
+        }
+
+        ui.add_space(4.0);
+        ui.checkbox(&mut self.agent_step_verify_enabled, "Verify each agent step result")
+            .on_hover_text("In multi-agent runs, a judge scores every agent's result against its \
+                assigned task as soon as it finishes. Failing results are retried with feedback \
+                before being delivered to the orchestrator.");
+        if self.agent_step_verify_enabled {
+            egui::Grid::new("step_verify_grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Step Verify Threshold:");
+                    ui.add(egui::Slider::new(&mut self.agent_step_verify_threshold, 0.1..=1.0)
+                        .text("score"))
+                        .on_hover_text("Step results scoring below this (0-1) trigger a retry. Higher = stricter.");
+                    ui.end_row();
+
+                    ui.label("Max Step Retries:");
+                    ui.add(egui::Slider::new(&mut self.agent_step_verify_max_retries, 0..=3)
+                        .text("retries"))
+                        .on_hover_text("How many times a failing agent retries with the judge's feedback. \
+                            0 = judge only (no retry), verdict still reported to the orchestrator.");
+                    ui.end_row();
+                });
+        }
 
         ui.add_space(16.0);
         ui.horizontal(|ui| {
@@ -2472,11 +2542,7 @@ impl SettingsView {
                             ui.add_space(4.0);
 
                             // Show content preview in collapsible
-                            let preview = if proposal.content.len() > 300 {
-                                format!("{}...", &proposal.content[..300])
-                            } else {
-                                proposal.content.clone()
-                            };
+                            let preview = crate::util::truncate_utf8_ellipsis(&proposal.content, 300);
                             egui::CollapsingHeader::new("Preview SKILL.md")
                                 .id_salt(format!("preview_{}", proposal.id))
                                 .show(ui, |ui| {

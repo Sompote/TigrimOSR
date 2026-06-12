@@ -491,6 +491,33 @@ async fn send_message(
         flags.insert(id.clone(), sub_agent.cancel_flag.clone());
     }
 
+    // Clear activity log and initialize chat log BEFORE pre-flight, so
+    // architecture-creation failures are visible to the web client.
+    {
+        let log_dir = activity_log_dir();
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log_path = log_dir.join(format!("{}.log", id));
+        let _ = std::fs::write(&log_path, "");
+        let cl_dir = chat_log_dir();
+        let _ = std::fs::create_dir_all(&cl_dir);
+        let cl_path = cl_dir.join(format!("{}.log", id));
+        let _ = std::fs::write(&cl_path, format!(
+            "[{}] === Web Chat Session ===\n",
+            chrono::Utc::now().format("%H:%M:%S"),
+        ));
+    }
+    let append_chat_log = |id: &str, line: &str| {
+        use std::io::Write;
+        let cl_path = chat_log_dir().join(format!("{}.log", id));
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&cl_path) {
+            let _ = f.write_all(line.as_bytes());
+        }
+    };
+
+    if sub_agent_enabled && request_mode == "manual" && sub_agent.config_file.is_empty() {
+        append_chat_log(&id, "⚠️ Manual mode requested but no agent config file is set on this server — falling back to fully-auto (an agent team will be generated).\n");
+    }
+
     // Fully Auto pre-flight: create architecture + boot realtime session (same as native UI)
     if sub_agent_enabled && effective_mode == "fully_auto" {
         use crate::server::services::toolbox::{
@@ -520,7 +547,7 @@ async fn send_message(
             }
 
             // Step 2: Boot realtime session
-            start_realtime_session(
+            let booted = start_realtime_session(
                 &sub_agent.session_id,
                 cf,
                 &sub_agent.api_key,
@@ -528,13 +555,20 @@ async fn send_message(
                 &sub_agent.model,
                 &sandbox_dir,
             ).await;
+            append_chat_log(&id, &format!(
+                "🤖 Agent team '{}' ({} agents) — realtime session {}\n",
+                cf, sub_agent.agent_ids.len(),
+                if booted { "LIVE" } else { "FAILED to boot" }
+            ));
+        } else {
+            append_chat_log(&id, "❌ Failed to create agent architecture — continuing WITHOUT sub-agents (single-agent mode).\n");
         }
     }
 
     // For manual/auto modes with a config file, boot realtime session
     if sub_agent_enabled && effective_mode != "fully_auto" && !sub_agent.config_file.is_empty() {
         use crate::server::services::toolbox::start_realtime_session;
-        start_realtime_session(
+        let booted = start_realtime_session(
             &sub_agent.session_id,
             &sub_agent.config_file,
             &sub_agent.api_key,
@@ -542,6 +576,11 @@ async fn send_message(
             &sub_agent.model,
             &sandbox_dir,
         ).await;
+        append_chat_log(&id, &format!(
+            "🤖 Agent config '{}' ({} agents) — realtime session {}\n",
+            sub_agent.config_file, sub_agent.agent_ids.len(),
+            if booted { "LIVE" } else { "FAILED to boot (check the YAML file exists on this server)" }
+        ));
     }
 
     // Build system prompt — same as native UI (identity, soul, skills, tools)
@@ -753,20 +792,8 @@ You have access to these tools: {}.{}",
         });
     }
 
-    // Clear activity log before starting
-    let log_dir = activity_log_dir();
-    let _ = std::fs::create_dir_all(&log_dir);
-    let log_path = log_dir.join(format!("{}.log", id));
-    let _ = std::fs::write(&log_path, "");
-
-    // Initialize chat log before starting (so it's not empty during the run)
-    let cl_dir = chat_log_dir();
-    let _ = std::fs::create_dir_all(&cl_dir);
-    let cl_path = cl_dir.join(format!("{}.log", id));
-    let _ = std::fs::write(&cl_path, format!(
-        "[{}] === Web Chat Session ===\n",
-        chrono::Utc::now().format("%H:%M:%S"),
-    ));
+    // Logs were initialized before the pre-flight (so pre-flight lines are kept)
+    let cl_path = chat_log_dir().join(format!("{}.log", id));
 
     // Spawn AI work in a fully detached task — returns immediately so the
     // HTTP response is not tied to the long-running AI loop. The client polls
@@ -856,7 +883,14 @@ You have access to these tools: {}.{}",
             }
         }
 
-        let assistant_content = result.content;
+        // Never persist a blank assistant turn — the web client polls for the
+        // assistant message, and an empty one looks like the job never finished.
+        let assistant_content = if result.content.trim().is_empty() {
+            "⚠️ The run finished without a final answer (the model returned empty content). \
+            Check the activity log for partial results and try again.".to_string()
+        } else {
+            result.content
+        };
         let output_files = result.files.clone();
 
         // Save assistant response to session history

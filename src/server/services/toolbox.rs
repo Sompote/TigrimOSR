@@ -353,6 +353,10 @@ pub struct AgentResult {
     pub output_files: Vec<String>,
     pub ok: bool,
     pub error: Option<String>,
+    /// Step-verification verdict (None when verification is disabled or failed open)
+    pub verified: Option<bool>,
+    pub verify_score: Option<f64>,
+    pub verify_gaps: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -817,7 +821,7 @@ async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Optio
             if desc.is_empty() {
                 block.push_str(&format!("\n  - {} ({}){}", name, source, files_flag));
             } else {
-                let short_desc = if desc.len() > 150 { &desc[..150] } else { desc };
+                let short_desc = crate::util::truncate_utf8(desc, 150);
                 block.push_str(&format!("\n  - {} ({}) — {}{}", name, source, short_desc, files_flag));
             }
         }
@@ -1099,18 +1103,18 @@ async fn realtime_agent_loop(
                     ToolUpdate::ToolCall { name, args } => {
                         log_agent_tool_call(&bid_progress_sid, &bid_log_aid, name, args);
                         let a = serde_json::to_string(args).unwrap_or_default();
-                        let a_short = if a.len() > 300 { format!("{}...", &a[..300]) } else { a };
+                        let a_short = crate::util::truncate_utf8_ellipsis(&a, 300);
                         format!("[{}] [{}] BID TOOL CALL: {}\n  args: {}", ts, bid_log_aid, name, a_short)
                     }
                     ToolUpdate::ToolResult { name, result } => {
                         let r = serde_json::to_string(result).unwrap_or_default();
-                        let r_short = if r.len() > 500 { format!("{}...", &r[..500]) } else { r };
+                        let r_short = crate::util::truncate_utf8_ellipsis(&r, 500);
                         format!("[{}] [{}] BID TOOL RESULT: {}\n  {}", ts, bid_log_aid, name, r_short)
                     }
                     ToolUpdate::TextChunk(t) => {
                         let clean = strip_think_blocks(t);
                         if clean.is_empty() { return; }
-                        let display = if clean.len() > 100 { format!("{}...", &clean[..100]) } else { clean };
+                        let display = crate::util::truncate_utf8_ellipsis(&clean, 100);
                         format!("[{}] [{}] BID TEXT: {}", ts, bid_log_aid, display)
                     }
                     ToolUpdate::Error(e) => format!("[{}] [{}] BID ERROR: {}", ts, bid_log_aid, e),
@@ -1136,7 +1140,8 @@ async fn realtime_agent_loop(
             format!("Task from {}: {}", task.from, task.task)
         };
 
-        let messages = vec![json!({"role": "user", "content": user_content})];
+        // (conversation for the agent is built per attempt below — step
+        // verification may retry with feedback appended)
 
         // Sub-agent config: who gets send_task/wait_result depends on orchestration mode
         let role = agent_def["role"].as_str().unwrap_or("worker");
@@ -1193,6 +1198,7 @@ async fn realtime_agent_loop(
 
         let log_tx = subagent_log_tx().clone();
         let fwd_log_tx = log_tx.clone(); // for pipeline auto-forward logging
+        let verify_log_tx = log_tx.clone(); // for step-verification logging
         let log_sid = session_id.clone();
         let log_aid = agent_id.clone();
         let progress_sid = session_id.clone(); // for activity log
@@ -1205,18 +1211,18 @@ async fn realtime_agent_loop(
                     log_agent_tool_call(&progress_sid, &progress_aid, name, args);
 
                     let args_str = serde_json::to_string(args).unwrap_or_default();
-                    let args_short = if args_str.len() > 300 { format!("{}...", &args_str[..300]) } else { args_str };
+                    let args_short = crate::util::truncate_utf8_ellipsis(&args_str, 300);
                     format!("[{}] [{}] TOOL CALL: {}\n  args: {}", ts, log_aid, name, args_short)
                 }
                 ToolUpdate::ToolResult { name, result } => {
                     let r_str = serde_json::to_string(result).unwrap_or_default();
-                    let r_short = if r_str.len() > 500 { format!("{}...", &r_str[..500]) } else { r_str };
+                    let r_short = crate::util::truncate_utf8_ellipsis(&r_str, 500);
                     format!("[{}] [{}] TOOL RESULT: {}\n  {}", ts, log_aid, name, r_short)
                 }
                 ToolUpdate::TextChunk(t) => {
                     let clean = strip_think_blocks(t);
                     if clean.is_empty() { return; }
-                    let display = if clean.len() > 100 { format!("{}...", &clean[..100]) } else { clean };
+                    let display = crate::util::truncate_utf8_ellipsis(&clean, 100);
                     format!("[{}] [{}] TEXT: {}", ts, log_aid, display)
                 }
                 ToolUpdate::Error(e) => {
@@ -1231,79 +1237,177 @@ async fn realtime_agent_loop(
         // Check agent type: "remote", "cli", or default "llm"
         let agent_type = agent_def.get("type").and_then(|v| v.as_str()).unwrap_or("llm");
 
-        let loop_result = match agent_type {
-            "remote" => {
-                // Delegate to a remote TigrimOS instance
-                let remote_url = agent_def.get("remote_url")
-                    .or_else(|| agent_def.get("url"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let remote_token = agent_def.get("remote_token")
-                    .or_else(|| agent_def.get("token"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+        // The on_update closure is consumed by each call_with_tools invocation;
+        // step-verification retries need it again, so share it via Arc.
+        let on_update_arc: Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static> = Arc::new(on_update_cb);
 
-                if remote_url.is_empty() {
-                    ToolLoopResult {
-                        content: format!("Remote agent '{}' has no URL configured", agent_id),
-                        tool_results: vec![],
-                        files: vec![],
+        // Step verification: judge each finished step against its assigned
+        // task; on failure, retry the same agent with the judge's gap list.
+        let vsettings = load_agent_settings();
+        let step_verify = vsettings["agentStepVerifyEnabled"].as_bool().unwrap_or(true);
+        let verify_threshold = vsettings["agentStepVerifyThreshold"].as_f64().unwrap_or(0.7);
+        let verify_max_retries = vsettings["agentStepVerifyMaxRetries"].as_u64().unwrap_or(1) as usize;
+
+        let mut attempt_messages = vec![json!({"role": "user", "content": user_content})];
+        let mut effective_task = user_content.clone(); // retry carrier for remote/cli agents
+        let mut verdict: Option<JudgeVerdict> = None;
+        let mut verified: Option<bool> = None;
+        let judge_client = Client::new();
+        let mut attempt: usize = 0;
+
+        let loop_result = loop {
+            let result = match agent_type {
+                "remote" => {
+                    // Delegate to a remote TigrimOS instance
+                    let remote_url = agent_def.get("remote_url")
+                        .or_else(|| agent_def.get("url"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let remote_token = agent_def.get("remote_token")
+                        .or_else(|| agent_def.get("token"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
+                    if remote_url.is_empty() {
+                        ToolLoopResult {
+                            content: format!("Remote agent '{}' has no URL configured", agent_id),
+                            tool_results: vec![],
+                            files: vec![],
+                        }
+                    } else {
+                        info!("[Realtime] Agent {} delegating to remote: {}", agent_id, remote_url);
+                        let result = exec_remote_task(&json!({
+                            "instance": json!({"url": remote_url, "token": remote_token}).to_string(),
+                            "task": effective_task,
+                        })).await;
+                        ToolLoopResult {
+                            content: result["result"].as_str().unwrap_or(
+                                result["error"].as_str().unwrap_or("Remote task completed")
+                            ).to_string(),
+                            tool_results: vec![],
+                            files: vec![],
+                        }
                     }
-                } else {
-                    info!("[Realtime] Agent {} delegating to remote: {}", agent_id, remote_url);
-                    let result = exec_remote_task(&json!({
-                        "instance": json!({"url": remote_url, "token": remote_token}).to_string(),
-                        "task": user_content,
-                    })).await;
+                }
+                "cli" => {
+                    // Route to a CLI agent (claude_code or codex)
+                    let cli_provider = agent_def.get("provider")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("claude_code");
+
+                    info!("[Realtime] Agent {} running via CLI provider: {}", agent_id, cli_provider);
+                    let cli_result = match cli_provider {
+                        "codex" => {
+                            exec_run_shell(&json!({
+                                "command": format!("echo '{}' | codex --quiet", effective_task.replace('\'', "'\\''")),
+                            }), &sandbox_dir).await
+                        }
+                        _ => {
+                            // Default to claude_code CLI
+                            exec_run_shell(&json!({
+                                "command": format!("echo '{}' | claude --print", effective_task.replace('\'', "'\\''")),
+                            }), &sandbox_dir).await
+                        }
+                    };
                     ToolLoopResult {
-                        content: result["result"].as_str().unwrap_or(
-                            result["error"].as_str().unwrap_or("Remote task completed")
-                        ).to_string(),
+                        content: cli_result["stdout"].as_str()
+                            .or(cli_result["output"].as_str())
+                            .unwrap_or("CLI agent completed").to_string(),
                         tool_results: vec![],
                         files: vec![],
                     }
                 }
-            }
-            "cli" => {
-                // Route to a CLI agent (claude_code or codex)
-                let cli_provider = agent_def.get("provider")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("claude_code");
-
-                info!("[Realtime] Agent {} running via CLI provider: {}", agent_id, cli_provider);
-                let cli_result = match cli_provider {
-                    "codex" => {
-                        exec_run_shell(&json!({
-                            "command": format!("echo '{}' | codex --quiet", user_content.replace('\'', "'\\''")),
-                        }), &sandbox_dir).await
+                _ => {
+                    // Default LLM agent
+                    let cb = on_update_arc.clone();
+                    if can_delegate {
+                        call_with_tools_realtime(
+                            &api_key, &api_url, &model, attempt_messages.clone(),
+                            Some(system_prompt.clone()), &sandbox_dir,
+                            move |u| cb(u), sub_agent.clone(),
+                        ).await
+                    } else {
+                        call_with_tools(
+                            &api_key, &api_url, &model, attempt_messages.clone(),
+                            Some(system_prompt.clone()), &sandbox_dir,
+                            move |u| cb(u), sub_agent.clone(),
+                        ).await
                     }
-                    _ => {
-                        // Default to claude_code CLI
-                        exec_run_shell(&json!({
-                            "command": format!("echo '{}' | claude --print", user_content.replace('\'', "'\\''")),
-                        }), &sandbox_dir).await
-                    }
-                };
-                ToolLoopResult {
-                    content: cli_result["stdout"].as_str()
-                        .or(cli_result["output"].as_str())
-                        .unwrap_or("CLI agent completed").to_string(),
-                    tool_results: vec![],
-                    files: vec![],
                 }
+            };
+
+            if !step_verify {
+                break result;
             }
-            _ => {
-                // Default LLM agent (existing code)
-                if can_delegate {
-                    call_with_tools_realtime(
-                        &api_key, &api_url, &model, messages,
-                        Some(system_prompt.clone()), &sandbox_dir, on_update_cb, sub_agent,
-                    ).await
-                } else {
-                    call_with_tools(
-                        &api_key, &api_url, &model, messages,
-                        Some(system_prompt.clone()), &sandbox_dir, on_update_cb, sub_agent,
-                    ).await
+
+            // Judge the step result against the assigned task
+            let mut evidence = summarize_tool_records(&result.tool_results);
+            evidence.push_str(&format!(
+                "FILES GENERATED: {}",
+                if result.files.is_empty() { "(none)".to_string() } else { result.files.join(", ") }
+            ));
+            let objective = match &task.context {
+                Some(ctx) => format!("{}\n\nContext: {}", task.task, ctx),
+                None => task.task.clone(),
+            };
+
+            match judge_task_result(
+                &judge_client, &api_key, &api_url, &model,
+                &objective, &evidence, &result.content,
+                "its assigned task",
+            ).await {
+                None => break result, // judge call/parse failed → fail open
+                Some(v) if v.satisfied || v.score >= verify_threshold => {
+                    info!("[StepVerify] Agent {} passed (score {:.2})", agent_id, v.score);
+                    append_session_progress(&session_id,
+                        &format!("> ✓ **{}** step verified (score {:.2})\n", agent_id, v.score));
+                    let _ = verify_log_tx.send((session_id.clone(), agent_id.clone(),
+                        format!("[{}] [{}] STEP VERIFIED: score {:.2}",
+                            chrono::Utc::now().format("%H:%M:%S"), agent_id, v.score)));
+                    verified = Some(true);
+                    verdict = Some(v);
+                    break result;
+                }
+                Some(v) if attempt >= verify_max_retries => {
+                    warn!("[StepVerify] Agent {} UNVERIFIED after {} retries (score {:.2}): {}",
+                        agent_id, attempt, v.score, crate::util::truncate_utf8(&v.missing, 200));
+                    append_session_progress(&session_id,
+                        &format!("> ✗ **{}** delivered UNVERIFIED (score {:.2})\n", agent_id, v.score));
+                    let _ = verify_log_tx.send((session_id.clone(), agent_id.clone(),
+                        format!("[{}] [{}] STEP UNVERIFIED: score {:.2} — {}",
+                            chrono::Utc::now().format("%H:%M:%S"), agent_id, v.score,
+                            crate::util::truncate_utf8(&v.missing, 200))));
+                    verified = Some(false);
+                    verdict = Some(v);
+                    break result;
+                }
+                Some(v) => {
+                    attempt += 1;
+                    info!("[StepVerify] Agent {} retry {}/{} (score {:.2}): {}",
+                        agent_id, attempt, verify_max_retries, v.score,
+                        crate::util::truncate_utf8(&v.missing, 200));
+                    append_session_progress(&session_id,
+                        &format!("> ↻ **{}** step verify retry {}/{} (score {:.2}): {}\n",
+                            agent_id, attempt, verify_max_retries, v.score,
+                            crate::util::truncate_utf8(&v.missing, 160)));
+                    let _ = verify_log_tx.send((session_id.clone(), agent_id.clone(),
+                        format!("[{}] [{}] STEP VERIFY RETRY {}/{}: score {:.2} — {}",
+                            chrono::Utc::now().format("%H:%M:%S"), agent_id, attempt,
+                            verify_max_retries, v.score, crate::util::truncate_utf8(&v.missing, 200))));
+
+                    let feedback = format!(
+                        "⚠️ STEP VERIFICATION: your result scored {:.1}/1.0 (threshold {:.1}). Gaps found:\n{}\n\n\
+                        Fix ONLY what is missing and return the COMPLETE result (previous correct parts included).",
+                        v.score, verify_threshold, v.missing
+                    );
+                    attempt_messages.push(json!({"role": "assistant", "content": result.content}));
+                    attempt_messages.push(json!({"role": "user", "content": feedback}));
+                    effective_task = format!(
+                        "{}\n\nYOUR PREVIOUS ATTEMPT:\n{}\n\n{}",
+                        user_content, crate::util::truncate_utf8(&result.content, 4000), feedback
+                    );
+                    verdict = Some(v);
+                    // continue loop → re-run agent
                 }
             }
         };
@@ -1317,6 +1421,11 @@ async fn realtime_agent_loop(
             output_files: loop_result.files.clone(),
             ok: true,
             error: None,
+            verified,
+            verify_score: verdict.as_ref().map(|v| v.score),
+            verify_gaps: verdict.as_ref().and_then(|v| {
+                if v.missing.trim().is_empty() { None } else { Some(v.missing.clone()) }
+            }),
         };
 
         info!("[Realtime] Agent {} finished. Result length: {}", agent_id, agent_result.result.len());
@@ -1384,10 +1493,12 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
     };
     let context = args.get("context").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    let map = realtime_sessions().lock().await;
-    let session_arc = match map.get(session_id) {
-        Some(s) => s.clone(),
-        None => return json!({"ok": false, "error": "No realtime session active. Ensure sub-agent mode is 'realtime'."}),
+    let session_arc = {
+        let map = realtime_sessions().lock().await;
+        match map.get(session_id) {
+            Some(s) => s.clone(),
+            None => return json!({"ok": false, "error": "No realtime session active. Ensure sub-agent mode is 'realtime'."}),
+        }
     };
     let session = session_arc.lock().await;
 
@@ -1495,17 +1606,52 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
     }
     // mesh, p2p: no access control — any agent can send to any
 
+    // Clone what we need and release the session lock BEFORE the (potentially
+    // blocking) channel send — the target agent's queue can be full, and holding
+    // the lock here would deadlock wait_result/check_agents/status polling.
+    let task_tx = handle.task_tx.clone();
+    let agent_name = handle.agent_def["name"].as_str().unwrap_or(&to).to_string();
+    drop(session);
+
     let agent_task = AgentTask { from: caller_id.to_string(), task: task.clone(), context };
-    match handle.task_tx.send(agent_task).await {
+    match task_tx.send(agent_task).await {
         Ok(_) => json!({
             "ok": true,
             "agentId": to,
-            "agentName": handle.agent_def["name"].as_str().unwrap_or(&to),
+            "agentName": agent_name,
             "sent": true,
             "note": format!("Task sent to {}. Use wait_result({{\"from\": \"{}\"}}) to collect the result.", to, to)
         }),
         Err(e) => json!({"ok": false, "error": format!("Failed to send task: {e}")}),
     }
+}
+
+/// Build the wait_result success JSON, including the step-verification verdict
+/// when verification ran. A failed verdict carries a hint so the orchestrator
+/// LLM knows it may re-delegate.
+fn wait_result_json(from: &str, result: &AgentResult) -> Value {
+    let mut out = json!({
+        "ok": result.ok,
+        "agentId": from,
+        "result": result.result,
+        "output_files": result.output_files,
+    });
+    if let Some(verified) = result.verified {
+        out["verified"] = json!(verified);
+        if let Some(score) = result.verify_score {
+            out["verify_score"] = json!(score);
+        }
+        if !verified {
+            if let Some(ref gaps) = result.verify_gaps {
+                out["verify_gaps"] = json!(gaps);
+            }
+            out["hint"] = json!(
+                "Result did NOT pass step verification after retries. Review verify_gaps — \
+                consider re-delegating with a more specific task or to a different agent."
+            );
+        }
+    }
+    out
 }
 
 /// Tool: wait_result — blocks until the target agent publishes its result
@@ -1547,12 +1693,7 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
                 let mut map = results.lock().await;
                 if let Some(result) = map.remove(&from) {
                     info!("[wait_result] Got result from '{}' after ~{}s", from, total_waited);
-                    return json!({
-                        "ok": result.ok,
-                        "agentId": from,
-                        "result": result.result,
-                        "output_files": result.output_files,
-                    });
+                    return wait_result_json(&from, &result);
                 }
             }
 
@@ -1567,17 +1708,28 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
 
         total_waited += timeout_secs;
 
-        // Check if agent is still working — if so, auto-retry the wait
-        let still_working = {
+        // Check if agent is still working — if so, auto-retry the wait.
+        // task_tx.is_closed() means the agent's task loop terminated (e.g. panicked):
+        // its status will never change again, so report instead of waiting out the hard limit.
+        let (still_working, agent_dead) = {
             let map = realtime_sessions().lock().await;
             if let Some(s) = map.get(session_id) {
                 let session = s.lock().await;
                 if let Some(handle) = session.agents.get(&from) {
                     let status = handle.status.lock().await;
-                    status.as_str() == "working"
-                } else { false }
-            } else { false }
+                    (status.as_str() == "working", handle.task_tx.is_closed())
+                } else { (false, false) }
+            } else { (false, false) }
         };
+
+        if agent_dead {
+            return json!({
+                "ok": false,
+                "error": format!("Agent '{}' crashed — its task loop terminated unexpectedly.", from),
+                "agentId": from,
+                "hint": "Re-send the task to another agent or restart the session."
+            });
+        }
 
         if still_working && tokio::time::Instant::now() < hard_deadline {
             info!("[wait_result] Agent '{}' still working after {}s — auto-retrying wait", from, total_waited);
@@ -1602,12 +1754,7 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
                 let mut map = results.lock().await;
                 if let Some(result) = map.remove(&from) {
                     info!("[wait_result] Got result from '{}' on idle-retry {}", from, retry);
-                    return json!({
-                        "ok": result.ok,
-                        "agentId": from,
-                        "result": result.result,
-                        "output_files": result.output_files,
-                    });
+                    return wait_result_json(&from, &result);
                 }
             }
             return json!({
@@ -2548,7 +2695,7 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}...[truncated]", &s[..max])
+        format!("{}...[truncated]", crate::util::truncate_utf8(s, max))
     }
 }
 
@@ -2767,7 +2914,7 @@ except Exception as e:
                     all_results.insert(0, json!({
                         "source": "web_summary",
                         "title": "AI-Summarized Web Results",
-                        "text": &text[..text.len().min(3000)],
+                        "text": crate::util::truncate_utf8(&text, 3000),
                         "url": ""
                     }));
                 }
@@ -2972,7 +3119,17 @@ async fn scan_output_files(sandbox_dir: &str) -> Vec<String> {
 }
 
 async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
-    let code = args["code"].as_str().unwrap_or("");
+    // Strict: a non-string `code` (array/object) would silently run an empty
+    // script and return ok=true, wasting tool rounds and misleading the model.
+    let code = match args.get("code").and_then(|v| v.as_str()) {
+        Some(c) if !c.trim().is_empty() => c,
+        _ => return json!({
+            "ok": false,
+            "error": "Parameter 'code' must be a non-empty STRING of Python source code. \
+                      To run a script file with arguments, use run_shell instead, e.g. \
+                      {\"command\": \"python3 script.py arg1\"}."
+        }),
+    };
 
     // Security check
     if let Some(reason) = check_dangerous(code) {
@@ -3158,7 +3315,15 @@ def save_output(filename, content=None, mode='w'):
 }
 
 async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
-    let command = args["command"].as_str().unwrap_or("");
+    // Strict: a non-string `command` would silently run an empty command and
+    // return ok=true (exit 0), wasting tool rounds and misleading the model.
+    let command = match args.get("command").and_then(|v| v.as_str()) {
+        Some(c) if !c.trim().is_empty() => c,
+        _ => return json!({
+            "ok": false,
+            "error": "Parameter 'command' must be a non-empty STRING shell command."
+        }),
+    };
 
     // Security check
     if let Some(reason) = check_dangerous(command) {
@@ -3663,7 +3828,7 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
             Ok(raw_content) => {
                 let content = raw_content.replace("{baseDir}", &base_dir_str);
                 let truncated = content.len() > 15000;
-                let content = if truncated { content[..15000].to_string() } else { content };
+                let content = crate::util::truncate_utf8(&content, 15000).to_string();
 
                 // Read _meta.json if present
                 let meta = match tokio::fs::read_to_string(skill_base_dir.join("_meta.json")).await {
@@ -3730,7 +3895,7 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
                     // Retry the load now that the file exists
                     let content = script.replace("{baseDir}", &skill_dir.display().to_string());
                     let truncated = content.len() > 15000;
-                    let content = if truncated { content[..15000].to_string() } else { content };
+                    let content = crate::util::truncate_utf8(&content, 15000).to_string();
                     return json!({
                         "ok": true,
                         "skill": skill_name,
@@ -4021,7 +4186,7 @@ async fn exec_remote_task(args: &Value) -> Value {
     if !submit.status().is_success() {
         let status = submit.status().as_u16();
         let body = submit.text().await.unwrap_or_default();
-        return json!({ "ok": false, "error": format!("Submit failed: {} {}", status, &body[..body.len().min(500)]) });
+        return json!({ "ok": false, "error": format!("Submit failed: {} {}", status, crate::util::truncate_utf8(&body, 500)) });
     }
 
     let submit_data: Value = match submit.json().await {
@@ -4121,7 +4286,7 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
             }
             if result_text.is_empty() && !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return json!({ "ok": false, "error": format!("claude exited {:?}: {}", output.status.code(), &stderr[..stderr.len().min(1000)]) });
+                return json!({ "ok": false, "error": format!("claude exited {:?}: {}", output.status.code(), crate::util::truncate_utf8(&stderr, 1000)) });
             }
             let output_files = scan_output_files(sandbox_dir).await;
             json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls, "output_files": output_files })
@@ -4202,7 +4367,7 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
             }
             if result_text.is_empty() && !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return json!({ "ok": false, "error": format!("gemini exited {:?}: {}", output.status.code(), &stderr[..stderr.len().min(1000)]) });
+                return json!({ "ok": false, "error": format!("gemini exited {:?}: {}", output.status.code(), crate::util::truncate_utf8(&stderr, 1000)) });
             }
             let output_files = scan_output_files(sandbox_dir).await;
             json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls, "output_files": output_files })
@@ -4933,7 +5098,7 @@ fn exec_spawn_subagent(
         return json!({"ok": false, "error": "Max sub-agent recursion depth reached (3)"});
     }
 
-    info!("[SubAgent] Spawning agent '{}' (depth={}) for task: {}", agent_id, sub_agent.depth, &task[..task.len().min(80)]);
+    info!("[SubAgent] Spawning agent '{}' (depth={}) for task: {}", agent_id, sub_agent.depth, crate::util::truncate_utf8(&task, 80));
 
     // Load YAML config
     let (yaml_val, _) = match load_agent_yaml(&sub_agent.config_file) {
@@ -5051,11 +5216,7 @@ fn exec_spawn_subagent(
     )
     .await;
 
-    let result_preview = if result.content.len() > 200 {
-        format!("{}...", &result.content[..200])
-    } else {
-        result.content.clone()
-    };
+    let result_preview = crate::util::truncate_utf8_ellipsis(&result.content, 200);
 
     info!("[SubAgent] Agent '{}' completed. Result length: {} chars", agent_id, result.content.len());
 
@@ -5440,7 +5601,7 @@ async fn llm_call_claude_code(
         } else if role == "assistant" {
             // Include assistant context
             if !content.is_empty() {
-                prompt_parts.push(format!("[Previous assistant response: {}]", &content[..content.len().min(500)]));
+                prompt_parts.push(format!("[Previous assistant response: {}]", crate::util::truncate_utf8(&content, 500)));
             }
         }
     }
@@ -5513,7 +5674,7 @@ async fn llm_call_claude_code(
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             if !output.status.success() && stdout.is_empty() {
-                return Err(format!("Claude Code CLI failed: {}", &stderr[..stderr.len().min(500)]));
+                return Err(format!("Claude Code CLI failed: {}", crate::util::truncate_utf8(&stderr, 500)));
             }
 
             // Try to extract tool calls from the response
@@ -5624,7 +5785,7 @@ async fn llm_call_gemini_cli(
         } else if role == "user" {
             prompt_parts.push(content.to_string());
         } else if role == "assistant" && !content.is_empty() {
-            prompt_parts.push(format!("[Previous assistant response: {}]", &content[..content.len().min(500)]));
+            prompt_parts.push(format!("[Previous assistant response: {}]", crate::util::truncate_utf8(&content, 500)));
         }
     }
 
@@ -5703,11 +5864,11 @@ async fn llm_call_gemini_cli(
                 let err_line = combined.lines()
                     .find(|l| l.contains("Error") || l.contains("message:"))
                     .unwrap_or("Unknown Gemini API error");
-                return Err(format!("Gemini API error: {}", &err_line[..err_line.len().min(300)]));
+                return Err(format!("Gemini API error: {}", crate::util::truncate_utf8(&err_line, 300)));
             }
 
             if !output.status.success() && stdout.trim().is_empty() {
-                return Err(format!("Gemini CLI failed: {}", &stderr[..stderr.len().min(500)]));
+                return Err(format!("Gemini CLI failed: {}", crate::util::truncate_utf8(&stderr, 500)));
             }
 
             // Filter out skill conflict warnings from stdout
@@ -5900,7 +6061,7 @@ async fn llm_call_codex_cli(
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             if !output.status.success() && stdout.trim().is_empty() {
-                return Err(format!("Codex CLI failed: {}", &stderr[..stderr.len().min(500)]));
+                return Err(format!("Codex CLI failed: {}", crate::util::truncate_utf8(&stderr, 500)));
             }
 
             // Parse JSONL events from codex --json output
@@ -6328,7 +6489,7 @@ fn truncate_tool_call_args(tool_calls: &[Value]) -> Vec<Value> {
                     for (key, val) in obj {
                         if let Some(s) = val.as_str() {
                             if s.len() > ARG_VALUE_TRUNCATE {
-                                summary.insert(key.clone(), json!(format!("{}...(truncated)", &s[..ARG_VALUE_TRUNCATE])));
+                                summary.insert(key.clone(), json!(format!("{}...(truncated)", crate::util::truncate_utf8(s, ARG_VALUE_TRUNCATE))));
                             } else {
                                 summary.insert(key.clone(), val.clone());
                             }
@@ -6338,11 +6499,11 @@ fn truncate_tool_call_args(tool_calls: &[Value]) -> Vec<Value> {
                     }
                     serde_json::to_string(&Value::Object(summary)).unwrap_or_else(|_| args_str.to_string())
                 } else {
-                    args_str[..ARG_TRUNCATE_THRESHOLD].to_string()
+                    crate::util::truncate_utf8(args_str, ARG_TRUNCATE_THRESHOLD).to_string()
                 }
             }
             Err(_) => {
-                serde_json::to_string(&json!({"_truncated": &args_str[..3000.min(args_str.len())]})).unwrap_or_default()
+                serde_json::to_string(&json!({"_truncated": crate::util::truncate_utf8(args_str, 3000)})).unwrap_or_default()
             }
         };
         let mut tc = tc.clone();
@@ -6429,11 +6590,12 @@ async fn save_checkpoint(
     tool_call_history: &[String],
     consecutive_errors: usize,
     early_content: &str,
+    conversation_key: &str,
 ) {
     if session_id.is_empty() { return; }
-    let dir = "data/checkpoints";
-    let _ = tokio::fs::create_dir_all(dir).await;
-    let fp = format!("{}/{}.json", dir, session_id);
+    let dir = crate::server::data::data_dir().join("checkpoints");
+    let _ = tokio::fs::create_dir_all(&dir).await;
+    let fp = dir.join(format!("{}.json", session_id));
 
     // Compress checkpoint: only keep last 20 messages fully
     let compact_messages = if all_messages.len() > 30 {
@@ -6454,8 +6616,8 @@ async fn save_checkpoint(
                 "ok": tr.result.get("ok"),
                 "exitCode": tr.result.get("exit_code"),
                 "outputFiles": tr.result.get("output_files"),
-                "stdout": tr.result.get("stdout").and_then(|v| v.as_str()).map(|s| &s[..s.len().min(2000)]),
-                "stderr": tr.result.get("stderr").and_then(|v| v.as_str()).map(|s| &s[..s.len().min(1000)]),
+                "stdout": tr.result.get("stdout").and_then(|v| v.as_str()).map(|s| crate::util::truncate_utf8(&s, 2000)),
+                "stderr": tr.result.get("stderr").and_then(|v| v.as_str()).map(|s| crate::util::truncate_utf8(&s, 1000)),
                 "error": tr.result.get("error"),
             }
         })
@@ -6470,6 +6632,7 @@ async fn save_checkpoint(
         "toolCallHistory": tool_call_history,
         "consecutiveErrors": consecutive_errors,
         "earlyContent": if early_content.is_empty() { Value::Null } else { json!(early_content) },
+        "conversationKey": conversation_key,
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
@@ -6485,11 +6648,13 @@ struct LocalCheckpoint {
     tool_call_history: Vec<String>,
     consecutive_errors: usize,
     early_content: Option<String>,
+    conversation_key: String,
+    timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 async fn load_checkpoint(session_id: &str) -> Option<LocalCheckpoint> {
     if session_id.is_empty() { return None; }
-    let fp = format!("data/checkpoints/{}.json", session_id);
+    let fp = crate::server::data::data_dir().join("checkpoints").join(format!("{}.json", session_id));
     let content = tokio::fs::read_to_string(&fp).await.ok()?;
     let v: Value = serde_json::from_str(&content).ok()?;
     Some(LocalCheckpoint {
@@ -6504,12 +6669,16 @@ async fn load_checkpoint(session_id: &str) -> Option<LocalCheckpoint> {
             .unwrap_or_default(),
         consecutive_errors: v["consecutiveErrors"].as_u64().unwrap_or(0) as usize,
         early_content: v["earlyContent"].as_str().map(|s| s.to_string()),
+        conversation_key: v["conversationKey"].as_str().unwrap_or("").to_string(),
+        timestamp: v["timestamp"].as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&chrono::Utc)),
     })
 }
 
 async fn clear_checkpoint(session_id: &str) {
     if session_id.is_empty() { return; }
-    let fp = format!("data/checkpoints/{}.json", session_id);
+    let fp = crate::server::data::data_dir().join("checkpoints").join(format!("{}.json", session_id));
     let _ = tokio::fs::remove_file(&fp).await;
 }
 
@@ -6618,18 +6787,38 @@ async fn call_with_tools_inner(
     // For tracking tool call history (loop detection)
     let mut tool_call_history: Vec<String> = Vec::new();
 
+    // Identify this conversation by its last real user message — a checkpoint
+    // saved for a DIFFERENT message (e.g. left behind by a crashed or killed
+    // run) must not hijack this one, or the new question is silently dropped.
+    let conversation_key: String = messages.iter().rev()
+        .find(|m| m["role"].as_str() == Some("user"))
+        .and_then(|m| m["content"].as_str())
+        .map(|s| s.chars().take(300).collect())
+        .unwrap_or_default();
+
     if checkpoint_enabled && !sub_agent.session_id.is_empty() {
         if let Some(checkpoint) = load_checkpoint(&sub_agent.session_id).await {
-            info!("[ToolLoop] Resuming from checkpoint at round {}", checkpoint.round);
-            all_messages = checkpoint.messages;
-            total_tool_calls = checkpoint.total_tool_calls;
-            collected_files = checkpoint.files;
-            tool_call_history = checkpoint.tool_call_history;
-            consecutive_errors = checkpoint.consecutive_errors;
-            if let Some(ec) = checkpoint.early_content {
-                early_content = ec;
+            let age_ok = checkpoint.timestamp
+                .map(|t| chrono::Utc::now() - t < chrono::Duration::hours(2))
+                .unwrap_or(false);
+            let key_ok = !conversation_key.is_empty()
+                && checkpoint.conversation_key == conversation_key;
+            if age_ok && key_ok {
+                info!("[ToolLoop] Resuming from checkpoint at round {}", checkpoint.round);
+                all_messages = checkpoint.messages;
+                total_tool_calls = checkpoint.total_tool_calls;
+                collected_files = checkpoint.files;
+                tool_call_history = checkpoint.tool_call_history;
+                consecutive_errors = checkpoint.consecutive_errors;
+                if let Some(ec) = checkpoint.early_content {
+                    early_content = ec;
+                }
+                start_round = checkpoint.round;
+            } else {
+                warn!("[ToolLoop] Ignoring stale checkpoint for session {} (age_ok={}, key_ok={}) — starting fresh",
+                    sub_agent.session_id, age_ok, key_ok);
+                clear_checkpoint(&sub_agent.session_id).await;
             }
-            start_round = checkpoint.round;
         }
     }
 
@@ -6641,10 +6830,14 @@ async fn call_with_tools_inner(
         all_messages.extend(messages);
     }
 
-    // Extract user objective for reflection (first user message)
-    let user_objective: String = all_messages.iter()
-        .find(|m| m["role"].as_str() == Some("user"))
-        .and_then(|m| m["content"].as_str())
+    // Extract user objective for reflection: the LAST real user message is the
+    // current request (the first one is stale in multi-turn sessions). Skip
+    // injected system nudges, which also use the user role.
+    let user_objective: String = all_messages.iter().rev()
+        .filter(|m| m["role"].as_str() == Some("user"))
+        .filter_map(|m| m["content"].as_str())
+        .find(|c| !c.starts_with('⚠') && !c.starts_with('🔴') && !c.starts_with('🚨')
+            && !c.starts_with("REFLECTION"))
         .unwrap_or("")
         .chars().take(2000)
         .collect();
@@ -6665,7 +6858,7 @@ async fn call_with_tools_inner(
                 save_checkpoint(
                     &sub_agent.session_id, round, &all_messages, &tool_records,
                     total_tool_calls, &collected_files, &tool_call_history,
-                    consecutive_errors, &early_content,
+                    consecutive_errors, &early_content, &conversation_key,
                 ).await;
             }
             let content = if early_content.is_empty() {
@@ -6726,7 +6919,7 @@ async fn call_with_tools_inner(
             save_checkpoint(
                 &sub_agent.session_id, round, &all_messages, &tool_records,
                 total_tool_calls, &collected_files, &tool_call_history,
-                consecutive_errors, &early_content,
+                consecutive_errors, &early_content, &conversation_key,
             ).await;
         }
 
@@ -6937,7 +7130,7 @@ async fn call_with_tools_inner(
         // Stream reasoning content to callback if present (extended thinking models)
         if let Some(reasoning) = message.get("reasoning_content").and_then(|r| r.as_str()) {
             if !reasoning.is_empty() {
-                on_update(ToolUpdate::TextChunk(format!("[reasoning] {}", &reasoning[..reasoning.len().min(500)])));
+                on_update(ToolUpdate::TextChunk(format!("[reasoning] {}", crate::util::truncate_utf8(&reasoning, 500))));
             }
         }
 
@@ -6963,7 +7156,7 @@ async fn call_with_tools_inner(
                 // Kimi API rejects empty content — fill from reasoning if content is empty
                 if truncated_message["content"].as_str().unwrap_or("").is_empty() {
                     let r = reasoning.as_str().unwrap_or("");
-                    truncated_message["content"] = json!(r[..r.len().min(200)]);
+                    truncated_message["content"] = json!(crate::util::truncate_utf8(r, 200));
                 }
             }
         }
@@ -7007,7 +7200,7 @@ async fn call_with_tools_inner(
                             info!("[ToolLoop] Recovered malformed JSON for {}", tool_name);
                             recovered
                         } else {
-                            warn!("[ToolLoop] Failed to parse args for {}: {}", tool_name, &tool_args_str[..tool_args_str.len().min(200)]);
+                            warn!("[ToolLoop] Failed to parse args for {}: {}", tool_name, crate::util::truncate_utf8(&tool_args_str, 200));
                             json!({})
                         }
                     }
@@ -7316,7 +7509,7 @@ async fn call_with_tools_inner(
                     let mut pending_info = String::new();
                     if !pending.is_empty() {
                         pending_info = format!("\n\nResults just arrived from your agents:\n{}",
-                            pending.iter().map(|(id, r)| format!("**{}**: {}", id, &r.result[..r.result.len().min(3000)]))
+                            pending.iter().map(|(id, r)| format!("**{}**: {}", id, crate::util::truncate_utf8(&r.result, 3000)))
                                 .collect::<Vec<_>>().join("\n\n")
                         );
                     }
@@ -7375,32 +7568,54 @@ async fn call_with_tools_inner(
             }
 
             // Truly done — return final response
-            let content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
+            let mut content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
+            // Some models end with empty content (e.g. text went to reasoning_content,
+            // or a malformed tool call). Never return a blank answer after real work.
+            if content.is_empty() && total_tool_calls > 0 {
+                warn!("[ToolLoop] Empty final content after {} tool calls — forcing final synthesis", total_tool_calls);
+                content = strip_think_blocks(&force_final_response(
+                    &client, api_key, api_url, model, &all_messages, &tool_records,
+                    total_tool_calls, temperature,
+                ).await);
+            }
+            if content.is_empty() && !early_content.is_empty() {
+                content = strip_think_blocks(&early_content);
+            }
+            if content.is_empty() && total_tool_calls > 0 {
+                content = format!(
+                    "The task ran {} tool calls but the model did not produce a final answer. \
+                    Please send the request again or rephrase it.", total_tool_calls
+                );
+            }
             info!("[ToolLoop] No tool_calls from LLM at round {} — returning text ({} chars)", round, content.len());
-            on_update(ToolUpdate::TextChunk(content.clone()));
             clear_checkpoint(&sub_agent.session_id).await;
 
             // --- Reflection loop (tiger_cowork: evaluate objective satisfaction) ---
+            // Runs BEFORE the final TextChunk emission so the UI receives the
+            // improved answer, not the pre-reflection draft.
             if reflection_enabled && total_tool_calls > 0 && !content.is_empty() {
-                let mut reflection_content = content.clone();
-                let records_snapshot = tool_records.clone();
                 let reflection_result = run_reflection_loop(
                     &client, api_key, api_url, model, &mut all_messages, &user_objective,
-                    &records_snapshot, eval_threshold, max_reflection_retries,
+                    eval_threshold, max_reflection_retries,
                     temperature, max_tokens,
                     &tools, &sub_agent, sandbox_dir, on_update.clone(), realtime,
                     &mut tool_records, &mut collected_files, &mut total_tool_calls,
                 ).await;
                 if let Some(improved) = reflection_result {
-                    reflection_content = improved;
+                    let improved = strip_think_blocks(&improved);
+                    if !improved.trim().is_empty() {
+                        content = improved;
+                    }
                 }
 
+                on_update(ToolUpdate::TextChunk(content.clone()));
                 return ToolLoopResult {
-                    content: reflection_content,
+                    content,
                     tool_results: tool_records,
                     files: collected_files,
                 };
             }
+            on_update(ToolUpdate::TextChunk(content.clone()));
 
             // --- Output file nudge (tiger_cowork: if user wants files but none generated) ---
             if user_wants_output && collected_files.is_empty() && total_tool_calls > 0 {
@@ -7437,6 +7652,16 @@ async fn call_with_tools_inner(
     // Fall back to early_content if force_final_response returned empty
     let content = if content.is_empty() && !early_content.is_empty() {
         strip_think_blocks(&early_content)
+    } else {
+        content
+    };
+    // Last resort: never end a long run with a blank answer
+    let content = if content.is_empty() {
+        format!(
+            "The task hit the tool-call limit ({} calls) without producing a final answer. \
+            Partial results may be in the activity log. Please retry or narrow the request.",
+            total_tool_calls
+        )
     } else {
         content
     };
@@ -7496,6 +7721,109 @@ async fn execute_tool_dispatch(
 // Reflection loop (tiger_cowork: post-loop evaluation with outer retry)
 // ---------------------------------------------------------------------------
 
+/// Verdict from an LLM judge call.
+struct JudgeVerdict {
+    score: f64,
+    satisfied: bool,
+    missing: String,
+}
+
+/// Summarize tool-call records for a judge prompt: most recent records first
+/// (newest are the most relevant after a gap-fix pass), capped in total size.
+fn summarize_tool_records(records: &[ToolCallRecord]) -> String {
+    const SUMMARY_MAX_RECORDS: usize = 40;
+    const SUMMARY_MAX_CHARS: usize = 8000;
+    let mut tool_summary = String::new();
+    let skipped = records.len().saturating_sub(SUMMARY_MAX_RECORDS);
+    if skipped > 0 {
+        tool_summary.push_str(&format!("[... {} earlier tool calls omitted ...]\n", skipped));
+    }
+    for tr in records.iter().skip(skipped) {
+        let r = &tr.result;
+        let line = if let Some(files) = r.get("output_files").and_then(|v| v.as_array()).filter(|f| !f.is_empty()) {
+            let fnames: Vec<&str> = files.iter().filter_map(|f| f.as_str()).collect();
+            format!("[{}] Generated: {}", tr.tool, fnames.join(", "))
+        } else if r.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+            format!("[{}] Error: {}", tr.tool, r.get("error").and_then(|v| v.as_str()).unwrap_or("failed"))
+        } else if let Some(stdout) = r.get("stdout").and_then(|v| v.as_str()) {
+            format!("[{}] {}", tr.tool, crate::util::truncate_utf8(stdout, 300))
+        } else {
+            let r_str = serde_json::to_string(r).unwrap_or_default();
+            format!("[{}] {}", tr.tool, crate::util::truncate_utf8(&r_str, 300))
+        };
+        if tool_summary.len() + line.len() > SUMMARY_MAX_CHARS { break; }
+        tool_summary.push_str(&line);
+        tool_summary.push('\n');
+    }
+    tool_summary
+}
+
+/// Score how well `answer` satisfies `objective`, with `evidence` (tool summary
+/// + files) as ground truth. Near-deterministic, small reply. Returns None when
+/// the judge call or parse fails — callers fail open (treat as satisfied).
+async fn judge_task_result(
+    client: &Client,
+    api_key: &str,
+    api_url: &str,
+    model: &str,
+    objective: &str,
+    evidence: &str,
+    answer: &str,
+    judge_role: &str, // e.g. "the user's objective" or "its assigned task"
+) -> Option<JudgeVerdict> {
+    let eval_messages = vec![
+        json!({"role": "system", "content": format!(
+            "You are a strict evaluation judge. Score how well the FINAL ANSWER satisfies {}. \
+            Judge the answer the reader will receive, not the effort spent. Output ONLY the JSON object.",
+            judge_role
+        )}),
+        json!({"role": "user", "content": format!(
+            "OBJECTIVE:\n{}\n\n\
+            EVIDENCE (tool calls and generated files):\n{}\n\n\
+            FINAL ANSWER:\n{}\n\n\
+            Respond in EXACTLY this JSON format (no other text):\n\
+            {{\"score\": <0.0-1.0>, \"satisfied\": <true/false>, \"missing\": \"<concrete, actionable list of what is missing or wrong; empty string if satisfied>\"}}\n\n\
+            Checklist before scoring:\n\
+            - Break the objective into its distinct parts; every part must be addressed in the FINAL ANSWER itself.\n\
+            - Claimed results must be backed by the evidence above (no fabricated data).\n\
+            - If files/charts were requested, they must appear in the evidence.\n\
+            - An answer that only describes what it WOULD do is NOT satisfied.\n\n\
+            Scoring guide:\n\
+            - 1.0: Fully satisfied, all parts addressed\n\
+            - 0.7-0.9: Mostly satisfied, minor gaps\n\
+            - 0.4-0.6: Partially satisfied, significant gaps\n\
+            - 0.0-0.3: Not satisfied, major parts missing",
+            objective, evidence, answer
+        )}),
+    ];
+
+    let eval_data = match llm_call(client, api_key, api_url, model, &eval_messages, None, 0.1, 1024).await {
+        Ok(d) => d,
+        Err(e) => {
+            error!("[Judge] Eval call failed: {}", e);
+            return None;
+        }
+    };
+    let eval_content = eval_data["choices"][0]["message"]["content"].as_str().unwrap_or("");
+    info!("[Judge] Raw eval: {}", crate::util::truncate_utf8(eval_content, 300));
+
+    let json_str = eval_content.find('{')
+        .and_then(|start| eval_content.rfind('}').map(|end| &eval_content[start..=end]));
+    let parsed: Value = match json_str.and_then(|s| serde_json::from_str(s).ok()) {
+        Some(p) => p,
+        None => {
+            warn!("[Judge] Could not parse verdict — failing open");
+            return None;
+        }
+    };
+
+    Some(JudgeVerdict {
+        score: parsed["score"].as_f64().unwrap_or(1.0),
+        satisfied: parsed["satisfied"].as_bool().unwrap_or(false),
+        missing: parsed["missing"].as_str().unwrap_or("").to_string(),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_reflection_loop(
     client: &Client,
@@ -7504,7 +7832,6 @@ async fn run_reflection_loop(
     model: &str,
     all_messages: &mut Vec<Value>,
     user_objective: &str,
-    tool_records: &[ToolCallRecord],
     eval_threshold: f64,
     max_reflection_retries: usize,
     temperature: f64,
@@ -7520,91 +7847,65 @@ async fn run_reflection_loop(
 ) -> Option<String> {
     // Outer retry loop (tiger_cowork: maxReflectionRetries, default 2)
     for retry_round in 0..max_reflection_retries {
+        if sub_agent.cancel_flag.load(Ordering::Relaxed) {
+            info!("[Reflection] Abort signal — skipping reflection");
+            break;
+        }
         info!("[Reflection] Round {}/{} — evaluating objective satisfaction...", retry_round + 1, max_reflection_retries);
 
-        // Build tool summary for evaluation (tiger_cowork format)
-        let tool_summary: String = tool_records.iter().chain(tool_records_mut.iter()).map(|tr| {
-            let r = &tr.result;
-            if let Some(files) = r.get("output_files").and_then(|v| v.as_array()) {
-                if !files.is_empty() {
-                    let fnames: Vec<&str> = files.iter().filter_map(|f| f.as_str()).collect();
-                    return format!("[{}] Generated: {}", tr.tool, fnames.join(", "));
-                }
-            }
-            if r.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-                return format!("[{}] Error: {}", tr.tool, r.get("error").and_then(|v| v.as_str()).unwrap_or("failed"));
-            }
-            if let Some(stdout) = r.get("stdout").and_then(|v| v.as_str()) {
-                return format!("[{}] {}", tr.tool, &stdout[..stdout.len().min(300)]);
-            }
-            format!("[{}] {}", tr.tool, serde_json::to_string(r).unwrap_or_default().chars().take(300).collect::<String>())
-        }).collect::<Vec<_>>().join("\n");
+        let mut evidence = summarize_tool_records(tool_records_mut);
+        evidence.push_str(&format!(
+            "FILES GENERATED: {}",
+            if collected_files.is_empty() { "(none)".to_string() } else { collected_files.join(", ") }
+        ));
 
         let last_assistant = all_messages.iter().rev()
             .find(|m| m["role"].as_str() == Some("assistant"))
             .and_then(|m| m["content"].as_str())
             .unwrap_or("(none)");
 
-        // Rich evaluation prompt matching tiger_cowork
-        let eval_messages = vec![
-            json!({"role": "system", "content": "You are an evaluation judge. Score how well the agent satisfied the user's objective."}),
-            json!({"role": "user", "content": format!(
-                "USER OBJECTIVE:\n{}\n\n\
-                AGENT ACTIONS ({} tool calls):\n{}\n\n\
-                LAST ASSISTANT MESSAGE:\n{}\n\n\
-                Respond in EXACTLY this JSON format (no other text):\n\
-                {{\"score\": <0.0-1.0>, \"satisfied\": <true/false>, \"missing\": \"<what is missing or incomplete, empty string if satisfied>\"}}\n\n\
-                Scoring guide:\n\
-                - 1.0: Fully satisfied, all parts addressed\n\
-                - 0.7-0.9: Mostly satisfied, minor gaps\n\
-                - 0.4-0.6: Partially satisfied, significant gaps\n\
-                - 0.0-0.3: Not satisfied, major parts missing",
-                user_objective, total_tool_calls, tool_summary, last_assistant
-            )}),
-        ];
-
-        let eval_data = match llm_call(client, api_key, api_url, model, &eval_messages, None, temperature, max_tokens).await {
-            Ok(d) => d,
-            Err(e) => {
-                error!("[Reflection] Eval call failed: {}", e);
-                break;
-            }
+        let verdict = match judge_task_result(
+            client, api_key, api_url, model,
+            user_objective, &evidence, last_assistant,
+            "the user's objective",
+        ).await {
+            Some(v) => v,
+            None => break, // judge failed → fail open (treat as satisfied)
         };
-        let eval_content = eval_data["choices"][0]["message"]["content"].as_str().unwrap_or("");
-        info!("[Reflection] Raw eval: {}", &eval_content[..eval_content.len().min(300)]);
+        let (score, satisfied, missing) = (verdict.score, verdict.satisfied, verdict.missing);
 
-        // Parse JSON from response
-        let json_str = eval_content.find('{')
-            .and_then(|start| eval_content.rfind('}').map(|end| &eval_content[start..=end]));
-        let parsed: Value = json_str
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or(json!({"score": 1.0, "satisfied": true}));
-
-        let score = parsed["score"].as_f64().unwrap_or(1.0);
-        let satisfied = parsed["satisfied"].as_bool().unwrap_or(false);
-        let missing = parsed["missing"].as_str().unwrap_or("").to_string();
-
-        info!("[Reflection] Score: {:.2}, Satisfied: {}, Missing: {}", score, satisfied, &missing[..missing.len().min(200)]);
+        info!("[Reflection] Score: {:.2}, Satisfied: {}, Missing: {}", score, satisfied, crate::util::truncate_utf8(&missing, 200));
 
         if score >= eval_threshold || satisfied {
             info!("[Reflection] Score {:.2} >= threshold {:.2}. Objective satisfied.", score, eval_threshold);
             break;
         }
 
-        // Score below threshold — re-enter agent loop to address gaps
+        // Score below threshold — re-enter agent loop to address gaps.
+        // Role must be "user": several OpenAI-compatible APIs reject system
+        // messages mid-conversation (consistent with the other loop nudges).
         info!("[Reflection] Score {:.2} < threshold {:.2}. Re-entering agent loop...", score, eval_threshold);
+        on_update(ToolUpdate::TextChunk(format!(
+            "[reflection] Score {:.1}/1.0 — addressing gaps: {}",
+            score, crate::util::truncate_utf8(&missing, 200)
+        )));
 
         all_messages.push(json!({
-            "role": "system",
+            "role": "user",
             "content": format!(
-                "REFLECTION CHECK: Your work scored {:.1}/1.0 (threshold: {:.1}). The evaluation found these gaps:\n{}\n\n\
-                Please address what's missing to fully satisfy the user's objective. Use tools as needed.",
+                "⚠️ SYSTEM REFLECTION CHECK: Your answer scored {:.1}/1.0 (threshold: {:.1}). The evaluation found these gaps:\n{}\n\n\
+                Address ONLY what is missing — do not redo completed work. Use tools as needed, \
+                then give a COMPLETE final answer that includes both your previous results and the fixes.",
                 score, eval_threshold, missing
             )
         }));
 
         // Run additional tool rounds to address the gaps (tiger_cowork: up to 5)
         for _extra_round in 0..5usize {
+            if sub_agent.cancel_flag.load(Ordering::Relaxed) {
+                info!("[Reflection] Abort signal during gap-fix rounds");
+                return None;
+            }
             let resp = match llm_call(client, api_key, api_url, model, all_messages, Some(tools), temperature, max_tokens).await {
                 Ok(d) => d,
                 Err(e) => {
@@ -7652,10 +7953,12 @@ async fn run_reflection_loop(
         // Loop back to re-evaluate
     }
 
-    // Return the last assistant message content (may be improved or original)
+    // Return the last assistant message with real text content (gap-fix rounds
+    // can leave tool-call messages with null content at the tail).
     all_messages.iter().rev()
-        .find(|m| m["role"].as_str() == Some("assistant"))
-        .and_then(|m| m["content"].as_str())
+        .filter(|m| m["role"].as_str() == Some("assistant"))
+        .filter_map(|m| m["content"].as_str())
+        .find(|c| !c.trim().is_empty())
         .map(|s| s.to_string())
 }
 

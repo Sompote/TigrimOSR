@@ -534,10 +534,10 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
     if result["ok"].as_bool() == Some(false) || result["exitCode"].as_i64() == Some(1) {
         let mut compact = json!({"ok": false});
         if let Some(e) = result["error"].as_str() {
-            compact["error"] = json!(&e[..e.len().min(2000)]);
+            compact["error"] = json!(crate::util::truncate_utf8(&e, 2000));
         }
         if let Some(e) = result["stderr"].as_str() {
-            compact["stderr"] = json!(&e[..e.len().min(2000)]);
+            compact["stderr"] = json!(crate::util::truncate_utf8(&e, 2000));
         }
         if let Some(ec) = result.get("exitCode") {
             compact["exitCode"] = ec.clone();
@@ -559,7 +559,7 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
                 }
             }
             if lines.len() <= 60 {
-                compact["stdout"] = json!(&stdout[..stdout.len().min(max_len.saturating_sub(200))]);
+                compact["stdout"] = json!(crate::util::truncate_utf8(stdout, max_len.saturating_sub(200)));
             } else {
                 let head: String = lines[..30].join("\n");
                 let tail: String = lines[lines.len() - 20..].join("\n");
@@ -571,7 +571,7 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
                 ));
             }
             if let Some(stderr) = result["stderr"].as_str() {
-                compact["stderr"] = json!(&stderr[..stderr.len().min(1000)]);
+                compact["stderr"] = json!(crate::util::truncate_utf8(stderr, 1000));
             }
             return serde_json::to_string(&compact).unwrap_or(raw);
         }
@@ -585,7 +585,7 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
                 .map(|r| {
                     let snippet = r["snippet"]
                         .as_str()
-                        .map(|s| &s[..s.len().min(150)])
+                        .map(|s| crate::util::truncate_utf8(s, 150))
                         .unwrap_or("");
                     json!({
                         "title": r["title"],
@@ -606,7 +606,7 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
             let lines: Vec<&str> = content.lines().collect();
             let mut compact = json!({"ok": true, "url": result["url"]});
             if lines.len() <= 50 {
-                compact["content"] = json!(&content[..content.len().min(max_len.saturating_sub(200))]);
+                compact["content"] = json!(crate::util::truncate_utf8(content, max_len.saturating_sub(200)));
             } else {
                 let head: String = lines[..30].join("\n");
                 let tail: String = lines[lines.len() - 10..].join("\n");
@@ -627,7 +627,7 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
             let lines: Vec<&str> = content.lines().collect();
             let mut compact = json!({"path": result["path"]});
             if lines.len() <= 50 {
-                compact["content"] = json!(&content[..content.len().min(max_len.saturating_sub(100))]);
+                compact["content"] = json!(crate::util::truncate_utf8(content, max_len.saturating_sub(100)));
             } else {
                 let head: String = lines[..30].join("\n");
                 let tail: String = lines[lines.len() - 10..].join("\n");
@@ -656,7 +656,7 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
 
     // Default: truncate with note
     if raw.len() > max_len {
-        format!("{}...(truncated)", &raw[..max_len.saturating_sub(20)])
+        format!("{}...(truncated)", crate::util::truncate_utf8(&raw, max_len.saturating_sub(20)))
     } else {
         raw
     }
@@ -1397,10 +1397,10 @@ pub async fn save_checkpoint(session_id: &str, checkpoint: &ToolLoopCheckpoint) 
                 compact_result["outputFiles"] = of.clone();
             }
             if let Some(stdout) = tr.result["stdout"].as_str() {
-                compact_result["stdout"] = json!(&stdout[..stdout.len().min(2000)]);
+                compact_result["stdout"] = json!(crate::util::truncate_utf8(&stdout, 2000));
             }
             if let Some(stderr) = tr.result["stderr"].as_str() {
-                compact_result["stderr"] = json!(&stderr[..stderr.len().min(1000)]);
+                compact_result["stderr"] = json!(crate::util::truncate_utf8(&stderr, 1000));
             }
             if let Some(err) = tr.result.get("error") {
                 compact_result["error"] = err.clone();
