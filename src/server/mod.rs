@@ -56,6 +56,74 @@ fn extract_query_token(uri: &axum::http::Uri) -> Option<String> {
     })
 }
 
+/// Constant-time comparison, exposed for the auth verify route.
+pub(crate) fn ct_eq_pub(a: &str, b: &str) -> bool {
+    ct_eq(a, b)
+}
+
+/// Constant-time string comparison — token checks must not leak length or
+/// prefix-match timing to a remote attacker.
+fn ct_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let mut diff = (a.len() != b.len()) as u8;
+    for i in 0..a.len().max(b.len()) {
+        diff |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
+    }
+    diff == 0
+}
+
+// Global brute-force limiter: sliding 60s window of failed auth attempts.
+// Global (not per-IP) because behind a Cloudflare tunnel every request
+// arrives from loopback — per-IP limits would be useless there.
+static AUTH_FAILS: std::sync::OnceLock<std::sync::Mutex<Vec<std::time::Instant>>> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn auth_rate_limited() -> bool {
+    let m = AUTH_FAILS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let mut v = m.lock().unwrap();
+    let now = std::time::Instant::now();
+    v.retain(|t| now.duration_since(*t) < std::time::Duration::from_secs(60));
+    v.len() >= 10
+}
+
+pub(crate) fn record_auth_fail() {
+    let m = AUTH_FAILS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let mut v = m.lock().unwrap();
+    if v.len() < 1000 {
+        v.push(std::time::Instant::now());
+    }
+}
+
+/// Browser cross-origin guard (anti drive-by / DNS-rebinding). Requests with
+/// an Origin header must originate either from loopback (the local web UI /
+/// desktop app) or from the same authority the request was addressed to
+/// (tunnel domain, LAN IP). Non-browser clients send no Origin and pass.
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) else {
+        return true;
+    };
+    if origin.eq_ignore_ascii_case("null") {
+        return false;
+    }
+    let authority = origin.split("://").nth(1).unwrap_or(origin);
+    let host_only = authority.split(':').next().unwrap_or(authority);
+    if matches!(host_only, "localhost" | "127.0.0.1" | "[::1]") {
+        return true;
+    }
+    if let Some(host) = headers.get("host").and_then(|v| v.to_str().ok()) {
+        if authority.eq_ignore_ascii_case(host) {
+            return true;
+        }
+    }
+    false
+}
+
+/// API prefixes a REMOTE-token session may not touch: these give code
+/// execution on the bare host or reconfigure security. The OWNER token
+/// (ACCESS_TOKEN env / headless setup token) retains full access, and the
+/// user can opt remote sessions back in with settings `remoteFullAccess: true`.
+const REMOTE_BLOCKED_PREFIXES: &[&str] = &["/api/terminal", "/api/local-files", "/api/plugins"];
+
 async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     req: Request,
@@ -63,8 +131,15 @@ async fn auth_middleware(
 ) -> Response {
     let uri = req.uri().clone();
     let path = uri.path().to_string();
+    let method = req.method().clone();
 
-    // Skip auth for verify endpoint
+    // Browser cross-origin guard — applies to ALL requests, even when no
+    // auth is configured: blocks drive-by websites POSTing to localhost.
+    if !origin_allowed(req.headers()) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Cross-origin request rejected"}))).into_response();
+    }
+
+    // Skip auth for verify endpoint (it does its own rate-limited check)
     if path.starts_with("/api/auth/verify") {
         return next.run(req).await;
     }
@@ -77,30 +152,61 @@ async fn auth_middleware(
         None
     };
 
-    // If no access_token AND no remote_token configured, allow all (local-only use)
+    // If no access_token AND no remote_token configured, allow all (local-only
+    // use — the server binds to 127.0.0.1 in this configuration).
     if state.access_token.is_empty() && remote_token.is_none() {
         return next.run(req).await;
     }
 
-    let token = extract_bearer(req.headers()).or_else(|| extract_query_token(&uri));
+    // Brute-force guard: once token guessing is detected, reject before
+    // comparing anything.
+    if auth_rate_limited() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "Too many failed authentication attempts. Try again in a minute."})),
+        ).into_response();
+    }
+
+    // Query-string tokens (?token=) are accepted ONLY for /api/files — they
+    // exist for browser download/preview links. Everywhere else tokens must
+    // travel in the Authorization header so they don't leak into access logs.
+    let token = extract_bearer(req.headers()).or_else(|| {
+        if path.starts_with("/api/files") { extract_query_token(&uri) } else { None }
+    });
 
     if let Some(ref t) = token {
-        // Check main access token
-        if !state.access_token.is_empty() && *t == state.access_token {
+        // OWNER token — full access
+        if !state.access_token.is_empty() && ct_eq(t, &state.access_token) {
             return next.run(req).await;
         }
-        // Check remote token
+        // REMOTE token — chat/agents/files, but not host-level control
         if let Some(ref rt) = remote_token {
-            if t == rt {
+            if ct_eq(t, rt) {
+                let remote_full = settings.extra.get("remoteFullAccess")
+                    .and_then(|v| v.as_bool()).unwrap_or(false);
+                if !remote_full {
+                    if REMOTE_BLOCKED_PREFIXES.iter().any(|p| path.starts_with(p)) {
+                        return (StatusCode::FORBIDDEN, Json(json!({
+                            "error": "This endpoint is not available with a remote access token. \
+                                      Use the owner ACCESS_TOKEN, or set remoteFullAccess=true in settings."
+                        }))).into_response();
+                    }
+                    if path.starts_with("/api/settings") && method != axum::http::Method::GET {
+                        return (StatusCode::FORBIDDEN, Json(json!({
+                            "error": "Settings are read-only for remote access tokens."
+                        }))).into_response();
+                    }
+                }
                 return next.run(req).await;
             }
         }
-        // Check file token for /files routes
+        // File token — /api/files routes only
         if path.starts_with("/api/files") && is_valid_file_token(t).await {
             return next.run(req).await;
         }
     }
 
+    record_auth_fail();
     (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))).into_response()
 }
 
@@ -200,6 +306,8 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         .nest("/api", api_routes)
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
+    let owner_token_set = !state.access_token.is_empty();
+
     // Combine: unauthenticated routes + authenticated API
     let app = Router::new()
         .merge(auth_verify)
@@ -216,7 +324,22 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3001);
 
-    let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await {
+    // Network exposure policy: only listen on all interfaces when some form
+    // of auth is actually configured (owner token, or remote access enabled
+    // WITH a token). Otherwise bind loopback — an unauthenticated TigrimOS
+    // must never be reachable from the network ("/api/terminal/exec" is RCE).
+    // Cloudflare tunnels connect via loopback, so tunnels keep working either way.
+    let bind_all = {
+        let settings = get_settings().await;
+        let remote_ready = settings.remote_enabled == Some(true)
+            && settings.remote_token.as_deref().map(|t| !t.is_empty()).unwrap_or(false);
+        owner_token_set
+            || remote_ready
+            || std::env::var("TIGRIMOS_BIND_ALL").ok().as_deref() == Some("1")
+    };
+    let bind_host = if bind_all { "0.0.0.0" } else { "127.0.0.1" };
+
+    let listener = match tokio::net::TcpListener::bind(format!("{}:{}", bind_host, port)).await {
         Ok(l) => l,
         Err(e) => {
             tracing::error!("Failed to bind port {}: {} — server not started", port, e);
@@ -224,6 +347,14 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         }
     };
 
+    if bind_all {
+        tracing::info!("TigrimOS server listening on ALL interfaces (auth configured)");
+    } else {
+        tracing::info!(
+            "TigrimOS server listening on 127.0.0.1 only (no auth configured). \
+             Enable Remote Access with a token in Settings (then restart) for LAN/mobile access."
+        );
+    }
     tracing::info!("TigrimOS server running on http://localhost:{}", port);
     tracing::info!("Sandbox directory: {}", sandbox_dir);
 

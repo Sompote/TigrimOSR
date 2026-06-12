@@ -30,17 +30,24 @@ pub async fn verify_handler(
         return Json(json!({"ok": false, "required": true, "error": "Token required"}));
     }
 
-    // Check access token
-    if !state.access_token.is_empty() && token == state.access_token {
+    // Brute-force guard — this endpoint is unauthenticated by design, so it
+    // is the natural token-guessing target.
+    if crate::server::auth_rate_limited() {
+        return Json(json!({"ok": false, "error": "Too many failed attempts. Try again in a minute."}));
+    }
+
+    // Check access token (constant-time)
+    if !state.access_token.is_empty() && crate::server::ct_eq_pub(token, &state.access_token) {
         return Json(json!({"ok": true}));
     }
 
-    // Check remote token
+    // Check remote token (constant-time)
     if let Some(ref rt) = remote_token {
-        if token == rt {
+        if crate::server::ct_eq_pub(token, rt) {
             return Json(json!({"ok": true}));
         }
     }
 
+    crate::server::record_auth_fail();
     Json(json!({"ok": false, "error": "Invalid access token"}))
 }
