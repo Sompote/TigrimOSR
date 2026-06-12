@@ -61,6 +61,17 @@ input, textarea, select {
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea { resize: vertical; }
+/* Safari renders native widget chrome on <select> unless appearance is reset */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8378' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+  padding-right: 34px;
+  cursor: pointer;
+}
 
 /* ===== Login ===== */
 #login-page {
@@ -448,8 +459,12 @@ textarea { resize: vertical; }
 #agent-diagram-container h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
 #agent-diagram-svg {
   width: 100%; border-radius: var(--r-md); background: var(--rail);
-  border: 1px solid var(--line); max-height: 360px;
+  border: 1px solid var(--line); max-height: 420px;
+  /* keep the drawing readable: don't letterbox a 800x500 viewBox across a
+     2000px-wide monitor — cap and center it */
+  max-width: 860px; display: block; margin: 0 auto;
 }
+#agent-diagram-container h4 { max-width: 860px; margin-left: auto; margin-right: auto; }
 
 .submit-task-area {
   padding: 16px; border-bottom: 1px solid var(--line); background: var(--surface);
@@ -614,6 +629,25 @@ h4.md-h { font-size: 1em; }
   .page { grid-column: 2; grid-row: 2; }
   /* Wider AI bubble on desktop */
   .msg:not(.user) .bubble-ai { max-width: min(100%, 800px); }
+}
+
+/* ===== Wide desktop: centered content columns =====
+   Full-width bands (toolbars, separators, backgrounds) stay edge-to-edge,
+   but their CONTENT centers in a readable column via responsive gutters —
+   otherwise a 2000px monitor stretches every control across the screen. */
+@media (min-width: 1100px) {
+  .agent-bar, #agent-diagram-container, .submit-task-area,
+  .page-content, .file-path-bar, #terminal-input-area, #terminal-output {
+    padding-left: max(24px, calc((100% - 1080px) / 2));
+    padding-right: max(24px, calc((100% - 1080px) / 2));
+  }
+  /* Chat reads best a little narrower */
+  #messages, .composer-wrap {
+    padding-left: max(24px, calc((100% - 980px) / 2));
+    padding-right: max(24px, calc((100% - 980px) / 2));
+  }
+  .agent-bar-inner select { max-width: 460px; }
+  #task-input { min-height: 52px; }
 }
 </style>
 </head>
