@@ -372,6 +372,9 @@ pub struct RealtimeAgentHandle {
     pub agent_def: Value,
     pub status: Arc<TokioMutex<String>>,          // "idle" | "working"
     pub task_tx: tokio::sync::mpsc::Sender<AgentTask>,
+    /// Who sent the task this agent is currently working on (empty when idle).
+    /// Used to reject an agent waiting on its own delegator (guaranteed deadlock).
+    pub current_task_from: Arc<TokioMutex<String>>,
 }
 
 #[allow(dead_code)]
@@ -379,11 +382,19 @@ pub struct RealtimeSession {
     pub session_id: String,
     pub agents: HashMap<String, RealtimeAgentHandle>,
     pub system_config: Value,
-    /// Completed results keyed by agent_id — consumed by wait_result
-    pub results: Arc<TokioMutex<HashMap<String, AgentResult>>>,
+    /// Completed results keyed by agent_id — FIFO queue per agent so multiple
+    /// queued tasks don't overwrite each other; consumed by wait_result
+    pub results: Arc<TokioMutex<HashMap<String, Vec<AgentResult>>>>,
     /// Notified whenever a new result is published
     pub result_notify: Arc<Notify>,
     pub abort_tx: tokio::sync::broadcast::Sender<()>,
+    /// Who is currently blocked in wait_result on whom (caller_id -> target_id).
+    /// Used for self-wait and circular-wait (deadlock) detection.
+    pub waiting_on: Arc<TokioMutex<HashMap<String, String>>>,
+    /// Consecutive hard-timeout count per "caller->target" wait edge.
+    /// Reset on a successful result; used to escalate the hint so the
+    /// orchestrator stops waiting forever and assembles partial results.
+    pub wait_hard_timeouts: Arc<TokioMutex<HashMap<String, u32>>>,
 }
 
 // Global store: session_id -> RealtimeSession
@@ -565,7 +576,7 @@ pub async fn start_realtime_session(
     };
 
     let (abort_tx, _) = tokio::sync::broadcast::channel::<()>(4);
-    let results = Arc::new(TokioMutex::new(HashMap::<String, AgentResult>::new()));
+    let results = Arc::new(TokioMutex::new(HashMap::<String, Vec<AgentResult>>::new()));
     let result_notify = Arc::new(Notify::new());
 
     let agents_arr = yaml_val["agents"].as_array().cloned().unwrap_or_default();
@@ -580,6 +591,7 @@ pub async fn start_realtime_session(
 
         let (task_tx, task_rx) = tokio::sync::mpsc::channel::<AgentTask>(8);
         let status = Arc::new(TokioMutex::new("idle".to_string()));
+        let current_task_from = Arc::new(TokioMutex::new(String::new()));
 
         // Human nodes don't get an LLM loop
         if role != "human" {
@@ -596,6 +608,7 @@ pub async fn start_realtime_session(
                 results.clone(),
                 result_notify.clone(),
                 status.clone(),
+                current_task_from.clone(),
                 abort_rx,
             ));
         }
@@ -604,6 +617,7 @@ pub async fn start_realtime_session(
             agent_def: agent_def.clone(),
             status,
             task_tx,
+            current_task_from,
         });
 
         // Write SUBAGENT_SPAWN to agent history so the graphic view can show this agent
@@ -635,6 +649,8 @@ pub async fn start_realtime_session(
         results,
         result_notify,
         abort_tx,
+        waiting_on: Arc::new(TokioMutex::new(HashMap::new())),
+        wait_hard_timeouts: Arc::new(TokioMutex::new(HashMap::new())),
     }));
 
     realtime_sessions().lock().await.insert(session_id.to_string(), session);
@@ -1025,6 +1041,15 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
         }
     }
 
+    prompt += &format!(
+        "\n\nDELEGATION SAFETY RULES (apply in every mode):\n\
+        - NEVER call wait_result on yourself ('{agent_id}') — it deadlocks.\n\
+        - NEVER wait_result on the agent that sent you your current task — it is already \
+          waiting for YOU; finish your work and return your answer as text instead.\n\
+        - Call wait_result exactly once per task you sent (one task = one result).\n\
+        - When you finish your assigned task, your final TEXT response IS your deliverable — \
+          it is automatically returned to whoever delegated to you."
+    );
     prompt += "\n\nERROR RECOVERY: If a tool fails, analyze the error, fix it, and retry. Try a different approach after two failures.";
     prompt
 }
@@ -1039,9 +1064,10 @@ async fn realtime_agent_loop(
     model: String,
     sandbox_dir: String,
     mut task_rx: tokio::sync::mpsc::Receiver<AgentTask>,
-    results: Arc<TokioMutex<HashMap<String, AgentResult>>>,
+    results: Arc<TokioMutex<HashMap<String, Vec<AgentResult>>>>,
     result_notify: Arc<Notify>,
     status: Arc<TokioMutex<String>>,
+    current_task_from: Arc<TokioMutex<String>>,
     mut abort_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
     let agent_id = agent_def["id"].as_str().unwrap_or("agent").to_string();
@@ -1073,6 +1099,7 @@ async fn realtime_agent_loop(
         };
 
         *status.lock().await = "working".to_string();
+        *current_task_from.lock().await = task.from.clone();
         info!("[Realtime] Agent {} received task from {}: {:.80}", agent_id, task.from, task.task);
 
         // ── P2P bid request handling ──────────────────────────────────────
@@ -1128,6 +1155,7 @@ async fn realtime_agent_loop(
                 &api_key, &api_url, &model, bid_messages,
                 Some(bid_system), &sandbox_dir, bid_on_update, bid_sub,
             ).await;
+            *current_task_from.lock().await = String::new();
             *status.lock().await = "idle".to_string();
             continue;
         }
@@ -1460,13 +1488,16 @@ async fn realtime_agent_loop(
             }
         }
 
-        // Publish result — consumed by wait_result
+        // Publish result — consumed by wait_result. Push (not insert) so an
+        // agent with multiple queued tasks doesn't overwrite earlier results
+        // before the requester collects them.
         {
             let mut map = result_arc.lock().await;
-            map.insert(agent_id.clone(), agent_result);
+            map.entry(agent_id.clone()).or_default().push(agent_result);
         }
         notify_arc.notify_waiters();
 
+        *current_task_from.lock().await = String::new();
         *status_arc.lock().await = "idle".to_string();
     }
 }
@@ -1611,17 +1642,34 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
     // the lock here would deadlock wait_result/check_agents/status polling.
     let task_tx = handle.task_tx.clone();
     let agent_name = handle.agent_def["name"].as_str().unwrap_or(&to).to_string();
+    let target_busy = handle.status.lock().await.as_str() == "working";
     drop(session);
+
+    // Tasks queue FIFO behind whatever the agent is already doing — surface
+    // that so the caller doesn't expect an instant turnaround or flood the queue.
+    let queued_ahead = task_tx.max_capacity().saturating_sub(task_tx.capacity());
 
     let agent_task = AgentTask { from: caller_id.to_string(), task: task.clone(), context };
     match task_tx.send(agent_task).await {
-        Ok(_) => json!({
-            "ok": true,
-            "agentId": to,
-            "agentName": agent_name,
-            "sent": true,
-            "note": format!("Task sent to {}. Use wait_result({{\"from\": \"{}\"}}) to collect the result.", to, to)
-        }),
+        Ok(_) => {
+            let mut note = format!("Task sent to {}. Use wait_result({{\"from\": \"{}\"}}) to collect the result.", to, to);
+            if target_busy || queued_ahead > 0 {
+                note.push_str(&format!(
+                    " NOTE: {} is currently busy{} — your task is queued and will run after the current work. \
+                     Each task produces exactly one result: call wait_result once per task you sent.",
+                    to,
+                    if queued_ahead > 0 { format!(" with {} task(s) already queued", queued_ahead) } else { String::new() }
+                ));
+            }
+            json!({
+                "ok": true,
+                "agentId": to,
+                "agentName": agent_name,
+                "sent": true,
+                "queued_ahead": queued_ahead,
+                "note": note
+            })
+        }
         Err(e) => json!({"ok": false, "error": format!("Failed to send task: {e}")}),
     }
 }
@@ -1654,19 +1702,51 @@ fn wait_result_json(from: &str, result: &AgentResult) -> Value {
     out
 }
 
-/// Tool: wait_result — blocks until the target agent publishes its result
+/// Pop the oldest pending result for `from` (FIFO). Removes the key when empty.
+fn pop_result(map: &mut HashMap<String, Vec<AgentResult>>, from: &str) -> Option<AgentResult> {
+    let queue = map.get_mut(from)?;
+    if queue.is_empty() { map.remove(from); return None; }
+    let result = queue.remove(0);
+    if queue.is_empty() { map.remove(from); }
+    Some(result)
+}
+
+/// Tool: wait_result — blocks until the target agent publishes its result.
+/// Caller defaults to "main" (desktop UI / web orchestrator path).
 pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
+    exec_wait_result_from(args, session_id, "main").await
+}
+
+/// wait_result with caller identity — enables self-wait and circular-wait
+/// (deadlock) detection: agent A waiting on B while B waits on A would
+/// otherwise spin until the hard timeout, which is what made long
+/// multi-agent sessions "never finish".
+pub async fn exec_wait_result_from(args: &Value, session_id: &str, caller_id: &str) -> Value {
     let from = match args.get("from").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
         None => return json!({"ok": false, "error": "Missing 'from' parameter"}),
     };
-    let default_timeout = load_agent_settings()["agentWaitResultTimeout"].as_u64().unwrap_or(300);
-    let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(default_timeout);
-    // Hard limit: auto-retry up to 1 hour total — orchestrators that delegate to workers
-    // can take a very long time. The coordinator can always call wait_result again.
-    let hard_limit_secs: u64 = 3600;
 
-    let (results, result_notify) = {
+    // Self-wait guard: an agent waiting on its own result deadlocks (its own
+    // status is "working" because it is the one calling) and can even steal
+    // its previously published result from the requester.
+    if from == caller_id {
+        return json!({
+            "ok": false,
+            "error": format!("You ('{}') cannot wait_result on yourself — that deadlocks.", caller_id),
+            "hint": "Finish your own task and return your final answer as text. \
+                     The agent that delegated to you will receive it automatically."
+        });
+    }
+
+    let settings = load_agent_settings();
+    let default_timeout = settings["agentWaitResultTimeout"].as_u64().unwrap_or(300);
+    let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(default_timeout).max(5);
+    // Hard limit per wait_result call — auto-retry internally up to this long.
+    // Configurable; the coordinator can always call wait_result again.
+    let hard_limit_secs: u64 = settings["agentWaitResultHardTimeout"].as_u64().unwrap_or(1800).max(60);
+
+    let (results, result_notify, waiting_on, wait_hard_timeouts) = {
         let map = realtime_sessions().lock().await;
         match map.get(session_id) {
             Some(s) => {
@@ -1675,12 +1755,90 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
                     let available: Vec<&str> = session.agents.keys().map(|s| s.as_str()).collect();
                     return json!({"ok": false, "error": format!("Agent '{}' not found. Available: {}", from, available.join(", "))});
                 }
-                (session.results.clone(), session.result_notify.clone())
+                // Delegator-wait guard: if the caller's CURRENT task was sent by
+                // `from`, then `from` is upstream expecting the caller's result —
+                // waiting on it is a guaranteed deadlock (observed in the wild as
+                // worker ⇄ orchestrator mutual waits that spin for hours).
+                if let Some(caller_handle) = session.agents.get(caller_id) {
+                    let delegator = caller_handle.current_task_from.lock().await.clone();
+                    if !delegator.is_empty() && delegator == from {
+                        return json!({
+                            "ok": false,
+                            "error": format!(
+                                "You cannot wait_result on '{}' — it delegated your CURRENT task to you \
+                                 and is waiting for YOUR result. This would deadlock.", from
+                            ),
+                            "hint": "Finish your assigned task and return your final answer as text — \
+                                     it is delivered to your delegator automatically."
+                        });
+                    }
+                }
+                (session.results.clone(), session.result_notify.clone(),
+                 session.waiting_on.clone(), session.wait_hard_timeouts.clone())
             }
             None => return json!({"ok": false, "error": "No realtime session active."}),
         }
     };
 
+    // Circular-wait (deadlock) detection: follow the chain of who `from` is
+    // waiting on; if it leads back to the caller, this wait can never finish.
+    // Skip when a result is already pending — then the wait returns instantly.
+    {
+        let pending = { results.lock().await.get(&from).map_or(false, |q| !q.is_empty()) };
+        if !pending {
+            let waits = waiting_on.lock().await;
+            let mut current = from.clone();
+            let mut chain = vec![from.clone()];
+            for _ in 0..waits.len() + 1 {
+                match waits.get(&current) {
+                    Some(next) => {
+                        chain.push(next.clone());
+                        if next == caller_id {
+                            warn!("[wait_result] Deadlock detected: {} → {}", caller_id, chain.join(" → "));
+                            return json!({
+                                "ok": false,
+                                "error": format!(
+                                    "Deadlock detected: '{}' is itself waiting for YOUR ('{}') result (chain: {} → {}). \
+                                     Waiting here would block forever.",
+                                    from, caller_id, caller_id, chain.join(" → ")
+                                ),
+                                "hint": "Do NOT wait for this agent. Finish your own task with the information you \
+                                         already have and return your final answer as text — the waiting agent will \
+                                         receive it and the deadlock resolves."
+                            });
+                        }
+                        current = next.clone();
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+
+    // Register this wait edge for cycle detection by other agents,
+    // and make sure it is removed on every exit path below.
+    { waiting_on.lock().await.insert(caller_id.to_string(), from.clone()); }
+    let out = wait_result_inner(
+        session_id, caller_id, &from, timeout_secs, hard_limit_secs,
+        &results, &result_notify, &waiting_on, &wait_hard_timeouts,
+    ).await;
+    { waiting_on.lock().await.remove(caller_id); }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn wait_result_inner(
+    session_id: &str,
+    caller_id: &str,
+    from: &str,
+    timeout_secs: u64,
+    hard_limit_secs: u64,
+    results: &Arc<TokioMutex<HashMap<String, Vec<AgentResult>>>>,
+    result_notify: &Arc<Notify>,
+    waiting_on: &Arc<TokioMutex<HashMap<String, String>>>,
+    wait_hard_timeouts: &Arc<TokioMutex<HashMap<String, u32>>>,
+) -> Value {
+    let edge_key = format!("{}->{}", caller_id, from);
     let hard_deadline = tokio::time::Instant::now() + Duration::from_secs(hard_limit_secs);
     let mut total_waited: u64 = 0;
 
@@ -1691,9 +1849,10 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
             // Check if result is already available
             {
                 let mut map = results.lock().await;
-                if let Some(result) = map.remove(&from) {
+                if let Some(result) = pop_result(&mut map, from) {
                     info!("[wait_result] Got result from '{}' after ~{}s", from, total_waited);
-                    return wait_result_json(&from, &result);
+                    wait_hard_timeouts.lock().await.remove(&edge_key);
+                    return wait_result_json(from, &result);
                 }
             }
 
@@ -1715,7 +1874,7 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
             let map = realtime_sessions().lock().await;
             if let Some(s) = map.get(session_id) {
                 let session = s.lock().await;
-                if let Some(handle) = session.agents.get(&from) {
+                if let Some(handle) = session.agents.get(from) {
                     let status = handle.status.lock().await;
                     (status.as_str() == "working", handle.task_tx.is_closed())
                 } else { (false, false) }
@@ -1731,6 +1890,30 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
             });
         }
 
+        // Deadlock can also FORM while we are already blocked here (the target
+        // starts waiting on us after our wait began) — re-check each round.
+        {
+            let waits = waiting_on.lock().await;
+            let mut current = from.to_string();
+            for _ in 0..waits.len() + 1 {
+                match waits.get(&current) {
+                    Some(next) if next == caller_id => {
+                        warn!("[wait_result] Deadlock formed while waiting: {} ↔ {}", caller_id, from);
+                        return json!({
+                            "ok": false,
+                            "error": format!(
+                                "Deadlock: '{}' started waiting for YOUR ('{}') result while you were waiting for it.",
+                                from, caller_id
+                            ),
+                            "hint": "Stop waiting. Finish your own task and return your final answer as text."
+                        });
+                    }
+                    Some(next) => current = next.clone(),
+                    None => break,
+                }
+            }
+        }
+
         if still_working && tokio::time::Instant::now() < hard_deadline {
             info!("[wait_result] Agent '{}' still working after {}s — auto-retrying wait", from, total_waited);
             continue; // auto-retry
@@ -1738,11 +1921,36 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
 
         // Agent stopped or hard limit reached
         if still_working {
+            let strikes = {
+                let mut map = wait_hard_timeouts.lock().await;
+                let n = map.entry(edge_key.clone()).or_insert(0);
+                *n += 1;
+                *n
+            };
+            // Show what the target is doing — if it's blocked on someone else,
+            // the caller LLM can reason about the chain instead of blind-waiting.
+            let target_waiting_on = waiting_on.lock().await.get(from).cloned();
+            let detail = match &target_waiting_on {
+                Some(t) => format!("'{}' is currently blocked waiting for '{}'.", from, t),
+                None => format!("'{}' is actively executing tools.", from),
+            };
+            let hint = if strikes >= 2 {
+                format!(
+                    "You have now waited {} times ({}s total) without a result. STOP waiting. \
+                     Use list_files + read_file to inspect the work files produced so far, \
+                     assemble the best possible final answer from them, and respond. \
+                     Do NOT call wait_result for '{}' again.",
+                    strikes, strikes as u64 * hard_limit_secs, from
+                )
+            } else {
+                "Call wait_result again to continue waiting. Do NOT resend the task.".to_string()
+            };
             return json!({
                 "ok": false,
-                "error": format!("Agent '{}' is still working but hard timeout ({}s) reached.", from, hard_limit_secs),
+                "error": format!("Agent '{}' is still working but hard timeout ({}s) reached. {}", from, hard_limit_secs, detail),
                 "agentId": from,
-                "hint": "Call wait_result again to continue waiting. Do NOT resend the task."
+                "hard_timeouts": strikes,
+                "hint": hint
             });
         } else {
             // Agent finished but no result in map — retry a few times with brief delays
@@ -1752,9 +1960,10 @@ pub async fn exec_wait_result(args: &Value, session_id: &str) -> Value {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
                 let mut map = results.lock().await;
-                if let Some(result) = map.remove(&from) {
+                if let Some(result) = pop_result(&mut map, from) {
                     info!("[wait_result] Got result from '{}' on idle-retry {}", from, retry);
-                    return wait_result_json(&from, &result);
+                    wait_hard_timeouts.lock().await.remove(&edge_key);
+                    return wait_result_json(from, &result);
                 }
             }
             return json!({
@@ -2487,7 +2696,7 @@ fn realtime_tools(agent_list: &str) -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "wait_result",
-                "description": "Wait for a result from an agent that was previously sent a task via send_task. Blocks until the agent finishes. If it times out, the agent is STILL WORKING — just call wait_result again to keep waiting. Do NOT resend the task.",
+                "description": "Wait for a result from an agent that was previously sent a task via send_task. Blocks until the agent finishes. If it times out, the agent is STILL WORKING — just call wait_result again to keep waiting. Do NOT resend the task. NEVER wait on yourself or on the agent that delegated your current task (deadlock). Call exactly once per task sent.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -6555,10 +6764,12 @@ async fn check_pending_work(session_id: &str) -> (Vec<String>, Vec<(String, Agen
                 working_agents.push(id.clone());
             }
         }
-        // Collect pending results
+        // Collect pending results (each agent may have several queued)
         let results = session.results.lock().await;
-        for (id, result) in results.iter() {
-            pending_results.push((id.clone(), result.clone()));
+        for (id, queue) in results.iter() {
+            for result in queue {
+                pending_results.push((id.clone(), result.clone()));
+            }
         }
     }
     drop(map);
@@ -7702,7 +7913,7 @@ async fn execute_tool_dispatch(
     } else if tool_name == "send_task" {
         exec_send_task_from(tool_args, &sub_agent.session_id, &sub_agent.agent_id).await
     } else if tool_name == "wait_result" {
-        exec_wait_result(tool_args, &sub_agent.session_id).await
+        exec_wait_result_from(tool_args, &sub_agent.session_id, &sub_agent.agent_id).await
     } else if tool_name == "check_agents" {
         exec_check_agents(&sub_agent.session_id).await
     } else if tool_name == "create_architecture" {
