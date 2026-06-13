@@ -191,7 +191,14 @@ async fn auth_middleware(
                                       Use the owner ACCESS_TOKEN, or set remoteFullAccess=true in settings."
                         }))).into_response();
                     }
-                    if path.starts_with("/api/settings") && method != axum::http::Method::GET {
+                    // Settings are read-only for remote tokens — except the
+                    // soul/identity persona files, which are prompt-level
+                    // configuration (no host control) and must be editable
+                    // from a connected desktop.
+                    if path.starts_with("/api/settings")
+                        && !path.starts_with("/api/settings/soul-identity")
+                        && method != axum::http::Method::GET
+                    {
                         return (StatusCode::FORBIDDEN, Json(json!({
                             "error": "Settings are read-only for remote access tokens."
                         }))).into_response();

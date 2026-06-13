@@ -38,6 +38,7 @@ fn is_masked(v: &Value) -> bool {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(get_settings_handler).put(put_settings_handler))
+        .route("/soul-identity", get(get_soul_identity).put(put_soul_identity))
         .route("/test-connection", post(test_connection))
         .route("/remote-token", get(get_remote_token))
         .route("/remote-token/regenerate", post(regenerate_remote_token))
@@ -50,6 +51,42 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/mcp/connect", post(mcp_connect))
         .route("/mcp/disconnect", post(mcp_disconnect))
         .route("/mcp/reconnect-all", post(mcp_reconnect_all))
+}
+
+// ---------------------------------------------------------------------------
+// GET/PUT /soul-identity — orchestrator SOUL.md / IDENTITY.md
+// (persona files injected into the system prompt; lets a connected desktop
+// configure the persona of THIS server's orchestrator)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SoulIdentityBody {
+    #[serde(default)]
+    soul: String,
+    #[serde(default)]
+    identity: String,
+}
+
+async fn get_soul_identity() -> Json<Value> {
+    let dir = data_dir();
+    let soul = tokio::fs::read_to_string(dir.join("SOUL.md")).await.unwrap_or_default();
+    let identity = tokio::fs::read_to_string(dir.join("IDENTITY.md")).await.unwrap_or_default();
+    Json(json!({ "ok": true, "soul": soul, "identity": identity }))
+}
+
+async fn put_soul_identity(Json(body): Json<SoulIdentityBody>) -> Json<Value> {
+    let dir = data_dir();
+    if body.soul.trim().is_empty() {
+        let _ = tokio::fs::remove_file(dir.join("SOUL.md")).await;
+    } else {
+        let _ = tokio::fs::write(dir.join("SOUL.md"), &body.soul).await;
+    }
+    if body.identity.trim().is_empty() {
+        let _ = tokio::fs::remove_file(dir.join("IDENTITY.md")).await;
+    } else {
+        let _ = tokio::fs::write(dir.join("IDENTITY.md"), &body.identity).await;
+    }
+    Json(json!({ "ok": true }))
 }
 
 // ---------------------------------------------------------------------------

@@ -533,10 +533,18 @@ impl SettingsView {
         self.agent_allow_unsandboxed_exec = settings.extra.get("agentAllowUnsandboxedExec")
             .and_then(|v| v.as_bool()).unwrap_or(false);
 
-        // Soul & Identity (stored in SOUL.md / IDENTITY.md files)
-        let data_dir = crate::server::data::data_dir();
-        self.orchestrator_soul = std::fs::read_to_string(data_dir.join("SOUL.md")).unwrap_or_default();
-        self.orchestrator_identity = std::fs::read_to_string(data_dir.join("IDENTITY.md")).unwrap_or_default();
+        // Soul & Identity (stored in SOUL.md / IDENTITY.md files).
+        // When a remote backend is connected, edit the REMOTE server's persona
+        // files — that's the orchestrator actually answering the chats.
+        if crate::server::data::get_remote_backend().is_some() {
+            let (soul, identity) = Self::fetch_soul_identity_remote();
+            self.orchestrator_soul = soul;
+            self.orchestrator_identity = identity;
+        } else {
+            let data_dir = crate::server::data::data_dir();
+            self.orchestrator_soul = std::fs::read_to_string(data_dir.join("SOUL.md")).unwrap_or_default();
+            self.orchestrator_identity = std::fs::read_to_string(data_dir.join("IDENTITY.md")).unwrap_or_default();
+        }
 
         // Skill Auto-Update
         self.skill_auto_update_enabled = settings.skill_auto_update_enabled.unwrap_or(true);
@@ -647,17 +655,23 @@ impl SettingsView {
         settings.extra.insert("agentWaitResultHardTimeout".into(), serde_json::json!(self.agent_wait_result_hard_timeout));
         settings.extra.insert("agentAllowUnsandboxedExec".into(), serde_json::json!(self.agent_allow_unsandboxed_exec));
 
-        // Soul & Identity (saved to SOUL.md / IDENTITY.md files)
-        let data_dir = crate::server::data::data_dir();
-        if self.orchestrator_soul.is_empty() {
-            let _ = std::fs::remove_file(data_dir.join("SOUL.md"));
+        // Soul & Identity (saved to SOUL.md / IDENTITY.md files — pushed to
+        // the remote server when one is connected, since that orchestrator
+        // is the one answering the chats)
+        if crate::server::data::get_remote_backend().is_some() {
+            Self::push_soul_identity_remote(&self.orchestrator_soul, &self.orchestrator_identity);
         } else {
-            let _ = std::fs::write(data_dir.join("SOUL.md"), &self.orchestrator_soul);
-        }
-        if self.orchestrator_identity.is_empty() {
-            let _ = std::fs::remove_file(data_dir.join("IDENTITY.md"));
-        } else {
-            let _ = std::fs::write(data_dir.join("IDENTITY.md"), &self.orchestrator_identity);
+            let data_dir = crate::server::data::data_dir();
+            if self.orchestrator_soul.is_empty() {
+                let _ = std::fs::remove_file(data_dir.join("SOUL.md"));
+            } else {
+                let _ = std::fs::write(data_dir.join("SOUL.md"), &self.orchestrator_soul);
+            }
+            if self.orchestrator_identity.is_empty() {
+                let _ = std::fs::remove_file(data_dir.join("IDENTITY.md"));
+            } else {
+                let _ = std::fs::write(data_dir.join("IDENTITY.md"), &self.orchestrator_identity);
+            }
         }
 
         // Skill Auto-Update
@@ -687,6 +701,45 @@ impl SettingsView {
         }
         files.sort();
         files
+    }
+
+    /// Fetch SOUL.md / IDENTITY.md content from the connected remote server.
+    fn fetch_soul_identity_remote() -> (String, String) {
+        let Some(rb) = crate::server::data::get_remote_backend() else {
+            return (String::new(), String::new());
+        };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        match client
+            .get(format!("{}/api/settings/soul-identity", rb.url))
+            .bearer_auth(&rb.token)
+            .send()
+        {
+            Ok(resp) => match resp.json::<serde_json::Value>() {
+                Ok(val) => (
+                    val["soul"].as_str().unwrap_or_default().to_string(),
+                    val["identity"].as_str().unwrap_or_default().to_string(),
+                ),
+                Err(_) => (String::new(), String::new()),
+            },
+            Err(_) => (String::new(), String::new()),
+        }
+    }
+
+    /// Push SOUL.md / IDENTITY.md content to the connected remote server.
+    fn push_soul_identity_remote(soul: &str, identity: &str) {
+        let Some(rb) = crate::server::data::get_remote_backend() else { return };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
+        let _ = client
+            .put(format!("{}/api/settings/soul-identity", rb.url))
+            .bearer_auth(&rb.token)
+            .json(&serde_json::json!({ "soul": soul, "identity": identity }))
+            .send();
     }
 
     fn scan_agent_configs_remote() -> Vec<String> {
@@ -1239,6 +1292,13 @@ impl SettingsView {
 
         if self.soul_section_open {
             ui.add_space(4.0);
+            if crate::server::data::get_remote_backend().is_some() {
+                ui.label(
+                    egui::RichText::new("🌐 Connected to a remote server — these edits are saved to the REMOTE orchestrator's SOUL.md / IDENTITY.md.")
+                        .size(11.0).color(egui::Color32::from_rgb(45, 140, 130)),
+                );
+                ui.add_space(4.0);
+            }
             ui.label(egui::RichText::new("SOUL.md — Internal Cognition, Values & Behavior").strong());
             ui.add(
                 egui::TextEdit::multiline(&mut self.orchestrator_soul)
