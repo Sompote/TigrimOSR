@@ -102,7 +102,7 @@ fn builtin_providers() -> Vec<AiProvider> {
         AiProvider::new("OpenRouter", "https://openrouter.ai/api/v1", "openrouter/auto"),
         AiProvider::new("xAI (Grok)", "https://api.x.ai/v1", "grok-3"),
         AiProvider::new("Anthropic (Claude)", "https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
-        AiProvider::new("MiniMax", "https://api.minimax.io/v1", "MiniMax-M2.7"),
+        AiProvider::new("MiniMax", "https://api.minimax.io/v1", "MiniMax-M3"),
         AiProvider::new("Google AI Studio", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash"),
         AiProvider::new("Kimi (Moonshot)", "https://api.kimi.com/coding/v1", "kimi-k2-0905-preview"),
         AiProvider::new("DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"),

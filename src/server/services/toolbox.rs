@@ -5896,6 +5896,238 @@ fn is_anthropic_api(api_url: &str) -> bool {
 }
 
 /// Convert OpenAI-format messages to Anthropic format (extract system, transform messages)
+// ---------------------------------------------------------------------------
+// Vision / multimodal image input
+// ---------------------------------------------------------------------------
+
+/// Image file extensions we will inline as vision content.
+const VISION_IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+/// Max size of a single image we will base64-inline (after this the model
+/// payload gets unwieldy and most APIs reject it). 12 MB raw.
+const MAX_VISION_IMAGE_BYTES: usize = 12 * 1024 * 1024;
+
+/// True if the model/endpoint can accept inline images (vision input).
+/// Conservative on purpose: a false negative just leaves the image as a text
+/// path reference (graceful), while a false positive makes the API reject the
+/// whole request. Start with MiniMax-M3; extend as other vision models land.
+fn model_supports_vision(api_url: &str, model: &str) -> bool {
+    let m = model.to_lowercase();
+    let u = api_url.to_lowercase();
+    (u.contains("minimax") && m.contains("m3"))
+        || m.contains("gpt-4o")
+        || m.contains("gpt-4.1")
+        || m.contains("gpt-5")
+        || m.contains("chatgpt-4o")
+        || m.contains("claude")
+        || m.contains("gemini")
+        || m.contains("-vl")
+        || m.contains("vl-")
+        || m.contains("vision")
+        || m.contains("pixtral")
+        || m.contains("llava")
+        || m.contains("internvl")
+}
+
+/// Extract plain text from message content that may be a bare string or an
+/// OpenAI multimodal content array (text + image_url parts). Used wherever we
+/// need the user's words after images have been folded into the content array.
+pub(crate) fn content_to_text(content: &Value) -> String {
+    match content {
+        Value::String(s) => s.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter(|p| p["type"].as_str() == Some("text"))
+            .filter_map(|p| p["text"].as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => String::new(),
+    }
+}
+
+/// Read an image file under the sandbox and return a `data:<mime>;base64,...`
+/// URI, or None if it is missing, outside the sandbox, empty, or too large.
+fn image_to_data_uri(path: &str, sandbox_dir: &str) -> Option<String> {
+    use base64::Engine;
+    let resolved = resolve_path(sandbox_dir, path);
+    let abs = resolved.canonicalize().ok()?;
+    // Stay inside the sandbox — never inline arbitrary host files.
+    let abs_sandbox = std::path::Path::new(sandbox_dir)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
+    if !abs.starts_with(&abs_sandbox) {
+        return None;
+    }
+    let ext = abs
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())?;
+    if !VISION_IMAGE_EXTS.contains(&ext.as_str()) {
+        return None;
+    }
+    let bytes = std::fs::read(&abs).ok()?;
+    if bytes.is_empty() || bytes.len() > MAX_VISION_IMAGE_BYTES {
+        return None;
+    }
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => "application/octet-stream",
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Some(format!("data:{};base64,{}", mime, b64))
+}
+
+/// Scan a user message for sandbox image-file references and, if any resolve to
+/// readable images, return an OpenAI multimodal content array (the original
+/// text followed by one `image_url` part per image). None if no images found.
+///
+/// Paths must be allowed to contain spaces — the macOS sandbox lives under
+/// `~/Library/Application Support/...`. So instead of splitting on whitespace we
+/// pull candidates from the exact note formats the two UIs emit, plus a
+/// whitespace-free fallback for bare inline paths.
+fn build_image_content(text: &str, sandbox_dir: &str) -> Option<Value> {
+    let candidates = extract_attachment_paths(text);
+
+    let mut seen_resolved = std::collections::HashSet::new();
+    let mut image_parts: Vec<Value> = Vec::new();
+    for path in candidates {
+        let lower = path.to_lowercase();
+        if !VISION_IMAGE_EXTS
+            .iter()
+            .any(|e| lower.ends_with(&format!(".{e}")))
+        {
+            continue;
+        }
+        // Dedupe by resolved path so the bare name and the full path of the
+        // same upload don't get inlined twice.
+        let key = resolve_path(sandbox_dir, &path).to_string_lossy().to_string();
+        if !seen_resolved.insert(key) {
+            continue;
+        }
+        if let Some(uri) = image_to_data_uri(&path, sandbox_dir) {
+            image_parts.push(json!({ "type": "image_url", "image_url": { "url": uri } }));
+        }
+    }
+    if image_parts.is_empty() {
+        return None;
+    }
+    // Strip the attachment-note boilerplate ("Use the read_file tool…") so the
+    // vision model just looks at the inlined image instead of reaching for tools.
+    let clean_text = clean_attachment_note(text);
+    let mut parts = vec![json!({ "type": "text", "text": clean_text })];
+    parts.extend(image_parts);
+    Some(Value::Array(parts))
+}
+
+/// Drop the "[Attached file…]" / "[Attached files…]" note (and everything after
+/// it) from the message, leaving just the user's actual words. Falls back to a
+/// generic prompt when the message was only an attachment.
+fn clean_attachment_note(text: &str) -> String {
+    let cut = text
+        .find("[Attached file")
+        .or_else(|| text.find("[Attached files"))
+        .unwrap_or(text.len());
+    let cleaned = text[..cut].trim();
+    if cleaned.is_empty() {
+        "Please look at the attached image(s) and respond to the request.".to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+/// Pull candidate file paths out of a chat message. Handles the two attachment
+/// note formats the UIs produce (whose paths may contain spaces) and a
+/// whitespace-free fallback for paths typed inline.
+fn extract_attachment_paths(text: &str) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+
+    // Desktop UI: "[Attached file: NAME — saved at: <PATH>]" — capture up to ']'.
+    if let Ok(re) = regex::Regex::new(r"saved at:\s*([^\]\n]+)") {
+        for cap in re.captures_iter(text) {
+            paths.push(cap[1].trim().to_string());
+        }
+    }
+    // Web UI: lines like "- <PATH> (NAME)" — capture the path before " (NAME)".
+    if let Ok(re) = regex::Regex::new(r"(?m)^\s*-\s+(.+?)\s+\([^)]*\)\s*$") {
+        for cap in re.captures_iter(text) {
+            paths.push(cap[1].trim().to_string());
+        }
+    }
+    // Fallback: bare whitespace-free tokens (paths typed directly with no note).
+    for raw in text.split(|c: char| {
+        c.is_whitespace() || matches!(c, '(' | ')' | ',' | '"' | '\'' | '`' | '[' | ']' | '<' | '>')
+    }) {
+        let tok = raw.trim().trim_matches('-');
+        if !tok.is_empty() {
+            paths.push(tok.to_string());
+        }
+    }
+    paths
+}
+
+/// For vision-capable models, rewrite the most recent user message so that any
+/// images it references become real inline vision content. Only the latest user
+/// turn is processed — older history stays as text to keep the payload small.
+fn embed_images_for_vision(mut messages: Vec<Value>, sandbox_dir: &str) -> Vec<Value> {
+    if let Some(idx) = messages
+        .iter()
+        .rposition(|m| m["role"].as_str() == Some("user"))
+    {
+        if let Some(text) = messages[idx]["content"].as_str() {
+            if let Some(multimodal) = build_image_content(text, sandbox_dir) {
+                info!("[Vision] Inlined image(s) into user message for vision model");
+                messages[idx]["content"] = multimodal;
+            }
+        }
+    }
+    messages
+}
+
+/// Convert OpenAI-style message content (string or multimodal array) into the
+/// Anthropic content shape. image_url data-URIs become base64 image blocks.
+fn openai_content_to_anthropic(content: &Value) -> Value {
+    let Value::Array(parts) = content else {
+        return content.clone();
+    };
+    let mut blocks: Vec<Value> = Vec::new();
+    for p in parts {
+        match p["type"].as_str() {
+            Some("text") => {
+                blocks.push(json!({ "type": "text", "text": p["text"].as_str().unwrap_or("") }));
+            }
+            Some("image_url") => {
+                if let Some(url) = p["image_url"]["url"].as_str() {
+                    if let Some((media, data)) = parse_data_uri(url) {
+                        blocks.push(json!({
+                            "type": "image",
+                            "source": { "type": "base64", "media_type": media, "data": data }
+                        }));
+                    } else {
+                        blocks.push(json!({
+                            "type": "image",
+                            "source": { "type": "url", "url": url }
+                        }));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Value::Array(blocks)
+}
+
+/// Split a `data:<media>;base64,<data>` URI into (media_type, base64_data).
+fn parse_data_uri(uri: &str) -> Option<(String, String)> {
+    let rest = uri.strip_prefix("data:")?;
+    let (meta, data) = rest.split_once(',')?;
+    let media = meta.strip_suffix(";base64")?;
+    Some((media.to_string(), data.to_string()))
+}
+
 fn to_anthropic_messages(messages: &[Value]) -> (Option<String>, Vec<Value>) {
     let mut system_parts: Vec<String> = Vec::new();
     let mut anthropic_msgs: Vec<Value> = Vec::new();
@@ -5946,7 +6178,7 @@ fn to_anthropic_messages(messages: &[Value]) -> (Option<String>, Vec<Value>) {
                 }));
             }
             "user" => {
-                anthropic_msgs.push(json!({"role": "user", "content": m["content"]}));
+                anthropic_msgs.push(json!({"role": "user", "content": openai_content_to_anthropic(&m["content"])}));
             }
             _ => {
                 anthropic_msgs.push(m.clone());
@@ -7220,6 +7452,16 @@ async fn call_with_tools_inner(
 ) -> ToolLoopResult {
     let on_update = std::sync::Arc::new(on_update);
     let client = Client::new();
+
+    // Vision: if the target model accepts images, fold any image files the user
+    // referenced (e.g. uploads/foo.png) into the current message as real inline
+    // vision content. Non-vision models keep the plain text path reference.
+    let messages = if model_supports_vision(api_url, model) {
+        embed_images_for_vision(messages, sandbox_dir)
+    } else {
+        messages
+    };
+
     // Track whether a swarm/architecture has been activated this session
     let mut session_activated = realtime; // realtime mode is pre-activated
 
@@ -7313,8 +7555,7 @@ async fn call_with_tools_inner(
     // run) must not hijack this one, or the new question is silently dropped.
     let conversation_key: String = messages.iter().rev()
         .find(|m| m["role"].as_str() == Some("user"))
-        .and_then(|m| m["content"].as_str())
-        .map(|s| s.chars().take(300).collect())
+        .map(|m| content_to_text(&m["content"]).chars().take(300).collect())
         .unwrap_or_default();
 
     if checkpoint_enabled && !sub_agent.session_id.is_empty() {
@@ -7356,10 +7597,10 @@ async fn call_with_tools_inner(
     // injected system nudges, which also use the user role.
     let user_objective: String = all_messages.iter().rev()
         .filter(|m| m["role"].as_str() == Some("user"))
-        .filter_map(|m| m["content"].as_str())
+        .map(|m| content_to_text(&m["content"]))
         .find(|c| !c.starts_with('⚠') && !c.starts_with('🔴') && !c.starts_with('🚨')
             && !c.starts_with("REFLECTION"))
-        .unwrap_or("")
+        .unwrap_or_default()
         .chars().take(2000)
         .collect();
 
@@ -8672,5 +8913,115 @@ async fn force_final_response(
         fallback_parts.join("\n\n")
     } else {
         "Task completed. Check the output panel for results.".to_string()
+    }
+}
+
+#[cfg(test)]
+mod vision_tests {
+    use super::*;
+
+    #[test]
+    fn minimax_m3_supports_vision() {
+        assert!(model_supports_vision("https://api.minimax.io/v1/chat/completions", "MiniMax-M3"));
+        // Non-vision MiniMax models should not be treated as vision-capable
+        assert!(!model_supports_vision("https://api.minimax.io/v1/chat/completions", "MiniMax-M2.5"));
+    }
+
+    #[test]
+    fn common_vision_and_text_models() {
+        assert!(model_supports_vision("https://api.openai.com/v1/chat/completions", "gpt-4o"));
+        assert!(model_supports_vision("https://x/v1", "qwen2.5-vl-72b"));
+        assert!(model_supports_vision("https://x/v1", "claude-3-5-sonnet"));
+        assert!(!model_supports_vision("https://x/v1", "TigerBot-70B-Chat"));
+        assert!(!model_supports_vision("https://x/v1", "deepseek-chat"));
+    }
+
+    #[test]
+    fn content_to_text_handles_string_and_array() {
+        assert_eq!(content_to_text(&json!("hello")), "hello");
+        let arr = json!([
+            {"type": "text", "text": "look at this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}
+        ]);
+        assert_eq!(content_to_text(&arr), "look at this");
+    }
+
+    #[test]
+    fn parse_data_uri_splits_media_and_data() {
+        let (media, data) = parse_data_uri("data:image/png;base64,QUJD").unwrap();
+        assert_eq!(media, "image/png");
+        assert_eq!(data, "QUJD");
+        assert!(parse_data_uri("https://example.com/a.png").is_none());
+    }
+
+    #[test]
+    fn openai_image_content_converts_to_anthropic_blocks() {
+        let content = json!([
+            {"type": "text", "text": "hi"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,QUJD"}}
+        ]);
+        let out = openai_content_to_anthropic(&content);
+        let arr = out.as_array().unwrap();
+        assert_eq!(arr[0]["type"], "text");
+        assert_eq!(arr[1]["type"], "image");
+        assert_eq!(arr[1]["source"]["type"], "base64");
+        assert_eq!(arr[1]["source"]["media_type"], "image/jpeg");
+        assert_eq!(arr[1]["source"]["data"], "QUJD");
+    }
+
+    #[test]
+    fn build_image_content_inlines_a_real_png() {
+        use base64::Engine;
+        // 1x1 transparent PNG
+        let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let png = base64::engine::general_purpose::STANDARD.decode(png_b64).unwrap();
+        let dir = std::env::temp_dir().join("tigrimos_vision_test");
+        let uploads = dir.join("uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        std::fs::write(uploads.join("pic.png"), &png).unwrap();
+
+        // Web UI note format
+        let text = "What is this?\n\n[Attached files]\n- uploads/pic.png (pic.png)";
+        let content = build_image_content(text, &dir.to_string_lossy()).expect("should inline image");
+        let arr = content.as_array().unwrap();
+        assert_eq!(arr[0]["type"], "text");
+        assert_eq!(arr[1]["type"], "image_url");
+        let url = arr[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+
+        // A message with no image reference yields None
+        assert!(build_image_content("just text, no files", &dir.to_string_lossy()).is_none());
+        // A path that escapes the sandbox is rejected
+        assert!(build_image_content("see ../secret.png", &dir.to_string_lossy()).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn desktop_note_with_spaces_in_path_is_inlined() {
+        use base64::Engine;
+        let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let png = base64::engine::general_purpose::STANDARD.decode(png_b64).unwrap();
+        // Reproduce the real macOS path that contains a space: "App Support".
+        let dir = std::env::temp_dir().join("tigrimos App Support").join("sandbox");
+        let uploads = dir.join("uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        let img_path = uploads.join("20260613_pointcloud.png");
+        std::fs::write(&img_path, &png).unwrap();
+
+        // Exact desktop attachment note format.
+        let text = format!(
+            "explain for this picture\n\n[Attached file: pointcloud.png — saved at: {}]\nUse the read_file tool to access this file.",
+            img_path.to_string_lossy()
+        );
+        let content = build_image_content(&text, &dir.to_string_lossy())
+            .expect("path with spaces must still be inlined");
+        let arr = content.as_array().unwrap();
+        // Exactly one image part (the bare 'pointcloud.png' name must not double-add).
+        let imgs: Vec<_> = arr.iter().filter(|p| p["type"] == "image_url").collect();
+        assert_eq!(imgs.len(), 1, "should inline the image exactly once");
+        assert!(imgs[0]["image_url"]["url"].as_str().unwrap().starts_with("data:image/png;base64,"));
+
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("tigrimos App Support"));
     }
 }
