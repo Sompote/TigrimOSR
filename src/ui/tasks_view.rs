@@ -532,7 +532,16 @@ impl TasksView {
                                 );
 
                                 ui.vertical(|ui| {
-                                    ui.strong(&task.name);
+                                    ui.horizontal(|ui| {
+                                        ui.strong(&task.name);
+                                        if task.source.as_deref() == Some("chat") {
+                                            ui.label(
+                                                egui::RichText::new("chat")
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(168, 85, 247)),
+                                            );
+                                        }
+                                    });
                                     ui.horizontal(|ui| {
                                         ui.label(
                                             egui::RichText::new(format!("cron: {}", task.cron))
@@ -733,6 +742,7 @@ impl TasksView {
                             last_run: None,
                             last_result: None,
                             created_at: chrono::Utc::now().to_rfc3339(),
+                            source: None,
                         };
                         self.tasks.push(task);
                         let tasks = self.tasks.clone();

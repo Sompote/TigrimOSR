@@ -285,6 +285,9 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     // Initialize MCP server connections from settings
     services::mcp::init_mcp_servers().await;
 
+    // Start the cron scheduler for enabled scheduled tasks
+    services::scheduler::init_scheduler().await;
+
     let state = Arc::new(AppState {
         sandbox_dir: sandbox_dir.clone(),
         data_dir,

@@ -395,6 +395,9 @@ pub struct ScheduledTask {
     pub last_result: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,
+    /// "chat" when created by the AI via the cron_create tool; None for manual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 pub async fn get_tasks() -> Vec<ScheduledTask> {

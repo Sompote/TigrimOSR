@@ -25,6 +25,7 @@ struct CreateTaskBody {
     cron: Option<String>,
     command: Option<String>,
     enabled: Option<bool>,
+    source: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,6 +47,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/active", get(list_active))
         .route("/finished", get(list_finished))
         .route("/active/{id}/kill", post(kill_active))
+        .route("/{id}/run", post(run_task_now))
         .route("/{id}", patch(update_task).delete(delete_task))
 }
 
@@ -95,12 +97,11 @@ async fn create_task(Json(body): Json<CreateTaskBody>) -> impl IntoResponse {
         last_run: None,
         last_result: None,
         created_at: chrono::Utc::now().to_rfc3339(),
+        source: body.source,
     };
 
     tasks.push(task.clone());
     save_tasks(&tasks).await;
-
-    // TODO: if task.enabled { schedule_task(&task); }
 
     (StatusCode::CREATED, Json(serde_json::to_value(&task).unwrap()))
 }
@@ -138,16 +139,28 @@ async fn update_task(
 
     save_tasks(&tasks).await;
 
-    // TODO: if tasks[idx].enabled { schedule_task(&tasks[idx]); } else { stop_task(&tasks[idx].id); }
-
     (StatusCode::OK, Json(serde_json::to_value(&tasks[idx]).unwrap()))
 }
 
 /// DELETE /:id - delete a task
 async fn delete_task(Path(id): Path<String>) -> Json<Value> {
     let tasks = get_tasks().await;
-    // TODO: stop_task(&id);
     let tasks: Vec<_> = tasks.into_iter().filter(|t| t.id != id).collect();
     save_tasks(&tasks).await;
     Json(json!({"success": true}))
+}
+
+/// POST /:id/run - execute a task immediately
+async fn run_task_now(Path(id): Path<String>) -> impl IntoResponse {
+    match crate::server::services::scheduler::run_task_now(&id).await {
+        Ok(output) => (StatusCode::OK, Json(json!({"ok": true, "output": output}))),
+        Err(e) => {
+            let status = if e == "Task not found" {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(json!({"ok": false, "error": e})))
+        }
+    }
 }

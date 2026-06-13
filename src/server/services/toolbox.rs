@@ -235,7 +235,9 @@ static APPROVAL_RX: OnceLock<TokioMutex<Option<tokio::sync::oneshot::Receiver<bo
 async fn tool_requires_approval(tool_name: &str) -> bool {
     let settings = crate::server::data::get_settings().await;
     match tool_name {
-        "run_shell" => settings.approval_required_for_shell.unwrap_or(true),
+        "run_shell" | "cron_create" | "cron_run_now" => {
+            settings.approval_required_for_shell.unwrap_or(true)
+        }
         "run_python" | "run_react" => settings.approval_required_for_python.unwrap_or(true),
         "write_file" => settings.approval_required_for_file_write.unwrap_or(false),
         "delete_file" => settings.approval_required_for_file_delete.unwrap_or(true),
@@ -2663,6 +2665,79 @@ pub fn tool_definitions() -> Vec<Value> {
                         "query": { "type": "string", "description": "Search query" }
                     },
                     "required": ["query"]
+                }
+            }
+        }),
+        // cron_create
+        json!({
+            "type": "function",
+            "function": {
+                "name": "cron_create",
+                "description": "Create a recurring cron job that runs a shell command on a schedule. The command runs with the sandbox directory as cwd. For complex jobs, first save a script with write_file, then schedule it (e.g. command: 'python3 my_script.py'). Cron format is the classic 5-field 'min hour day-of-month month day-of-week' (e.g. '0 9 * * *' = daily 09:00, '*/15 * * * *' = every 15 min), local time. The user can see, enable/disable, run, and delete jobs in the Tasks page.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Short human-readable job name (unique)" },
+                        "cron": { "type": "string", "description": "5-field cron expression, e.g. '0 9 * * *'" },
+                        "command": { "type": "string", "description": "Shell command to run on each trigger" },
+                        "enabled": { "type": "boolean", "description": "Start enabled (default true). Pass false to let the user review and enable it manually." }
+                    },
+                    "required": ["name", "cron", "command"]
+                }
+            }
+        }),
+        // cron_list
+        json!({
+            "type": "function",
+            "function": {
+                "name": "cron_list",
+                "description": "List all scheduled cron jobs with their id, schedule, command, enabled state, and last run result.",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }),
+        // cron_toggle
+        json!({
+            "type": "function",
+            "function": {
+                "name": "cron_toggle",
+                "description": "Enable or disable an existing cron job.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id_or_name": { "type": "string", "description": "Job id or exact job name" },
+                        "enabled": { "type": "boolean", "description": "true to enable, false to disable" }
+                    },
+                    "required": ["id_or_name", "enabled"]
+                }
+            }
+        }),
+        // cron_delete
+        json!({
+            "type": "function",
+            "function": {
+                "name": "cron_delete",
+                "description": "Delete a cron job permanently.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id_or_name": { "type": "string", "description": "Job id or exact job name" }
+                    },
+                    "required": ["id_or_name"]
+                }
+            }
+        }),
+        // cron_run_now
+        json!({
+            "type": "function",
+            "function": {
+                "name": "cron_run_now",
+                "description": "Run a cron job immediately once (useful to test a newly created job). Returns the command output.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id_or_name": { "type": "string", "description": "Job id or exact job name" }
+                    },
+                    "required": ["id_or_name"]
                 }
             }
         }),
@@ -5534,6 +5609,151 @@ fn exec_spawn_subagent(
     }) // end Box::pin(async move)
 }
 
+// ---------------------------------------------------------------------------
+// Cron job tools (scheduled tasks, shared with the Tasks page UI)
+// ---------------------------------------------------------------------------
+
+fn cron_find_task<'a>(
+    tasks: &'a mut [crate::server::data::ScheduledTask],
+    id_or_name: &str,
+) -> Option<&'a mut crate::server::data::ScheduledTask> {
+    tasks
+        .iter_mut()
+        .find(|t| t.id == id_or_name || t.name == id_or_name)
+}
+
+async fn exec_cron_create(args: &Value) -> Value {
+    let name = match args.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+        _ => return json!({ "ok": false, "error": "Parameter 'name' must be a non-empty string." }),
+    };
+    let cron_expr = match args.get("cron").and_then(|v| v.as_str()) {
+        Some(c) if !c.trim().is_empty() => c.trim().to_string(),
+        _ => return json!({ "ok": false, "error": "Parameter 'cron' must be a non-empty string." }),
+    };
+    let command = match args.get("command").and_then(|v| v.as_str()) {
+        Some(c) if !c.trim().is_empty() => c.trim().to_string(),
+        _ => return json!({ "ok": false, "error": "Parameter 'command' must be a non-empty string." }),
+    };
+    let enabled = args.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+    if let Some(reason) = check_dangerous(&command) {
+        warn!("[SECURITY] cron_create command blocked: {}", reason);
+        return json!({ "ok": false, "error": format!("Security: {reason}") });
+    }
+    if let Err(e) = crate::server::services::scheduler::validate_cron(&cron_expr) {
+        return json!({ "ok": false, "error": e });
+    }
+
+    let mut tasks = crate::server::data::get_tasks().await;
+    if tasks.iter().any(|t| t.name == name) {
+        return json!({
+            "ok": false,
+            "error": format!("A cron job named '{name}' already exists. Use cron_toggle/cron_delete or pick another name.")
+        });
+    }
+
+    let task = crate::server::data::ScheduledTask {
+        id: format!("{:x}-{:04x}", chrono::Utc::now().timestamp_millis(), rand::random::<u16>()),
+        name: name.clone(),
+        cron: cron_expr.clone(),
+        command,
+        enabled,
+        last_run: None,
+        last_result: None,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        source: Some("chat".to_string()),
+    };
+    let id = task.id.clone();
+    tasks.push(task);
+    crate::server::data::save_tasks(&tasks).await;
+
+    json!({
+        "ok": true,
+        "id": id,
+        "name": name,
+        "cron": cron_expr,
+        "enabled": enabled,
+        "message": "Cron job created. The user can enable/disable, run, or delete it in the Tasks page."
+    })
+}
+
+async fn exec_cron_list(_args: &Value) -> Value {
+    let tasks = crate::server::data::get_tasks().await;
+    let jobs: Vec<Value> = tasks
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "name": t.name,
+                "cron": t.cron,
+                "command": t.command,
+                "enabled": t.enabled,
+                "last_run": t.last_run,
+                "last_result": t.last_result,
+                "source": t.source,
+            })
+        })
+        .collect();
+    json!({ "ok": true, "count": jobs.len(), "jobs": jobs })
+}
+
+async fn exec_cron_toggle(args: &Value) -> Value {
+    let id_or_name = match args.get("id_or_name").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.trim(),
+        _ => return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." }),
+    };
+    let enabled = match args.get("enabled").and_then(|v| v.as_bool()) {
+        Some(e) => e,
+        None => return json!({ "ok": false, "error": "Parameter 'enabled' must be a boolean." }),
+    };
+
+    let mut tasks = crate::server::data::get_tasks().await;
+    let Some(task) = cron_find_task(&mut tasks, id_or_name) else {
+        return json!({ "ok": false, "error": format!("No cron job found with id or name '{id_or_name}'.") });
+    };
+    task.enabled = enabled;
+    let (id, name) = (task.id.clone(), task.name.clone());
+    crate::server::data::save_tasks(&tasks).await;
+    json!({ "ok": true, "id": id, "name": name, "enabled": enabled })
+}
+
+async fn exec_cron_delete(args: &Value) -> Value {
+    let id_or_name = match args.get("id_or_name").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.trim(),
+        _ => return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." }),
+    };
+
+    let tasks = crate::server::data::get_tasks().await;
+    let before = tasks.len();
+    let tasks: Vec<_> = tasks
+        .into_iter()
+        .filter(|t| t.id != id_or_name && t.name != id_or_name)
+        .collect();
+    if tasks.len() == before {
+        return json!({ "ok": false, "error": format!("No cron job found with id or name '{id_or_name}'.") });
+    }
+    crate::server::data::save_tasks(&tasks).await;
+    json!({ "ok": true, "deleted": id_or_name })
+}
+
+async fn exec_cron_run_now(args: &Value) -> Value {
+    let id_or_name = match args.get("id_or_name").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.trim(),
+        _ => return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." }),
+    };
+
+    let mut tasks = crate::server::data::get_tasks().await;
+    let Some(task) = cron_find_task(&mut tasks, id_or_name) else {
+        return json!({ "ok": false, "error": format!("No cron job found with id or name '{id_or_name}'.") });
+    };
+    let id = task.id.clone();
+    match crate::server::services::scheduler::run_task_now(&id).await {
+        Ok(output) => json!({ "ok": true, "id": id, "output": output }),
+        Err(e) => json!({ "ok": false, "id": id, "error": e }),
+    }
+}
+
 #[allow(dead_code)]
 async fn execute_tool(name: &str, args: &Value, sandbox_dir: &str) -> Value {
     execute_tool_with_context(name, args, sandbox_dir, "default", "main").await
@@ -5578,6 +5798,11 @@ async fn execute_tool_with_context(
         "clawhub_search" => exec_clawhub_search(args).await,
         "clawhub_install" => exec_clawhub_install(args).await,
         "openrouter_web_search" => exec_openrouter_web_search(args).await,
+        "cron_create" => exec_cron_create(args).await,
+        "cron_list" => exec_cron_list(args).await,
+        "cron_toggle" => exec_cron_toggle(args).await,
+        "cron_delete" => exec_cron_delete(args).await,
+        "cron_run_now" => exec_cron_run_now(args).await,
         _ if mcp::is_mcp_tool(name) => {
             info!("[execute_tool] Routing MCP tool call: {name}");
             mcp::call_mcp_tool(name, args).await
