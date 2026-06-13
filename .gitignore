@@ -9,6 +9,16 @@ tiger_cowork/
 Cargo.lock
 
 # Data directories (user-specific, not part of source)
+data/checkpoints/
+data/plugins.json
+data/plugins/
+data/transcripts/
+data/activity_logs/
+data/sandbox/
+data/skills/
+data/agents/
+data/file_tokens.json
+data/remote_cache/
 data/chat_logs/
 data/chat_history.json
 data/agent_history/
