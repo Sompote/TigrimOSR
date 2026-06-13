@@ -54,13 +54,13 @@ fn main() {
             println!("===========================================");
             println!();
             loop {
-                print!("Enter access token (min 8 chars): ");
+                print!("Enter access token: ");
                 use std::io::Write;
                 std::io::stdout().flush().unwrap();
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input).unwrap();
                 let token = input.trim().to_string();
-                if token.len() >= 8 {
+                if !token.is_empty() {
                     println!();
                     println!("Token set. Use this to connect from your Mac or browser.");
                     println!("  Web UI:  http://<server-ip>:{}/web/", std::env::var("PORT").unwrap_or_else(|_| "3001".to_string()));
@@ -68,7 +68,7 @@ fn main() {
                     println!();
                     break token;
                 }
-                println!("Token too short — must be at least 8 characters.");
+                println!("Token cannot be empty.");
             }
         } else {
             println!("Access token loaded from ACCESS_TOKEN env var.");
