@@ -1231,6 +1231,20 @@ You have access to these tools: {}.{}",
                     }
                 });
 
+                // Baseline message count — used to detect when the remote run
+                // appends its assistant reply to the session.
+                let baseline_msgs = match client
+                    .get(format!("{}/api/chat/sessions/{}", rb.url, remote_sid))
+                    .bearer_auth(&rb.token)
+                    .timeout(std::time::Duration::from_secs(10))
+                    .send().await
+                {
+                    Ok(r) => r.json::<serde_json::Value>().await.ok()
+                        .and_then(|v| v["messages"].as_array().map(|a| a.len()))
+                        .unwrap_or(0),
+                    Err(_) => 0,
+                };
+
                 // Send message — remote runs call_with_tools internally
                 let body = serde_json::json!({
                     "message": remote_msg,
@@ -1243,34 +1257,87 @@ You have access to these tools: {}.{}",
                     .json(&body)
                     .send().await;
 
-                poll_done.store(true, std::sync::atomic::Ordering::Relaxed);
-                let _ = poller.await;
+                let apply_files = |val: &serde_json::Value| {
+                    if let Some(files_arr) = val.get("files").and_then(|v| v.as_array()) {
+                        let mut files = remote_state.files.lock().unwrap();
+                        for f in files_arr {
+                            if let Some(s) = f.as_str() {
+                                if !files.contains(&s.to_string()) {
+                                    files.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                };
 
                 match result {
                     Ok(resp) => {
-                        if let Ok(val) = resp.json::<serde_json::Value>().await {
-                            let content = val.get("content")
-                                .or_else(|| val.get("message"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("(no response)");
-                            *remote_state.text.lock().unwrap() = content.to_string();
+                        let val = resp.json::<serde_json::Value>().await
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                        let processing = val.get("status").and_then(|v| v.as_str()) == Some("processing");
+                        let direct = val.get("content")
+                            .or_else(|| val.get("message"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
 
-                            if let Some(files_arr) = val.get("files").and_then(|v| v.as_array()) {
-                                let mut files = remote_state.files.lock().unwrap();
-                                for f in files_arr {
-                                    if let Some(s) = f.as_str() {
-                                        if !files.contains(&s.to_string()) {
-                                            files.push(s.to_string());
+                        if !processing && direct.is_some() {
+                            // Legacy server: full response returned inline
+                            *remote_state.text.lock().unwrap() = direct.unwrap();
+                            apply_files(&val);
+                        } else if processing {
+                            // Current server: the POST returns immediately and the
+                            // assistant reply is appended to the session when the
+                            // run finishes — poll for it. The activity poller keeps
+                            // streaming live progress meanwhile.
+                            let deadline = tokio::time::Instant::now()
+                                + std::time::Duration::from_secs(3600);
+                            let mut final_msg: Option<serde_json::Value> = None;
+                            while tokio::time::Instant::now() < deadline {
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                let Ok(r) = client
+                                    .get(format!("{}/api/chat/sessions/{}", rb.url, remote_sid))
+                                    .bearer_auth(&rb.token)
+                                    .timeout(std::time::Duration::from_secs(10))
+                                    .send().await else { continue };
+                                let Ok(v) = r.json::<serde_json::Value>().await else { continue };
+                                if let Some(msgs) = v["messages"].as_array() {
+                                    if msgs.len() > baseline_msgs {
+                                        if let Some(last) = msgs.last() {
+                                            if last["role"].as_str() == Some("assistant") {
+                                                final_msg = Some(last.clone());
+                                                break;
+                                            }
                                         }
                                     }
                                 }
                             }
+                            match final_msg {
+                                Some(last) => {
+                                    let content = last["content"].as_str()
+                                        .filter(|s| !s.trim().is_empty())
+                                        .unwrap_or("(empty response)");
+                                    *remote_state.text.lock().unwrap() = content.to_string();
+                                    apply_files(&last);
+                                }
+                                None => {
+                                    *remote_state.error.lock().unwrap() = Some(
+                                        "Remote run did not finish within 60 minutes — \
+                                         check the remote server's Tasks/Activity for status.".to_string()
+                                    );
+                                }
+                            }
+                        } else {
+                            let err = val.get("error").and_then(|v| v.as_str()).unwrap_or("(no response)");
+                            *remote_state.text.lock().unwrap() = err.to_string();
                         }
                     }
                     Err(e) => {
                         *remote_state.error.lock().unwrap() = Some(format!("Remote error: {}", e));
                     }
                 }
+
+                poll_done.store(true, std::sync::atomic::Ordering::Relaxed);
+                let _ = poller.await;
 
                 // Invalidate cache so sidebar picks up the new messages
                 crate::server::data::remote_cache_invalidate("/api/chat/sessions/bulk");
