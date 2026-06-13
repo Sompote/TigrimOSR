@@ -239,7 +239,8 @@ select {
 .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 0 0 4px var(--accent-soft); }
 .composer .attach {
   width: 38px; height: 38px; flex: none; border-radius: 13px; display: grid; place-items: center;
-  color: var(--ink-soft); background: rgba(52,48,42,.04);
+  color: var(--ink-soft); background: rgba(52,48,42,.04); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 .composer .attach:active { background: rgba(52,48,42,.1); }
 .composer .attach svg { width: 19px; height: 19px; stroke-width: 2; }
@@ -713,8 +714,10 @@ h4.md-h { font-size: 1em; }
         </div>
         <div class="attach-bar" id="attach-bar"></div>
         <div class="composer">
-          <button class="attach" title="Attach file" onclick="document.getElementById('file-upload-input').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg></button>
-          <input type="file" id="file-upload-input" multiple style="display:none" onchange="uploadChatFiles(this.files); this.value='';">
+          <label class="attach" title="Attach file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+            <input type="file" id="file-upload-input" multiple style="display:none" onchange="uploadChatFiles(this.files); this.value='';">
+          </label>
           <textarea id="chat-input" rows="1" placeholder="Type a message..."></textarea>
           <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled title="Send">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 19V5M5 12l7-7 7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
