@@ -599,9 +599,29 @@ impl SettingsView {
         // MCP Tools
         settings.mcp_tools = self.mcp_tools.clone();
 
-        // Reconnect MCP servers after saving
+        // Reconnect MCP servers after saving — on the box that runs them:
+        // the remote server when connected, else the local one.
         let mcp_status = self.mcp_connection_status.clone();
         runtime.spawn(async move {
+            if let Some(rb) = crate::server::data::get_remote_backend() {
+                // Give the settings PUT (block_on below) time to land first.
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                let client = reqwest::Client::new();
+                if let Ok(resp) = client
+                    .post(format!("{}/api/settings/mcp/reconnect-all", rb.url))
+                    .bearer_auth(&rb.token)
+                    .timeout(std::time::Duration::from_secs(60))
+                    .send()
+                    .await
+                {
+                    if let Ok(v) = resp.json::<serde_json::Value>().await {
+                        if let Ok(list) = serde_json::from_value::<Vec<(String, bool, usize, Option<String>)>>(v["status"].clone()) {
+                            *mcp_status.lock().unwrap() = list;
+                        }
+                    }
+                }
+                return;
+            }
             use crate::server::services::mcp;
             mcp::disconnect_all().await;
             mcp::init_mcp_servers().await;

@@ -65,6 +65,8 @@ pub struct SkillsView {
     selected_skill_id: Option<String>,
     // Delete confirmation
     confirm_delete_id: Option<String>,
+    /// Cached SKILL.md content fetched from the remote server: (skill_id, content)
+    remote_md_cache: Option<(String, Option<String>)>,
     // Content editing mode
     editing_content: bool,
     // Description editing in detail panel
@@ -180,6 +182,7 @@ impl SkillsView {
             search_query: String::new(),
             selected_skill_id: None,
             confirm_delete_id: None,
+            remote_md_cache: None,
             editing_content: false,
             editing_description: false,
             upload_preview: None,
@@ -611,12 +614,19 @@ impl SkillsView {
                 let slot = results_slot.clone();
 
                 runtime.spawn(async move {
-                    let url = format!(
-                        "http://localhost:3001/api/clawhub/search?q={}",
-                        url_encode(&query)
-                    );
+                    // Target the connected remote server when set, else local
+                    let (base, token) = match crate::server::data::get_remote_backend() {
+                        Some(rb) => (rb.url.clone(), Some(rb.token.clone())),
+                        None => ("http://localhost:3001".to_string(), None),
+                    };
+                    let url = format!("{}/api/clawhub/search?q={}", base, url_encode(&query));
+                    let client = reqwest::Client::new();
+                    let mut req = client.get(&url).timeout(std::time::Duration::from_secs(30));
+                    if let Some(t) = token {
+                        req = req.bearer_auth(t);
+                    }
 
-                    let outcome = match reqwest::get(&url).await {
+                    let outcome = match req.send().await {
                         Ok(resp) => {
                             if resp.status().is_success() {
                                 match resp.json::<serde_json::Value>().await {
@@ -887,10 +897,20 @@ impl SkillsView {
                         let slot = install_slot.clone();
 
                         runtime.spawn(async move {
+                            // Install onto the connected remote server when set
+                            let (base, token) = match crate::server::data::get_remote_backend() {
+                                Some(rb) => (rb.url.clone(), Some(rb.token.clone())),
+                                None => ("http://localhost:3001".to_string(), None),
+                            };
                             let client = reqwest::Client::new();
-                            let outcome = match client
-                                .post("http://localhost:3001/api/clawhub/install")
-                                .json(&serde_json::json!({ "slug": slug }))
+                            let mut req = client
+                                .post(format!("{}/api/clawhub/install", base))
+                                .timeout(std::time::Duration::from_secs(120))
+                                .json(&serde_json::json!({ "slug": slug }));
+                            if let Some(t) = token {
+                                req = req.bearer_auth(t);
+                            }
+                            let outcome = match req
                                 .send()
                                 .await
                             {
@@ -1092,6 +1112,31 @@ impl SkillsView {
 
         if do_install {
             if let Some(preview) = self.upload_preview.take() {
+                // Remote backend: upload the original file to the remote
+                // server — it extracts the skill AND registers it itself.
+                if let Some(rb) = crate::server::data::get_remote_backend() {
+                    let file_path = preview.file_path.clone();
+                    let fname = std::path::Path::new(&file_path)
+                        .file_name().map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "SKILL.md".to_string());
+                    runtime.spawn(async move {
+                        if let Ok(bytes) = tokio::fs::read(&file_path).await {
+                            let part = reqwest::multipart::Part::bytes(bytes).file_name(fname);
+                            let form = reqwest::multipart::Form::new().part("file", part);
+                            let client = reqwest::Client::new();
+                            let _ = client
+                                .post(format!("{}/api/skills/upload", rb.url))
+                                .bearer_auth(&rb.token)
+                                .timeout(std::time::Duration::from_secs(60))
+                                .multipart(form)
+                                .send().await;
+                            crate::server::data::remote_cache_invalidate("/api/skills");
+                        }
+                    });
+                    self.needs_refresh = true;
+                    return;
+                }
+
                 let slug = preview.name.to_lowercase()
                     .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
                 let slug = slug.trim_matches('-').to_string();
@@ -1164,6 +1209,23 @@ impl SkillsView {
         } else if !still_open {
             self.upload_preview = None;
         }
+    }
+
+    /// Fetch a skill's SKILL.md content from the connected remote server
+    /// (GET /api/skills/{id}/content). Called once per selected skill.
+    fn fetch_skill_content_remote(skill_id: &str) -> Option<String> {
+        let rb = crate::server::data::get_remote_backend()?;
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .ok()?;
+        let resp = client
+            .get(format!("{}/api/skills/{}/content", rb.url, skill_id))
+            .bearer_auth(&rb.token)
+            .send()
+            .ok()?;
+        let val = resp.json::<serde_json::Value>().ok()?;
+        val["content"].as_str().map(|s| s.to_string())
     }
 
     // ------------------------------------------------------------------
@@ -1363,10 +1425,16 @@ impl SkillsView {
             .filter(|s| s.source != "bundled") // skip bundled duplicates
             .collect();
 
-        // Also scan data/skills/ on disk for skills with SKILL.md that aren't registered
+        // Also scan data/skills/ on disk for skills with SKILL.md that aren't
+        // registered — LOCAL mode only: when a remote backend is connected the
+        // local folder is irrelevant (and would show the wrong machine's skills).
         let mut disk_skills: Vec<(String, String)> = Vec::new(); // (name, description)
         let data_dir = crate::server::data::data_dir();
-        let skills_on_disk = data_dir.join("skills");
+        let skills_on_disk = if crate::server::data::get_remote_backend().is_some() {
+            data_dir.join("__remote_no_local_scan__")
+        } else {
+            data_dir.join("skills")
+        };
         if let Ok(entries) = std::fs::read_dir(&skills_on_disk) {
             for entry in entries.flatten() {
                 if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
@@ -1653,13 +1721,22 @@ impl SkillsView {
             .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
         let skill_dir = data::data_dir().join("skills").join(slug.trim_matches('-'));
         let skill_md_path = skill_dir.join("SKILL.md");
-        let skill_md_content = if skill_source != "built-in" {
-            std::fs::read_to_string(&skill_md_path).ok()
-        } else {
+        let is_remote = crate::server::data::get_remote_backend().is_some();
+        let skill_md_content = if skill_source == "built-in" {
             None
+        } else if is_remote {
+            // Fetch the REMOTE server's SKILL.md once per selected skill
+            let sid = self.skills[idx].id.clone();
+            if self.remote_md_cache.as_ref().map(|(k, _)| k != &sid).unwrap_or(true) {
+                self.remote_md_cache = Some((sid.clone(), Self::fetch_skill_content_remote(&sid)));
+            }
+            self.remote_md_cache.as_ref().and_then(|(_, c)| c.clone())
+        } else {
+            std::fs::read_to_string(&skill_md_path).ok()
         };
-        // Collect all files in the skill subfolder
-        let skill_files: Vec<(String, String)> = if skill_source != "built-in" && skill_dir.is_dir() {
+        // Collect all files in the skill subfolder (local mode only — the
+        // remote server exposes SKILL.md via API, not the folder listing)
+        let skill_files: Vec<(String, String)> = if !is_remote && skill_source != "built-in" && skill_dir.is_dir() {
             let mut files = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&skill_dir) {
                 for entry in entries.flatten() {
@@ -1695,13 +1772,30 @@ impl SkillsView {
                 .clicked()
             {
                 if self.editing_content {
-                    // Save content — write to SKILL.md file if it's a folder-based skill
+                    // Save content — write to SKILL.md (remote: PATCH the
+                    // server, which syncs its own SKILL.md file)
                     if skill_md_content.is_some() {
-                        let path = skill_md_path.clone();
                         let content = self.skills[idx].script.clone();
-                        runtime.spawn(async move {
-                            let _ = tokio::fs::write(path, content).await;
-                        });
+                        if is_remote {
+                            let sid = self.skills[idx].id.clone();
+                            self.remote_md_cache = None; // refetch after save
+                            runtime.spawn(async move {
+                                if let Some(rb) = crate::server::data::get_remote_backend() {
+                                    let client = reqwest::Client::new();
+                                    let _ = client
+                                        .patch(format!("{}/api/skills/{}", rb.url, sid))
+                                        .bearer_auth(&rb.token)
+                                        .timeout(std::time::Duration::from_secs(10))
+                                        .json(&serde_json::json!({ "script": content }))
+                                        .send().await;
+                                }
+                            });
+                        } else {
+                            let path = skill_md_path.clone();
+                            runtime.spawn(async move {
+                                let _ = tokio::fs::write(path, content).await;
+                            });
+                        }
                     }
                     let skills = self.skills.clone();
                     runtime.spawn(async move {
@@ -1835,19 +1929,34 @@ impl SkillsView {
                     )
                     .clicked()
                 {
-                    // Also delete skill files from disk
-                    let skill_name = self.skills.iter().find(|s| s.id == sel_id)
-                        .map(|s| s.name.clone()).unwrap_or_default();
-                    let slug = skill_name.to_lowercase()
-                        .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
-                    let skill_dir = data::data_dir().join("skills").join(slug.trim_matches('-'));
-                    let _ = std::fs::remove_dir_all(&skill_dir);
+                    // Also delete skill files from disk — on the box that
+                    // owns them (remote DELETE removes the folder server-side)
+                    if let Some(rb) = crate::server::data::get_remote_backend() {
+                        let sid = sel_id.clone();
+                        runtime.spawn(async move {
+                            let client = reqwest::Client::new();
+                            let _ = client
+                                .delete(format!("{}/api/skills/{}", rb.url, sid))
+                                .bearer_auth(&rb.token)
+                                .timeout(std::time::Duration::from_secs(10))
+                                .send().await;
+                            crate::server::data::remote_cache_invalidate("/api/skills");
+                        });
+                        self.skills.retain(|s| s.id != sel_id);
+                    } else {
+                        let skill_name = self.skills.iter().find(|s| s.id == sel_id)
+                            .map(|s| s.name.clone()).unwrap_or_default();
+                        let slug = skill_name.to_lowercase()
+                            .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
+                        let skill_dir = data::data_dir().join("skills").join(slug.trim_matches('-'));
+                        let _ = std::fs::remove_dir_all(&skill_dir);
 
-                    self.skills.retain(|s| s.id != sel_id);
-                    let skills = self.skills.clone();
-                    runtime.spawn(async move {
-                        data::save_skills(&skills).await;
-                    });
+                        self.skills.retain(|s| s.id != sel_id);
+                        let skills = self.skills.clone();
+                        runtime.spawn(async move {
+                            data::save_skills(&skills).await;
+                        });
+                    }
                     self.selected_skill_id = None;
                     self.confirm_delete_id = None;
                     self.editing_content = false;

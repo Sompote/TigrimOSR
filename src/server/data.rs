@@ -919,6 +919,65 @@ pub async fn write_file_content(
         .map_err(|e| e.to_string())
 }
 
+/// Write raw bytes into the sandbox — remote-aware (multipart upload to the
+/// connected server). `file_path` is sandbox-relative including the filename.
+pub async fn write_file_bytes(
+    sandbox_dir: &str,
+    file_path: &str,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    if let Some(rb) = get_remote_backend() {
+        let (dir, name) = match file_path.rsplit_once('/') {
+            Some((d, n)) => (d.to_string(), n.to_string()),
+            None => (String::new(), file_path.to_string()),
+        };
+        let part = reqwest::multipart::Part::bytes(bytes).file_name(name);
+        let form = reqwest::multipart::Form::new()
+            .text("path", dir)
+            .part("file", part);
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/api/files/upload", rb.url))
+            .bearer_auth(&rb.token)
+            .timeout(std::time::Duration::from_secs(300))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("Remote upload failed: HTTP {}", resp.status()));
+        }
+        return Ok(());
+    }
+    let resolved = validate_path(sandbox_dir, file_path)?;
+    if let Some(parent) = resolved.parent() {
+        let _ = fs::create_dir_all(parent).await;
+    }
+    fs::write(&resolved, &bytes).await.map_err(|e| e.to_string())
+}
+
+/// Read raw bytes from the sandbox — remote-aware (downloads from the
+/// connected server).
+pub async fn read_file_bytes(sandbox_dir: &str, file_path: &str) -> Result<Vec<u8>, String> {
+    if let Some(rb) = get_remote_backend() {
+        let encoded = urlencoding::encode(file_path);
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("{}/api/files/download?path={}", rb.url, encoded))
+            .bearer_auth(&rb.token)
+            .timeout(std::time::Duration::from_secs(300))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("Remote download failed: HTTP {}", resp.status()));
+        }
+        return resp.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string());
+    }
+    let resolved = validate_path(sandbox_dir, file_path)?;
+    fs::read(&resolved).await.map_err(|e| e.to_string())
+}
+
 pub async fn delete_file_or_dir(sandbox_dir: &str, file_path: &str) -> Result<(), String> {
     if let Some(rb) = get_remote_backend() {
         let encoded = urlencoding::encode(file_path);

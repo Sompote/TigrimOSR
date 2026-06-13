@@ -584,7 +584,8 @@ async fn regenerate_file_token(Path(id): Path<String>) -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 async fn mcp_status() -> Json<Value> {
-    Json(json!([]))
+    let status = crate::server::services::mcp::get_connection_status().await;
+    Json(json!(status))
 }
 
 async fn mcp_connect(Json(body): Json<Value>) -> impl IntoResponse {
@@ -611,5 +612,9 @@ async fn mcp_disconnect(Json(body): Json<Value>) -> impl IntoResponse {
 }
 
 async fn mcp_reconnect_all() -> Json<Value> {
-    Json(json!({"ok": true, "status": []}))
+    use crate::server::services::mcp;
+    mcp::disconnect_all().await;
+    mcp::init_mcp_servers().await;
+    let status = mcp::get_connection_status().await;
+    Json(json!({"ok": true, "status": status}))
 }

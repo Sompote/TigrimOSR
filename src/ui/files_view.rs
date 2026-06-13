@@ -480,35 +480,25 @@ impl FilesView {
                     }
                 }
                 Err(_) => {
-                    // Binary file
+                    // Binary file — remote-aware byte upload
                     match std::fs::read(&src) {
                         Ok(bytes) => {
                             let sandbox = self.sandbox_dir.clone();
-                            let resolved = data::validate_path(&sandbox, &dest_rel);
-                            match resolved {
-                                Ok(full_path) => {
-                                    if let Some(parent) = full_path.parent() {
-                                        let _ = std::fs::create_dir_all(parent);
-                                    }
-                                    match std::fs::write(&full_path, &bytes) {
-                                        Ok(()) => {
-                                            self.needs_refresh = true;
-                                            self.status_message = Some((
-                                                format!("Uploaded (binary): {}", file_name),
-                                                false,
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            self.status_message = Some((
-                                                format!("Upload write failed: {}", e),
-                                                true,
-                                            ));
-                                        }
-                                    }
+                            match runtime
+                                .block_on(data::write_file_bytes(&sandbox, &dest_rel, bytes))
+                            {
+                                Ok(()) => {
+                                    self.needs_refresh = true;
+                                    self.status_message = Some((
+                                        format!("Uploaded (binary): {}", file_name),
+                                        false,
+                                    ));
                                 }
                                 Err(e) => {
-                                    self.status_message =
-                                        Some((format!("Path error: {}", e), true));
+                                    self.status_message = Some((
+                                        format!("Upload write failed: {}", e),
+                                        true,
+                                    ));
                                 }
                             }
                         }
@@ -522,7 +512,7 @@ impl FilesView {
         }
     }
 
-    fn download_file(&mut self) {
+    fn download_file(&mut self, runtime: &tokio::runtime::Handle) {
         if let Some(ref selected) = self.selected_file.clone() {
             let sandbox = self.sandbox_dir.clone();
             let file_name = selected
@@ -530,29 +520,28 @@ impl FilesView {
                 .next()
                 .unwrap_or(selected)
                 .to_string();
-            match data::validate_path(&sandbox, selected) {
-                Ok(src_path) => {
-                    if let Some(dest) = rfd::FileDialog::new()
-                        .set_title("Save file as")
-                        .set_file_name(&file_name)
-                        .save_file()
-                    {
-                        match std::fs::copy(&src_path, &dest) {
-                            Ok(_) => {
-                                self.status_message = Some((
-                                    format!("Downloaded to: {}", dest.display()),
-                                    false,
-                                ));
-                            }
-                            Err(e) => {
-                                self.status_message =
-                                    Some((format!("Download failed: {}", e), true));
-                            }
+            if let Some(dest) = rfd::FileDialog::new()
+                .set_title("Save file as")
+                .set_file_name(&file_name)
+                .save_file()
+            {
+                // Remote-aware: fetches bytes from the connected server
+                match runtime.block_on(data::read_file_bytes(&sandbox, selected)) {
+                    Ok(bytes) => match std::fs::write(&dest, &bytes) {
+                        Ok(()) => {
+                            self.status_message = Some((
+                                format!("Downloaded to: {}", dest.display()),
+                                false,
+                            ));
                         }
+                        Err(e) => {
+                            self.status_message =
+                                Some((format!("Download failed: {}", e), true));
+                        }
+                    },
+                    Err(e) => {
+                        self.status_message = Some((format!("Download failed: {}", e), true));
                     }
-                }
-                Err(e) => {
-                    self.status_message = Some((format!("Path error: {}", e), true));
                 }
             }
         }
@@ -584,13 +573,11 @@ impl FilesView {
                         count += 1;
                     }
                 } else if let Ok(bytes) = std::fs::read(path) {
-                    if let Ok(full_path) = data::validate_path(&sandbox, &dest_rel) {
-                        if let Some(parent) = full_path.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        if std::fs::write(&full_path, &bytes).is_ok() {
-                            count += 1;
-                        }
+                    if runtime
+                        .block_on(data::write_file_bytes(&sandbox, &dest_rel, bytes))
+                        .is_ok()
+                    {
+                        count += 1;
                     }
                 }
             }
@@ -1184,7 +1171,7 @@ impl FilesView {
                                 self.delete_selected(runtime);
                             }
                             if ui.button("Download").clicked() {
-                                self.download_file();
+                                self.download_file(runtime);
                             }
                         },
                     );
@@ -1715,7 +1702,7 @@ impl FilesView {
                             // Download first selected file
                             if let Some(first) = self.selected_set.iter().next().cloned() {
                                 self.selected_file = Some(first);
-                                self.download_file();
+                                self.download_file(runtime);
                             }
                         }
 
@@ -1990,7 +1977,7 @@ impl FilesView {
                             }
                             if ui.button("Download").clicked() {
                                 self.selected_file = Some(entry_path.clone());
-                                self.download_file();
+                                self.download_file(runtime);
                                 ui.close_menu();
                             }
                         }

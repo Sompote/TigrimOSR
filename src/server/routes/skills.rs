@@ -168,6 +168,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/catalog", get(catalog))
         .route("/auto/run-now", post(auto_run_now))
         .route("/auto/status", get(auto_status))
+        .route("/auto/full-status", get(auto_full_status))
         .route("/feedback", post(set_feedback))
         .route("/feedback/{sessionId}", get(get_feedback))
         .route("/{id}", patch(update_skill).delete(uninstall_skill))
@@ -243,6 +244,7 @@ async fn update_skill(
     if let Some(source) = body.source {
         skills[idx].source = source;
     }
+    let script_updated = body.script.is_some();
     if let Some(script) = body.script {
         skills[idx].script = script;
     }
@@ -255,12 +257,30 @@ async fn update_skill(
 
     save_skills(&skills).await;
 
+    // Folder-based skills keep their live content in SKILL.md — keep it in
+    // sync when the script was edited (e.g. from a connected desktop).
+    if script_updated && !skills[idx].script.trim().is_empty() {
+        if let Some(file_path) = find_skill_file(&skills[idx]) {
+            let _ = tokio::fs::write(&file_path, &skills[idx].script).await;
+        }
+    }
+
     (StatusCode::OK, Json(serde_json::to_value(&skills[idx]).unwrap()))
 }
 
 /// DELETE /:id - uninstall a skill
 async fn uninstall_skill(Path(id): Path<String>) -> Json<Value> {
     let skills = get_skills().await;
+    // Remove the on-disk skill folder too, otherwise it lingers and the
+    // skills-dir scan resurrects the skill as an unregistered stray.
+    if let Some(skill) = skills.iter().find(|s| s.id == id) {
+        let slug: String = skill.name.to_lowercase()
+            .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
+        let dir = data_dir().join("skills").join(slug.trim_matches('-'));
+        if dir.is_dir() {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+        }
+    }
     let skills: Vec<_> = skills.into_iter().filter(|s| s.id != id).collect();
     save_skills(&skills).await;
     Json(json!({"success": true}))
@@ -608,6 +628,12 @@ async fn auto_run_now() -> Json<Value> {
         }
     });
     Json(json!({"ok": true, "message": "Synthesis started"}))
+}
+
+/// GET /auto/full-status — the synthesizer status struct verbatim, so a
+/// connected desktop renders/manages this server's proposals same as local.
+async fn auto_full_status() -> Json<skill_synthesizer::SynthesizerStatus> {
+    Json(skill_synthesizer::get_synth_status().await)
 }
 
 /// GET /auto/status - get auto-update status from settings

@@ -155,6 +155,24 @@ fn inflight() -> &'static Arc<Mutex<bool>> {
 }
 
 pub async fn get_synth_status() -> SynthesizerStatus {
+    // Desktop connected to a remote server: the synthesizer (and its
+    // proposals) live on the REMOTE box — fetch its status so the Settings
+    // page shows and manages the remote proposals, same as local.
+    if let Some(rb) = crate::server::data::get_remote_backend() {
+        let client = reqwest::Client::new();
+        if let Ok(resp) = client
+            .get(format!("{}/api/skills/auto/full-status", rb.url))
+            .bearer_auth(&rb.token)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+        {
+            if let Ok(s) = resp.json::<SynthesizerStatus>().await {
+                return s;
+            }
+        }
+        return SynthesizerStatus::default();
+    }
     synth_status().lock().await.clone()
 }
 
@@ -1058,7 +1076,32 @@ async fn write_proposed_update(p: &Proposal, model: &str) {
 // Approval / Rejection
 // ---------------------------------------------------------------------------
 
+/// Forward an approve/reject action to the connected remote server.
+/// Returns Some(result) when remote mode handled it, None for local mode.
+async fn forward_proposal_action(proposal_id: &str, action: &str) -> Option<Result<(), String>> {
+    let rb = crate::server::data::get_remote_backend()?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/api/skills/{}/{}", rb.url, proposal_id, action))
+        .bearer_auth(&rb.token)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+    Some(match resp {
+        Ok(r) => match r.json::<serde_json::Value>().await {
+            Ok(v) if v["ok"].as_bool() == Some(true) => Ok(()),
+            Ok(v) => Err(v["error"].as_str().unwrap_or("Remote rejected the action").to_string()),
+            Err(e) => Err(format!("Remote response parse error: {e}")),
+        },
+        Err(e) => Err(format!("Remote request failed: {e}")),
+    })
+}
+
 pub async fn approve_proposal(proposal_id: &str) -> Result<(), String> {
+    if let Some(result) = forward_proposal_action(proposal_id, "approve").await {
+        return result;
+    }
+
     let proposal_name;
     let proposal_content;
 
@@ -1101,6 +1144,10 @@ pub async fn approve_proposal(proposal_id: &str) -> Result<(), String> {
 }
 
 pub async fn reject_proposal(proposal_id: &str) -> Result<(), String> {
+    if let Some(result) = forward_proposal_action(proposal_id, "reject").await {
+        return result;
+    }
+
     let proposal_name;
     let proposal_kind;
 

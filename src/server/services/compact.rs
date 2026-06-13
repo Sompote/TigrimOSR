@@ -908,7 +908,8 @@ fn build_post_compact_attachments() -> Vec<Value> {
 // ---------------------------------------------------------------------------
 
 async fn write_compact_transcript(compaction_id: &str, messages: &[Value]) -> Option<String> {
-    let transcript_dir = "data/transcripts";
+    let transcript_dir = crate::server::data::data_dir().join("transcripts");
+    let transcript_dir = transcript_dir.to_str().unwrap_or("data/transcripts");
     if let Err(e) = tokio::fs::create_dir_all(transcript_dir).await {
         error!("[Compact] Failed to create transcript dir: {}", e);
         return None;
@@ -1376,7 +1377,9 @@ pub async fn compress_older_messages(
 
 /// Save a checkpoint for session resumption.
 pub async fn save_checkpoint(session_id: &str, checkpoint: &ToolLoopCheckpoint) {
-    let dir = "data/checkpoints";
+    let dir = crate::server::data::data_dir().join("checkpoints");
+    let dir = dir.to_str().unwrap_or("data/checkpoints").to_string();
+    let dir = dir.as_str();
     if let Err(e) = tokio::fs::create_dir_all(dir).await {
         error!("[Checkpoint] Failed to create checkpoint dir: {}", e);
         return;
@@ -1459,7 +1462,9 @@ pub async fn save_checkpoint(session_id: &str, checkpoint: &ToolLoopCheckpoint) 
 
 /// Load a checkpoint for session resumption.
 pub async fn load_checkpoint(session_id: &str) -> Option<ToolLoopCheckpoint> {
-    let dir = "data/checkpoints";
+    let dir = crate::server::data::data_dir().join("checkpoints");
+    let dir = dir.to_str().unwrap_or("data/checkpoints").to_string();
+    let dir = dir.as_str();
     let fp = format!("{}/{}.json", dir, session_id);
 
     match tokio::fs::read_to_string(&fp).await {
@@ -1482,7 +1487,9 @@ pub async fn load_checkpoint(session_id: &str) -> Option<ToolLoopCheckpoint> {
 
 /// Clear a checkpoint for a session.
 pub async fn clear_checkpoint(session_id: &str) {
-    let dir = "data/checkpoints";
+    let dir = crate::server::data::data_dir().join("checkpoints");
+    let dir = dir.to_str().unwrap_or("data/checkpoints").to_string();
+    let dir = dir.as_str();
     let fp = format!("{}/{}.json", dir, session_id);
 
     match tokio::fs::remove_file(&fp).await {

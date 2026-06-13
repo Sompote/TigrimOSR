@@ -181,7 +181,7 @@ pub async fn stop_tunnel() -> Value {
 
 /// Auto-start tunnel if enabled in settings
 pub async fn init_tunnel(port: u16) {
-    let settings: Value = match tokio::fs::read_to_string("data/settings.json").await {
+    let settings: Value = match tokio::fs::read_to_string(crate::server::data::data_dir().join("settings.json")).await {
         Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
         Err(_) => return,
     };
@@ -253,12 +253,12 @@ async fn install_cloudflared() -> bool {
 }
 
 async fn save_tunnel_to_settings(url: &str) {
-    if let Ok(content) = tokio::fs::read_to_string("data/settings.json").await {
+    if let Ok(content) = tokio::fs::read_to_string(crate::server::data::data_dir().join("settings.json")).await {
         if let Ok(mut settings) = serde_json::from_str::<Value>(&content) {
             settings["tunnelUrl"] = json!(url);
             settings["tunnelRunning"] = json!(true);
             let _ = tokio::fs::write(
-                "data/settings.json",
+                crate::server::data::data_dir().join("settings.json"),
                 serde_json::to_string_pretty(&settings).unwrap_or_default(),
             )
             .await;

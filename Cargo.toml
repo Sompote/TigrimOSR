@@ -7,7 +7,7 @@ edition = "2021"
 eframe = "0.31"
 egui = "0.31"
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["stream", "json", "blocking"] }
+reqwest = { version = "0.12", features = ["stream", "json", "blocking", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
