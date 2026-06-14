@@ -71,197 +71,13 @@ impl TigrimOSApp {
         vm_manager: Arc<VmManager>,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
-        // ── Font setup: Plus Jakarta Sans + Thai fallback ────────────
-        {
-            let mut fonts = egui::FontDefinitions::default();
-
-            // Plus Jakarta Sans — primary UI font (bundled)
-            let assets_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
-            let jakarta_regular = assets_dir.join("PlusJakartaSans-Regular.ttf");
-            let jakarta_bold = assets_dir.join("PlusJakartaSans-SemiBold.ttf");
-            if let Ok(data) = std::fs::read(&jakarta_regular) {
-                fonts.font_data.insert(
-                    "JakartaSans".to_owned(),
-                    egui::FontData::from_owned(data).into(),
-                );
-                // Insert as FIRST font in Proportional family
-                if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                    v.insert(0, "JakartaSans".to_owned());
-                }
-            }
-            if let Ok(data) = std::fs::read(&jakarta_bold) {
-                fonts.font_data.insert(
-                    "JakartaSansBold".to_owned(),
-                    egui::FontData::from_owned(data).into(),
-                );
-                // Available as fallback after regular
-                if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                    // Insert after JakartaSans regular
-                    let pos = v.iter().position(|n| n == "JakartaSans").map(|i| i + 1).unwrap_or(1);
-                    v.insert(pos, "JakartaSansBold".to_owned());
-                }
-            }
-
-            // Thai fallback (Ayuthaya / Silom / etc.)
-            let thai_paths = [
-                "/System/Library/Fonts/Supplemental/Ayuthaya.ttf",
-                "/System/Library/Fonts/Supplemental/Silom.ttf",
-                "/System/Library/Fonts/Supplemental/SukhumvitSet.ttc",
-                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-                "/System/Library/Fonts/Supplemental/Thonburi.ttc",
-                "/Library/Fonts/Thonburi.ttc",
-                "/System/Library/Fonts/ThonburiUI.ttc",
-            ];
-            for path in &thai_paths {
-                if let Ok(data) = std::fs::read(path) {
-                    fonts.font_data.insert(
-                        "ThaiFallback".to_owned(),
-                        egui::FontData::from_owned(data).into(),
-                    );
-                    if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                        v.push("ThaiFallback".to_owned());
-                    }
-                    if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                        v.push("ThaiFallback".to_owned());
-                    }
-                    break;
-                }
-            }
-
-            // Emoji fallback (monochrome Noto Emoji — bundled)
-            let emoji_path = assets_dir.join("NotoEmoji-Regular.ttf");
-            if let Ok(data) = std::fs::read(&emoji_path) {
-                fonts.font_data.insert(
-                    "NotoEmoji".to_owned(),
-                    egui::FontData::from_owned(data).into(),
-                );
-                if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                    v.push("NotoEmoji".to_owned());
-                }
-                if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                    v.push("NotoEmoji".to_owned());
-                }
-            }
-
-            // Symbol fallback for sidebar icons
-            let symbol_paths = [
-                "/System/Library/Fonts/Apple Symbols.ttf",
-                "/System/Library/Fonts/Supplemental/Apple Symbols.ttf",
-                "/System/Library/Fonts/SFCompact.ttf",
-                "/System/Library/Fonts/Menlo.ttc",
-                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-            ];
-            for path in &symbol_paths {
-                if let Ok(data) = std::fs::read(path) {
-                    fonts.font_data.insert(
-                        "SymbolFallback".to_owned(),
-                        egui::FontData::from_owned(data).into(),
-                    );
-                    if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                        v.push("SymbolFallback".to_owned());
-                    }
-                    if let Some(v) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                        v.push("SymbolFallback".to_owned());
-                    }
-                    break;
-                }
-            }
-
-            cc.egui_ctx.set_fonts(fonts);
-        }
-
-        // ── Warm neutral theme with teal accent ─────────────────────
-        let mut visuals = egui::Visuals::light();
-
-        // Base palette – warm neutral surfaces, teal accent
-        let bg_white   = egui::Color32::WHITE;
-        let bg_light   = egui::Color32::from_rgb(244, 238, 229);  // #F4EEE5 warm canvas
-        let bg_card    = egui::Color32::from_rgb(255, 255, 255);  // white cards
-        let bg_hover   = egui::Color32::from_rgb(239, 231, 218);  // #EFE7DA warm hover
-        let border     = egui::Color32::from_rgb(230, 220, 204);  // #E6DCCC warm hairline
-        let text_primary   = egui::Color32::from_rgb(52, 48, 42);   // #34302A warm ink
-        let text_secondary = egui::Color32::from_rgb(124, 115, 104); // #7C7368 warm muted
-        let accent     = egui::Color32::from_rgb(18, 154, 145);   // #129A91 teal
-        let accent_hover = egui::Color32::from_rgb(12, 129, 122); // #0C817A deep teal
-
-        // Window & panel backgrounds
-        let bg_surface = egui::Color32::from_rgb(251, 247, 241); // #FBF7F1 warm surface
-        visuals.panel_fill = bg_surface;
-        visuals.window_fill = bg_surface;
-        visuals.extreme_bg_color = bg_light;
-        visuals.faint_bg_color = bg_light;
-
-        // Widget styles
-        visuals.widgets.noninteractive.bg_fill = bg_card;
-        visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_secondary);
-        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, border);
-        visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
-
-        visuals.widgets.inactive.bg_fill = bg_light;
-        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, text_primary);
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.5, border);
-        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
-
-        visuals.widgets.hovered.bg_fill = bg_hover;
-        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, text_primary);
-        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent);
-        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
-
-        visuals.widgets.active.bg_fill = accent;
-        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-        visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent_hover);
-        visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
-
-        visuals.widgets.open.bg_fill = bg_hover;
-        visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, text_primary);
-        visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, accent);
-        visuals.widgets.open.corner_radius = egui::CornerRadius::same(6);
-
-        // Selection & hyperlinks
-        visuals.selection.bg_fill = egui::Color32::from_rgba_premultiplied(18, 154, 145, 50);
-        visuals.selection.stroke = egui::Stroke::new(1.0, accent);
-        visuals.hyperlink_color = accent;
-
-        // Window shadow & stroke
-        visuals.window_stroke = egui::Stroke::new(1.0, border);
-        visuals.window_shadow = egui::epaint::Shadow {
-            offset: [0, 2],
-            blur: 8,
-            spread: 0,
-            color: egui::Color32::from_rgba_premultiplied(0, 0, 0, 20),
-        };
-        visuals.popup_shadow = visuals.window_shadow;
-
-        // Cursor
-        visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
-
-        // Separator
-        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, border);
-
-        cc.egui_ctx.set_visuals(visuals);
-
-        // Spacing / global style
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style.spacing.item_spacing = egui::vec2(8.0, 8.0);  // extra vertical for Thai
-        style.spacing.window_margin = egui::Margin::same(12);
-        style.spacing.button_padding = egui::vec2(12.0, 6.0);
-        style.spacing.scroll = egui::style::ScrollStyle {
-            bar_width: 6.0,
-            ..style.spacing.scroll
-        };
-
-        // Larger body font so Thai diacritics are legible
-        // (ab_glyph has no OpenType shaping; bigger size helps readability)
-        use egui::{FontFamily, FontId, TextStyle};
-        style.text_styles = [
-            (TextStyle::Small,   FontId::new(12.0, FontFamily::Proportional)),
-            (TextStyle::Body,    FontId::new(15.0, FontFamily::Proportional)),
-            (TextStyle::Button,  FontId::new(14.0, FontFamily::Proportional)),
-            (TextStyle::Heading, FontId::new(20.0, FontFamily::Proportional)),
-            (TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace)),
-        ].into();
-
-        cc.egui_ctx.set_style(style);
+        // ── User-customizable theme (fonts, colors, sizes) ─────────────
+        // Loaded from data/theme.yaml; falls back to the warm-neutral / teal
+        // defaults + bundled Plus Jakarta Sans if the file is missing.
+        // Editable live in Settings → Theme.
+        let theme = super::theme::Theme::load();
+        theme.apply_fonts(&cc.egui_ctx);
+        theme.apply(&cc.egui_ctx);
 
         Self {
             vm_manager,
@@ -374,6 +190,12 @@ impl TigrimOSApp {
 }
 
 impl eframe::App for TigrimOSApp {
+    /// Clear to fully transparent so the "Transparent" theme's translucent
+    /// panel fills reveal the desktop. Opaque themes paint over this entirely.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let snap = self.snapshot();
         self.get_logo_texture(ctx);
@@ -382,12 +204,12 @@ impl eframe::App for TigrimOSApp {
             ctx.request_repaint();
         }
 
-        // ── Colors ──────────────────────────────────────────────
-        let accent = egui::Color32::from_rgb(18, 154, 145);     // #129A91 teal
-        let text_dim = egui::Color32::from_rgb(124, 115, 104);  // #7C7368 warm muted
-        let text_dark = egui::Color32::from_rgb(52, 48, 42);    // #34302A warm ink
-        let border_color = egui::Color32::from_rgb(230, 220, 204); // #E6DCCC warm hairline
-        let sidebar_bg = egui::Color32::from_rgb(239, 231, 218);  // #EFE7DA warm rail
+        // ── Colors (from the active theme) ──────────────────────────
+        let accent = super::theme::accent_color();
+        let text_dim = super::theme::text_secondary_color();
+        let text_dark = super::theme::text_primary_color();
+        let border_color = super::theme::border_color();
+        let sidebar_bg = super::theme::hover_color();  // warm rail
 
         // ── Left sidebar (Kimi-style) ────────────────────────────────
         let sidebar_w = if self.sidebar_open { 240.0 } else { 52.0 };
@@ -746,7 +568,7 @@ impl eframe::App for TigrimOSApp {
         // Central panel - main content
         egui::CentralPanel::default()
             .frame(egui::Frame::new()
-                .fill(egui::Color32::from_rgb(251, 247, 241)) // #FBF7F1 warm surface
+                .fill(super::theme::surface_color())
                 .inner_margin(egui::Margin::same(0)))
             .show(ctx, |ui| {
             // Handle navigation from Projects -> Chat

@@ -107,7 +107,9 @@ fn main() {
             .with_title("TigrimOS")
             .with_icon(std::sync::Arc::new(icon))
             .with_min_inner_size([1100.0, 700.0])
-            .with_inner_size([1200.0, 800.0]),
+            .with_inner_size([1200.0, 800.0])
+            // Allow the "Transparent" theme to show the desktop through translucent surfaces.
+            .with_transparent(true),
         ..Default::default()
     };
 

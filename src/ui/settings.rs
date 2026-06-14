@@ -25,6 +25,7 @@ enum SettingsSection {
     FileMounts,
     SkillUpdate,
     Security,
+    Theme,
     About,
 }
 
@@ -40,6 +41,7 @@ impl SettingsSection {
         Self::FileMounts,
         Self::SkillUpdate,
         Self::Security,
+        Self::Theme,
         Self::About,
     ];
 
@@ -55,6 +57,7 @@ impl SettingsSection {
             Self::FileMounts => "File Mounts",
             Self::SkillUpdate => "Skill Update",
             Self::Security => "Security",
+            Self::Theme => "Theme",
             Self::About => "About",
         }
     }
@@ -221,6 +224,11 @@ pub struct SettingsView {
     plugin_status_msg: Option<String>,
     plugin_connector_configs: HashMap<String, HashMap<String, String>>,
     show_uninstall_confirm: Option<String>,
+
+    // --- Theme ---
+    theme: crate::ui::theme::Theme,
+    theme_loaded: bool,
+    theme_status_msg: Option<String>,
 }
 
 impl Default for SettingsView {
@@ -321,6 +329,10 @@ impl Default for SettingsView {
             plugin_status_msg: None,
             plugin_connector_configs: HashMap::new(),
             show_uninstall_confirm: None,
+
+            theme: crate::ui::theme::Theme::default(),
+            theme_loaded: false,
+            theme_status_msg: None,
         }
     }
 }
@@ -409,6 +421,7 @@ impl SettingsView {
                             SettingsSection::FileMounts => self.section_file_mounts(ui, runtime),
                             SettingsSection::SkillUpdate => self.section_skill_update(ui, runtime),
                             SettingsSection::Security => self.section_security(ui, runtime),
+                            SettingsSection::Theme => self.section_theme(ui, ctx),
                             SettingsSection::About => Self::section_about(ui),
                         }
                     });
@@ -3346,6 +3359,279 @@ impl SettingsView {
     // ==================================================================
     // 11. About (unchanged)
     // ==================================================================
+
+    /// One color-picker row inside the theme editor grid. Returns true if the
+    /// color changed. `field` is the `#RRGGBB` hex string kept in the theme.
+    fn theme_color_row(
+        ui: &mut egui::Ui,
+        label: &str,
+        field: &mut String,
+        fallback: egui::Color32,
+    ) -> bool {
+        ui.label(label);
+        let mut c = crate::ui::theme::hex_to_color(field, fallback);
+        let mut changed = false;
+        if ui.color_edit_button_srgba(&mut c).changed() {
+            *field = crate::ui::theme::color_to_hex(c);
+            changed = true;
+        }
+        ui.label(
+            egui::RichText::new(field.clone())
+                .size(11.0)
+                .monospace()
+                .color(egui::Color32::GRAY),
+        );
+        ui.end_row();
+        changed
+    }
+
+    fn section_theme(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        use crate::ui::theme::Theme;
+
+        // Lazy-load the persisted theme the first time this section opens so the
+        // editor reflects what is actually saved on disk (not just defaults).
+        if !self.theme_loaded {
+            self.theme = Theme::load();
+            self.theme_loaded = true;
+        }
+
+        ui.add_space(8.0);
+        ui.heading("Appearance");
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Customize colors and font sizes. Changes preview instantly; click \
+                 \"Save to theme.yaml\" to persist them across restarts.",
+            )
+            .size(12.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(12.0);
+
+        let mut changed = false;
+
+        // ── Presets ─────────────────────────────────────────────────
+        ui.label(egui::RichText::new("Preset").strong());
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Pick a ready-made look (you can still fine-tune colors below).")
+                .size(12.0)
+                .color(egui::Color32::GRAY),
+        );
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            for &name in crate::ui::theme::preset_names() {
+                if ui.button(name).clicked() {
+                    if self.theme.apply_preset(name) {
+                        self.theme.apply_fonts(ctx);
+                        self.theme.apply(ctx);
+                        changed = true;
+                        self.theme_status_msg =
+                            Some(format!("Applied '{}' preset — click Save to keep it", name));
+                    }
+                }
+            }
+        });
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        ui.label(egui::RichText::new("Colors").strong());
+        ui.add_space(6.0);
+
+        egui::Grid::new("theme_colors_grid")
+            .num_columns(3)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                let c = &mut self.theme.colors;
+                changed |= Self::theme_color_row(ui, "Surface (panels/windows):", &mut c.surface, egui::Color32::from_rgb(251, 247, 241));
+                changed |= Self::theme_color_row(ui, "Canvas (inputs/fields):", &mut c.canvas, egui::Color32::from_rgb(244, 238, 229));
+                changed |= Self::theme_color_row(ui, "Card fill:", &mut c.card, egui::Color32::WHITE);
+                changed |= Self::theme_color_row(ui, "Hover background:", &mut c.hover, egui::Color32::from_rgb(239, 231, 218));
+                changed |= Self::theme_color_row(ui, "Border / separators:", &mut c.border, egui::Color32::from_rgb(230, 220, 204));
+                changed |= Self::theme_color_row(ui, "Primary text:", &mut c.text_primary, egui::Color32::from_rgb(52, 48, 42));
+                changed |= Self::theme_color_row(ui, "Secondary text:", &mut c.text_secondary, egui::Color32::from_rgb(124, 115, 104));
+                changed |= Self::theme_color_row(ui, "Accent:", &mut c.accent, egui::Color32::from_rgb(18, 154, 145));
+                changed |= Self::theme_color_row(ui, "Accent (pressed):", &mut c.accent_hover, egui::Color32::from_rgb(12, 129, 122));
+                let accent_fb = crate::ui::theme::hex_to_color(&c.accent, egui::Color32::from_rgb(18, 154, 145));
+                let card_fb = crate::ui::theme::hex_to_color(&c.card, egui::Color32::WHITE);
+                changed |= Self::theme_color_row(ui, "User bubble:", &mut c.user_bubble, accent_fb);
+                changed |= Self::theme_color_row(ui, "AI bubble:", &mut c.ai_bubble, card_fb);
+            });
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("Font sizes").strong());
+        ui.add_space(6.0);
+
+        egui::Grid::new("theme_fonts_grid")
+            .num_columns(2)
+            .spacing([12.0, 10.0])
+            .show(ui, |ui| {
+                let f = &mut self.theme.fonts;
+                ui.label("Chat messages:");
+                if ui.add(egui::Slider::new(&mut f.chat, 10.0..=28.0).suffix(" pt")).changed() {
+                    changed = true;
+                }
+                ui.end_row();
+                ui.label("Body:");
+                if ui.add(egui::Slider::new(&mut f.body, 10.0..=24.0).suffix(" pt")).changed() {
+                    changed = true;
+                }
+                ui.end_row();
+                ui.label("Small:");
+                if ui.add(egui::Slider::new(&mut f.small, 8.0..=20.0).suffix(" pt")).changed() {
+                    changed = true;
+                }
+                ui.end_row();
+                ui.label("Button:");
+                if ui.add(egui::Slider::new(&mut f.button, 10.0..=22.0).suffix(" pt")).changed() {
+                    changed = true;
+                }
+                ui.end_row();
+                ui.label("Heading:");
+                if ui.add(egui::Slider::new(&mut f.heading, 14.0..=36.0).suffix(" pt")).changed() {
+                    changed = true;
+                }
+                ui.end_row();
+                ui.label("Monospace:");
+                if ui.add(egui::Slider::new(&mut f.monospace, 9.0..=22.0).suffix(" pt")).changed() {
+                    changed = true;
+                }
+                ui.end_row();
+            });
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("Font family").strong());
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Pick a bundled modern web font (Inter is what Vite/VitePress uses), \
+                 or load your own .ttf / .otf / .ttc file. Thai / emoji glyphs always \
+                 fall back automatically; code blocks use JetBrains Mono.",
+            )
+            .size(12.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(6.0);
+
+        // True when the font *family* changes — rebuilding the glyph atlas is
+        // heavier than a size/color tweak, so we re-apply fonts only then.
+        let mut font_changed = false;
+        let using_custom = !self.theme.custom_font_path.is_empty();
+
+        ui.horizontal(|ui| {
+            ui.label("Font:");
+            let selected_label = if using_custom {
+                "Custom file…".to_string()
+            } else {
+                self.theme.font_family.clone()
+            };
+            egui::ComboBox::from_id_salt("theme_font_family")
+                .selected_text(selected_label)
+                .show_ui(ui, |ui| {
+                    for &name in crate::ui::theme::bundled_font_names() {
+                        let is_sel = !using_custom && self.theme.font_family == name;
+                        if ui.selectable_label(is_sel, name).clicked() {
+                            self.theme.font_family = name.to_string();
+                            self.theme.custom_font_path.clear();
+                            font_changed = true;
+                        }
+                    }
+                });
+        });
+
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.button("📂 Choose custom file…").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Select a font file")
+                    .add_filter("Fonts", &["ttf", "otf", "ttc", "TTF", "OTF", "TTC"])
+                    .pick_file()
+                {
+                    self.theme.custom_font_path = path.display().to_string();
+                    font_changed = true;
+                }
+            }
+            if using_custom && ui.button("↺ Use bundled font").clicked() {
+                self.theme.custom_font_path.clear();
+                font_changed = true;
+            }
+        });
+
+        ui.add_space(4.0);
+        let current_font = if using_custom {
+            self.theme.custom_font_path.clone()
+        } else {
+            format!("{} (bundled)", self.theme.font_family)
+        };
+        ui.label(
+            egui::RichText::new(format!("Current: {}", current_font))
+                .size(11.0)
+                .monospace()
+                .color(egui::Color32::GRAY),
+        );
+
+        if font_changed {
+            self.theme.apply_fonts(ctx);
+            changed = true;
+        }
+
+        // Live preview: re-apply to the running context as soon as anything changes.
+        if changed {
+            self.theme.apply(ctx);
+            self.theme_status_msg = Some("Previewing — not yet saved".to_string());
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
+            if ui.button("💾 Save to theme.yaml").clicked() {
+                match self.theme.save() {
+                    Ok(()) => {
+                        self.theme.apply(ctx);
+                        self.theme_status_msg =
+                            Some(format!("Saved to {}", Theme::path().display()));
+                    }
+                    Err(e) => {
+                        self.theme_status_msg = Some(format!("Save failed: {}", e));
+                    }
+                }
+            }
+            if ui.button("↻ Reload from file").clicked() {
+                self.theme = Theme::load();
+                self.theme.apply_fonts(ctx);
+                self.theme.apply(ctx);
+                self.theme_status_msg = Some("Reloaded from theme.yaml".to_string());
+            }
+            if ui.button("⟲ Reset to defaults").clicked() {
+                self.theme = Theme::default();
+                self.theme.apply_fonts(ctx);
+                self.theme.apply(ctx);
+                self.theme_status_msg =
+                    Some("Reset to defaults (click Save to persist)".to_string());
+            }
+        });
+
+        if let Some(msg) = &self.theme_status_msg {
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new(msg).size(12.0).color(egui::Color32::GRAY));
+        }
+
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(format!("File: {}", Theme::path().display()))
+                .size(11.0)
+                .monospace()
+                .color(egui::Color32::GRAY),
+        );
+    }
 
     fn section_about(ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {

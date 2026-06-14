@@ -572,6 +572,7 @@ impl ChatView {
             if let Some(id) = new_id {
                 self.selected_session_id = Some(id);
                 self.needs_refresh = true;
+                self.scroll_to_bottom = true;
             }
             return;
         }
@@ -597,6 +598,7 @@ impl ChatView {
 
         self.selected_session_id = Some(new_id);
         self.needs_refresh = true;
+        self.scroll_to_bottom = true;
     }
 
     fn delete_session(&mut self, runtime: &tokio::runtime::Handle, session_id: &str) {
@@ -2454,7 +2456,7 @@ You have access to these tools: {}.{}",
         // ── Chat panel ───────────────────────────────────────────────
         let mut mid_ui = ui.new_child(egui::UiBuilder::new().max_rect(mid_rect));
         egui::Frame::new()
-            .fill(egui::Color32::from_rgb(251, 247, 241)) // #FBF7F1 warm surface
+            .fill(super::theme::surface_color())
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(&mut mid_ui, |ui| {
                 // Output toggle button in chat header area when panel is closed
@@ -2849,20 +2851,20 @@ You have access to these tools: {}.{}",
                     let logo_image = egui::Image::from_bytes("bytes://logo_tigrimos", logo_bytes.as_slice())
                         .max_width(96.0)
                         .max_height(96.0)
-                        .tint(egui::Color32::from_rgb(52, 48, 42));
+                        .tint(super::theme::text_primary_color());
                     ui.add(logo_image);
                     ui.add_space(8.0);
                     ui.heading(
                         egui::RichText::new("TigrimOS")
                             .size(28.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(52, 48, 42)),
+                            .color(super::theme::text_primary_color()),
                     );
                     ui.add_space(8.0);
                     ui.label(
                         egui::RichText::new("How can I help you today?")
                             .size(16.0)
-                            .color(egui::Color32::from_rgb(124, 115, 104)),
+                            .color(super::theme::text_secondary_color()),
                     );
                     ui.add_space(24.0);
 
@@ -2890,10 +2892,10 @@ You have access to these tools: {}.{}",
                                         egui::Button::new(
                                             egui::RichText::new(*suggestion)
                                                 .size(13.0)
-                                                .color(egui::Color32::from_rgb(52, 48, 42)),
+                                                .color(super::theme::text_primary_color()),
                                         )
-                                        .fill(egui::Color32::from_rgb(239, 231, 218))
-                                        .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(230, 220, 204)))
+                                        .fill(super::theme::hover_color())
+                                        .stroke(egui::Stroke::new(0.5, super::theme::border_color()))
                                         .corner_radius(12.0),
                                     );
                                     if btn.clicked() {
@@ -3342,7 +3344,10 @@ You have access to these tools: {}.{}",
             .id_salt(scroll_id)
             .max_height(messages_height.max(200.0))
             .auto_shrink([false, false])
-            .stick_to_bottom(self.scroll_to_bottom)
+            // Follow new messages / streaming automatically. egui stops sticking
+            // the moment the user scrolls up to read history, and resumes once
+            // they scroll back down.
+            .stick_to_bottom(true)
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .show(ui, |ui| {
                 if session.messages.is_empty() && !self.active_streams.contains_key(&session.id) {
@@ -3372,6 +3377,13 @@ You have access to these tools: {}.{}",
                     }
 
                     ui.add_space(4.0);
+
+                    // Force a jump to the newest message on explicit events
+                    // (sending, switching/opening a chat) even if the user had
+                    // scrolled up — stick_to_bottom alone won't, once unstuck.
+                    if self.scroll_to_bottom {
+                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+                    }
                 }
             });
 
@@ -3398,14 +3410,17 @@ You have access to these tools: {}.{}",
             ui.vertical(|ui| {
                 ui.set_max_width(card_max_w);
                 egui::Frame::new()
-                    .fill(egui::Color32::WHITE)
+                    .fill(super::theme::card_color())
                     .corner_radius(26.0)
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
+                    .stroke(egui::Stroke::new(1.0, super::theme::border_color()))
                     .inner_margin(egui::Margin::symmetric(16, 10))
                     .show(ui, |ui| {
                         // ── Text area (top part) ──
                         let edit_width = ui.available_width();
                         let max_input_height = 10.0 * line_height;
+                        // Match the chat message font size (theme-driven).
+                        let input_font =
+                            egui::FontId::new(super::theme::chat_font_size(), egui::FontFamily::Proportional);
                         let response = if line_count > 10 {
                             let mut te_response: Option<egui::Response> = None;
                             egui::ScrollArea::vertical()
@@ -3414,6 +3429,7 @@ You have access to these tools: {}.{}",
                                 .show(ui, |ui| {
                                     let text_edit = egui::TextEdit::multiline(&mut self.input_text)
                                         .hint_text("Type \"/\" to quickly access skills")
+                                        .font(input_font.clone())
                                         .desired_rows(input_rows.max(2))
                                         .desired_width(edit_width)
                                         .frame(false);
@@ -3423,6 +3439,7 @@ You have access to these tools: {}.{}",
                         } else {
                             let text_edit = egui::TextEdit::multiline(&mut self.input_text)
                                 .hint_text("Type \"/\" to quickly access skills")
+                                .font(input_font.clone())
                                 .desired_rows(input_rows.max(2))
                                 .desired_width(edit_width)
                                 .frame(false);
@@ -3618,14 +3635,14 @@ You have access to these tools: {}.{}",
 
         let (bg_color, text_color, icon) = if is_user {
             (
-                egui::Color32::from_rgb(18, 154, 145), // #3B8D99 teal
-                egui::Color32::WHITE,
+                super::theme::chat_user_bubble(), // theme accent / user_bubble
+                super::theme::chat_user_text(),   // auto-contrast on the bubble
                 "You",
             )
         } else {
             (
-                egui::Color32::WHITE, // #f9fafc very light gray-blue
-                egui::Color32::from_rgb(52, 48, 42),
+                super::theme::chat_ai_bubble(), // theme card color
+                super::theme::chat_ai_text(),   // theme primary text
                 "AI",
             )
         };
@@ -3661,7 +3678,7 @@ You have access to these tools: {}.{}",
                             .size(11.0)
                             .strong()
                             .color(if is_user {
-                                egui::Color32::from_rgb(180, 225, 220)
+                                text_color.gamma_multiply(0.75)
                             } else {
                                 egui::Color32::from_rgb(168, 158, 144)
                             }),
@@ -3706,7 +3723,7 @@ You have access to these tools: {}.{}",
                         ui.add(
                             egui::Label::new(
                                 egui::RichText::new(display_text)
-                                    .size(14.0)
+                                    .size(super::theme::chat_font_size())
                                     .color(text_color),
                             )
                             .wrap(),
@@ -3721,7 +3738,7 @@ You have access to these tools: {}.{}",
                         egui::RichText::new(ts_display)
                             .size(10.0)
                             .color(if is_user {
-                                egui::Color32::from_rgb(160, 215, 210)
+                                text_color.gamma_multiply(0.6)
                             } else {
                                 egui::Color32::from_rgb(168, 158, 144)
                             }),
@@ -3803,8 +3820,8 @@ You have access to these tools: {}.{}",
     }
 
     fn render_streaming_message(&self, ui: &mut egui::Ui, text: &str, tool_calls: &[ToolCallDisplay]) {
-        let bg_color = egui::Color32::WHITE;
-        let text_color = egui::Color32::from_rgb(52, 48, 42);
+        let bg_color = super::theme::chat_ai_bubble();
+        let text_color = super::theme::chat_ai_text();
 
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
             let max_bubble_width = (ui.available_width() * 0.75).min(600.0);
@@ -4964,9 +4981,9 @@ You have access to these tools: {}.{}",
         // ── RIGHT: Agent Activity panel (same theme as main chat) ──
         ui.allocate_ui_at_rect(activity_rect, |ui| {
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(251, 247, 241)) // warm surface
+                .fill(super::theme::surface_color())
                 .corner_radius(14.0)
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
+                .stroke(egui::Stroke::new(1.0, super::theme::border_color()))
                 .inner_margin(egui::Margin::symmetric(12, 10))
                 .show(ui, |ui| {
                     ui.set_min_width(activity_w - 26.0);
@@ -5133,6 +5150,9 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
         return;
     }
 
+    // User-configurable chat font size; headings/code scale relative to it.
+    let base = super::theme::chat_font_size();
+
     let all_lines: Vec<&str> = clean.lines().collect();
     let mut i = 0;
 
@@ -5154,25 +5174,25 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
             }
             ui.add_space(4.0);
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(244, 238, 229))
+                .fill(super::theme::canvas_color())
                 .corner_radius(6.0)
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
+                .stroke(egui::Stroke::new(1.0, super::theme::border_color()))
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         if !lang.is_empty() {
                             ui.label(
                                 egui::RichText::new(&lang)
-                                    .size(10.0)
-                                    .color(egui::Color32::from_rgb(124, 115, 104)),
+                                    .size((base - 4.0).max(8.0))
+                                    .color(super::theme::text_secondary_color()),
                             );
                         }
                         ui.add(
                             egui::Label::new(
                                 egui::RichText::new(code_lines.join("\n"))
-                                    .size(13.0)
+                                    .size((base - 1.0).max(8.0))
                                     .monospace()
-                                    .color(egui::Color32::from_rgb(52, 48, 42)),
+                                    .color(super::theme::text_primary_color()),
                             )
                             .selectable(true)
                             .wrap(),
@@ -5261,7 +5281,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
         if trimmed.starts_with("### ") {
             ui.add_space(2.0);
             ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(&trimmed[4..])).strong().size(14.0).color(default_color),
+                egui::RichText::new(clean_inline_md(&trimmed[4..])).strong().size(base + 1.0).color(default_color),
             ).wrap());
             ui.add_space(2.0);
             continue;
@@ -5269,7 +5289,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
         if trimmed.starts_with("## ") {
             ui.add_space(4.0);
             ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(&trimmed[3..])).strong().size(16.0).color(default_color),
+                egui::RichText::new(clean_inline_md(&trimmed[3..])).strong().size(base + 2.0).color(default_color),
             ).wrap());
             ui.add_space(2.0);
             continue;
@@ -5277,7 +5297,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
         if trimmed.starts_with("# ") {
             ui.add_space(4.0);
             ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(&trimmed[2..])).strong().size(18.0).color(default_color),
+                egui::RichText::new(clean_inline_md(&trimmed[2..])).strong().size(base + 4.0).color(default_color),
             ).wrap());
             ui.add_space(2.0);
             continue;
@@ -5293,7 +5313,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(
                         egui::RichText::new(clean_inline_md(&trimmed[2..]))
-                            .size(14.0)
+                            .size(base)
                             .italics()
                             .color(egui::Color32::from_rgb(124, 115, 104)),
                     ).wrap());
@@ -5305,7 +5325,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
         if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
             ui.add(egui::Label::new(
                 egui::RichText::new(format!("  \u{2022} {}", clean_inline_md(&trimmed[2..])))
-                    .size(14.0)
+                    .size(base)
                     .color(default_color),
             ).wrap());
             continue;
@@ -5317,7 +5337,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
             if !num_part.is_empty() && num_part.chars().all(|c| c.is_ascii_digit()) {
                 ui.add(egui::Label::new(
                     egui::RichText::new(format!("  {}", clean_inline_md(trimmed)))
-                        .size(14.0)
+                        .size(base)
                         .color(default_color),
                 ).wrap());
                 continue;
@@ -5335,14 +5355,14 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
                         super::math_render::render_math_equation(ui, content, false, default_color);
                     } else if !content.is_empty() {
                         ui.add(egui::Label::new(
-                            egui::RichText::new(clean_inline_md(content)).size(14.0).color(default_color),
+                            egui::RichText::new(clean_inline_md(content)).size(base).color(default_color),
                         ).wrap());
                     }
                 }
             });
         } else {
             ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(trimmed)).size(14.0).color(default_color),
+                egui::RichText::new(clean_inline_md(trimmed)).size(base).color(default_color),
             ).wrap());
         }
     }
@@ -5380,6 +5400,7 @@ fn render_markdown_table(ui: &mut egui::Ui, lines: &[&str], default_color: egui:
     if lines.is_empty() {
         return;
     }
+    let cell_size = (super::theme::chat_font_size() - 1.0).max(8.0);
 
     // Parse header and data rows (skip separator lines)
     let mut rows: Vec<Vec<String>> = Vec::new();
@@ -5447,12 +5468,12 @@ fn render_markdown_table(ui: &mut egui::Ui, lines: &[&str], default_color: egui:
                                     ui.allocate_ui(egui::vec2(col_width, 20.0), |ui| {
                                         let rt = if is_header {
                                             egui::RichText::new(&text)
-                                                .size(13.0)
+                                                .size(cell_size)
                                                 .strong()
                                                 .color(header_text_color)
                                         } else {
                                             egui::RichText::new(&text)
-                                                .size(13.0)
+                                                .size(cell_size)
                                                 .color(default_color)
                                         };
                                         ui.add(egui::Label::new(rt).wrap());
