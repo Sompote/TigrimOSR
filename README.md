@@ -88,11 +88,14 @@ irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.ps1 | iex
 Download and run [`install.bat`](https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.bat).
 
 The installer will:
-1. Check prerequisites (git, Rust)
+1. Check prerequisites and auto-install what's missing — git, Rust toolchain, and (Windows) the MSVC C++ build tools
 2. Let you choose an install location
 3. Clone and build in release mode
-4. Create a native app (macOS `.app` / Linux `.desktop` / Windows shortcut)
-5. Optionally launch the app
+4. Install Python + the data libraries the tools use (search, charts, data analysis)
+5. Create a native app (macOS `.app` / Linux `.desktop` / Windows shortcut)
+6. Optionally launch the app
+
+> **Windows note:** the one-line PowerShell installer auto-installs git, the Rust MSVC toolchain, the C++ Build Tools (UAC prompt), and Python + libraries. If a tool was just installed and isn't found, open a **new** terminal and re-run. The built-in **VM/QEMU terminal** feature is macOS/Linux only; everything else (chat, tools, Python, web/remote UI) works on Windows.
 
 <details>
 <summary>Manual Install on macOS (step-by-step)</summary>

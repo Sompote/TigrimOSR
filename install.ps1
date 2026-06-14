@@ -32,6 +32,19 @@ function Add-ToSessionPath {
     }
 }
 
+# Reload PATH from the registry (Machine + User) so tools just installed via
+# winget become visible in THIS session — otherwise you'd need a new terminal,
+# which is the #1 reason the piped installer "can't find git/cargo/python".
+function Update-SessionPath {
+    try {
+        $machine = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        $user    = [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $merged  = (@($machine, $user) | Where-Object { $_ }) -join ";"
+        if ($merged) { $env:Path = "$merged;$env:Path" }
+    } catch { }
+    Add-ToSessionPath "$env:USERPROFILE\.cargo\bin"
+}
+
 # ── Ensure a tool exists, installing it via winget if missing ──
 function Ensure-Tool {
     param(
@@ -105,7 +118,21 @@ function Ensure-Rust {
     }
 
     # rustup installs to ~/.cargo/bin; make it visible in THIS session.
+    Update-SessionPath
     Add-ToSessionPath $cargoBin
+
+    # winget's Rustup package sometimes installs rustup WITHOUT a default
+    # toolchain, leaving `cargo build` to fail with "no default toolchain".
+    # Force-install the MSVC stable toolchain so the build can proceed.
+    if (Get-Command rustup -ErrorAction SilentlyContinue) {
+        try {
+            rustup toolchain install stable-x86_64-pc-windows-msvc --no-self-update | Out-Host
+            rustup default stable-x86_64-pc-windows-msvc | Out-Host
+        } catch {
+            Write-Host "[WARN] Could not set default Rust toolchain: $_" -ForegroundColor Yellow
+        }
+        Update-SessionPath
+    }
 
     if ((Get-Command cargo -ErrorAction SilentlyContinue) -and
         (Get-Command rustc -ErrorAction SilentlyContinue)) {
@@ -193,11 +220,66 @@ function Ensure-BuildTools {
     return $false
 }
 
+# ── Ensure Python + the data libraries the app's tools rely on ──
+# (web search = duckduckgo-search, charts = matplotlib, data = numpy/pandas).
+# Optional: the app builds and runs without it, but Python-backed tools won't
+# work until these are installed. This is non-fatal.
+function Ensure-Python {
+    $ErrorActionPreference = "Continue"
+
+    $want = Read-Default "Install Python + data libraries (search, charts, data analysis)? [Y/n]" "Y"
+    if ($want -eq "n") {
+        Write-Host "[..] Skipping Python setup (run it later: pip install duckduckgo-search matplotlib numpy pandas requests)" -ForegroundColor DarkGray
+        return
+    }
+
+    $hasPy = (Get-Command python -ErrorAction SilentlyContinue) -or (Get-Command py -ErrorAction SilentlyContinue)
+    if (-not $hasPy) {
+        Write-Host "[..] Python not found - installing Python 3.12..." -ForegroundColor Yellow
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            try {
+                winget install --id Python.Python.3.12 -e --silent `
+                    --accept-source-agreements --accept-package-agreements | Out-Host
+            } catch {
+                Write-Host "[WARN] winget install of Python failed: $_" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "[WARN] winget unavailable; install Python from https://www.python.org/downloads/ (check 'Add to PATH')." -ForegroundColor Yellow
+        }
+        Update-SessionPath
+    }
+
+    # Resolve a usable interpreter (python, then the py launcher).
+    $py = $null
+    foreach ($cand in @("python", "py")) {
+        if (Get-Command $cand -ErrorAction SilentlyContinue) { $py = $cand; break }
+    }
+    if (-not $py) {
+        Write-Host "[WARN] Python is not on PATH yet. Open a new terminal and run:" -ForegroundColor Yellow
+        Write-Host "       python -m pip install duckduckgo-search matplotlib numpy pandas requests" -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "[..] Installing Python libraries (this can take a minute)..." -ForegroundColor Yellow
+    try {
+        & $py -m pip install --upgrade pip | Out-Host
+        & $py -m pip install duckduckgo-search matplotlib numpy pandas requests | Out-Host
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Python libraries installed" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] Some Python libraries may have failed to install (exit $LASTEXITCODE)." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "[WARN] pip install failed: $_" -ForegroundColor Yellow
+    }
+}
+
 # ── Prerequisites (auto-install where possible) ──
 function Ensure-Prerequisites {
     Write-Host "Checking prerequisites..." -ForegroundColor Cyan
 
     Ensure-Tool -Command "git" -WingetId "Git.Git" -FriendlyName "git" | Out-Null
+    Update-SessionPath
     Add-ToSessionPath "$env:ProgramFiles\Git\cmd"
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Host "[ERROR] git is required but could not be installed automatically." -ForegroundColor Red
@@ -207,6 +289,9 @@ function Ensure-Prerequisites {
 
     if (-not (Ensure-Rust))       { return $false }
     if (-not (Ensure-BuildTools)) { return $false }
+
+    # Python is optional (the app still builds/runs), so failures are non-fatal.
+    Ensure-Python
 
     Write-Host "[OK] All prerequisites ready" -ForegroundColor Green
     return $true

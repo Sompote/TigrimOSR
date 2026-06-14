@@ -6232,38 +6232,64 @@ pub fn cli_env_path() -> String {
 
 /// Resolve the home directory (works even when launched from .app bundle).
 pub fn resolve_home() -> String {
+    // Cross-platform: dirs::home_dir() handles %USERPROFILE% on Windows,
+    // $HOME on macOS/Linux.
+    if let Some(h) = dirs::home_dir() {
+        let s = h.to_string_lossy().to_string();
+        if !s.is_empty() { return s; }
+    }
     if let Ok(h) = std::env::var("HOME") {
         if !h.is_empty() { return h; }
     }
-    if let Ok(u) = std::env::var("USER") {
-        if !u.is_empty() { return format!("/Users/{}", u); }
+    #[cfg(target_os = "windows")]
+    if let Ok(h) = std::env::var("USERPROFILE") {
+        if !h.is_empty() { return h; }
     }
-    // Last resort: ask the OS for the current username
-    if let Ok(o) = std::process::Command::new("/usr/bin/id").args(["-un"]).output() {
-        if o.status.success() {
-            let user = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if !user.is_empty() {
-                return format!("/Users/{}", user);
-            }
-        }
-    }
-    "/Users/sompoteyouwai".to_string()
+    ".".to_string()
 }
 
 /// Find a node binary.
 fn find_node() -> String {
+    // Look it up in PATH first (cross-platform): `where` on Windows, `which` on Unix.
+    #[cfg(target_os = "windows")]
+    let which_cmd = "where";
+    #[cfg(not(target_os = "windows"))]
+    let which_cmd = "which";
+    let node_name = if cfg!(target_os = "windows") { "node.exe" } else { "node" };
+    if let Ok(out) = std::process::Command::new(which_cmd).arg(node_name).output() {
+        if out.status.success() {
+            let path = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
+            if !path.is_empty() && std::path::Path::new(&path).exists() {
+                return path;
+            }
+        }
+    }
+
     let home = resolve_home();
-    let candidates = [
+    #[cfg(target_os = "windows")]
+    let candidates: Vec<String> = {
+        let mut v = vec![
+            r"C:\Program Files\nodejs\node.exe".to_string(),
+            r"C:\Program Files (x86)\nodejs\node.exe".to_string(),
+        ];
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            v.push(format!(r"{}\npm\node.exe", appdata));
+        }
+        v
+    };
+    #[cfg(not(target_os = "windows"))]
+    let candidates: Vec<String> = vec![
         format!("{}/.nvm/versions/node/v22.16.0/bin/node", home),
         "/usr/local/bin/node".to_string(),
         "/opt/homebrew/bin/node".to_string(),
     ];
+    let _ = &home;
     for c in &candidates {
         if std::path::Path::new(c).exists() {
             return c.to_string();
         }
     }
-    "node".to_string()
+    node_name.to_string()
 }
 
 /// Resolve a symlink to its real JS script path.

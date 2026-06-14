@@ -43,7 +43,7 @@ async fn exec_command(
     let cwd = if state.sandbox_dir.is_empty() {
         std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "/tmp".to_string())
+            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string())
     } else {
         state.sandbox_dir.clone()
     };
@@ -51,11 +51,22 @@ async fn exec_command(
     // Hard timeout + kill_on_drop: an interactive/hung command (top, vim, a
     // server) would otherwise block this handler forever and leak the child
     // process — enough of those accumulate to exhaust the host.
+    // Cross-platform shell: cmd.exe on Windows, /bin/sh elsewhere.
+    #[cfg(target_os = "windows")]
+    let mut shell = {
+        let mut c = tokio::process::Command::new("cmd.exe");
+        c.arg("/C").arg(&command);
+        c
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut shell = {
+        let mut c = tokio::process::Command::new("/bin/bash");
+        c.arg("-c").arg(&command);
+        c
+    };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(120),
-        tokio::process::Command::new("/bin/bash")
-            .arg("-c")
-            .arg(&command)
+        shell
             .current_dir(&cwd)
             .env("TERM", "dumb")
             .kill_on_drop(true)

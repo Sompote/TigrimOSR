@@ -104,6 +104,20 @@ echo.
 echo [OK] Build complete
 echo.
 
+:: ── Install Python data libraries (for search / charts / data analysis tools) ──
+where python >nul 2>&1
+if %errorlevel%==0 (
+    echo Installing Python libraries ^(search, charts, data analysis^)...
+    python -m pip install --upgrade pip >nul 2>&1
+    python -m pip install duckduckgo-search matplotlib numpy pandas requests
+    echo [OK] Python libraries installed
+) else (
+    echo [WARN] Python not found - skipping data libraries.
+    echo        Install Python from https://www.python.org/downloads/ ^(check "Add to PATH"^),
+    echo        then run: pip install duckduckgo-search matplotlib numpy pandas requests
+)
+echo.
+
 :: ── Create installation folder ──
 set "DIST_DIR=%INSTALL_DIR%\dist"
 if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"

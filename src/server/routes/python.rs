@@ -61,13 +61,10 @@ async fn resolve_sandbox_dir(state: &AppState) -> String {
         }
     }
 
-    // 5. Fallback to tmp
-    let tmp = format!(
-        "{}/tigrimos_sandbox",
-        std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
-    );
+    // 5. Fallback to the OS temp directory (cross-platform).
+    let tmp = std::env::temp_dir().join("tigrimos_sandbox");
     let _ = fs::create_dir_all(&tmp).await;
-    tmp
+    tmp.to_string_lossy().to_string()
 }
 
 // ---------------------------------------------------------------------------

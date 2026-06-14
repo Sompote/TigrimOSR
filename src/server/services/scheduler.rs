@@ -95,9 +95,20 @@ fn spawn_task_run(task: ScheduledTask) {
 
 async fn run_command(command: &str) -> Result<String, String> {
     let cwd = get_sandbox_dir_sync();
-    let child = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(command)
+    // Cross-platform shell: cmd.exe on Windows, sh elsewhere.
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = tokio::process::Command::new("cmd.exe");
+        c.arg("/C").arg(command);
+        c
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = {
+        let mut c = tokio::process::Command::new("sh");
+        c.arg("-c").arg(command);
+        c
+    };
+    let child = cmd
         .current_dir(&cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

@@ -35,8 +35,7 @@ fn resolve_sandbox_dir(configured: &str) -> String {
     if Path::new(&cwd).exists() {
         return cwd;
     }
-    let tmp = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
-    let fallback = format!("{}/tigrimos_sandbox", tmp);
+    let fallback = std::env::temp_dir().join("tigrimos_sandbox").to_string_lossy().to_string();
     let _ = std::fs::create_dir_all(&fallback);
     fallback
 }
