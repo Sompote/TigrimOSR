@@ -28,6 +28,14 @@ Design multi-agent systems visually — create architectures manually or generat
 
 ![Agent Swarm Editor](assets/screenshot_agents.png)
 
+### Inline charts & files in chat
+
+Files the agent produces — charts, plots, images, and documents — render **inline in the conversation** by default (no separate panel to hunt through). Ask for a plot and it appears right under the reply. Click any image to view it **full size**, and click a document chip (e.g. a `.md` report) to open it in a built-in viewer with Markdown rendering and a "Save a copy" button. Prefer the classic side panel? Switch in **Settings → Theme → Output files**.
+
+![Inline chart in chat](assets/screenshot_inline_chart.png)
+
+*Above: "plot oil price and time in graph" → the agent runs Python (matplotlib), saves `output_file/oil_price_history.png`, and embeds the annotated chart directly in its answer. Hovering shows "Click to view full size".*
+
 ### Mobile Remote Connection
 
 Connect from your phone to TigrimOS running on a cloud server — full chat with inline charts, tool execution, and file browsing.
