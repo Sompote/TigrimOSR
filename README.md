@@ -79,13 +79,14 @@ curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux
 ```
 Select **"Desktop mode"** when prompted.
 
-**Windows (PowerShell):**
+**Windows (PowerShell — recommended, fully automatic):**
 ```powershell
 irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.ps1 | iex
 ```
+This installs **everything** for you — git, the Rust MSVC toolchain, the C++ Build Tools (a UAC prompt appears), Python + libraries — then clones, builds, and creates a shortcut. Run it in a normal PowerShell window; approve the Administrator prompt when the build tools install. Need **~10 GB free** disk space. If a freshly-installed tool isn't picked up, open a **new** terminal and run the command again.
 
 **Windows (Command Prompt):**
-Download and run [`install.bat`](https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.bat).
+Download and run [`install.bat`](https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.bat). Unlike the PowerShell installer, the `.bat` **requires git, Rust, and the MSVC C++ Build Tools to already be installed** (see the manual steps below) — it then clones, builds, installs Python libraries, and makes a shortcut.
 
 The installer will:
 1. Check prerequisites and auto-install what's missing — git, Rust toolchain, and (Windows) the MSVC C++ build tools
@@ -197,11 +198,14 @@ cargo build --release
 <details>
 <summary>Manual Install on Windows (step-by-step)</summary>
 
-Building on Windows needs three things: **git**, **Rust**, and the **MSVC C++ Build Tools**
-(the linker). The third one is easy to miss — without it the build fails with
-`error: linker 'link.exe' not found`. The commands below use
-[winget](https://learn.microsoft.com/windows/package-manager/winget/) (built into
-Windows 10/11); manual download links are given as a fallback.
+> Prefer the one-line **PowerShell installer** above — it does all of this for you.
+> These steps are for when you want full control or the installer failed.
+
+Building on Windows needs three things: **git**, **Rust** (with a default toolchain),
+and the **MSVC C++ Build Tools** (the linker). The build tools are easy to miss —
+without them the build fails with `error: linker 'link.exe' not found`. The commands
+below use [winget](https://learn.microsoft.com/windows/package-manager/winget/) (built
+into Windows 10/11); manual download links are given as a fallback.
 
 > **Disk space:** the MSVC C++ Build Tools need roughly **3–7 GB** free, and the
 > Rust build's `target\` folder adds a few GB more. Make sure you have **~10 GB free**
@@ -214,12 +218,20 @@ winget install --id Git.Git -e
 ```
 Or download from https://git-scm.com/download/win
 
-#### Step 2 — Install Rust
+#### Step 2 — Install Rust + set a default toolchain
 
 ```powershell
 winget install --id Rustlang.Rustup -e
 ```
 Or download and run [rustup-init.exe](https://win.rustup.rs/) from https://rustup.rs
+
+Then **make sure a toolchain is selected** (winget sometimes installs `rustup` without
+one, which makes `cargo build` fail with *"no default toolchain"*):
+
+```powershell
+rustup toolchain install stable-x86_64-pc-windows-msvc
+rustup default stable-x86_64-pc-windows-msvc
+```
 
 #### Step 3 — Install the MSVC C++ Build Tools (required for linking)
 
@@ -247,13 +259,14 @@ rustc --version
 cargo --version
 ```
 
-#### Step 5 — (Optional) Install Python
+#### Step 5 — (Recommended) Install Python + libraries
 
-Used for the code execution, web search, and data analysis tools inside the app.
+Required for the code execution, web search, and data analysis tools inside the app.
+**Without these the app still builds and chats, but those tools fail at runtime.**
 
 ```powershell
 winget install --id Python.Python.3.12 -e
-pip install duckduckgo-search matplotlib numpy pandas requests
+python -m pip install duckduckgo-search matplotlib numpy pandas requests
 ```
 Or download from https://www.python.org/downloads/ — check **"Add Python to PATH"**.
 
@@ -272,6 +285,17 @@ cargo build --release
 
 **Tip:** to reclaim disk space after building, run `cargo clean` (deletes the
 multi-GB `target\` folder; the built `.exe` you already copied out is unaffected).
+
+#### Troubleshooting (Windows)
+
+| Symptom | Fix |
+|---------|-----|
+| `error: linker 'link.exe' not found` | Install the **MSVC C++ Build Tools** (Step 3), then open a new terminal. |
+| `error: no default toolchain configured` / `rustup could not choose a version` | Run `rustup default stable-x86_64-pc-windows-msvc` (Step 2). |
+| `cargo` / `git` / `python` "not recognized" right after installing | Open a **new** terminal so `PATH` refreshes, then retry. |
+| `running scripts is disabled on this system` | Run PowerShell as your user and use `irm … \| iex` (the one-line installer bypasses the script-file policy), or `Set-ExecutionPolicy -Scope Process Bypass`. |
+| Web search / charts / data tools do nothing | Install the Python libraries (Step 5). |
+| Built-in **VM / QEMU terminal** doesn't start | Expected — that feature is **macOS/Linux only**. Everything else (chat, tools, Python, web/remote UI) works on Windows. |
 
 </details>
 
