@@ -1,0 +1,17 @@
+# Keep the build context small and avoid leaking local state/secrets.
+target/
+tiger_cowork/
+Tigrimos/
+data/
+sandbox/
+output_file/
+skills/
+.git/
+.github/
+*.log
+nohup.out
+.env
+*.key
+.DS_Store
+.vscode/
+.idea/

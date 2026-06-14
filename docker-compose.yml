@@ -1,0 +1,23 @@
+services:
+  tigrimos:
+    build: .
+    image: tigrimos:latest
+    container_name: tigrimos
+    # Secrets come from .env (at minimum ACCESS_TOKEN). See .env.example.
+    env_file:
+      - .env
+    # Published to localhost ONLY — not reachable from the LAN.
+    # For LAN/remote access change to "3001:3001" (token is still required).
+    ports:
+      - "127.0.0.1:3001:3001"
+    # Persist user data and the agent sandbox on the host.
+    volumes:
+      - ./data:/app/data
+      - ./sandbox:/app/sandbox
+    restart: unless-stopped
+    # Hardening — the container is the isolation boundary for agent code execution.
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 4g
+    cpus: 2.0
+    pids_limit: 512

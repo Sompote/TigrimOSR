@@ -66,6 +66,115 @@ Connect from your phone to TigrimOS running on a cloud server — full chat with
 
 ---
 
+## Run with Docker (easiest & safest)
+
+Run TigrimOS as a self-contained web server in a container — **no Rust toolchain,
+Python, or system libraries to install on your machine.** You use it from your
+**browser**, and all agent code execution stays sandboxed **inside the container**,
+isolated from your host.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) with the Compose plugin
+  (Docker Desktop on macOS/Windows already includes it). Verify with:
+  ```bash
+  docker --version && docker compose version
+  ```
+
+### Setup (4 steps)
+
+**1. Get the code**
+```bash
+git clone https://github.com/Sompote/TigrimOSR.git
+cd TigrimOSR
+```
+
+**2. Create your login token.** Copy the example env file and put a strong random
+token in it. This token is what you'll type into the web UI to log in.
+```bash
+cp .env.example .env
+
+# Generate a token and write it into .env (macOS/Linux):
+echo "ACCESS_TOKEN=$(openssl rand -hex 32)" > .env
+```
+> On Windows PowerShell:
+> ```powershell
+> "ACCESS_TOKEN=$([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))" | Out-File -Encoding ascii .env
+> ```
+> Keep `.env` private — it holds your login secret. It is already git-ignored.
+
+**3. Build and start.** The first build compiles the Rust binary and takes a few
+minutes; later starts are instant.
+```bash
+docker compose up -d --build
+```
+
+**4. Open the app.** Go to **http://localhost:3001/web/** in your browser and log
+in with the token from your `.env`. Then set your AI provider and API key under
+**Settings** (saved to `./data`, so it persists).
+
+### Check it's running
+
+```bash
+docker compose ps         # STATUS should show "Up ... (healthy)"
+docker compose logs -f    # should print "Running in headless mode" + listening on :3001
+```
+If the container exits immediately, the most common cause is a missing/empty
+`ACCESS_TOKEN` in `.env` — the logs will say so.
+
+### Day-to-day commands
+
+```bash
+docker compose logs -f         # follow logs
+docker compose down            # stop (your data is kept)
+docker compose up -d           # start again
+docker compose up -d --build   # rebuild after pulling new code
+```
+
+### Where your data lives
+
+Two host folders are mounted into the container, so your state survives restarts
+and rebuilds — back them up to keep everything:
+
+| Host folder | Contents |
+|-------------|----------|
+| `./data`    | settings (incl. API key), chat history, skills, agents |
+| `./sandbox` | the agent's working files and generated outputs |
+
+### Why this is safe
+
+On Linux the agent's `run_python` / `run_shell` tools have **no OS-level sandbox**,
+so running natively would let agent-written code touch your machine. Inside Docker,
+**the container *is* the sandbox** — agent code can only see the container's
+filesystem and your two mounted folders, never the host. The server also runs as a
+non-root user, with `no-new-privileges` and CPU/memory/PID limits applied.
+
+### Network exposure
+
+By default the port is published to **`127.0.0.1` only**, so TigrimOS is reachable
+from your machine alone (the access token is still required). To reach it from
+other devices on your LAN, edit `docker-compose.yml` and change the port mapping
+from `"127.0.0.1:3001:3001"` to `"3001:3001"`, then `docker compose up -d`. Only do
+this on networks you trust.
+
+### Configuration reference
+
+| Setting | Where | Default |
+|---------|-------|---------|
+| Login token | `ACCESS_TOKEN` in `.env` | _(required — no default)_ |
+| HTTP port | `PORT` in `.env` + the mapping in `docker-compose.yml` | `3001` |
+| AI provider / API key / model | the web UI → **Settings** (saved to `./data`) | — |
+| Resource limits | `mem_limit` / `cpus` / `pids_limit` in `docker-compose.yml` | 4g / 2 CPUs / 512 |
+
+> **Tip — use the native desktop app with this container:** instead of the browser,
+> you can point the desktop app at the container. In the desktop app go to
+> **Settings → Remote Instances**, add `http://localhost:3001` with your token, and
+> toggle **Remote** in the sidebar. Because the desktop app also starts its own
+> server on `3001`, run it on a different port to avoid a clash, e.g.
+> `PORT=3002 ./tigrimos`.
+
+---
+
 ## Quick Install
 
 One-command installer that clones, builds, and sets up the app for you.
