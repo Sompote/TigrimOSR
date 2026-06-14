@@ -492,6 +492,45 @@ select {
 }
 .modal-head h3 { font-size: 16px; font-weight: 700; }
 
+/* ===== Architecture editor ===== */
+.arch-editor-card { max-width: 760px; max-height: 92vh; margin: auto; }
+.arch-editor-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+.arch-section { margin-bottom: 20px; }
+.arch-section > h4, .arch-section-head h4 { font-size: 13px; font-weight: 700; color: var(--accent); margin: 0 0 8px; }
+.arch-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.arch-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.arch-row > input, .arch-row > select, .arch-row > textarea { flex: 1; min-width: 120px; }
+.arch-section > textarea { width: 100%; }
+.arch-agent-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 12px; margin-bottom: 10px;
+}
+.arch-agent-card .aac-head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.arch-agent-card .aac-head input { flex: 1; }
+.arch-agent-card label.aac-field { display: block; font-size: 11px; font-weight: 600; color: var(--ink-soft); margin: 8px 0 3px; }
+.arch-agent-card textarea { width: 100%; }
+.arch-agent-card .aac-opts { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--ink-soft); }
+.arch-agent-card .aac-opts label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.arch-conn-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+.arch-conn-row select, .arch-conn-row input { flex: 1; min-width: 90px; }
+.arch-conn-row .arch-arrow { color: var(--ink-faint); font-weight: 700; }
+.arch-preview-box { padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--rail); display: none; }
+.arch-preview-box.visible { display: block; }
+.arch-preview-box svg { width: 100%; max-height: 420px; display: block; touch-action: none; user-select: none; }
+.arch-node { cursor: crosshair; }
+.arch-node circle { transition: stroke .1s ease, filter .1s ease; }
+.arch-node.arch-target circle { stroke: var(--accent); stroke-width: 3.5; }
+.arch-node.arch-source circle { filter: brightness(1.15); }
+.arch-conn-chip {
+  display: inline-flex; align-items: center; gap: 4px; flex: 1; min-width: 120px;
+  font-size: 12px; font-weight: 600; color: var(--ink);
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 5px 11px;
+}
+.arch-editor-foot {
+  padding: 12px 18px; border-top: 1px solid var(--line);
+  display: flex; gap: 8px; align-items: center;
+}
+
 /* ===== Markdown ===== */
 .bubble-ai p, .md-p { margin-bottom: 8px; display: block; }
 .bubble-ai p:last-child, .md-p:last-child { margin-bottom: 0; }
@@ -790,6 +829,8 @@ h4.md-h { font-size: 1em; }
           <option value="manual">Manual</option>
           <option value="fully_auto">Fully Auto</option>
         </select>
+        <button class="pill-btn primary" style="flex:none" onclick="openArchEditor()">+ New Architecture</button>
+        <button class="pill-btn" id="arch-edit-btn" style="flex:none" onclick="editArchConfig()">Edit</button>
         <label class="pill-btn" style="cursor:pointer;flex:none">
           Upload YAML
           <input type="file" accept=".yaml,.yml" onchange="uploadAgentConfig(this)" style="display:none">
@@ -825,6 +866,85 @@ h4.md-h { font-size: 1em; }
             <button class="pill-btn" onclick="document.getElementById('yaml-modal').classList.add('hidden')">Close</button>
           </div>
           <pre id="yaml-modal-content" style="padding:16px;overflow:auto;flex:1;font-size:13px;line-height:1.5;margin:0"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Architecture editor modal -->
+    <div id="arch-editor-modal" class="hidden" style="position:fixed;inset:0;z-index:110">
+      <div class="modal-overlay" style="align-items:stretch">
+        <div class="modal-card arch-editor-card">
+          <div class="modal-head">
+            <h3 id="arch-editor-title">New Architecture</h3>
+            <button class="pill-btn" onclick="closeArchEditor()">Close</button>
+          </div>
+          <div class="arch-editor-body">
+            <!-- (a) Auto-create -->
+            <div class="arch-section">
+              <h4>✨ Auto-create with AI</h4>
+              <textarea id="arch-auto-desc" rows="2" placeholder="Describe the goal, e.g. 'a research team that writes a market report'"></textarea>
+              <div class="arch-row" style="margin-top:8px">
+                <select id="arch-auto-type">
+                  <option value="hierarchical">hierarchical</option>
+                  <option value="flat">flat</option>
+                  <option value="mesh">mesh</option>
+                  <option value="hybrid">hybrid</option>
+                  <option value="pipeline">pipeline</option>
+                  <option value="p2p">p2p</option>
+                </select>
+                <input id="arch-auto-count" value="auto" placeholder="auto or a number" style="max-width:140px">
+                <button class="pill-btn primary" id="arch-gen-btn" onclick="archAutoGenerate()" style="flex:none">Generate</button>
+                <span id="arch-auto-status" style="font-size:12px;color:var(--ink-soft)"></span>
+              </div>
+            </div>
+
+            <!-- (b) System fields -->
+            <div class="arch-section">
+              <h4>System</h4>
+              <div class="arch-row">
+                <input id="arch-sys-name" placeholder="System name" oninput="archModel.system.name=this.value">
+                <select id="arch-sys-mode" onchange="archModel.system.orchestration_mode=this.value">
+                  <option value="hierarchical">hierarchical</option>
+                  <option value="flat">flat</option>
+                  <option value="mesh">mesh</option>
+                  <option value="hybrid">hybrid</option>
+                  <option value="pipeline">pipeline</option>
+                  <option value="p2p">p2p</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- (c) Agents -->
+            <div class="arch-section">
+              <div class="arch-section-head">
+                <h4>Agents</h4>
+                <button class="pill-btn" onclick="archAddAgent()">+ Add Agent</button>
+              </div>
+              <div id="arch-agents-list"></div>
+            </div>
+
+            <!-- Live diagram (drag to connect) -->
+            <div class="arch-section">
+              <div class="arch-section-head">
+                <h4>Diagram</h4>
+                <span style="font-size:11px;color:var(--ink-faint)">✋ Drag from one agent onto another to connect them</span>
+              </div>
+              <div id="arch-diagram-container" class="arch-preview-box">
+                <svg id="arch-diagram-svg" viewBox="0 0 800 500"></svg>
+              </div>
+            </div>
+
+            <!-- Connections -->
+            <div class="arch-section">
+              <h4>Connections</h4>
+              <div id="arch-conns-list"></div>
+            </div>
+          </div>
+          <div class="arch-editor-foot">
+            <span id="arch-save-status" style="font-size:12px;color:var(--ink-soft);flex:1"></span>
+            <button class="pill-btn" onclick="closeArchEditor()">Cancel</button>
+            <button class="pill-btn primary" onclick="archSave()">Save</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1650,7 +1770,7 @@ function uploadAgentConfig(input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = (e) => {
-    api('/api/agents/', {
+    api('/api/agents', {
       method: 'POST', body: JSON.stringify({ filename: file.name, content: e.target.result })
     }).then(data => {
       if (data.ok) {
@@ -1693,11 +1813,13 @@ const ROLE_SHAPES = { human: 'diamond', orchestrator: 'hexagon' };
 const PROTO_COLORS = { tcp: '#D2691E', queue: '#4682B4', bus: '#9370DB' };
 const PROTO_DASH = { tcp: '', queue: '6,4', bus: '3,3' };
 
-function renderAgentDiagram(parsed) {
-  const container = document.getElementById('agent-diagram-container');
-  const svg = document.getElementById('agent-diagram-svg');
+function renderAgentDiagram(parsed, containerId, svgId) {
+  const container = document.getElementById(containerId || 'agent-diagram-container');
+  const svg = document.getElementById(svgId || 'agent-diagram-svg');
+  if (!container || !svg) return;
   if (!parsed || !parsed.agents || parsed.agents.length === 0) {
     container.classList.remove('visible');
+    svg.innerHTML = '';
     return;
   }
   container.classList.add('visible');
@@ -1831,6 +1953,377 @@ function loadAgentDiagram() {
   }).catch(() => {
     document.getElementById('agent-diagram-container').classList.remove('visible');
   });
+}
+
+// ========== Architecture editor ==========
+const ARCH_ROLES = ['human', 'orchestrator', 'worker', 'checker', 'reporter', 'researcher', 'peer'];
+let archModel = { system: { name: '', orchestration_mode: 'hierarchical' }, agents: [], connections: [] };
+let archEditFilename = null;
+
+function snake(s) {
+  return (s || '').toString().toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+function archAutoStatus(m) { const e = document.getElementById('arch-auto-status'); if (e) e.textContent = m; }
+function archSaveStatus(m) { const e = document.getElementById('arch-save-status'); if (e) e.textContent = m; }
+
+function normalizeModel(p) {
+  p = p || {};
+  const sys = p.system || {};
+  let agents = Array.isArray(p.agents) ? p.agents.map(a => ({
+    id: a.id || '', name: a.name || '', role: a.role || 'worker', persona: a.persona || '',
+    responsibilities: Array.isArray(a.responsibilities) ? a.responsibilities.slice()
+      : (a.responsibilities ? [String(a.responsibilities)] : []),
+    bus: (a.bus && a.bus.enabled) ? { enabled: true, topics: Array.isArray(a.bus.topics) ? a.bus.topics.slice() : [] } : { enabled: false, topics: [] },
+    mesh: (a.mesh && a.mesh.enabled) ? { enabled: true } : { enabled: false },
+    _idManual: !!a.id,
+  })) : [];
+  if (!agents.length) {
+    agents = [{ id: 'human', name: 'You', role: 'human', persona: '', responsibilities: [], bus: { enabled: false, topics: [] }, mesh: { enabled: false }, _idManual: true }];
+  }
+  return {
+    system: { name: sys.name || '', orchestration_mode: sys.orchestration_mode || 'hierarchical' },
+    agents,
+    connections: Array.isArray(p.connections) ? p.connections.map(c => ({ from: c.from || '', to: c.to || '', protocol: c.protocol === 'queue' ? 'queue' : 'tcp', label: c.label || '' })) : [],
+  };
+}
+
+function openArchEditor(parsed) {
+  if (!parsed) archEditFilename = null;
+  archModel = normalizeModel(parsed);
+  document.getElementById('arch-editor-title').textContent = archEditFilename ? ('Edit: ' + archEditFilename) : 'New Architecture';
+  document.getElementById('arch-sys-name').value = archModel.system.name || '';
+  document.getElementById('arch-sys-mode').value = archModel.system.orchestration_mode || 'hierarchical';
+  document.getElementById('arch-auto-desc').value = '';
+  archAutoStatus(''); archSaveStatus('');
+  archRender();
+  document.getElementById('arch-editor-modal').classList.remove('hidden');
+}
+function closeArchEditor() { document.getElementById('arch-editor-modal').classList.add('hidden'); }
+
+function editArchConfig() {
+  const sel = document.getElementById('agent-config-select').value;
+  if (!sel) { alert('Select a Sub-Agent System to edit, or click "+ New Architecture".'); return; }
+  api('/api/agents/' + encodeURIComponent(sel)).then(data => {
+    archEditFilename = sel;
+    openArchEditor(data.parsed || null);
+  }).catch(() => alert('Failed to load config'));
+}
+
+function archRender() { archRenderAgents(); archRenderConns(); archDrawDiagram(); }
+
+function archRenderAgents() {
+  const el = document.getElementById('arch-agents-list');
+  el.innerHTML = archModel.agents.map((a, i) => {
+    const roleOpts = ARCH_ROLES.map(r => `<option value="${r}" ${a.role === r ? 'selected' : ''}>${r}</option>`).join('');
+    return `<div class="arch-agent-card">
+      <div class="aac-head">
+        <input placeholder="Agent name" value="${esc(a.name)}" oninput="archSetName(${i}, this.value)">
+        <select onchange="archSetRole(${i}, this.value)">${roleOpts}</select>
+        <button class="pill-btn" title="Auto-fill with AI" onclick="archAutoFillAgent(${i})" style="flex:none">✨</button>
+        <button class="pill-btn danger" title="Remove agent" onclick="archRemoveAgent(${i})" style="flex:none">✕</button>
+      </div>
+      <label class="aac-field">ID (snake_case)</label>
+      <input data-role="idinput" value="${esc(a.id)}" oninput="archSetId(${i}, this.value)" placeholder="auto from name">
+      <label class="aac-field">Persona</label>
+      <textarea rows="2" oninput="archSetField(${i}, 'persona', this.value)" placeholder="What this agent is and how it works">${esc(a.persona)}</textarea>
+      <label class="aac-field">Responsibilities (one per line)</label>
+      <textarea rows="3" oninput="archSetResp(${i}, this.value)" placeholder="One responsibility per line">${esc((a.responsibilities || []).join('\n'))}</textarea>
+      <div class="aac-opts">
+        <label><input type="checkbox" ${a.bus.enabled ? 'checked' : ''} onchange="archSetBus(${i}, this.checked)"> Bus</label>
+        <input placeholder="bus topics (comma sep)" value="${esc((a.bus.topics || []).join(', '))}" oninput="archSetTopics(${i}, this.value)" style="flex:1;min-width:140px" ${a.bus.enabled ? '' : 'disabled'}>
+        <label><input type="checkbox" ${a.mesh.enabled ? 'checked' : ''} onchange="archSetMesh(${i}, this.checked)"> Mesh</label>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function archRenderConns() {
+  const nameOf = (id) => { const a = archModel.agents.find(x => (x.id || '') === id); return a ? (a.name || a.id || id) : id; };
+  const el = document.getElementById('arch-conns-list');
+  if (!archModel.connections.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--ink-faint)">No connections yet — drag from one agent onto another in the diagram above to connect them.</div>';
+    return;
+  }
+  el.innerHTML = archModel.connections.map((c, i) => `<div class="arch-conn-row">
+    <span class="arch-conn-chip">${esc(nameOf(c.from))} <span class="arch-arrow">→</span> ${esc(nameOf(c.to))}</span>
+    <select onchange="archModel.connections[${i}].protocol=this.value;archDrawDiagram()" style="max-width:90px">
+      <option value="tcp" ${c.protocol !== 'queue' ? 'selected' : ''}>tcp</option>
+      <option value="queue" ${c.protocol === 'queue' ? 'selected' : ''}>queue</option>
+    </select>
+    <input placeholder="label" value="${esc(c.label || '')}" oninput="archModel.connections[${i}].label=this.value" style="max-width:120px">
+    <button class="pill-btn danger" title="Remove connection" onclick="archRemoveConn(${i})" style="flex:none">✕</button>
+  </div>`).join('');
+}
+
+// Interactive diagram: drag from one node onto another to create a connection.
+let archNodePos = {};   // id -> {x, y}
+let archNodeR = 22;
+let archDrag = null;    // { from, fromX, fromY } while dragging
+
+function archDrawDiagram() {
+  const container = document.getElementById('arch-diagram-container');
+  const svg = document.getElementById('arch-diagram-svg');
+  if (!container || !svg) return;
+  const agents = archModel.agents.map((a, i) => ({
+    id: a.id || snake(a.name) || ('agent_' + i),
+    name: a.name || a.id || ('Agent ' + (i + 1)),
+    role: (a.role || 'worker').toLowerCase(),
+  }));
+  if (!agents.length) { container.classList.remove('visible'); svg.innerHTML = ''; archNodePos = {}; return; }
+  container.classList.add('visible');
+
+  // Role-based layered layout
+  const layers = { human: [], orchestrator: [], worker: [], checker: [], reporter: [], researcher: [], peer: [] };
+  const other = [];
+  agents.forEach(a => { (layers[a.role] || other).push(a); });
+  const ordered = ['human', 'orchestrator', 'worker', 'peer', 'checker', 'researcher', 'reporter'];
+  const rows = ordered.map(r => layers[r]).filter(l => l.length);
+  if (other.length) rows.push(other);
+
+  const n = agents.length;
+  const nodeR = n <= 4 ? 26 : n <= 6 ? 22 : n <= 10 ? 18 : 15;
+  const maxPerRow = Math.max(...rows.map(r => r.length));
+  const W = Math.max(420, Math.min(900, maxPerRow * (nodeR * 2 + 70) + 60));
+  const rowGap = nodeR * 2 + 60;
+  const H = Math.max(200, rows.length * rowGap + 40);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const pos = {};
+  rows.forEach((row, ri) => {
+    const y = 30 + nodeR + ri * rowGap;
+    const sp = W / (row.length + 1);
+    row.forEach((a, ci) => { pos[a.id] = { x: sp * (ci + 1), y, agent: a }; });
+  });
+  archNodePos = pos; archNodeR = nodeR;
+
+  const defs = `<defs><marker id="archah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><polygon points="0 0, 8 3, 0 6" fill="#999"/></marker></defs>`;
+
+  let edges = '';
+  archModel.connections.forEach((c, ci) => {
+    const f = pos[c.from], t = pos[c.to];
+    if (!f || !t) return;
+    const proto = c.protocol || 'tcp';
+    const color = PROTO_COLORS[proto] || '#888';
+    const dash = PROTO_DASH[proto] || '';
+    const dx = t.x - f.x, dy = t.y - f.y, dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const sx = f.x + dx / dist * (nodeR + 2), sy = f.y + dy / dist * (nodeR + 2);
+    const ex = t.x - dx / dist * (nodeR + 8), ey = t.y - dy / dist * (nodeR + 8);
+    edges += `<path d="M${sx},${sy} L${ex},${ey}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="${dash}" marker-end="url(#archah)" opacity="0.7" class="arch-edge" data-conn="${ci}"><title>${esc(proto)} — click ✕ in list to remove</title></path>`;
+  });
+
+  let nodes = '';
+  Object.values(pos).forEach(({ x, y, agent }) => {
+    const fill = ROLE_COLORS[agent.role] || '#708090';
+    const short = agent.name.length > 14 ? agent.name.slice(0, 13) + '…' : agent.name;
+    nodes += `<g class="arch-node" data-agent-id="${esc(agent.id)}" transform="translate(${x},${y})">
+      <circle r="${nodeR}" fill="${fill}" stroke="#fff" stroke-width="2"/>
+      <text text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${nodeR * 0.8}" font-weight="700">${esc(agent.name.charAt(0).toUpperCase())}</text>
+      <text text-anchor="middle" y="${nodeR + 13}" font-size="11" fill="var(--ink)" font-weight="600">${esc(short)}</text>
+      <title>${esc(agent.name)} (${esc(agent.role)}) — drag onto another agent to connect</title>
+    </g>`;
+  });
+
+  svg.innerHTML = defs + edges + nodes +
+    '<path id="arch-temp-edge" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="5,3" style="pointer-events:none"/>';
+  archAttachDrag(svg);
+}
+
+function archNodeAt(ev) {
+  const svg = document.getElementById('arch-diagram-svg');
+  if (!svg || !svg.getScreenCTM) return null;
+  const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+  const m = svg.getScreenCTM(); if (!m) return null;
+  const c = pt.matrixTransform(m.inverse());
+  let best = null, bestD = Infinity;
+  for (const id in archNodePos) {
+    const p = archNodePos[id];
+    const d = Math.hypot(p.x - c.x, p.y - c.y);
+    if (d < bestD) { bestD = d; best = id; }
+  }
+  return (best !== null && bestD <= archNodeR + 10) ? best : null;
+}
+
+function archSvgPoint(ev) {
+  const svg = document.getElementById('arch-diagram-svg');
+  const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+  const m = svg.getScreenCTM();
+  return m ? pt.matrixTransform(m.inverse()) : { x: 0, y: 0 };
+}
+
+function archAttachDrag(svg) {
+  svg.querySelectorAll('.arch-node').forEach(g => {
+    g.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      const id = g.getAttribute('data-agent-id');
+      const p = archNodePos[id]; if (!p) return;
+      archDrag = { from: id, fromX: p.x, fromY: p.y };
+      g.classList.add('arch-source');
+      try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+    });
+  });
+  svg.addEventListener('pointermove', (ev) => {
+    if (!archDrag) return;
+    const c = archSvgPoint(ev);
+    const tmp = document.getElementById('arch-temp-edge');
+    if (tmp) tmp.setAttribute('d', `M${archDrag.fromX},${archDrag.fromY} L${c.x},${c.y}`);
+    const tgt = archNodeAt(ev);
+    svg.querySelectorAll('.arch-node').forEach(g =>
+      g.classList.toggle('arch-target', !!tgt && tgt !== archDrag.from && g.getAttribute('data-agent-id') === tgt));
+  });
+  const finish = (ev) => {
+    if (!archDrag) return;
+    const from = archDrag.from;
+    const tgt = archNodeAt(ev);
+    archDrag = null;
+    if (tgt && tgt !== from && !archModel.connections.some(c => c.from === from && c.to === tgt)) {
+      archModel.connections.push({ from, to: tgt, protocol: 'tcp', label: '' });
+      archRenderConns();
+    }
+    archDrawDiagram();
+  };
+  svg.addEventListener('pointerup', finish);
+  svg.addEventListener('pointercancel', finish);
+}
+
+function archSetName(i, v) {
+  const a = archModel.agents[i]; a.name = v;
+  if (!a._idManual) {
+    a.id = snake(v);
+    const card = document.getElementById('arch-agents-list').children[i];
+    if (card) { const idInput = card.querySelector('input[data-role=idinput]'); if (idInput) idInput.value = a.id; }
+  }
+  archDrawDiagram(); archRenderConns();
+}
+function archSetId(i, v) { const a = archModel.agents[i]; a.id = snake(v); a._idManual = v.trim() !== ''; archDrawDiagram(); archRenderConns(); }
+function archSetRole(i, v) { archModel.agents[i].role = v; archDrawDiagram(); }
+function archSetField(i, f, v) { archModel.agents[i][f] = v; }
+function archSetResp(i, v) { archModel.agents[i].responsibilities = v.split('\n'); }
+function archSetBus(i, checked) { const a = archModel.agents[i]; if (!a.bus) a.bus = { enabled: false, topics: [] }; a.bus.enabled = checked; archRenderAgents(); }
+function archSetTopics(i, v) { const a = archModel.agents[i]; if (!a.bus) a.bus = { enabled: true, topics: [] }; a.bus.topics = v.split(',').map(s => s.trim()).filter(Boolean); }
+function archSetMesh(i, checked) { const a = archModel.agents[i]; if (!a.mesh) a.mesh = { enabled: false }; a.mesh.enabled = checked; }
+
+function archAddAgent() {
+  archModel.agents.push({ id: '', name: '', role: 'worker', persona: '', responsibilities: [], bus: { enabled: false, topics: [] }, mesh: { enabled: false }, _idManual: false });
+  archRender();
+}
+function archRemoveAgent(i) {
+  const removed = archModel.agents[i];
+  archModel.agents.splice(i, 1);
+  if (removed) archModel.connections = archModel.connections.filter(c => c.from !== removed.id && c.to !== removed.id);
+  archRender();
+}
+function archRemoveConn(i) { archModel.connections.splice(i, 1); archRenderConns(); archDrawDiagram(); }
+
+function archAutoGenerate() {
+  const desc = document.getElementById('arch-auto-desc').value.trim();
+  if (!desc) { archAutoStatus('Enter a description first.'); return; }
+  const type = document.getElementById('arch-auto-type').value;
+  const count = document.getElementById('arch-auto-count').value.trim() || 'auto';
+  const btn = document.getElementById('arch-gen-btn'); btn.disabled = true;
+  archAutoStatus('Generating…');
+  api('/api/agents/generate-system', { method: 'POST', body: JSON.stringify({ description: desc, architectureType: type, agentCount: count }) })
+    .then(data => {
+      btn.disabled = false;
+      if (data.ok && data.system) {
+        archEditFilename = null;
+        archModel = normalizeModel(data.system);
+        document.getElementById('arch-editor-title').textContent = 'New Architecture';
+        document.getElementById('arch-sys-name').value = archModel.system.name || '';
+        document.getElementById('arch-sys-mode').value = archModel.system.orchestration_mode || 'hierarchical';
+        archRender();
+        archAutoStatus('Loaded into editor — review and Save.');
+      } else {
+        archAutoStatus('Failed: ' + (data.error || 'unknown error'));
+      }
+    }).catch(err => { btn.disabled = false; archAutoStatus('Failed: ' + err.message); });
+}
+
+function archAutoFillAgent(i) {
+  const a = archModel.agents[i];
+  const seed = (a.name || '') + (a.persona ? (' — ' + a.persona) : '');
+  if (!seed.trim()) { archSaveStatus('Give the agent a name first.'); return; }
+  archSaveStatus('Auto-filling agent…');
+  api('/api/agents/generate-definition', { method: 'POST', body: JSON.stringify({ description: seed }) })
+    .then(data => {
+      if (data.ok && data.definition) {
+        const d = data.definition;
+        if (d.name && !a.name) a.name = d.name;
+        if (d.role) a.role = d.role;
+        if (d.persona) a.persona = d.persona;
+        if (Array.isArray(d.responsibilities)) a.responsibilities = d.responsibilities;
+        if (!a._idManual && a.name) a.id = snake(a.name);
+        archRender();
+        archSaveStatus('Agent filled in.');
+      } else {
+        archSaveStatus('Auto-fill failed: ' + (data.error || 'unknown'));
+      }
+    }).catch(err => archSaveStatus('Auto-fill failed: ' + err.message));
+}
+
+function archBuildClean() {
+  const agents = archModel.agents.map((a, i) => {
+    const id = (a.id && a.id.trim()) ? snake(a.id) : (snake(a.name) || ('agent_' + (i + 1)));
+    const o = { id, name: a.name || id, role: a.role || 'worker', persona: a.persona || '',
+      responsibilities: (a.responsibilities || []).map(s => String(s).trim()).filter(Boolean) };
+    if (a.bus && a.bus.enabled) o.bus = { enabled: true, topics: (a.bus.topics || []).filter(Boolean) };
+    if (a.mesh && a.mesh.enabled) o.mesh = { enabled: true };
+    return o;
+  });
+  if (!agents.length) return { error: 'Add at least one agent before saving.' };
+  const seen = {};
+  agents.forEach(a => {
+    let id = a.id || 'agent';
+    if (seen[id]) { let k = 2; while (seen[id + '_' + k]) k++; id = id + '_' + k; }
+    a.id = id; seen[id] = true;
+  });
+  if (!agents.some(a => a.role === 'human')) {
+    agents.unshift({ id: seen['human'] ? 'human_user' : 'human', name: 'You', role: 'human', persona: '', responsibilities: [] });
+  }
+  const ids = new Set(agents.map(a => a.id));
+  const connections = archModel.connections
+    .filter(c => c.from && c.to && ids.has(c.from) && ids.has(c.to))
+    .map(c => ({ from: c.from, to: c.to, protocol: c.protocol === 'queue' ? 'queue' : 'tcp', label: c.label || '', topics: [] }));
+  const obj = {
+    system: {
+      name: archModel.system.name || 'Untitled System',
+      orchestration_mode: archModel.system.orchestration_mode || 'hierarchical',
+      communication_protocol: 'structured_handoff',
+      context_passing: 'full_chain',
+    },
+    agents, connections,
+  };
+  return { obj };
+}
+
+function archSave() {
+  archModel.system.name = document.getElementById('arch-sys-name').value.trim();
+  archModel.system.orchestration_mode = document.getElementById('arch-sys-mode').value;
+  const clean = archBuildClean();
+  if (clean.error) { archSaveStatus(clean.error); return; }
+  let fn = archEditFilename || ((snake(clean.obj.system.name) || 'architecture') + '_web.yaml');
+  fn = prompt('Save architecture as filename:', fn);
+  if (!fn) return;
+  if (!/\.ya?ml$/i.test(fn)) fn += '.yaml';
+  archSaveStatus('Saving…');
+  api('/api/agents/generate', { method: 'POST', body: JSON.stringify(clean.obj) })
+    .then(g => {
+      if (!g.ok || !g.content) { return Promise.reject(new Error(g.error || 'serialize failed')); }
+      return api('/api/agents', { method: 'POST', body: JSON.stringify({ filename: fn, content: g.content }) });
+    })
+    .then(r => {
+      if (r && r.ok) { archSaveStatus('Saved.'); closeArchEditor(); archSelectAfterSave(r.filename || fn); }
+      else { archSaveStatus('Save failed: ' + ((r && r.error) || 'unknown')); }
+    })
+    .catch(err => { archSaveStatus('Save failed: ' + (err.message || err)); });
+}
+
+function archSelectAfterSave(fn) {
+  api('/api/agents').then(data => {
+    agentConfigs = Array.isArray(data) ? data : (data.configs || data.agents || []);
+    const sel = document.getElementById('agent-config-select');
+    updateAgentSelect();
+    if (sel) { sel.value = fn; updateAgentSelect(); }
+  }).catch(() => {});
 }
 
 function loadRemoteTasks() {
