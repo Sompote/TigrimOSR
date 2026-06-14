@@ -1,4 +1,4 @@
-# TigrimOSR v0.5.3
+# TigrimOSR v0.5.4
 
 **TigrimOSR** is a native desktop AI agent platform that lets you orchestrate teams of specialist AI agents — all from a single, self-contained binary. Define agent swarms in simple YAML, connect them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously to solve complex tasks.
 
@@ -6,7 +6,8 @@
 
 - **Multi-agent orchestration** — Build teams of AI agents with 6 orchestration modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator). Agents communicate through real protocols and coordinate via a shared blackboard.
 - **Any LLM, any provider** — Works with OpenAI, Anthropic, DeepSeek, Kimi, Google Gemini, local Ollama, or any OpenAI-compatible API. Also supports 3 local CLI agents (Claude Code, Gemini CLI, Codex) with zero API keys.
-- **Full tool calling** — Web search, Python execution, file read/write, shell commands, MCP tool servers, and a skill marketplace (ClawHub). Output panel renders images, markdown, CSV, PDF, charts, and more inline.
+- **Full tool calling** — Web search, Python execution, file read/write, shell commands, MCP tool servers, and a skill marketplace (ClawHub). Images, markdown, CSV, PDF, and charts render inline in chat (or a side panel) with click-to-zoom.
+- **Make it yours** — Customizable themes saved to `theme.yaml`: color presets (Default, Dark, Minimal, Transparent, Colorful), per-color editing with live preview, bundled modern web fonts, and adjustable font sizes.
 - **Plugin system** — Install zip-based plugins that bundle skills, MCP servers, agent configs, and service connectors. Compatible with Claude Desktop Extensions, Claude Code Plugins, and npm MCP packages.
 - **Run anywhere** — Native macOS desktop app, headless Linux server, or access from any browser via the built-in web UI. Toggle Local/Remote seamlessly from the same interface.
 - **Built in Rust** — Fast startup, low memory, single binary. No Node.js or Python runtime needed to run the app itself. Rewritten from the original [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
@@ -46,7 +47,8 @@ Connect from your phone to TigrimOS running on a cloud server — full chat with
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
 - **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
 - **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
-- **Output panel** — inline preview for images (PNG/JPG), markdown reports, CSV tables, JSON, PDF, HTML
+- **Customizable themes** — color presets (Default, Dark, Minimal, Transparent, Colorful), full per-color editing, font selection (Inter, Geist, Roboto, IBM Plex Sans, Plus Jakarta Sans, or your own) and per-style sizes — all saved to `data/theme.yaml`
+- **Output panel or inline files** — render images (PNG/JPG), markdown, CSV tables, JSON, PDF, HTML either in a side panel or embedded inline in chat with click-to-zoom (default)
 - **Agent history log** — JSONL logs per session in `data/agent_history/`
 - **Skills system** — loadable skill modules from `skills/` directory
 - **Sandboxed Python** — matplotlib plots auto-saved as PNG via Agg backend
@@ -600,7 +602,17 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ## Changelog
 
-### v0.5.3
+### v0.5.4
+
+- **Customizable themes** — New **Settings → Theme** panel to personalize the whole app, saved to `data/theme.yaml`. Edit every color with live preview, or pick a one-click preset: **Default**, **Dark**, **Minimal** (ChatGPT-style), **Transparent** (see-through window), and **Colorful**. The theme now recolors the entire window — central panel, sidebar, chat surface, input bar, code blocks, and start page — not just the chat bubbles.
+- **Font selection & sizing** — Choose from bundled modern web fonts (**Inter** — the font Vite/VitePress uses, **Geist**, **Roboto**, **IBM Plex Sans**, **Plus Jakarta Sans**) or load your own `.ttf`/`.otf`/`.ttc` file. Per-style font sizes (chat, body, headings, code, …) with a dedicated chat message size. Fonts are embedded in the binary; code blocks use **JetBrains Mono**. Defaults: Roboto, 15 pt chat.
+- **Inline files in chat** — Output files (graphs & pictures) now embed **inline in the chat reply** by default, with **click-to-zoom** full-size view. Switch back to the side output panel anytime in **Settings → Theme → Output files**.
+- **Auto-scroll to newest** — Chat now follows new messages and streaming output automatically, with a forced jump to the bottom when you send or open a chat (and it stops following the moment you scroll up to read history).
+- **Web file viewer + download** — In the remote/mobile web UI, clicking a file chip now opens a **content viewer** (rendered Markdown, CSV tables, text, images, PDF) with a **Download** button — instead of jumping to the file directory listing.
+- **Smarter contrast & dark mode** — User-bubble text auto-contrasts to its bubble color, and dark surfaces switch egui to a dark base so built-in widgets match.
+
+<details>
+<summary>v0.5.3 — Web/mobile parity, inline images, activity log viewer</summary>
 
 - **Web/mobile UI parity** — Remote and mobile web chat now uses the same system prompt, SOUL.md, and IDENTITY.md as the native desktop UI. Responses are consistent regardless of how you connect.
 - **Inline image rendering** — Generated images (charts, figures, plots) now display inline in web chat with click-to-enlarge lightbox. Auth tokens are passed as query params so `<img>` tags can load from authenticated endpoints.
@@ -613,6 +625,8 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 - **`<think>` tag stripping in web UI** — Frontend now strips `<think>` reasoning blocks as a safety net, in addition to backend stripping.
 - **`.env` loading from data directory** — The app now loads `.env` files from both the data directory and the current working directory via `dotenvy`.
 - **Cache-Control on web UI** — Added `no-cache, no-store, must-revalidate` headers to prevent browsers from serving stale cached pages.
+
+</details>
 
 <details>
 <summary>v0.5.2 — Agent Activity panel, think-tag stripping, Auto mode enforcement</summary>

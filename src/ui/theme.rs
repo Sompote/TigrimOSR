@@ -5,7 +5,7 @@
 //! from Settings → Theme, which re-applies it to the running egui context and
 //! writes it back to disk.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
@@ -99,6 +99,15 @@ pub fn text_secondary_color() -> Color32 { load_color(&T_TEXT_SECONDARY, Color32
 /// Accent color.
 pub fn accent_color() -> Color32 { load_color(&T_ACCENT, Color32::from_rgb(18, 154, 145)) }
 
+// How AI output files (graphs/pictures) are presented: false = side output
+// panel (default), true = embedded inline in chat with click-to-zoom.
+static EMBED_FILES: AtomicBool = AtomicBool::new(false);
+
+/// True when output files should be embedded inline in chat instead of the panel.
+pub fn embed_files_in_chat() -> bool {
+    EMBED_FILES.load(Ordering::Relaxed)
+}
+
 /// Full theme definition. Serialized to / from `theme.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -113,10 +122,18 @@ pub struct Theme {
     /// it overrides `font_family`. Empty means use `font_family`.
     #[serde(default)]
     pub custom_font_path: String,
+    /// How AI output files (graphs/pictures) are shown:
+    /// `"panel"` (side output panel, default) or `"chat"` (embedded inline).
+    #[serde(default = "default_file_display")]
+    pub file_display: String,
 }
 
 fn default_font_family() -> String {
     DEFAULT_FONT_FAMILY.to_string()
+}
+
+fn default_file_display() -> String {
+    "chat".to_string()
 }
 
 /// Color palette. Each value is a `#RRGGBB` hex string so the YAML stays
@@ -203,6 +220,7 @@ impl Default for Theme {
             fonts: ThemeFonts::default(),
             font_family: default_font_family(),
             custom_font_path: String::new(),
+            file_display: default_file_display(),
         }
     }
 }
@@ -529,6 +547,7 @@ impl Theme {
         T_TEXT_PRIMARY.store(pack_color(self.text_primary()), Ordering::Relaxed);
         T_TEXT_SECONDARY.store(pack_color(self.text_secondary()), Ordering::Relaxed);
         T_ACCENT.store(pack_color(self.accent()), Ordering::Relaxed);
+        EMBED_FILES.store(self.file_display.trim() == "chat", Ordering::Relaxed);
 
         let bg_card = self.card();
         let bg_light = self.canvas();

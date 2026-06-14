@@ -595,6 +595,33 @@ h4.md-h { font-size: 1em; }
   background: rgba(0,0,0,.6); color: #fff; padding: 6px 16px;
   border-radius: 20px; font-size: 13px; font-weight: 600;
 }
+/* ── Chat file viewer modal ── */
+.file-modal {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,.55); backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; animation: fadeIn .2s ease;
+}
+.file-modal-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r-lg, 16px); box-shadow: 0 20px 60px rgba(0,0,0,.4);
+  width: min(900px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.file-modal-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--rail);
+}
+.file-modal-name { font-weight: 700; font-size: 14px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-modal-body { padding: 16px; overflow: auto; }
+.file-pre { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px; color: var(--ink); margin: 0; }
+.file-table { border-collapse: collapse; font-size: 13px; }
+.file-table th, .file-table td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
+.file-table th { background: var(--rail); color: var(--ink); position: sticky; top: 0; }
+.file-md { font-size: 14px; color: var(--ink); line-height: 1.6; }
+.file-md img { max-width: 100%; }
 
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
@@ -2075,16 +2102,17 @@ function renderChatFiles(files) {
   for (const f of files) {
     const name = fileBasename(f);
     const encPath = encodeURIComponent(f);
+    const encPathRaw = encPath + '&token=' + encodeURIComponent(TOKEN);
     if (isImageFile(f)) {
       html += `<div style="display:flex;flex-direction:column;gap:4px;max-width:220px">
-        <img class="chat-file-thumb" src="/api/files/raw?path=${encPath}&token=${encodeURIComponent(TOKEN)}" alt="${esc(name)}" onclick="openLightbox(this.src,'${esc(name)}')" loading="lazy">
-        <div class="chat-file-card" onclick="goToFile('${esc(f)}')">
+        <img class="chat-file-thumb" src="${BASE}/api/files/raw?path=${encPathRaw}" alt="${esc(name)}" onclick="openLightbox(this.src,'${esc(name)}','${esc(f)}')" loading="lazy">
+        <div class="chat-file-card" onclick="openFileViewer('${esc(f)}')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a1 1 0 0 0 1 1h3"/></svg>
           <span class="cf-name">${esc(name)}</span>
         </div>
       </div>`;
     } else {
-      html += `<div class="chat-file-card" onclick="goToFile('${esc(f)}')">
+      html += `<div class="chat-file-card" onclick="openFileViewer('${esc(f)}')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a1 1 0 0 0 1 1h3"/></svg>
         <span class="cf-name">${esc(name)}</span>
       </div>`;
@@ -2093,20 +2121,92 @@ function renderChatFiles(files) {
   html += '</div>';
   return html;
 }
-function openLightbox(src, name) {
+function openLightbox(src, name, path) {
   const overlay = document.createElement('div');
   overlay.className = 'lightbox';
-  overlay.innerHTML = `<img src="${src}"><div class="lightbox-label">${esc(name)}</div>`;
+  const dl = path ? `<button class="pill-btn" style="position:absolute;top:16px;left:16px" onclick="event.stopPropagation();downloadFile('${esc(path)}')">&#8681; Download</button>` : '';
+  overlay.innerHTML = `${dl}<img src="${src}"><div class="lightbox-label">${esc(name)}</div>`;
   overlay.onclick = () => overlay.remove();
   document.body.appendChild(overlay);
 }
-function goToFile(path) {
-  // Switch to Files tab and navigate to the file's directory
-  const parts = path.split('/');
-  parts.pop(); // remove filename
-  const dir = parts.join('/') || '.';
-  switchTab('files');
-  setTimeout(() => loadFiles(dir), 200);
+
+const TEXT_EXTS = ['md','markdown','txt','csv','tsv','json','py','js','ts','rs','html','css',
+  'log','yaml','yml','toml','sh','bash','c','cpp','h','hpp','java','xml','ini','cfg','sql','r'];
+
+// Open a file from a chat chip: preview its content + offer download.
+function openFileViewer(path) {
+  const name = fileBasename(path);
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const encPath = encodeURIComponent(path) + '&token=' + encodeURIComponent(TOKEN);
+  const rawUrl = BASE + '/api/files/raw?path=' + encPath;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'file-modal';
+  const dlBtn = `<button class="pill-btn primary" onclick="downloadFile('${esc(path)}')">&#8681; Download</button>`;
+  overlay.innerHTML = `
+    <div class="file-modal-card" onclick="event.stopPropagation()">
+      <div class="file-modal-head">
+        <span class="file-modal-name">${esc(name)}</span>
+        <span style="flex:1"></span>
+        ${dlBtn}
+        <button class="pill-btn" onclick="this.closest('.file-modal').remove()">&#10005;</button>
+      </div>
+      <div class="file-modal-body" id="file-modal-body">Loading…</div>
+    </div>`;
+  overlay.onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+  const body = overlay.querySelector('#file-modal-body');
+
+  if (isImageFile(path)) {
+    body.innerHTML = `<img src="${rawUrl}" style="max-width:100%;height:auto;border-radius:8px">`;
+    return;
+  }
+  if (ext === 'pdf') {
+    body.innerHTML = `<iframe src="${rawUrl}" style="width:100%;height:70vh;border:none;border-radius:8px"></iframe>`;
+    return;
+  }
+  if (!TEXT_EXTS.includes(ext)) {
+    body.innerHTML = `<div style="color:var(--ink-soft);padding:24px;text-align:center">No inline preview for .${esc(ext)} files.<br>Use Download to save it.</div>`;
+    return;
+  }
+  api('/api/files/read?path=' + encodeURIComponent(path)).then(data => {
+    const content = typeof data === 'string' ? data : (data.content || data.data || '');
+    if (ext === 'md' || ext === 'markdown') {
+      body.innerHTML = `<div class="file-md">${md(content)}</div>`;
+    } else if (ext === 'csv' || ext === 'tsv') {
+      body.innerHTML = renderCsvTable(content, ext === 'tsv' ? '\t' : ',');
+    } else {
+      body.innerHTML = `<pre class="file-pre">${esc(content)}</pre>`;
+    }
+  }).catch(e => { body.innerHTML = `<div style="color:var(--red);padding:24px">Failed to load: ${esc(e.message||e)}</div>`; });
+}
+
+function renderCsvTable(content, sep) {
+  const rows = content.trim().split(/\r?\n/).slice(0, 500).map(r => r.split(sep));
+  if (!rows.length) return '<pre class="file-pre"></pre>';
+  let h = '<div style="overflow:auto"><table class="file-table">';
+  rows.forEach((cells, i) => {
+    h += '<tr>' + cells.map(c => i === 0 ? `<th>${esc(c)}</th>` : `<td>${esc(c)}</td>`).join('') + '</tr>';
+  });
+  h += '</table></div>';
+  return h;
+}
+
+// Download a file through the authenticated API as a blob (works with bearer tokens).
+function downloadFile(path) {
+  const name = fileBasename(path);
+  const headers = {};
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  fetch(BASE + '/api/files/download?path=' + encodeURIComponent(path), { headers })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    })
+    .catch(e => alert('Download failed: ' + (e.message || e)));
 }
 
 // ========== LOG VIEWER ==========

@@ -390,6 +390,8 @@ pub struct ChatView {
     pub needs_refresh: bool,
     scroll_to_bottom: bool,
     confirm_delete_id: Option<String>,
+    /// Path of an embedded image currently shown full-size (click-to-zoom).
+    zoom_image: Option<String>,
 
     // --- Streaming AI responses (multiple sessions can stream in parallel) ---
     active_streams: std::collections::HashMap<String, StreamingState>,
@@ -464,6 +466,7 @@ impl ChatView {
             needs_refresh: true,
             scroll_to_bottom: false,
             confirm_delete_id: None,
+            zoom_image: None,
             active_streams: std::collections::HashMap::new(),
             stream_session_snapshots: std::collections::HashMap::new(),
             attached_files: Vec::new(),
@@ -2388,6 +2391,61 @@ You have access to these tools: {}.{}",
     // Main entry-point called by the parent UI
     // ---------------------------------------------------------------------
 
+    /// Full-screen overlay showing a clicked inline image at full size.
+    /// Click anywhere (or press Esc / the ✕) to dismiss.
+    fn show_zoom_overlay(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.zoom_image.clone() else { return };
+        let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+
+        egui::Area::new(egui::Id::new("chat_zoom_overlay"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(0.0, 0.0))
+            .show(ctx, |ui| {
+                let screen = ctx.screen_rect();
+                // Dimmed backdrop — clicking it closes the overlay.
+                ui.painter().rect_filled(
+                    screen,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(0, 0, 0, 220),
+                );
+                if ui.allocate_rect(screen, egui::Sense::click()).clicked() {
+                    close = true;
+                }
+                // Centered image.
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(screen), |ui| {
+                    ui.centered_and_justified(|ui| {
+                        let img = egui::Image::new(format!("file://{}", path))
+                            .max_width(screen.width() - 80.0)
+                            .max_height(screen.height() - 80.0)
+                            .fit_to_original_size(1.0);
+                        if ui.add(img.sense(egui::Sense::click())).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                // Close button (top-right).
+                let btn_rect = egui::Rect::from_min_size(
+                    egui::pos2(screen.max.x - 52.0, screen.min.y + 16.0),
+                    egui::vec2(36.0, 36.0),
+                );
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(btn_rect), |ui| {
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new("✕").size(20.0).color(egui::Color32::WHITE))
+                            .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 30))
+                            .corner_radius(18.0)
+                            .min_size(egui::vec2(36.0, 36.0)))
+                        .clicked()
+                    {
+                        close = true;
+                    }
+                });
+            });
+
+        if close {
+            self.zoom_image = None;
+        }
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         // Poll streaming state
         self.poll_streaming(runtime);
@@ -2398,6 +2456,20 @@ You have access to these tools: {}.{}",
         if self.needs_refresh {
             self.refresh(runtime);
         }
+
+        // "Embed in chat" mode: images render inline (not in the side panel).
+        let embed_files = super::theme::embed_files_in_chat();
+        if embed_files {
+            self.output_panel.open = false;
+        }
+        // Pick up a click-to-zoom request from an inline image.
+        if let Some(path) = ui
+            .ctx()
+            .data_mut(|d| d.remove_temp::<String>(egui::Id::new("chat_zoom_image_request")))
+        {
+            self.zoom_image = Some(path);
+        }
+        self.show_zoom_overlay(ui.ctx());
 
         let _border_color   = egui::Color32::from_rgb(230, 220, 204);
 
@@ -2427,8 +2499,8 @@ You have access to these tools: {}.{}",
             files
         };
 
-        // Auto-open output panel when new files appear
-        if !output_files.is_empty() && !self.output_panel.open {
+        // Auto-open output panel when new files appear (unless embedding in chat)
+        if !output_files.is_empty() && !self.output_panel.open && !embed_files {
             self.output_panel.open = true;
         }
 
@@ -2460,7 +2532,7 @@ You have access to these tools: {}.{}",
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(&mut mid_ui, |ui| {
                 // Output toggle button in chat header area when panel is closed
-                if !self.output_panel.open && !output_files.is_empty() {
+                if !self.output_panel.open && !output_files.is_empty() && !embed_files {
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             self.output_panel.show_toggle_button(ui, output_files.len());
@@ -3684,7 +3756,10 @@ You have access to these tools: {}.{}",
                             }),
                     );
 
-                    // Show attached files as vertical cards
+                    // Show attached files. In "embed" mode, images render inline
+                    // as clickable thumbnails (click to view full size); other
+                    // files (and panel mode) show as compact cards.
+                    let embed = super::theme::embed_files_in_chat();
                     if let Some(ref files) = msg.files {
                         if !files.is_empty() {
                             for fname in files {
@@ -3692,6 +3767,28 @@ You have access to these tools: {}.{}",
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
                                     .unwrap_or_else(|| fname.clone());
+
+                                if embed && is_image_file(fname) {
+                                    ui.add_space(2.0);
+                                    let img = egui::Image::new(format!("file://{}", fname))
+                                        .max_width(max_bubble_width - 40.0)
+                                        .max_height(320.0)
+                                        .corner_radius(8.0)
+                                        .fit_to_original_size(1.0)
+                                        .sense(egui::Sense::click());
+                                    let resp = ui.add(img).on_hover_text("Click to view full size");
+                                    if resp.clicked() {
+                                        ui.ctx().data_mut(|d| {
+                                            d.insert_temp(
+                                                egui::Id::new("chat_zoom_image_request"),
+                                                fname.clone(),
+                                            )
+                                        });
+                                    }
+                                    ui.add_space(4.0);
+                                    continue;
+                                }
+
                                 egui::Frame::new()
                                     .fill(egui::Color32::from_rgb(239, 231, 218))
                                     .corner_radius(4.0)
@@ -5120,6 +5217,14 @@ You have access to these tools: {}.{}",
 // -------------------------------------------------------------------------
 // Render rich markdown content in a UI region
 // -------------------------------------------------------------------------
+
+/// True if the path looks like a raster/vector image we can render inline.
+fn is_image_file(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
 
 /// Strip `<think>...</think>` blocks and `[Used tools: ...]` prefixes from displayed content.
 fn strip_think_tags(content: &str) -> String {

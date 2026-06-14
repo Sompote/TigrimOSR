@@ -3581,6 +3581,32 @@ impl SettingsView {
             changed = true;
         }
 
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("Output files (graphs & pictures)").strong());
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Choose how files the AI produces are shown: in a side panel, or \
+                 embedded inline in the chat (click an image to view it full size).",
+            )
+            .size(12.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(6.0);
+        let mut is_embed = self.theme.file_display.trim() == "chat";
+        let before = is_embed;
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut is_embed, false, "Side output panel (default)");
+            ui.add_space(12.0);
+            ui.radio_value(&mut is_embed, true, "Embedded in chat");
+        });
+        if is_embed != before {
+            self.theme.file_display = if is_embed { "chat" } else { "panel" }.to_string();
+            changed = true;
+        }
+
         // Live preview: re-apply to the running context as soon as anything changes.
         if changed {
             self.theme.apply(ctx);
@@ -3648,7 +3674,7 @@ impl SettingsView {
             ui.add_space(8.0);
             ui.label(egui::RichText::new("TigrimOS").size(28.0).strong());
             ui.label(
-                egui::RichText::new("v0.5.3")
+                egui::RichText::new("v0.5.4")
                     .size(14.0)
                     .color(egui::Color32::GRAY),
             );
@@ -3657,7 +3683,7 @@ impl SettingsView {
             ui.separator();
             ui.add_space(12.0);
             for line in [
-                "TigrimOS v0.5.3 (Rust/egui edition)",
+                "TigrimOS v0.5.4 (Rust/egui edition)",
                 "Ubuntu 22.04 VM via QEMU",
                 "Node.js 20 + Python 3 + Fastify",
             ] {
