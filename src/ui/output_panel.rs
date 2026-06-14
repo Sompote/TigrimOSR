@@ -167,7 +167,7 @@ impl OutputPanel {
         path.split('/').last().unwrap_or(path)
     }
 
-    fn full_path(rel: &str) -> PathBuf {
+    pub(crate) fn full_path(rel: &str) -> PathBuf {
         let p = PathBuf::from(rel);
         if p.exists() {
             return p;

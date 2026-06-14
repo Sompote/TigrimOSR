@@ -392,6 +392,8 @@ pub struct ChatView {
     confirm_delete_id: Option<String>,
     /// Path of an embedded image currently shown full-size (click-to-zoom).
     zoom_image: Option<String>,
+    /// Path of a (non-image) file currently open in the inline file viewer.
+    view_file: Option<String>,
 
     // --- Streaming AI responses (multiple sessions can stream in parallel) ---
     active_streams: std::collections::HashMap<String, StreamingState>,
@@ -467,6 +469,7 @@ impl ChatView {
             scroll_to_bottom: false,
             confirm_delete_id: None,
             zoom_image: None,
+            view_file: None,
             active_streams: std::collections::HashMap::new(),
             stream_session_snapshots: std::collections::HashMap::new(),
             attached_files: Vec::new(),
@@ -2446,6 +2449,90 @@ You have access to these tools: {}.{}",
         }
     }
 
+    /// Inline viewer for a clicked file card: shows the file's content
+    /// (rendered Markdown, image, or plain text) with Save-a-copy / Open buttons.
+    fn show_file_overlay(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.view_file.clone() else { return };
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let lower = name.to_ascii_lowercase();
+        let full = crate::ui::output_panel::OutputPanel::full_path(&path);
+
+        let mut open = true;
+        let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+
+        egui::Window::new(format!("\u{1F4C4} {}", name))
+            .id(egui::Id::new("chat_file_viewer"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([720.0, 560.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("\u{1F4BE} Save a copy\u{2026}").clicked() {
+                        if let Some(dest) = rfd::FileDialog::new().set_file_name(&name).save_file() {
+                            let _ = std::fs::copy(&full, &dest);
+                        }
+                    }
+                    if ui.button("Open externally").clicked() {
+                        let _ = open::that(&full);
+                    }
+                    if ui.button("Copy path").clicked() {
+                        ui.ctx().copy_text(path.clone());
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("\u{2715} Close").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if is_image_file(&name) {
+                            ui.add(
+                                egui::Image::new(format!("file://{}", full.display()))
+                                    .max_width(ui.available_width())
+                                    .fit_to_original_size(1.0),
+                            );
+                        } else {
+                            match std::fs::read_to_string(&full) {
+                                Ok(content) => {
+                                    if lower.ends_with(".md") || lower.ends_with(".markdown") {
+                                        render_markdown_content(ui, &content, super::theme::text_primary_color());
+                                    } else {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(content)
+                                                    .monospace()
+                                                    .size(13.0)
+                                                    .color(super::theme::text_primary_color()),
+                                            )
+                                            .selectable(true)
+                                            .wrap(),
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    ui.colored_label(
+                                        egui::Color32::from_rgb(201, 85, 78),
+                                        format!("Could not open {}: {}", name, e),
+                                    );
+                                }
+                            }
+                        }
+                    });
+            });
+
+        if !open || close {
+            self.view_file = None;
+        }
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         // Poll streaming state
         self.poll_streaming(runtime);
@@ -2470,6 +2557,15 @@ You have access to these tools: {}.{}",
             self.zoom_image = Some(path);
         }
         self.show_zoom_overlay(ui.ctx());
+
+        // Pick up a click-to-open request from a file card.
+        if let Some(path) = ui
+            .ctx()
+            .data_mut(|d| d.remove_temp::<String>(egui::Id::new("chat_open_file_request")))
+        {
+            self.view_file = Some(path);
+        }
+        self.show_file_overlay(ui.ctx());
 
         let _border_color   = egui::Color32::from_rgb(230, 220, 204);
 
@@ -3789,22 +3885,35 @@ You have access to these tools: {}.{}",
                                     continue;
                                 }
 
-                                egui::Frame::new()
-                                    .fill(egui::Color32::from_rgb(239, 231, 218))
+                                // Clickable file card → opens an inline viewer.
+                                let card_resp = egui::Frame::new()
+                                    .fill(super::theme::hover_color())
                                     .corner_radius(4.0)
-                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .stroke(egui::Stroke::new(0.5, super::theme::border_color()))
+                                    .inner_margin(egui::Margin::symmetric(8, 5))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.label(
                                                 egui::RichText::new(format!("\u{1F4C4} {}", short_name))
                                                     .size(11.0)
-                                                    .color(egui::Color32::from_rgb(18, 154, 145)),
+                                                    .color(super::theme::accent_color()),
                                             );
-                                            if ui.small_button("\u{1F4CB}").on_hover_text("Copy path").clicked() {
-                                                ui.ctx().copy_text(fname.clone());
-                                            }
                                         });
-                                    }).response.on_hover_text(fname);
+                                    })
+                                    .response
+                                    .interact(egui::Sense::click())
+                                    .on_hover_text(format!("Open {}", fname));
+                                if card_resp.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                if card_resp.clicked() {
+                                    ui.ctx().data_mut(|d| {
+                                        d.insert_temp(
+                                            egui::Id::new("chat_open_file_request"),
+                                            fname.clone(),
+                                        )
+                                    });
+                                }
                                 ui.add_space(2.0);
                             }
                         }
