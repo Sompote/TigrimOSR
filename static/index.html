@@ -228,6 +228,8 @@ select {
 .chip svg { width: 13px; height: 13px; stroke-width: 2; color: var(--ink-faint); }
 .chip .lead { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .chip:active { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--accent-ink); }
+.arch-tag-chip { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--accent-ink); max-width: 220px; }
+.arch-tag-chip span.arch-tag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .composer {
   display: flex; align-items: flex-end; gap: 7px;
@@ -438,6 +440,19 @@ select {
 .active-task-card .at-go svg { width: 14px; height: 14px; stroke-width: 2.3; }
 
 /* ===== Settings / Agents ===== */
+.settings-tabs {
+  display: flex; flex-wrap: wrap; gap: 2px;
+  border-bottom: 1px solid var(--line); margin-bottom: 22px;
+  position: sticky; top: 0; background: var(--bg); z-index: 5; padding-top: 2px;
+}
+.settings-tab {
+  padding: 9px 15px; font-size: 13px; font-weight: 600; color: var(--ink-soft);
+  background: none; border: none; border-bottom: 2px solid transparent;
+  cursor: pointer; white-space: nowrap; border-radius: 6px 6px 0 0;
+}
+.settings-tab:hover { background: rgba(52,48,42,.05); color: var(--ink); }
+.settings-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.settings-pane[hidden] { display: none; }
 .settings-group { margin-bottom: 24px; }
 .settings-group h3 { margin-bottom: 12px; color: var(--accent); font-size: 15px; font-weight: 700; }
 .settings-row-field {
@@ -452,6 +467,13 @@ select {
 .agent-bar-inner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .agent-bar-inner label { font-size: 13px; color: var(--ink-soft); white-space: nowrap; font-weight: 500; }
 .agent-bar-inner select { flex: 1; min-width: 160px; max-width: 400px; }
+.active-arch-tag {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 14px;
+  background: var(--accent-soft); color: var(--accent-ink); border: 1px solid var(--accent);
+  max-width: 280px; white-space: nowrap; overflow: hidden;
+}
+.active-arch-tag .active-arch-name { overflow: hidden; text-overflow: ellipsis; }
 
 #agent-diagram-container {
   padding: 16px; border-bottom: 1px solid var(--line); background: var(--surface); display: none;
@@ -776,6 +798,7 @@ h4.md-h { font-size: 1em; }
       <div class="composer-wrap">
         <div class="chips">
           <button class="chip" id="agent-mode-chip" onclick="cycleAgentMode()"><span class="lead"></span><span id="agent-mode-label">Single Agent</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button class="chip arch-tag-chip hidden" id="agent-arch-tag" onclick="switchTab('agents')" title="Active architecture — tap to change"></button>
           <button class="chip" onclick="switchTab('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</button>
         </div>
         <div class="attach-bar" id="attach-bar"></div>
@@ -819,9 +842,11 @@ h4.md-h { font-size: 1em; }
     <div class="agent-bar">
       <div class="agent-bar-inner">
         <label>Sub-Agent System:</label>
-        <select id="agent-config-select" onchange="selectAgentConfig()">
+        <select id="agent-config-select" onchange="previewAgentConfig()">
           <option value="">None (single agent)</option>
         </select>
+        <button class="pill-btn primary" id="agent-apply-btn" style="flex:none" onclick="applyAgentConfig()" disabled>Apply</button>
+        <span id="active-arch-tag" class="active-arch-tag hidden"></span>
         <label>Mode:</label>
         <select id="agents-mode-select" onchange="selectAgentMode()">
           <option value="single">Single</option>
@@ -1321,9 +1346,37 @@ function cycleAgentMode() {
   localStorage.setItem('tigrimos_agent_mode', next);
   updateAgentModeChip();
 }
+function archDisplayName(fn) {
+  if (!fn) return '';
+  const cfg = (agentConfigs || []).find(c => (c.filename || c.name) === fn);
+  if (cfg && cfg.name) return cfg.name;
+  return String(fn).replace(/\.ya?ml$/i, '');
+}
 function updateAgentModeChip() {
+  const mode = getAgentMode();
   const label = document.getElementById('agent-mode-label');
-  if (label) label.textContent = agentModeLabels[getAgentMode()] || 'Single Agent';
+  if (label) label.textContent = agentModeLabels[mode] || 'Single Agent';
+  // Show the active architecture name as a tag when running a team
+  // (Manual / Auto Swarm) so remote users can see which swarm is live.
+  const tag = document.getElementById('agent-arch-tag');
+  if (tag) {
+    const teamMode = (mode === 'manual' || mode === 'auto');
+    if (teamMode) {
+      const icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="2.6"/><circle cx="5" cy="6" r="1.8"/><circle cx="19" cy="6" r="1.8"/><circle cx="5" cy="18" r="1.8"/><circle cx="19" cy="18" r="1.8"/><path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/></svg>';
+      tag.innerHTML = icon + '<span class="arch-tag-name"></span>';
+      const nm = tag.querySelector('.arch-tag-name');
+      if (currentAgentConfig) {
+        nm.textContent = archDisplayName(currentAgentConfig);
+        tag.title = 'Active architecture: ' + nm.textContent + ' — tap to change';
+      } else {
+        nm.textContent = 'Select architecture';
+        tag.title = 'No architecture selected — tap to choose one';
+      }
+      tag.classList.remove('hidden');
+    } else {
+      tag.classList.add('hidden');
+    }
+  }
 }
 
 let pendingSendSession = null;
@@ -1691,10 +1744,12 @@ function loadAgents() {
   api('/api/agents').then(data => {
     agentConfigs = Array.isArray(data) ? data : (data.configs || data.agents || []);
     updateAgentSelect();
+    updateAgentModeChip();
   }).catch(() => {});
   api('/api/settings').then(data => {
     currentAgentConfig = data.subAgentConfigFile || '';
     updateAgentSelect();
+    updateAgentModeChip();
   }).catch(() => {});
   loadRemoteTasks();
 }
@@ -1723,6 +1778,8 @@ function updateAgentSelect() {
     preview.style.display = 'none';
     document.getElementById('agent-diagram-container').classList.remove('visible');
   }
+  updateAgentApplyState();
+  updateActiveArchTag();
 }
 
 function selectAgentMode() {
@@ -1740,29 +1797,72 @@ function selectAgentMode() {
   }).catch(() => {});
 }
 
-function selectAgentConfig() {
+// Selecting in the dropdown only PREVIEWS — it no longer activates. The user
+// must press Apply to make an architecture the active one.
+function previewAgentConfig() {
+  const sel = document.getElementById('agent-config-select');
+  const preview = document.getElementById('agent-config-preview');
+  const info = document.getElementById('agent-config-info');
+  if (sel.value) {
+    preview.style.display = 'block';
+    const cfg = agentConfigs.find(c => (c.filename || c.name) === sel.value);
+    info.textContent = cfg ? `${cfg.agentCount || 0} agents` : sel.value;
+    loadAgentDiagram();
+  } else {
+    preview.style.display = 'none';
+    document.getElementById('agent-diagram-container').classList.remove('visible');
+  }
+  updateAgentApplyState();
+}
+
+// Apply the architecture selected in the dropdown — writes it to settings so
+// chat + remote tasks use it.
+function applyAgentConfig() {
   const sel = document.getElementById('agent-config-select');
   const val = sel.value;
-  currentAgentConfig = val;
   const modeSel = document.getElementById('agents-mode-select');
   if (val && modeSel && modeSel.value === 'single') {
     modeSel.value = 'auto';
     localStorage.setItem('tigrimos_agent_mode', 'auto');
-    updateAgentModeChip();
   }
   const mode = modeSel ? modeSel.value : 'auto';
+  const status = document.getElementById('agent-config-status');
+  if (status) status.textContent = 'Applying…';
   api('/api/settings').then(data => {
     data.subAgentConfigFile = val || null;
     data.subAgentEnabled = !!val && mode !== 'single';
     data.subAgentMode = mode === 'single' ? 'auto' : mode;
     return api('/api/settings', { method: 'PUT', body: JSON.stringify(data) });
   }).then(() => {
-    const status = document.getElementById('agent-config-status');
-    status.textContent = val ? 'Config activated!' : 'Sub-agent disabled';
-    setTimeout(() => status.textContent = '', 3000);
-    updateAgentSelect();
-    loadAgentDiagram();
-  }).catch(() => {});
+    currentAgentConfig = val;
+    if (status) { status.textContent = val ? 'Architecture applied ✓' : 'Sub-agent disabled'; setTimeout(() => status.textContent = '', 3000); }
+    updateActiveArchTag();
+    updateAgentApplyState();
+    updateAgentModeChip();
+  }).catch(err => { if (status) status.textContent = 'Apply failed: ' + (err.message || err); });
+}
+
+// Enable Apply only when the previewed config differs from the active one.
+function updateAgentApplyState() {
+  const sel = document.getElementById('agent-config-select');
+  const btn = document.getElementById('agent-apply-btn');
+  if (!sel || !btn) return;
+  const isApplied = sel.value === currentAgentConfig;
+  btn.disabled = isApplied;
+  btn.textContent = isApplied ? 'Applied ✓' : 'Apply';
+}
+
+// Tag in the toolbar showing which architecture is currently active.
+function updateActiveArchTag() {
+  const tag = document.getElementById('active-arch-tag');
+  if (!tag) return;
+  if (currentAgentConfig) {
+    tag.innerHTML = '<span style="opacity:.65">Active:</span> <span class="active-arch-name"></span>';
+    tag.querySelector('.active-arch-name').textContent = archDisplayName(currentAgentConfig);
+    tag.classList.remove('hidden');
+  } else {
+    tag.classList.add('hidden');
+  }
 }
 
 function uploadAgentConfig(input) {
@@ -1799,7 +1899,11 @@ function deleteAgentConfig() {
   const sel = document.getElementById('agent-config-select').value;
   if (!sel || !confirm('Delete ' + sel + '?')) return;
   api('/api/agents/' + encodeURIComponent(sel), { method: 'DELETE' }).then(() => {
-    if (currentAgentConfig === sel) { currentAgentConfig = ''; selectAgentConfig(); }
+    // If the deleted config was the active one, clear it from settings.
+    if (currentAgentConfig === sel) {
+      document.getElementById('agent-config-select').value = '';
+      applyAgentConfig();
+    }
     loadAgents();
   }).catch(() => {});
 }
@@ -2322,7 +2426,7 @@ function archSelectAfterSave(fn) {
     agentConfigs = Array.isArray(data) ? data : (data.configs || data.agents || []);
     const sel = document.getElementById('agent-config-select');
     updateAgentSelect();
-    if (sel) { sel.value = fn; updateAgentSelect(); }
+    if (sel) { sel.value = fn; previewAgentConfig(); }
   }).catch(() => {});
 }
 
@@ -2467,48 +2571,421 @@ function goToChat(sessionId) {
 }
 
 // ========== SETTINGS ==========
+// Built-in AI providers — mirrors src/ui/settings.rs builtin_providers().
+// Selecting one ("connect to system") auto-fills the API URL + default model.
+const AI_PROVIDERS = [
+  { name: 'Claude Code (Local)', url: 'claude-code', model: 'claude-sonnet-4-20250514' },
+  { name: 'Gemini CLI (Local)', url: 'gemini-cli', model: 'gemini-2.5-pro' },
+  { name: 'Codex (Local)', url: 'codex-cli', model: 'gpt-5.4' },
+  { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1', model: 'openrouter/auto' },
+  { name: 'xAI (Grok)', url: 'https://api.x.ai/v1', model: 'grok-3' },
+  { name: 'Anthropic (Claude)', url: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-20250514' },
+  { name: 'MiniMax', url: 'https://api.minimax.io/v1', model: 'MiniMax-M3' },
+  { name: 'Google AI Studio', url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' },
+  { name: 'Kimi (Moonshot)', url: 'https://api.kimi.com/coding/v1', model: 'kimi-k2-0905-preview' },
+  { name: 'DeepSeek', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+];
+
+// Agent Harness controls — mirrors the "Agent Harness" section in
+// src/ui/settings.rs. Stored in the flattened `extra` map of Settings.
+const HARNESS_NUM = [
+  { key: 'agentMaxToolRounds', label: 'Max Turns', def: 15, suffix: 'rounds' },
+  { key: 'agentMaxToolCalls', label: 'Max Tool Calls', def: 25, suffix: 'calls' },
+  { key: 'agentMaxTokens', label: 'Max Output Tokens', def: 81920, suffix: '' },
+  { key: 'agentTemperature', label: 'Temperature', def: 0.7, suffix: '', float: true, step: 0.05 },
+  { key: 'agentMaxContextTokens', label: 'Max Context Tokens', def: 100000, suffix: '' },
+  { key: 'agentMaxConsecutiveErrors', label: 'Max Consecutive Errors', def: 3, suffix: '' },
+  { key: 'agentCompressionInterval', label: 'Compression Interval', def: 5, suffix: 'rounds' },
+  { key: 'agentToolResultMaxLen', label: 'Tool Result Max Length', def: 6000, suffix: '' },
+  { key: 'agentWaitResultTimeout', label: 'Wait Result Timeout', def: 120, suffix: 'sec' },
+  { key: 'agentWaitResultHardTimeout', label: 'Wait Result Hard Limit', def: 1800, suffix: 'sec' },
+];
+const HARNESS_REFLECT = [
+  { key: 'agentReflectionThreshold', label: 'Reflection Threshold', def: 0.7, suffix: 'score', float: true, step: 0.05 },
+  { key: 'agentMaxReflectionRetries', label: 'Max Reflection Retries', def: 2, suffix: 'rounds' },
+];
+const HARNESS_VERIFY = [
+  { key: 'agentStepVerifyThreshold', label: 'Step Verify Threshold', def: 0.7, suffix: 'score', float: true, step: 0.05 },
+  { key: 'agentStepVerifyMaxRetries', label: 'Max Step Retries', def: 1, suffix: 'retries' },
+];
+
+// Client-side working copy of MCP tools so add/remove works before save.
+let _mcpTools = [];
+
+function harnessVal(data, f) {
+  const v = data[f.key];
+  return (v === undefined || v === null) ? f.def : v;
+}
+function numRow(data, f) {
+  return `<div class="settings-row-field"><label>${f.label}</label>
+    <input type="number" id="s-h-${f.key}" value="${harnessVal(data, f)}" ${f.step ? `step="${f.step}"` : ''} style="flex:none;width:160px">
+    ${f.suffix ? `<span style="font-size:13px;color:var(--ink-soft);margin-left:8px">${f.suffix}</span>` : ''}</div>`;
+}
+
 function loadSettings() {
-  api('/api/settings').then(data => {
+  Promise.all([
+    api('/api/settings'),
+    api('/api/settings/soul-identity').catch(() => ({ soul: '', identity: '' })),
+  ]).then(([data, soul]) => {
+    _mcpTools = (data.mcpTools || []).map(t => ({
+      name: t.name || '', url: t.url || '', type: t.type || 'auto',
+      enabled: t.enabled !== false,
+    }));
+    const curUrl = data.tigerBotApiUrl || '';
+    const providerOpts = ['<option value="">Custom / manual…</option>']
+      .concat(AI_PROVIDERS.map(p =>
+        `<option value="${esc(p.name)}" ${p.url === curUrl ? 'selected' : ''}>${esc(p.name)}</option>`))
+      .join('');
+    const ck = v => v ? 'checked' : '';
+    const sv = (k, d) => (data[k] === undefined || data[k] === null) ? d : data[k];
     const el = document.getElementById('settings-content');
     el.innerHTML = `
-      <div class="settings-group">
-        <h3>AI Configuration</h3>
-        <div class="settings-row-field"><label>Model</label><input id="s-model" value="${esc(data.tigerBotModel || '')}"></div>
-        <div class="settings-row-field"><label>API URL</label><input id="s-api-url" value="${esc(data.tigerBotApiUrl || '')}"></div>
-        <div class="settings-row-field"><label>API Key</label><input id="s-api-key" type="password" value="${esc(data.tigerBotApiKey || '')}"></div>
+      <div class="settings-tabs" id="settings-tabs">
+        <button class="settings-tab active" data-pane="ai" onclick="switchSettingsTab('ai')">AI / API</button>
+        <button class="settings-tab" data-pane="mcp" onclick="switchSettingsTab('mcp')">MCP Tools</button>
+        <button class="settings-tab" data-pane="plugins" onclick="switchSettingsTab('plugins')">Plugins</button>
+        <button class="settings-tab" data-pane="skill" onclick="switchSettingsTab('skill')">Skill Update</button>
+        <button class="settings-tab" data-pane="remote" onclick="switchSettingsTab('remote')">Remote</button>
       </div>
-      <div class="settings-group">
-        <h3>MCP Tools</h3>
-        <div id="s-mcp-list">${(data.mcpTools || []).map(t => `
-          <div class="card">
-            <h3>${esc(t.name)} <span class="dot ${t.enabled !== false ? 'on' : ''}" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:${t.enabled !== false ? 'var(--green)' : 'var(--red)'}"></span></h3>
-            <div class="detail">URL: ${esc(t.url || '')}</div>
-            <div class="detail">Type: ${esc(t.type || 'auto')}</div>
+
+      <div class="settings-pane" id="pane-ai">
+        <div class="settings-group">
+          <h3>AI Provider</h3>
+          <div class="settings-row-field"><label>Connect to System</label>
+            <select id="s-provider" onchange="applyProvider()" style="flex:1">${providerOpts}</select>
+            <button class="pill-btn" onclick="addProvider()" style="flex:none;margin-left:8px">+ Add</button></div>
+          <div class="settings-row-field"><label>Model</label><input id="s-model" value="${esc(data.tigerBotModel || '')}"></div>
+          <div class="settings-row-field"><label>API URL</label><input id="s-api-url" value="${esc(curUrl)}"></div>
+          <div class="settings-row-field"><label>API Key</label><input id="s-api-key" type="password" value="${esc(data.tigerBotApiKey || '')}"></div>
+          <div class="settings-row-field"><label></label>
+            <button class="pill-btn" onclick="testConnection()">Test Connection</button>
+            <span id="s-test-status" style="font-size:13px;margin-left:10px"></span></div>
+        </div>
+        <div class="settings-group">
+          <h3>Web Search</h3>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-web-search" ${ck(data.webSearchEnabled)} style="flex:none;width:auto"> Enable web search</label></div>
+          <div class="settings-row-field"><label>Web Search API Key</label>
+            <input id="s-web-search-key" type="password" value="${esc(data.webSearchApiKey || '')}"></div>
+        </div>
+        <div class="settings-group">
+          <details>
+            <summary style="cursor:pointer;color:var(--accent);font-size:15px;font-weight:700">Orchestrator Soul &amp; Identity</summary>
+            <div style="color:var(--ink-soft);font-size:12px;margin:8px 0">Configure the orchestrator's internal cognition (SOUL.md) and external presentation (IDENTITY.md). Injected into the system prompt.</div>
+            <div class="settings-row-field" style="align-items:flex-start"><label>SOUL.md</label>
+              <textarea id="s-soul" rows="6" style="flex:1;font-family:monospace;font-size:12px">${esc(soul.soul || '')}</textarea></div>
+            <div class="settings-row-field" style="align-items:flex-start"><label>IDENTITY.md</label>
+              <textarea id="s-identity" rows="6" style="flex:1;font-family:monospace;font-size:12px">${esc(soul.identity || '')}</textarea></div>
+          </details>
+        </div>
+        <div class="settings-group">
+          <h3>Agent Harness</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">Controls for the autonomous tool loop (fully_auto / auto modes)</div>
+          ${HARNESS_NUM.map(f => numRow(data, f)).join('')}
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-h-agentAllowUnsandboxedExec" ${ck(data.agentAllowUnsandboxedExec)} style="flex:none;width:auto"> Allow UNSANDBOXED execution fallback (not recommended)</label></div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-h-agentReflectionEnabled" ${ck(data.agentReflectionEnabled)} style="flex:none;width:auto"> Enable self-reflection / evaluation</label></div>
+          ${HARNESS_REFLECT.map(f => numRow(data, f)).join('')}
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-h-agentStepVerifyEnabled" ${ck(data.agentStepVerifyEnabled === undefined ? true : data.agentStepVerifyEnabled)} style="flex:none;width:auto"> Verify each agent step result</label></div>
+          ${HARNESS_VERIFY.map(f => numRow(data, f)).join('')}
+        </div>
+      </div>
+
+      <div class="settings-pane" id="pane-mcp" hidden>
+        <div class="settings-group">
+          <h3>MCP Tools</h3>
+          <div id="s-mcp-list"></div>
+          <div class="settings-row-field" style="margin-top:10px">
+            <input id="s-mcp-name" placeholder="Name (e.g. github)" style="flex:1">
+            <input id="s-mcp-url" placeholder="URL or command" style="flex:2">
+            <select id="s-mcp-type" style="flex:none;width:110px">
+              <option value="auto">auto</option><option value="sse">sse</option>
+              <option value="http">http</option><option value="stdio">stdio</option>
+            </select>
+            <button class="pill-btn" onclick="addMcpTool()" style="flex:none">+ Add</button>
           </div>
-        `).join('') || '<div style="color:var(--ink-soft)">No MCP tools configured</div>'}</div>
+          <div style="margin-top:8px"><button class="pill-btn" onclick="reconnectMcp()">Reconnect All</button>
+            <span id="s-mcp-status" style="font-size:13px;margin-left:10px"></span></div>
+        </div>
       </div>
-      <div class="settings-group">
-        <h3>Remote Access</h3>
-        <div class="settings-row-field"><label>Remote Enabled</label><span style="font-weight:600;color:${data.remoteEnabled ? 'var(--green)' : 'var(--ink-soft)'}">${data.remoteEnabled ? 'Yes' : 'No'}</span></div>
-        <div class="settings-row-field"><label>Sandbox Dir</label><span style="font-size:13px;color:var(--ink-soft)">${esc(data.sandboxDir || '')}</span></div>
+
+      <div class="settings-pane" id="pane-plugins" hidden>
+        <div class="settings-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <h3 style="margin:0">Plugins</h3>
+            <button class="pill-btn primary" onclick="document.getElementById('s-plugin-file').click()">Install Plugin</button>
+          </div>
+          <input type="file" id="s-plugin-file" accept=".zip" style="display:none" onchange="installPluginFile(this)">
+          <div style="color:var(--ink-soft);font-size:12px;margin:8px 0 14px">Install a plugin from a .zip bundle (skills, agents, MCP servers, connectors).</div>
+          <div id="s-plugin-list"><div style="color:var(--ink-soft)">Loading…</div></div>
+          <span id="s-plugin-status" style="font-size:13px"></span>
+        </div>
       </div>
-      <div class="settings-group">
-        <h3>General</h3>
-        <div class="settings-row-field"><label>Web Search</label><span style="font-weight:600;color:${data.webSearchEnabled ? 'var(--green)' : 'var(--ink-soft)'}">${data.webSearchEnabled ? 'Enabled' : 'Disabled'}</span></div>
+
+      <div class="settings-pane" id="pane-skill" hidden>
+        <div class="settings-group">
+          <h3>Skill Auto-Update</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">Automatically generates reusable skills from your chat sessions using LLM analysis.</div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-skill-enabled" ${ck(sv('skillAutoUpdateEnabled', true))} style="flex:none;width:auto"> Enable automatic skill updates</label></div>
+          <div class="settings-row-field"><label>Update Interval</label>
+            <input type="number" id="s-skill-interval" value="${sv('skillAutoUpdateIntervalMinutes', 5)}" min="1" style="flex:none;width:160px">
+            <span style="font-size:13px;color:var(--ink-soft);margin-left:8px">minutes</span></div>
+          <div class="settings-row-field"><label>Max Candidates per Run</label>
+            <input type="number" id="s-skill-max" value="${sv('skillAutoUpdateMaxCandidates', 10)}" min="1" style="flex:none;width:160px"></div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-skill-approval" ${ck(sv('skillAutoUpdateRequireApproval', true))} style="flex:none;width:auto"> Require approval before applying updates</label></div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-skill-feedback" ${ck(sv('skillAutoUpdateHumanFeedbackEnabled', true))} style="flex:none;width:auto"> Enable human feedback (thumbs up/down on messages)</label></div>
+          <div style="margin-top:10px"><button class="pill-btn primary" onclick="runSkillUpdate()">▶ Run Auto-Update Now</button>
+            <span id="s-skill-run-status" style="font-size:13px;margin-left:10px"></span></div>
+        </div>
+        <div class="settings-group">
+          <h3>Status</h3>
+          <div id="s-skill-status"><div style="color:var(--ink-soft)">Loading…</div></div>
+        </div>
       </div>
-      <div style="margin-top:16px"><button class="pill-btn primary" onclick="saveSettings()" style="padding:12px 28px;font-size:14px">Save Settings</button></div>
+
+      <div class="settings-pane" id="pane-remote" hidden>
+        <div class="settings-group">
+          <h3>Remote Access</h3>
+          <div class="settings-row-field"><label>Remote Enabled</label><span style="font-weight:600;color:${data.remoteEnabled ? 'var(--green)' : 'var(--ink-soft)'}">${data.remoteEnabled ? 'Yes' : 'No'}</span></div>
+          <div class="settings-row-field"><label>Sandbox Dir</label><span style="font-size:13px;color:var(--ink-soft)">${esc(data.sandboxDir || '')}</span></div>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:16px"><button class="pill-btn primary" onclick="saveSettings()" style="padding:12px 28px;font-size:14px">Save Settings</button>
+        <span id="s-save-status" style="font-size:13px;margin-left:10px"></span></div>
     `;
+    renderMcpList();
+    loadSkillStatus();
+    loadPlugins();
   }).catch(() => {});
 }
 
+// ---- Plugins ----
+function loadPlugins() {
+  const el = document.getElementById('s-plugin-list');
+  if (!el) return;
+  api('/api/plugins').then(list => {
+    if (!Array.isArray(list) || !list.length) {
+      el.innerHTML = '<div style="color:var(--ink-soft)">No plugins installed</div>';
+      return;
+    }
+    el.innerHTML = list.map(p => {
+      const on = p.enabled !== false;
+      const cat = p.category ? `<span style="color:var(--accent);font-size:12px;margin-left:6px">${esc(p.category)}</span>` : '';
+      const c = p.components || {};
+      const counts = [
+        (c.skills || []).length ? `${c.skills.length} skills` : '',
+        (c.agents || []).length ? `${c.agents.length} agents` : '',
+        (c.mcp_servers || c.mcpServers || []).length ? `${(c.mcp_servers || c.mcpServers).length} MCP` : '',
+        (c.connectors || []).length ? `${c.connectors.length} connectors` : '',
+      ].filter(Boolean).join(' · ');
+      return `<div class="card" style="margin-bottom:10px">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <span class="dot ${on ? 'on' : ''}" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:${on ? 'var(--green)' : 'var(--red)'};margin-top:6px"></span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700">${esc(p.name || p.id)} <span style="color:var(--ink-soft);font-size:12px;font-weight:500">v${esc(p.version || '0.0.0')}</span>${cat}</div>
+            <div class="detail" style="margin:4px 0">${esc(p.description || '')}</div>
+            <div style="color:var(--ink-soft);font-size:12px">by ${esc(p.author || 'unknown')}${counts ? ' · ' + counts : ''}</div>
+          </div>
+          <button class="pill-btn" onclick="togglePlugin('${esc(p.id)}', ${!on})" style="flex:none;font-size:11px;padding:5px 10px">${on ? 'Disable' : 'Enable'}</button>
+          <button class="pill-btn danger" onclick="removePlugin('${esc(p.id)}', '${esc(p.name || p.id)}')" style="flex:none;font-size:11px;padding:5px 10px">Remove</button>
+        </div>
+      </div>`;
+    }).join('');
+  }).catch(() => {
+    el.innerHTML = '<div style="color:var(--ink-soft)">Plugins require the owner access token (not available with a remote token).</div>';
+  });
+}
+
+function togglePlugin(id, enabled) {
+  api('/api/plugins/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ enabled }) })
+    .then(loadPlugins).catch(e => alert('Failed: ' + e.message));
+}
+
+function removePlugin(id, name) {
+  if (!confirm('Remove plugin "' + name + '"? This uninstalls its skills, agents, and MCP servers.')) return;
+  api('/api/plugins/' + encodeURIComponent(id), { method: 'DELETE' })
+    .then(loadPlugins).catch(e => alert('Failed: ' + e.message));
+}
+
+function installPluginFile(input) {
+  const file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  const s = document.getElementById('s-plugin-status');
+  s.textContent = 'Installing ' + file.name + '…'; s.style.color = 'var(--ink-soft)';
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  const headers = {};
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  fetch(BASE + '/api/plugins/upload', { method: 'POST', body: fd, headers })
+    .then(r => r.json().then(j => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => {
+      if (ok && !j.error) { s.textContent = 'Installed'; s.style.color = 'var(--green)'; loadPlugins(); }
+      else { s.textContent = 'Failed: ' + (j.error || 'error'); s.style.color = 'var(--red)'; }
+    })
+    .catch(() => { s.textContent = 'Upload failed'; s.style.color = 'var(--red)'; });
+}
+
+// Switch the active settings tab (panes stay in the DOM so edits persist).
+function switchSettingsTab(name) {
+  document.querySelectorAll('#settings-tabs .settings-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.pane === name));
+  document.querySelectorAll('#settings-content .settings-pane').forEach(p =>
+    p.hidden = (p.id !== 'pane-' + name));
+}
+
+function loadSkillStatus() {
+  const el = document.getElementById('s-skill-status');
+  if (!el) return;
+  api('/api/skills/auto/status').then(st => {
+    const lastRun = st.lastRunAt ? esc(st.lastRunAt) : '—';
+    const summary = st.lastRunSummary ? esc(st.lastRunSummary) : '—';
+    const running = st.running;
+    el.innerHTML = `
+      <div class="settings-row-field"><label>Status</label>
+        <span style="font-weight:600;color:${running ? 'var(--accent)' : 'var(--green)'}">${running ? 'Running…' : '✓ Idle'}</span></div>
+      <div class="settings-row-field"><label>Last Run</label><span style="font-size:13px;color:var(--ink-soft)">${lastRun}</span></div>
+      <div class="settings-row-field"><label>Summary</label><span style="font-size:13px;color:var(--ink-soft)">${summary}</span></div>`;
+  }).catch(() => { el.innerHTML = '<div style="color:var(--ink-soft)">Status unavailable</div>'; });
+}
+
+function runSkillUpdate() {
+  const s = document.getElementById('s-skill-run-status');
+  s.textContent = 'Starting…'; s.style.color = 'var(--ink-soft)';
+  api('/api/skills/auto/run-now', { method: 'POST', body: '{}' })
+    .then(() => { s.textContent = 'Started'; s.style.color = 'var(--green)'; setTimeout(loadSkillStatus, 1500); })
+    .catch(() => { s.textContent = 'Failed'; s.style.color = 'var(--red)'; });
+}
+
+// Apply a built-in provider preset — fills API URL + default model.
+function applyProvider() {
+  const name = document.getElementById('s-provider').value;
+  const p = AI_PROVIDERS.find(x => x.name === name);
+  if (!p) return;
+  document.getElementById('s-api-url').value = p.url;
+  document.getElementById('s-model').value = p.model;
+}
+
+// Add a custom provider (session-local) and select it — matches the desktop
+// "+ Add" flow which just fills the API URL + model fields.
+function addProvider() {
+  const name = prompt('Provider name:');
+  if (!name) return;
+  const url = prompt('API URL (or claude-code / gemini-cli / codex-cli):') || '';
+  const model = prompt('Default model:') || '';
+  AI_PROVIDERS.push({ name, url, model });
+  const sel = document.getElementById('s-provider');
+  const opt = document.createElement('option');
+  opt.value = name; opt.textContent = name; sel.appendChild(opt);
+  sel.value = name;
+  applyProvider();
+}
+
+function renderMcpList() {
+  const el = document.getElementById('s-mcp-list');
+  if (!el) return;
+  if (!_mcpTools.length) {
+    el.innerHTML = '<div style="color:var(--ink-soft)">No MCP tools configured</div>';
+    return;
+  }
+  el.innerHTML = _mcpTools.map((t, i) => `
+    <div class="card" style="display:flex;align-items:center;gap:10px">
+      <span class="dot ${t.enabled ? 'on' : ''}" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:${t.enabled ? 'var(--green)' : 'var(--red)'}"></span>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600">${esc(t.name)}</div>
+        <div class="detail" style="word-break:break-all">${esc(t.url)} · ${esc(t.type || 'auto')}</div>
+      </div>
+      <button class="pill-btn" onclick="toggleMcpTool(${i})" style="flex:none;font-size:11px;padding:5px 10px">${t.enabled ? 'Disable' : 'Enable'}</button>
+      <button class="pill-btn danger" onclick="removeMcpTool(${i})" style="flex:none;font-size:11px;padding:5px 10px">Remove</button>
+    </div>`).join('');
+}
+
+function addMcpTool() {
+  const name = document.getElementById('s-mcp-name').value.trim();
+  const url = document.getElementById('s-mcp-url').value.trim();
+  const type = document.getElementById('s-mcp-type').value;
+  if (!name || !url) { alert('Name and URL are required'); return; }
+  _mcpTools.push({ name, url, type, enabled: true });
+  document.getElementById('s-mcp-name').value = '';
+  document.getElementById('s-mcp-url').value = '';
+  renderMcpList();
+}
+
+function toggleMcpTool(i) { _mcpTools[i].enabled = !_mcpTools[i].enabled; renderMcpList(); }
+function removeMcpTool(i) { _mcpTools.splice(i, 1); renderMcpList(); }
+
+function reconnectMcp() {
+  const s = document.getElementById('s-mcp-status');
+  s.textContent = 'Reconnecting…'; s.style.color = 'var(--ink-soft)';
+  api('/api/settings/mcp/reconnect-all', { method: 'POST', body: '{}' })
+    .then(() => { s.textContent = 'Reconnected'; s.style.color = 'var(--green)'; })
+    .catch(() => { s.textContent = 'Failed (need full access)'; s.style.color = 'var(--red)'; });
+}
+
+function testConnection() {
+  const s = document.getElementById('s-test-status');
+  s.textContent = 'Testing…'; s.style.color = 'var(--ink-soft)';
+  api('/api/settings/test-connection', { method: 'POST', body: JSON.stringify({
+    apiKey: document.getElementById('s-api-key').value,
+    apiUrl: document.getElementById('s-api-url').value,
+    model: document.getElementById('s-model').value,
+  }) }).then(r => {
+    s.textContent = r.message || (r.success ? 'OK' : 'Failed');
+    s.style.color = r.success ? 'var(--green)' : 'var(--red)';
+  }).catch(() => { s.textContent = 'Request failed'; s.style.color = 'var(--red)'; });
+}
+
 function saveSettings() {
+  const s = document.getElementById('s-save-status');
   const body = {
     tigerBotModel: document.getElementById('s-model').value,
     tigerBotApiUrl: document.getElementById('s-api-url').value || null,
     tigerBotApiKey: document.getElementById('s-api-key').value,
+    webSearchEnabled: document.getElementById('s-web-search').checked,
+    webSearchApiKey: document.getElementById('s-web-search-key').value,
+    mcpTools: _mcpTools.map(t => ({ name: t.name, url: t.url, type: t.type, enabled: t.enabled })),
+    agentAllowUnsandboxedExec: document.getElementById('s-h-agentAllowUnsandboxedExec').checked,
+    agentReflectionEnabled: document.getElementById('s-h-agentReflectionEnabled').checked,
+    agentStepVerifyEnabled: document.getElementById('s-h-agentStepVerifyEnabled').checked,
+    skillAutoUpdateEnabled: document.getElementById('s-skill-enabled').checked,
+    skillAutoUpdateIntervalMinutes: parseInt(document.getElementById('s-skill-interval').value, 10) || 5,
+    skillAutoUpdateMaxCandidates: parseInt(document.getElementById('s-skill-max').value, 10) || 10,
+    skillAutoUpdateRequireApproval: document.getElementById('s-skill-approval').checked,
+    skillAutoUpdateHumanFeedbackEnabled: document.getElementById('s-skill-feedback').checked,
   };
-  api('/api/settings', { method: 'PUT', body: JSON.stringify(body) })
-    .then(() => alert('Settings saved!')).catch(() => alert('Failed to save'));
+  // Numeric harness fields (ints unless flagged float)
+  [].concat(HARNESS_NUM, HARNESS_REFLECT, HARNESS_VERIFY).forEach(f => {
+    const raw = document.getElementById('s-h-' + f.key).value;
+    const n = f.float ? parseFloat(raw) : parseInt(raw, 10);
+    if (!isNaN(n)) body[f.key] = n;
+  });
+  if (s) { s.textContent = 'Saving…'; s.style.color = 'var(--ink-soft)'; }
+  // Soul/Identity persist to their own endpoint (editable even for remote tokens).
+  const soul = document.getElementById('s-soul');
+  const identity = document.getElementById('s-identity');
+  const soulSave = (soul && identity)
+    ? api('/api/settings/soul-identity', { method: 'PUT', body: JSON.stringify({ soul: soul.value, identity: identity.value }) }).catch(() => {})
+    : Promise.resolve();
+  Promise.all([
+    api('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
+    soulSave,
+  ]).then(() => { if (s) { s.textContent = 'Saved'; s.style.color = 'var(--green)'; } })
+    .catch(() => {
+      if (s) { s.textContent = 'Failed — settings are read-only for remote tokens'; s.style.color = 'var(--red)'; }
+    });
 }
 
 // ========== HELPERS ==========
