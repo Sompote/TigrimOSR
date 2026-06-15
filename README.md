@@ -8,12 +8,12 @@
 - **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, or any OpenAI-compatible API — plus 3 local CLI agents (Claude Code, Gemini CLI, Codex) with no API keys.
 - **Full tool calling** — web search, Python, file I/O, shell, MCP servers, and the ClawHub skill marketplace. Charts, images, and docs render inline with click-to-zoom.
 - **Plugin system** — zip plugins bundling skills, MCP servers, agents, and connectors. Compatible with Claude Desktop/Code plugins and npm MCP packages.
-- **Run anywhere** — native macOS app, headless Linux server, or any browser; toggle Local/Remote from one interface.
+- **Run it your way** — as a native **Rust desktop UI** on your machine, **headless** on a machine or in **Docker**, and connect from any browser via the built-in **web UI**. Toggle Local/Remote from one interface.
 - **Built in Rust** — fast, low-memory, single binary, no Node/Python runtime. Rewritten from [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
 
 ### Inline charts & files in chat
 
-Files the agent produces — charts, plots, images, and documents — render **inline in the conversation** by default (no separate panel to hunt through). Ask for a plot and it appears right under the reply. Click any image to view it **full size**, and click a document chip (e.g. a `.md` report) to open it in a built-in viewer with Markdown rendering and a "Save a copy" button. Prefer the classic side panel? Switch in **Settings → Theme → Output files**.
+Files the agent produces — charts, plots, images, and documents — render **inline in the conversation** by default (no separate panel to hunt through). Ask for a plot and it appears right under the reply. Click any image to view it **full size**, and click a document chip (e.g. a `.md` report) to open it in a built-in viewer with Markdown rendering and a "Save a copy" button. Prefer the classic side panel? Switch in **Settings → Theme → Output files**. The same experience works **everywhere it runs** — the native Rust desktop app, a headless or Docker server, and any browser.
 
 ![Inline chart in chat](assets/screenshot_inline_chart.png)
 
@@ -21,7 +21,7 @@ Files the agent produces — charts, plots, images, and documents — render **i
 
 ### Mobile Remote Connection
 
-Connect from your phone to TigrimOS running on a cloud server — full chat with inline charts, tool execution, and file browsing.
+Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or in Docker — then connect from any browser or your phone. The screenshots below show a cloud server controlled entirely from a mobile browser: full chat with inline charts, tool execution, and file browsing.
 
 <p align="center">
   <img src="assets/screenshot_mobile_remote_1.jpg" width="300" alt="Mobile Remote Chat">
@@ -46,26 +46,6 @@ Connect from your phone to TigrimOS running on a cloud server — full chat with
 - **Resizable layout** — drag handles for chat sidebar and output panel widths
 - **Session management** — persistent chat history with project context
 - **LaTeX math** — KaTeX rendering in web UI for equations and formulas
-
----
-
-## Screenshots
-
-![TigrimOSR Architecture](assets/architecture.png)
-
-![TigrimOSR Screenshot](assets/screenshot.png)
-
-### AI Provider Settings
-
-10 built-in providers including 3 local CLI agents (Claude Code, Gemini CLI, Codex) — no API keys needed for local providers.
-
-![AI Provider Settings](assets/screenshot_providers.png)
-
-### Agent Swarm Editor
-
-Design multi-agent systems visually — create architectures manually or generate them automatically with AI. Supports hierarchical, hybrid, mesh, pipeline, and P2P orchestration modes.
-
-![Agent Swarm Editor](assets/screenshot_agents.png)
 
 ---
 
@@ -540,6 +520,26 @@ multi-GB `target\` folder; the built `.exe` you already copied out is unaffected
 | Built-in **VM / QEMU terminal** doesn't start | Expected — that feature is **macOS/Linux only**. Everything else (chat, tools, Python, web/remote UI) works on Windows. |
 
 </details>
+
+---
+
+## Screenshots
+
+![TigrimOSR Architecture](assets/architecture.png)
+
+![TigrimOSR Screenshot](assets/screenshot.png)
+
+### AI Provider Settings
+
+10 built-in providers including 3 local CLI agents (Claude Code, Gemini CLI, Codex) — no API keys needed for local providers.
+
+![AI Provider Settings](assets/screenshot_providers.png)
+
+### Agent Swarm Editor
+
+Design multi-agent systems visually — create architectures manually or generate them automatically with AI. Supports hierarchical, hybrid, mesh, pipeline, and P2P orchestration modes.
+
+![Agent Swarm Editor](assets/screenshot_agents.png)
 
 ---
 
