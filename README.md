@@ -535,9 +535,21 @@ multi-GB `target\` folder; the built `.exe` you already copied out is unaffected
 
 ## Screenshots
 
+### Architecture
+
+How the pieces fit together — the Rust core, the agent/tool runtime, the inter-agent protocols (TCP, Bus, Queue, Blackboard), and the desktop/web/remote front-ends that all talk to the same engine.
+
 ![TigrimOSR Architecture](assets/architecture.png)
 
+*Above: the overall system architecture — one binary serving the native UI, the embedded web UI, and remote/headless access.*
+
+### Main desktop app
+
+The native Rust desktop UI: a chat-centric workspace with the conversation in the middle, sessions/sidebar on the left, and an output area for files and charts the agent produces.
+
 ![TigrimOSR Screenshot](assets/screenshot.png)
+
+*Above: the main chat view where you talk to the agent, watch tool calls stream live, and see generated files render inline.*
 
 ### AI Provider Settings
 
@@ -545,11 +557,15 @@ multi-GB `target\` folder; the built `.exe` you already copied out is unaffected
 
 ![AI Provider Settings](assets/screenshot_providers.png)
 
+*Above: the Settings → AI panel — pick a provider, paste an API key (or use a key-free local CLI agent), and set the model and harness parameters.*
+
 ### Agent Swarm Editor
 
 Design multi-agent systems visually — create architectures manually or generate them automatically with AI. Supports hierarchical, hybrid, mesh, pipeline, and P2P orchestration modes.
 
 ![Agent Swarm Editor](assets/screenshot_agents.png)
+
+*Above: the visual swarm editor — drag agents onto the canvas, draw connections, and pick each link's protocol; or let AI generate the whole architecture.*
 
 ---
 
