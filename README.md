@@ -11,13 +11,13 @@
 - **Run it your way** — as a native **Rust desktop UI** on your machine, **headless** on a machine or in **Docker**, and connect from any browser via the built-in **web UI**. Toggle Local/Remote from one interface.
 - **Built in Rust** — fast, low-memory, single binary, no Node/Python runtime. Rewritten from [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
 
-### Inline charts & files in chat
+### Native Rust desktop app
 
-Files the agent produces — charts, plots, images, and documents — render **inline in the conversation** by default (no separate panel to hunt through). Ask for a plot and it appears right under the reply. Click any image to view it **full size**, and click a document chip (e.g. a `.md` report) to open it in a built-in viewer with Markdown rendering and a "Save a copy" button. Prefer the classic side panel? Switch in **Settings → Theme → Output files**. The same experience works **everywhere it runs** — the native Rust desktop app, a headless or Docker server, and any browser.
+Install it on your machine and run the UI as a **native Rust app** — a single, fast binary with quick startup and low memory.
 
-![Inline chart in chat](assets/screenshot_inline_chart.png)
+![TigrimOSR native desktop app](assets/screenshot_inline_chart.png)
 
-*Above: "plot oil price and time in graph" → the agent runs Python (matplotlib), saves `output_file/oil_price_history.png`, and embeds the annotated chart directly in its answer. Hovering shows "Click to view full size".*
+*Above: the native desktop app — ask for a plot and the agent runs Python (matplotlib) and embeds the chart inline in its answer.*
 
 ### Mobile Remote Connection
 
@@ -135,6 +135,9 @@ docker compose up -d --build
 in with the token from your `.env`. Then set your AI provider and API key under
 **Settings** (saved to `./data`, so it persists).
 
+<details>
+<summary>Check it's running, day-to-day commands, data, safety, network & config reference</summary>
+
 ### Check it's running
 
 ```bash
@@ -195,7 +198,12 @@ this on networks you trust.
 > server on `3001`, run it on a different port to avoid a clash, e.g.
 > `PORT=3002 ./tigrimos`.
 
+</details>
+
 ### Headless on Windows (Docker Desktop)
+
+<details>
+<summary>Windows setup — one-command PowerShell script, manual steps & troubleshooting</summary>
 
 The same container runs **headless on Windows** with no Rust, Python, or build
 tools installed on the host — only Docker Desktop. This is the easiest way to run
@@ -275,6 +283,8 @@ above apply on Windows verbatim — run them in PowerShell.
 > **Tip:** you can also run these commands from **WSL 2** (Ubuntu) instead of
 > PowerShell — the macOS/Linux instructions above apply verbatim there, and Docker
 > Desktop shares the same engine.
+
+</details>
 
 ---
 
@@ -595,6 +605,9 @@ Enable sub-agents in Settings and select an agent config file. Included configs 
 | `BOQ.yaml` | Bill of quantities team |
 | `research_agent.yaml` | General research agent |
 
+<details>
+<summary>Agent modes, inter-agent protocols & YAML format</summary>
+
 ### Agent Modes
 
 | Mode | Description |
@@ -653,11 +666,16 @@ connections:
     protocol: tcp
 ```
 
+</details>
+
 ---
 
 ## Plugin System
 
-TigrimOS supports a **zip-based plugin system** that bundles skills, MCP servers, agent configs, and service connectors into a single distributable package. Install one zip — get everything registered automatically.
+TigrimOS supports a **zip-based plugin system** that bundles skills, MCP servers, agent configs, and service connectors into a single distributable package. Install one zip — get everything registered automatically. From the UI: **Settings → Plugins → Install Plugin**.
+
+<details>
+<summary>Install via API, supported formats & package layout</summary>
 
 ### Installing Plugins
 
@@ -695,6 +713,8 @@ my-plugin.zip
 └── README.md
 ```
 
+</details>
+
 See **[PLUGINS.md](PLUGINS.md)** for the full developer guide — manifest format, connector config fields, MCP server config, Claude format compatibility, and the REST API reference.
 
 ---
@@ -717,6 +737,9 @@ sudo systemctl stop tigrimos     # stop server
 sudo systemctl restart tigrimos  # restart after config change
 sudo journalctl -u tigrimos -f   # view live logs
 ```
+
+<details>
+<summary>Manual headless setup, systemd, Nginx + HTTPS, firewall & security</summary>
 
 ### Manual Headless Setup
 
@@ -866,6 +889,8 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 | Remote Token (Settings) | Settings → Remote Instances → set token + enable | When "Enable remote agent access" is checked |
 | `--headless` prompt | Interactive prompt on startup | Always in headless mode |
 | No token set | — | No auth (local desktop use only) |
+
+</details>
 
 ---
 
@@ -1044,6 +1069,9 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ## Project Structure
 
+<details>
+<summary>Show the source tree</summary>
+
 ```
 TigrimOSR/
 ├── src/
@@ -1086,6 +1114,8 @@ TigrimOSR/
 ├── skills/                  # Loadable skill modules (SKILL.md)
 └── Cargo.toml
 ```
+
+</details>
 
 ## Keyboard Shortcuts
 
