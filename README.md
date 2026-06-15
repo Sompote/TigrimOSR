@@ -11,22 +11,6 @@
 - **Run anywhere** — native macOS app, headless Linux server, or any browser; toggle Local/Remote from one interface.
 - **Built in Rust** — fast, low-memory, single binary, no Node/Python runtime. Rewritten from [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
 
-![TigrimOSR Architecture](assets/architecture.png)
-
-![TigrimOSR Screenshot](assets/screenshot.png)
-
-### AI Provider Settings
-
-10 built-in providers including 3 local CLI agents (Claude Code, Gemini CLI, Codex) — no API keys needed for local providers.
-
-![AI Provider Settings](assets/screenshot_providers.png)
-
-### Agent Swarm Editor
-
-Design multi-agent systems visually — create architectures manually or generate them automatically with AI. Supports hierarchical, hybrid, mesh, pipeline, and P2P orchestration modes.
-
-![Agent Swarm Editor](assets/screenshot_agents.png)
-
 ### Inline charts & files in chat
 
 Files the agent produces — charts, plots, images, and documents — render **inline in the conversation** by default (no separate panel to hunt through). Ask for a plot and it appears right under the reply. Click any image to view it **full size**, and click a document chip (e.g. a `.md` report) to open it in a built-in viewer with Markdown rendering and a "Save a copy" button. Prefer the classic side panel? Switch in **Settings → Theme → Output files**.
@@ -62,6 +46,26 @@ Connect from your phone to TigrimOS running on a cloud server — full chat with
 - **Resizable layout** — drag handles for chat sidebar and output panel widths
 - **Session management** — persistent chat history with project context
 - **LaTeX math** — KaTeX rendering in web UI for equations and formulas
+
+---
+
+## Screenshots
+
+![TigrimOSR Architecture](assets/architecture.png)
+
+![TigrimOSR Screenshot](assets/screenshot.png)
+
+### AI Provider Settings
+
+10 built-in providers including 3 local CLI agents (Claude Code, Gemini CLI, Codex) — no API keys needed for local providers.
+
+![AI Provider Settings](assets/screenshot_providers.png)
+
+### Agent Swarm Editor
+
+Design multi-agent systems visually — create architectures manually or generate them automatically with AI. Supports hierarchical, hybrid, mesh, pipeline, and P2P orchestration modes.
+
+![Agent Swarm Editor](assets/screenshot_agents.png)
 
 ---
 
