@@ -66,7 +66,23 @@ Connect from your phone to TigrimOS running on a cloud server — full chat with
 
 ---
 
-## Run with Docker (easiest & safest)
+## Installation
+
+Two ways to install TigrimOS — pick one:
+
+| | **[Install in Docker](#install-in-docker-recommended)** | **[Install & run on your machine](#install--run-on-your-machine)** |
+|---|---|---|
+| **What you get** | Headless web server you use from a **browser** | Native **desktop app** (and optional headless server) |
+| **You install** | Just Docker Desktop | Rust toolchain + Python (build from source) |
+| **Best for** | Quickest, safest start; servers; Windows | Mac/Linux desktop UI, VM/QEMU terminal, hacking on the code |
+| **Setup time** | One command | ~5–15 min first build |
+
+> **Not sure?** Use **Docker** — it's the fastest and safest, and the agent's code
+> execution stays isolated inside the container.
+
+---
+
+## Install in Docker (recommended)
 
 Run TigrimOS as a self-contained web server in a container — **no Rust toolchain,
 Python, or system libraries to install on your machine.** You use it from your
@@ -279,9 +295,11 @@ above apply on Windows verbatim — run them in PowerShell.
 
 ---
 
-## Quick Install
+## Install & run on your machine
 
-One-command installer that clones, builds, and sets up the app for you.
+Build TigrimOS natively from source for the **desktop app** (and features the
+container can't provide, like the VM/QEMU terminal). The one-command installer below
+clones, builds, and sets up the app for you; manual step-by-step guides per OS follow.
 
 **Prerequisites:** Install Rust first (if not already installed):
 ```bash
