@@ -81,7 +81,33 @@ isolated from your host.
   docker --version && docker compose version
   ```
 
-### Setup (4 steps)
+Three ways to start, fastest first:
+
+- **macOS — one command** → run the [`docker-start.sh`](#easiest-one-command-macos) script (auto-token, builds, opens the browser).
+- **macOS / Linux — manual** → the [four steps](#manual-setup-macos--linux) below.
+- **Windows** → [Headless on Windows](#headless-on-windows-docker-desktop).
+
+All three build the **same container** and share the same data, commands, and security model documented further down.
+
+### Easiest: one command (macOS)
+
+If you just want it running, this single script checks Docker, **auto-generates your
+login token**, builds the container, starts the server, and opens the browser for
+you — no manual `.env` editing:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.sh | bash
+```
+
+Already cloned the repo? Run it in place instead:
+```bash
+./docker-start.sh
+```
+It prints your token (also saved to `.env`) at the end — paste it into the web UI to
+log in. Re-running is safe: it reuses your existing token. Prefer to do it by hand?
+Follow the four steps below.
+
+### Manual setup (macOS / Linux)
 
 **1. Get the code**
 ```bash
@@ -94,14 +120,11 @@ token in it. This token is what you'll type into the web UI to log in.
 ```bash
 cp .env.example .env
 
-# Generate a token and write it into .env (macOS/Linux):
+# Generate a token and write it into .env:
 echo "ACCESS_TOKEN=$(openssl rand -hex 32)" > .env
 ```
-> On Windows PowerShell:
-> ```powershell
-> "ACCESS_TOKEN=$([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))" | Out-File -Encoding ascii .env
-> ```
 > Keep `.env` private — it holds your login secret. It is already git-ignored.
+> (On Windows, see [Headless on Windows](#headless-on-windows-docker-desktop) for the PowerShell equivalent.)
 
 **3. Build and start.** The first build compiles the Rust binary and takes a few
 minutes; later starts are instant.
@@ -172,6 +195,68 @@ this on networks you trust.
 > toggle **Remote** in the sidebar. Because the desktop app also starts its own
 > server on `3001`, run it on a different port to avoid a clash, e.g.
 > `PORT=3002 ./tigrimos`.
+
+### Headless on Windows (Docker Desktop)
+
+The same container runs **headless on Windows** with no Rust, Python, or build
+tools installed on the host — only Docker Desktop. This is the easiest way to run
+TigrimOS on Windows: everything (and all agent code execution) stays inside the
+Linux container, and you use the app from your browser. The built-in **VM/QEMU
+terminal** is the only feature unavailable in containers; chat, tools, Python,
+web/remote UI all work.
+
+**1. Install Docker Desktop for Windows** (uses the WSL 2 backend — the installer
+enables it for you). Get it from
+<https://docs.docker.com/desktop/install/windows-install/>, then launch it once so
+the engine is running. Verify in **PowerShell**:
+```powershell
+docker --version
+docker compose version
+```
+
+**2. Get the code** (Git for Windows, or download the ZIP from GitHub):
+```powershell
+git clone https://github.com/Sompote/TigrimOSR.git
+cd TigrimOSR
+```
+
+**3. Create your login token** in `.env` (this is what you type into the web UI):
+```powershell
+Copy-Item .env.example .env
+
+# Generate a strong random token and write it to .env:
+"ACCESS_TOKEN=$([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))" `
+  | Out-File -Encoding ascii .env
+```
+> Keep `.env` private — it holds your login secret. It is already git-ignored.
+
+**4. Build and start.** The first build compiles the Rust binary (a few minutes);
+later starts are instant.
+```powershell
+docker compose up -d --build
+```
+
+**5. Open the app.** Browse to **http://localhost:3001/web/** and log in with the
+token from `.env`. Set your AI provider and API key under **Settings** (saved to
+`.\data`, so it persists).
+
+The same [Day-to-day commands](#day-to-day-commands), [data folders](#where-your-data-lives),
+[network](#network-exposure), and [configuration](#configuration-reference) sections
+above apply on Windows verbatim — run them in PowerShell.
+
+#### Windows-specific notes
+
+| Symptom / question | Fix |
+|--------------------|-----|
+| Container exits at once; logs say `exec /usr/local/bin/docker-entrypoint.sh: no such file or directory` or `set: Illegal option` | Git rewrote the entrypoint to **CRLF**. The included `.gitattributes` forces LF — make sure you cloned *after* it was added, or run `git config core.autocrlf false` then re-clone. |
+| `error during connect` / `docker: command not found` | **Docker Desktop isn't running** (or WSL 2 isn't enabled). Start Docker Desktop and wait for the whale icon to settle, then retry. |
+| `running scripts is disabled on this system` | These are normal programs, not scripts — they run in any PowerShell window. If a wrapper script is blocked, use `Set-ExecutionPolicy -Scope Process Bypass`. |
+| Port `3001` already in use (e.g. the desktop app) | Set a different host port in `docker-compose.yml` (e.g. `"127.0.0.1:3002:3001"`) and use that in the URL. |
+| Reach it from your phone/LAN | Edit `docker-compose.yml`: change `"127.0.0.1:3001:3001"` to `"3001:3001"`, then `docker compose up -d`. The token is still required. Only do this on trusted networks. |
+
+> **Tip:** you can also run these commands from **WSL 2** (Ubuntu) instead of
+> PowerShell — the macOS/Linux instructions above apply verbatim there, and Docker
+> Desktop shares the same engine.
 
 ---
 
