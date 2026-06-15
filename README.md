@@ -1,16 +1,15 @@
 # TigrimOSR v0.5.5
 
-**TigrimOSR** is a native desktop AI agent platform that lets you orchestrate teams of specialist AI agents — all from a single, self-contained binary. Define agent swarms in simple YAML, connect them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously to solve complex tasks.
+**TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously.
 
 ### Why TigrimOSR?
 
-- **Multi-agent orchestration** — Build teams of AI agents with 6 orchestration modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator). Agents communicate through real protocols and coordinate via a shared blackboard.
-- **Any LLM, any provider** — Works with OpenAI, Anthropic, DeepSeek, Kimi, Google Gemini, local Ollama, or any OpenAI-compatible API. Also supports 3 local CLI agents (Claude Code, Gemini CLI, Codex) with zero API keys.
-- **Full tool calling** — Web search, Python execution, file read/write, shell commands, MCP tool servers, and a skill marketplace (ClawHub). Images, markdown, CSV, PDF, and charts render inline in chat (or a side panel) with click-to-zoom.
-- **Make it yours** — Customizable themes saved to `theme.yaml`: color presets (Default, Dark, Minimal, Transparent, Colorful), per-color editing with live preview, bundled modern web fonts, and adjustable font sizes.
-- **Plugin system** — Install zip-based plugins that bundle skills, MCP servers, agent configs, and service connectors. Compatible with Claude Desktop Extensions, Claude Code Plugins, and npm MCP packages.
-- **Run anywhere** — Native macOS desktop app, headless Linux server, or access from any browser via the built-in web UI. Toggle Local/Remote seamlessly from the same interface.
-- **Built in Rust** — Fast startup, low memory, single binary. No Node.js or Python runtime needed to run the app itself. Rewritten from the original [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
+- **Multi-agent orchestration** — 6 modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator) with real protocols and a shared blackboard.
+- **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, or any OpenAI-compatible API — plus 3 local CLI agents (Claude Code, Gemini CLI, Codex) with no API keys.
+- **Full tool calling** — web search, Python, file I/O, shell, MCP servers, and the ClawHub skill marketplace. Charts, images, and docs render inline with click-to-zoom.
+- **Plugin system** — zip plugins bundling skills, MCP servers, agents, and connectors. Compatible with Claude Desktop/Code plugins and npm MCP packages.
+- **Run anywhere** — native macOS app, headless Linux server, or any browser; toggle Local/Remote from one interface.
+- **Built in Rust** — fast, low-memory, single binary, no Node/Python runtime. Rewritten from [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
 
 ![TigrimOSR Architecture](assets/architecture.png)
 
