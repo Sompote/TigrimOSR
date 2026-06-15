@@ -205,6 +205,25 @@ Linux container, and you use the app from your browser. The built-in **VM/QEMU
 terminal** is the only feature unavailable in containers; chat, tools, Python,
 web/remote UI all work.
 
+#### Easiest: one command (PowerShell)
+
+With **Docker Desktop already installed and running**, this single script checks
+Docker, **auto-generates your login token**, builds the container, starts the
+server, and opens the browser — no manual `.env` editing:
+
+```powershell
+irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.ps1 | iex
+```
+
+Already cloned the repo? Run it in place instead:
+```powershell
+.\docker-start.ps1
+```
+It prints your token (also saved to `.env`) at the end. Re-running is safe — it
+reuses your existing token. Prefer to do it by hand? Follow the manual steps below.
+
+#### Manual setup
+
 **1. Install Docker Desktop for Windows** (uses the WSL 2 backend — the installer
 enables it for you). Get it from
 <https://docs.docker.com/desktop/install/windows-install/>, then launch it once so
