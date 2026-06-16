@@ -514,6 +514,13 @@ pub struct Settings {
     pub approval_required_for_file_delete: Option<bool>,
     #[serde(rename = "approvalRequiredForAgentSpawn", skip_serializing_if = "Option::is_none")]
     pub approval_required_for_agent_spawn: Option<bool>,
+    /// Whether background swarm sub-agents may auto-run tools that would otherwise
+    /// require interactive approval. Background agents have no UI to prompt, so the
+    /// interactive approval channel cannot serve them; this toggle governs them instead.
+    /// Defaults to true so auto-swarm runs don't stall. Set false to make sub-agents
+    /// refuse approval-gated tools (run_shell/run_python/etc.) rather than run them.
+    #[serde(rename = "autoApproveSubagentTools", skip_serializing_if = "Option::is_none")]
+    pub auto_approve_subagent_tools: Option<bool>,
     // Catch-all for unknown fields
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -567,6 +574,9 @@ pub async fn get_settings() -> Settings {
     }
     if settings.approval_required_for_agent_spawn.is_none() {
         settings.approval_required_for_agent_spawn = Some(false);
+    }
+    if settings.auto_approve_subagent_tools.is_none() {
+        settings.auto_approve_subagent_tools = Some(true);
     }
     settings
 }

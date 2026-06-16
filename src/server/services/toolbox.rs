@@ -8474,14 +8474,40 @@ async fn execute_tool_dispatch(
     on_update: Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static>,
     _realtime: bool,
 ) -> Value {
-    // Gate: require user approval for dangerous tools
+    // Gate: require user approval for dangerous tools.
+    //
+    // Interactive approval is only meaningful for the foreground "main" agent: it relies
+    // on a single global oneshot channel (APPROVAL_TX/APPROVAL_RX) plus a UI prompt the
+    // user actually sees. Background swarm sub-agents (agent_id != "main") have no UI to
+    // approve them, and routing several concurrent sub-agents through that one global slot
+    // makes each request overwrite the previous receiver — the earlier agent's oneshot
+    // never fires, it blocks for the full 120s timeout, its result never returns, and every
+    // agent waiting on it via wait_result deadlocks. That is the swarm hang.
+    //
+    // So only the main agent uses the interactive channel. Background sub-agents are
+    // governed by the `auto_approve_subagent_tools` setting (default true) instead.
     if tool_requires_approval(tool_name).await {
-        let approved = request_tool_approval(tool_name, tool_args, &on_update).await;
+        let is_main_agent = sub_agent.agent_id.is_empty() || sub_agent.agent_id == "main";
+        let approved = if is_main_agent {
+            request_tool_approval(tool_name, tool_args, &on_update).await
+        } else {
+            crate::server::data::get_settings()
+                .await
+                .auto_approve_subagent_tools
+                .unwrap_or(true)
+        };
         if !approved {
-            return json!({
-                "ok": false,
-                "error": format!("User denied execution of '{}'", tool_name)
-            });
+            let reason = if is_main_agent {
+                format!("User denied execution of '{}'", tool_name)
+            } else {
+                format!(
+                    "Tool '{}' requires approval but background sub-agents cannot prompt for it. \
+                     Enable `auto_approve_subagent_tools` in settings to let swarm agents run \
+                     sandboxed approval-gated tools, or have this agent complete its task without it.",
+                    tool_name
+                )
+            };
+            return json!({ "ok": false, "error": reason });
         }
     }
 
