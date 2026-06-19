@@ -2682,6 +2682,28 @@ function loadSettings() {
             </select></div>
         </div>
         <div class="settings-group">
+          <h3>Tool Approval</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">When enabled, the agent must ask for your approval before running each tool type. Turn these off for hands-free / autonomous runs.</div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-approval-shell" ${data.approvalRequiredForShell === false ? '' : 'checked'} style="flex:none;width:auto"> Require approval — shell (run_shell)</label></div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-approval-python" ${data.approvalRequiredForPython === false ? '' : 'checked'} style="flex:none;width:auto"> Require approval — Python / React (run_python, run_react)</label></div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-approval-file-write" ${ck(data.approvalRequiredForFileWrite)} style="flex:none;width:auto"> Require approval — write files (write_file)</label></div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-approval-file-delete" ${data.approvalRequiredForFileDelete === false ? '' : 'checked'} style="flex:none;width:auto"> Require approval — delete files (delete_file)</label></div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-approval-agent-spawn" ${ck(data.approvalRequiredForAgentSpawn)} style="flex:none;width:auto"> Require approval — spawn sub-agent</label></div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-auto-approve-subagent" ${data.autoApproveSubagentTools === false ? '' : 'checked'} style="flex:none;width:auto"> Auto-approve tools for background sub-agents</label></div>
+        </div>
+        <div class="settings-group">
           <details>
             <summary style="cursor:pointer;color:var(--accent);font-size:15px;font-weight:700">Orchestrator Soul &amp; Identity</summary>
             <div style="color:var(--ink-soft);font-size:12px;margin:8px 0">Configure the orchestrator's internal cognition (SOUL.md) and external presentation (IDENTITY.md). Injected into the system prompt.</div>
@@ -2970,6 +2992,12 @@ function saveSettings() {
     webSearchApiKey: document.getElementById('s-web-search-key').value,
     browserControlEnabled: document.getElementById('s-browser-control').checked,
     browserEngine: document.getElementById('s-browser-engine').value,
+    approvalRequiredForShell: document.getElementById('s-approval-shell').checked,
+    approvalRequiredForPython: document.getElementById('s-approval-python').checked,
+    approvalRequiredForFileWrite: document.getElementById('s-approval-file-write').checked,
+    approvalRequiredForFileDelete: document.getElementById('s-approval-file-delete').checked,
+    approvalRequiredForAgentSpawn: document.getElementById('s-approval-agent-spawn').checked,
+    autoApproveSubagentTools: document.getElementById('s-auto-approve-subagent').checked,
     mcpTools: _mcpTools.map(t => ({ name: t.name, url: t.url, type: t.type, enabled: t.enabled })),
     agentAllowUnsandboxedExec: document.getElementById('s-h-agentAllowUnsandboxedExec').checked,
     agentReflectionEnabled: document.getElementById('s-h-agentReflectionEnabled').checked,
