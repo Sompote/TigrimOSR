@@ -521,6 +521,17 @@ pub struct Settings {
     /// refuse approval-gated tools (run_shell/run_python/etc.) rather than run them.
     #[serde(rename = "autoApproveSubagentTools", skip_serializing_if = "Option::is_none")]
     pub auto_approve_subagent_tools: Option<bool>,
+    /// Browser control: when true, a Playwright browser MCP server is
+    /// auto-registered so the agent can drive a real web browser (navigate,
+    /// click, type, screenshot). Off by default for safety — once on, the agent
+    /// can act in the browser (submit forms, click buttons) as the user.
+    #[serde(rename = "browserControlEnabled", skip_serializing_if = "Option::is_none")]
+    pub browser_control_enabled: Option<bool>,
+    /// Which engine browser control drives: "chromium" (Playwright's bundled
+    /// build — portable, always available) or "chrome" (the user's installed
+    /// Google Chrome). Defaults to "chromium".
+    #[serde(rename = "browserEngine", skip_serializing_if = "Option::is_none")]
+    pub browser_engine: Option<String>,
     // Catch-all for unknown fields
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -577,6 +588,12 @@ pub async fn get_settings() -> Settings {
     }
     if settings.auto_approve_subagent_tools.is_none() {
         settings.auto_approve_subagent_tools = Some(true);
+    }
+    if settings.browser_control_enabled.is_none() {
+        settings.browser_control_enabled = Some(false);
+    }
+    if settings.browser_engine.is_none() {
+        settings.browser_engine = Some("chromium".to_string());
     }
     settings
 }
