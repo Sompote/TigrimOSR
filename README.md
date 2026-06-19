@@ -740,23 +740,73 @@ See **[PLUGINS.md](PLUGINS.md)** for the full developer guide — manifest forma
 
 Let the agent drive a **real web browser** — navigate to pages, read content, click, fill forms, take screenshots, manage tabs, and run JavaScript. It's powered by [Playwright MCP](https://github.com/microsoft/playwright-mcp) running through TigrimOS's built-in MCP client, and is **off by default for safety** (once on, the agent can act in the browser — submit forms, click buttons, use logged-in sessions — as you).
 
-### Setup
+### Setup — step by step
 
-1. **Install Node.js** (v18+) so `npx` is available — Playwright MCP runs on Node. Check with `node --version`.
-2. **Install the browser binary** (one time). Playwright MCP uses its own managed *Chrome for Testing* build (~280 MB), not your system browser:
-   ```bash
-   npx @playwright/mcp@latest install-browser chrome-for-testing
-   ```
-   If you see an `EPERM` / "root-owned files" error from npm, fix the cache once with `sudo chown -R $(id -u):$(id -g) ~/.npm` and re-run.
-3. In the app: **Settings → Security → Browser Control → ☑ Enable browser control**.
-4. Pick an **engine**:
-   - **Chromium** *(default)* — Playwright's managed Chromium build. Portable and recommended.
-   - **Chrome** — your installed Google Chrome channel. Fewer bot/CAPTCHA blocks on big sites, but Chrome must be installed.
-5. That's it — the browser tools register immediately (saving the setting reconnects MCP). The agent gains tools like `mcp_browser_browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, and `browser_take_screenshot`. Screenshots render inline in chat.
+#### Step 1 — Install Node.js (v18 or newer)
 
-> If a navigate fails with `Browser "chrome-for-testing" is not installed`, step 2 was skipped — run that command and reconnect (toggle Browser Control off/on, or restart).
+Playwright MCP runs on Node, so the `npx` command must be available.
 
-A **dedicated browser profile** is kept under the app data dir (`<data-dir>/browser-profile-<engine>`), so the agent's browsing stays separate from your everyday browser — and any logins you do in that window persist for later runs.
+```bash
+# macOS (Homebrew)
+brew install node
+
+# Ubuntu / Debian
+sudo apt-get install -y nodejs npm
+
+# Windows — download the LTS installer from https://nodejs.org
+```
+
+Verify both are present:
+
+```bash
+node --version    # e.g. v20.x or v22.x
+npx --version     # e.g. 10.x
+```
+
+#### Step 2 — Install the browser binary (one time)
+
+Playwright MCP drives its **own managed _Chrome for Testing_ build** (~280 MB), not the browser you normally use. Download it once:
+
+```bash
+npx @playwright/mcp@latest install-browser chrome-for-testing
+```
+
+You should see a download progress bar ending in `Chrome for Testing ... downloaded to .../ms-playwright/chromium-XXXX`.
+
+> **npm permission error?** If you see `EPERM` / "root-owned files" from npm, fix the cache ownership once and re-run the command above:
+> ```bash
+> sudo chown -R $(id -u):$(id -g) ~/.npm
+> ```
+
+#### Step 3 — Enable it in the app
+
+Open **Settings → Security → Browser Control** and tick **☑ Enable browser control** (it's off by default).
+
+#### Step 4 — Choose the engine
+
+| Engine | When to pick it |
+|--------|-----------------|
+| **Chromium** *(default, recommended)* | Playwright's managed Chromium build. Portable — works on any machine after Step 2. |
+| **Chrome** | Your installed Google Chrome channel. Fewer bot/CAPTCHA blocks on big sites, but Google Chrome must be installed. |
+
+Saving the setting **reconnects MCP immediately** — no restart needed. The agent now has tools like `mcp_browser_browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, and `browser_take_screenshot`, and screenshots render inline in chat.
+
+#### Step 5 — Test it
+
+In a chat, ask:
+
+> *"Open a browser to example.com and take a screenshot."*
+
+Expect the agent to call `browser_navigate` → `browser_snapshot` → `browser_take_screenshot`, then show the screenshot inline. For sites that need a login, the browser keeps a **dedicated persistent profile** (`<data-dir>/browser-profile-<engine>`, separate from your everyday browser) — log in once in that window and the session is remembered for later runs.
+
+#### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Browser "chrome-for-testing" is not installed` | Step 2 was skipped or failed — run the `install-browser` command, then reconnect (toggle Browser Control off/on, or restart). |
+| `EPERM` / root-owned files during install | `sudo chown -R $(id -u):$(id -g) ~/.npm`, then re-run Step 2. |
+| Toggle on but no browser tools appear; log says `failed to start (is Node/npx installed?)` | Node isn't installed or `npx` isn't on PATH — complete Step 1. |
+| Lots of CAPTCHAs / "are you a robot" pages | Switch the engine to **Chrome** (Step 4) and log in once in the visible window. |
 
 <details>
 <summary>How it works, advanced config & safety notes</summary>
