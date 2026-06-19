@@ -1,4 +1,4 @@
-# TigrimOSR v0.5.5
+# TigrimOSR v0.5.6
 
 **TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously.
 
@@ -743,13 +743,20 @@ Let the agent drive a **real web browser** — navigate to pages, read content, 
 ### Setup
 
 1. **Install Node.js** (v18+) so `npx` is available — Playwright MCP runs on Node. Check with `node --version`.
-2. In the app: **Settings → Security → Browser Control → ☑ Enable browser control**.
-3. Pick an **engine**:
-   - **Chromium** *(default)* — Playwright's bundled build. Portable, always available, no separate install.
-   - **Chrome** — your installed Google Chrome. Fewer bot/CAPTCHA blocks on big sites, but Chrome must be installed.
-4. That's it — the browser tools register immediately (saving the setting reconnects MCP). The agent gains tools like `mcp_browser_browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, and `browser_take_screenshot`. Screenshots render inline in chat.
+2. **Install the browser binary** (one time). Playwright MCP uses its own managed *Chrome for Testing* build (~280 MB), not your system browser:
+   ```bash
+   npx @playwright/mcp@latest install-browser chrome-for-testing
+   ```
+   If you see an `EPERM` / "root-owned files" error from npm, fix the cache once with `sudo chown -R $(id -u):$(id -g) ~/.npm` and re-run.
+3. In the app: **Settings → Security → Browser Control → ☑ Enable browser control**.
+4. Pick an **engine**:
+   - **Chromium** *(default)* — Playwright's managed Chromium build. Portable and recommended.
+   - **Chrome** — your installed Google Chrome channel. Fewer bot/CAPTCHA blocks on big sites, but Chrome must be installed.
+5. That's it — the browser tools register immediately (saving the setting reconnects MCP). The agent gains tools like `mcp_browser_browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, and `browser_take_screenshot`. Screenshots render inline in chat.
 
-The first run downloads the browser on demand (or pre-fetch with `npx playwright install chromium`). A **dedicated browser profile** is kept under the app data dir (`<data-dir>/browser-profile-<engine>`), so the agent's browsing stays separate from your everyday browser — and any logins you do in that window persist for later runs.
+> If a navigate fails with `Browser "chrome-for-testing" is not installed`, step 2 was skipped — run that command and reconnect (toggle Browser Control off/on, or restart).
+
+A **dedicated browser profile** is kept under the app data dir (`<data-dir>/browser-profile-<engine>`), so the agent's browsing stays separate from your everyday browser — and any logins you do in that window persist for later runs.
 
 <details>
 <summary>How it works, advanced config & safety notes</summary>
@@ -962,13 +969,20 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ## Changelog
 
-### v0.5.5
+### v0.5.6
+
+- **Browser control (opt-in)** — New **Settings → Security → Browser Control** toggle lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP. Off by default for safety; pick the bundled Chromium or your installed Chrome. Requires Node.js (`npx`) and a one-time browser install (`npx @playwright/mcp@latest install-browser chrome-for-testing`).
+- **Persistent stdio MCP connections** — MCP servers launched over stdio now stay alive across tool calls instead of respawning per call, so stateful servers (like the browser) keep their session — a page opened by one call is still there for the next. Auto-restarts on crash.
+
+<details>
+<summary>v0.5.5 — Web/mobile settings parity, Connect to System, editable harness</summary>
 
 - **Full settings parity in the web/mobile UI** — The remote **Settings** page is now a tabbed editor matching the desktop, instead of a small read-only view. Tabs: **AI / API · MCP Tools · Plugins · Skill Update · Remote**, so each area is its own pane with no endless scrolling (panes stay mounted, so edits survive tab switches).
 - **Connect to System** — Pick a built-in AI provider (Claude Code, Gemini CLI, Codex, OpenRouter, xAI, Anthropic, MiniMax, Google AI Studio, Kimi, DeepSeek) to auto-fill the API URL + default model, **+ Add** your own custom provider, and **Test Connection** — all from the browser.
 - **Editable Web Search, Soul & Identity, and Agent Harness** — Toggle web search, edit the orchestrator's SOUL.md / IDENTITY.md, and tune the autonomous loop (max turns/tool-calls/tokens, temperature, reflection & step-verify thresholds, timeouts, unsandboxed-exec fallback) remotely.
 - **MCP Tools, Skill Update & Plugins over the web** — Add/remove/enable MCP servers and Reconnect All; configure skill auto-update (interval, max candidates, approval, human feedback) with a **Run Auto-Update Now** button + live status; and list/install(.zip)/enable/disable/remove plugins. Host-control actions (plugins) remain owner-token only by design.
-- **Browser control (opt-in)** — New **Settings → Security → Browser Control** toggle lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP. Off by default for safety; pick the bundled Chromium or your installed Chrome. Backed by persistent stdio MCP connections so the browser session stays alive across tool calls. Requires Node.js (`npx`).
+
+</details>
 
 <details>
 <summary>v0.5.4 — Customizable themes, fonts, inline files, web file viewer</summary>
