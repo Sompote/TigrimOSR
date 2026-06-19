@@ -137,6 +137,12 @@ docker compose up -d --build
 in with the token from your `.env`. Then set your AI provider and API key under
 **Settings** (saved to `./data`, so it persists).
 
+> **Want [Browser Control](#browser-control) in Docker?** It's off by default to
+> keep the image slim. Bake the browser in by adding `INSTALL_BROWSER=true` to your
+> `.env` (or `docker compose build --build-arg INSTALL_BROWSER=true`), then
+> `docker compose up -d --build`. The container always runs headless, so it
+> auto-uses headless mode — just enable Browser Control in **Settings → AI / API**.
+
 <details>
 <summary>Check it's running, day-to-day commands, data, safety, network & config reference</summary>
 

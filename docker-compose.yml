@@ -1,6 +1,11 @@
 services:
   tigrimos:
-    build: .
+    build:
+      context: .
+      args:
+        # Bake the browser into the image for Browser Control. OFF by default
+        # (adds ~400 MB). Enable by setting INSTALL_BROWSER=true in .env.
+        INSTALL_BROWSER: ${INSTALL_BROWSER:-false}
     image: tigrimos:latest
     container_name: tigrimos
     # Secrets come from .env (at minimum ACCESS_TOKEN). See .env.example.

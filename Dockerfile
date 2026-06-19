@@ -44,6 +44,22 @@ ENV PATH="/opt/venv/bin:${PATH}"
 RUN npm install -g clawhub && npm cache clean --force \
     || echo "clawhub install skipped (marketplace will be unavailable)"
 
+# Optional: browser control (Playwright). OFF by default to keep the image slim
+# (~400 MB of browser + system libs). Enable with:
+#   docker compose build --build-arg INSTALL_BROWSER=true   (or set it in .env)
+# Browsers install to a shared, world-readable path so the non-root runtime user
+# finds them. The container always runs --headless, so auto-headless applies.
+ARG INSTALL_BROWSER=false
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
+        echo "Installing browser for browser control…" \
+        && npx --yes playwright install-deps chromium \
+        && npx --yes @playwright/mcp@latest install-browser chrome-for-testing \
+        && chmod -R a+rX /opt/ms-playwright ; \
+    else \
+        echo "Browser control browser NOT installed (build with --build-arg INSTALL_BROWSER=true)" ; \
+    fi
+
 # Non-root user for defence-in-depth (the container itself is the sandbox boundary).
 RUN useradd -m -u 1000 -s /bin/bash tiger
 
