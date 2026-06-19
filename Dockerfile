@@ -39,6 +39,14 @@ RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt
 # Put the venv first on PATH so python_command() (resolves via PATH) finds it.
 ENV PATH="/opt/venv/bin:${PATH}"
+# The app prepends /usr/local/bin:/usr/bin:… to PATH at startup, which would
+# otherwise shadow the venv with the system python3 (missing our deps). Symlink
+# the venv interpreters into /usr/local/bin (first in that list) so run_python /
+# run_shell resolve the venv python that actually has duckduckgo-search etc.
+RUN ln -sf /opt/venv/bin/python3 /usr/local/bin/python3 \
+    && ln -sf /opt/venv/bin/python  /usr/local/bin/python \
+    && ln -sf /opt/venv/bin/pip     /usr/local/bin/pip \
+    && ln -sf /opt/venv/bin/pip3    /usr/local/bin/pip3
 
 # ClawHub skill marketplace CLI (Node). Optional — don't fail the build if unavailable.
 RUN npm install -g clawhub && npm cache clean --force \

@@ -115,8 +115,13 @@ fn processes() -> &'static TokioMutex<HashMap<String, Arc<TokioMutex<StdioProc>>
 /// process alive and ready for `tools/list` / `tools/call`. stderr is drained
 /// on a background task so a chatty server can't fill the pipe and stall.
 async fn spawn_and_init(command: &str, args: &[String]) -> Result<StdioProc, String> {
+    // Run the server from the sandbox dir so relative output paths it returns
+    // (e.g. a browser screenshot saved as `./shot.png`) land inside the sandbox,
+    // where the agent's read_file and the web file-server can reach them.
+    let sandbox = crate::server::data::get_sandbox_dir_sync();
     let mut child = Command::new(command)
         .args(args)
+        .current_dir(&sandbox)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -268,10 +273,12 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
         .clone()
         .unwrap_or_else(|| "chromium".to_string());
 
-    // Per-install dirs under the data directory — no hardcoded user paths.
+    // Profile lives under the data dir (internal browser state, not served).
     let data_dir = crate::server::data::data_dir().to_string_lossy().to_string();
     let profile = format!("{}/browser-profile-{}", data_dir, engine);
-    let output = format!("{}/browser-output", data_dir);
+    // Screenshots/snapshots go in the sandbox so the agent (read_file) and the
+    // web UI (file-server) can read/display them.
+    let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
 
     // When TigrimOS itself runs headless (cloud/server, no display), the browser
     // must run headless too — a headed launch fails with "Missing X server".
