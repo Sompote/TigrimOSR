@@ -100,9 +100,15 @@ you — no manual `.env` editing:
 curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.sh | bash
 ```
 
+Want [Browser Control](#browser-control) too? Add `INSTALL_BROWSER=true` (bakes the
+browser into the image, ~400 MB):
+```bash
+curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.sh | INSTALL_BROWSER=true bash
+```
+
 Already cloned the repo? Run it in place instead:
 ```bash
-./docker-start.sh
+./docker-start.sh                      # or: INSTALL_BROWSER=true ./docker-start.sh
 ```
 It prints your token (also saved to `.env`) at the end — paste it into the web UI to
 log in. Re-running is safe: it reuses your existing token. Prefer to do it by hand?
