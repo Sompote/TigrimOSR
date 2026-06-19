@@ -821,7 +821,10 @@ You should see a download progress bar ending in `Chrome for Testing ... downloa
 
 #### Step 3 — Enable it in the app
 
-Open **Settings → Security → Browser Control** and tick **☑ Enable browser control** (it's off by default).
+- **Desktop app:** **Settings → Security → Browser Control → ☑ Enable browser control**.
+- **Web / mobile UI:** **Settings → AI / API → Browser Control → ☑ Enable browser control**.
+
+It's off by default; both places also let you choose the **Chromium** or **Chrome** engine, and saving reconnects MCP immediately.
 
 #### Step 4 — Choose the engine
 
@@ -1064,7 +1067,7 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ### v0.5.6
 
-- **Browser control (opt-in)** — New **Settings → Security → Browser Control** toggle lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP. Off by default for safety; pick the bundled Chromium or your installed Chrome. Requires Node.js (`npx`) and a one-time browser install (`npx @playwright/mcp@latest install-browser chrome-for-testing`).
+- **Browser control (opt-in)** — New Browser Control toggle (desktop **Settings → Security**, web/mobile **Settings → AI / API**) lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP. Off by default for safety; pick the bundled Chromium or your installed Chrome. Auto-runs headless on a headless server, which also prompts to install the browser on first interactive startup. Requires Node.js (`npx`) and a one-time browser install (`npx @playwright/mcp@latest install-browser chrome-for-testing`).
 - **Persistent stdio MCP connections** — MCP servers launched over stdio now stay alive across tool calls instead of respawning per call, so stateful servers (like the browser) keep their session — a page opened by one call is still there for the next. Auto-restarts on crash.
 
 <details>

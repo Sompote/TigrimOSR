@@ -2670,6 +2670,18 @@ function loadSettings() {
             <input id="s-web-search-key" type="password" value="${esc(data.webSearchApiKey || '')}"></div>
         </div>
         <div class="settings-group">
+          <h3>Browser Control</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">Let the agent drive a real web browser — search Google, click, type, screenshot. Off by default for safety. Requires Node.js on the host (and a one-time browser install).</div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-browser-control" ${ck(data.browserControlEnabled)} style="flex:none;width:auto"> Enable browser control</label></div>
+          <div class="settings-row-field"><label>Engine</label>
+            <select id="s-browser-engine" style="flex:1">
+              <option value="chromium" ${data.browserEngine !== 'chrome' ? 'selected' : ''}>Chromium (managed, recommended)</option>
+              <option value="chrome" ${data.browserEngine === 'chrome' ? 'selected' : ''}>Chrome (your installed Google Chrome)</option>
+            </select></div>
+        </div>
+        <div class="settings-group">
           <details>
             <summary style="cursor:pointer;color:var(--accent);font-size:15px;font-weight:700">Orchestrator Soul &amp; Identity</summary>
             <div style="color:var(--ink-soft);font-size:12px;margin:8px 0">Configure the orchestrator's internal cognition (SOUL.md) and external presentation (IDENTITY.md). Injected into the system prompt.</div>
@@ -2956,6 +2968,8 @@ function saveSettings() {
     tigerBotApiKey: document.getElementById('s-api-key').value,
     webSearchEnabled: document.getElementById('s-web-search').checked,
     webSearchApiKey: document.getElementById('s-web-search-key').value,
+    browserControlEnabled: document.getElementById('s-browser-control').checked,
+    browserEngine: document.getElementById('s-browser-engine').value,
     mcpTools: _mcpTools.map(t => ({ name: t.name, url: t.url, type: t.type, enabled: t.enabled })),
     agentAllowUnsandboxedExec: document.getElementById('s-h-agentAllowUnsandboxedExec').checked,
     agentReflectionEnabled: document.getElementById('s-h-agentReflectionEnabled').checked,
@@ -2982,7 +2996,12 @@ function saveSettings() {
   Promise.all([
     api('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
     soulSave,
-  ]).then(() => { if (s) { s.textContent = 'Saved'; s.style.color = 'var(--green)'; } })
+  ]).then(() => {
+      if (s) { s.textContent = 'Saved'; s.style.color = 'var(--green)'; }
+      // Reconnect MCP so browser-control / MCP changes take effect immediately
+      // (best-effort; ignored for read-only remote tokens).
+      api('/api/settings/mcp/reconnect-all', { method: 'POST', body: '{}' }).catch(() => {});
+    })
     .catch(() => {
       if (s) { s.textContent = 'Failed — settings are read-only for remote tokens'; s.style.color = 'var(--red)'; }
     });
