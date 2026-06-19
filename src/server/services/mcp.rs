@@ -276,6 +276,13 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
     // Profile lives under the data dir (internal browser state, not served).
     let data_dir = crate::server::data::data_dir().to_string_lossy().to_string();
     let profile = format!("{}/browser-profile-{}", data_dir, engine);
+
+    // A crashed/killed browser (e.g. a Docker container that died without a clean
+    // shutdown) leaves stale Chromium singleton locks in the profile. Playwright
+    // MCP then sees the profile as "already in use" and refuses to launch
+    // ("use --isolated to run multiple instances"). The profile is dedicated to
+    // this built-in browser, so clearing stale locks before launch is safe.
+    clear_stale_browser_locks(&profile);
     // Screenshots/snapshots go in the sandbox so the agent (read_file) and the
     // web UI (file-server) can read/display them.
     let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
@@ -314,6 +321,27 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
             "[MCP] Browser control failed to start (is Node/npx installed?): {}",
             result["error"].as_str().unwrap_or("unknown")
         );
+    }
+}
+
+/// Remove stale Chromium singleton lock files from a dedicated browser profile.
+///
+/// Chromium guards a profile against concurrent use with `SingletonLock`,
+/// `SingletonSocket`, and `SingletonCookie` (symlinks under the profile root).
+/// When a browser process dies abnormally — common in Docker when the container
+/// is stopped — these are left behind and the next launch reports the profile as
+/// already in use. Since this profile belongs solely to the built-in browser,
+/// no live Chromium should legitimately hold these, so we clear them.
+fn clear_stale_browser_locks(profile: &str) {
+    for name in ["SingletonLock", "SingletonSocket", "SingletonCookie"] {
+        let path = std::path::Path::new(profile).join(name);
+        // These are symlinks; symlink_metadata avoids following a dangling target.
+        if std::fs::symlink_metadata(&path).is_ok() {
+            match std::fs::remove_file(&path) {
+                Ok(_) => info!("[MCP] Cleared stale browser lock: {}", path.display()),
+                Err(e) => warn!("[MCP] Could not clear browser lock {}: {}", path.display(), e),
+            }
+        }
     }
 }
 
@@ -566,6 +594,17 @@ pub async fn get_mcp_tools() -> Vec<Value> {
 /// Check if a tool name is an MCP tool (prefixed with mcp_)
 pub fn is_mcp_tool(name: &str) -> bool {
     name.starts_with("mcp_")
+}
+
+/// True if an MCP server with this name is currently connected. Used by
+/// web_search to decide whether it can route through the live browser.
+pub async fn is_server_connected(name: &str) -> bool {
+    connections()
+        .lock()
+        .await
+        .get(name)
+        .map(|c| c.connected)
+        .unwrap_or(false)
 }
 
 /// Call an MCP tool by its prefixed name

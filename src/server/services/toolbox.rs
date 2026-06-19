@@ -3017,10 +3017,122 @@ fn resolve_path(sandbox_dir: &str, path: &str) -> PathBuf {
     }
 }
 
+/// Run a web search by driving the live browser to Google and reading the
+/// rendered results page. Used when browser control is enabled (e.g. web/mobile
+/// remote in Docker, where the browser runs headless): Google through a real
+/// browser session is far more reliable than the DuckDuckGo library, which gets
+/// rate-limited/blocked from datacenter IPs. Returns None if the browser path
+/// is unavailable or yields nothing, so the caller can fall back.
+async fn google_search_via_browser(query: &str) -> Option<Vec<Value>> {
+    let url = format!(
+        "https://www.google.com/search?q={}&hl=en&gl=us&num=10",
+        urlencoding::encode(query)
+    );
+
+    // Navigate. The Playwright MCP process stays alive across calls, so the page
+    // (and any accepted consent on the persistent profile) survives.
+    let nav = mcp::call_mcp_tool("mcp_browser_browser_navigate", &json!({ "url": url })).await;
+    if nav["ok"].as_bool() != Some(true) {
+        warn!("[web_search] browser navigate failed: {}", nav["error"].as_str().unwrap_or("?"));
+        return None;
+    }
+    // Playwright MCP reports tool-level failures as "### Error" text with ok=true.
+    if let Some(r) = nav["result"].as_str() {
+        if r.contains("### Error") {
+            warn!("[web_search] browser navigate error: {}", r.chars().take(160).collect::<String>());
+            return None;
+        }
+    }
+
+    // Extract structured results from the SERP via JS. innerText fallback keeps
+    // it working even if Google's result-container markup changes.
+    let js = r#"() => {
+  const out = [];
+  const seen = new Set();
+  document.querySelectorAll('#search a h3, #rso a h3').forEach(h3 => {
+    const a = h3.closest('a');
+    if (!a || !a.href) return;
+    const url = a.href;
+    if (seen.has(url)) return;
+    if (/^https?:\/\/(www\.)?google\./.test(url)) return;
+    seen.add(url);
+    let snippet = '';
+    const c = a.closest('div.g, div[data-hveid], div[data-sokoban-container]');
+    if (c) { const s = c.querySelector('.VwiC3b, div[data-sncf], .lEBKkf'); if (s) snippet = s.innerText; }
+    out.push({ title: h3.innerText, url, snippet: (snippet || '').slice(0, 300) });
+  });
+  // Return the array directly — Playwright MCP JSON-serializes the value, so
+  // stringifying here would double-escape and break parsing. innerText fallback
+  // is a plain string (shows up JSON-quoted) for when no result links match.
+  if (out.length) return out.slice(0, 8);
+  return 'TEXT:' + document.body.innerText.slice(0, 4000);
+}"#;
+    let eval = mcp::call_mcp_tool(
+        "mcp_browser_browser_evaluate",
+        &json!({ "function": js }),
+    )
+    .await;
+
+    // Pull the JS return value out of the MCP result text. Playwright MCP wraps
+    // it in surrounding prose, so scan for our JSON array or TEXT: marker.
+    let raw = eval["result"].as_str().unwrap_or("");
+    if let (Some(start), Some(end)) = (raw.find('['), raw.rfind(']')) {
+        if start < end {
+            if let Ok(items) = serde_json::from_str::<Vec<Value>>(&raw[start..=end]) {
+                let results: Vec<Value> = items
+                    .iter()
+                    .filter_map(|it| {
+                        let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                        let url = it.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                        if title.is_empty() && url.is_empty() {
+                            return None;
+                        }
+                        Some(json!({
+                            "source": "google",
+                            "title": title,
+                            "url": url,
+                            "text": it.get("snippet").and_then(|s| s.as_str()).unwrap_or(""),
+                        }))
+                    })
+                    .collect();
+                if !results.is_empty() {
+                    return Some(results);
+                }
+            }
+        }
+    }
+
+    // Structured extraction failed — fall back to the page's visible text so the
+    // model still gets something to read (a consent/captcha wall shows up here).
+    let text_blob = raw.split("TEXT:").nth(1).unwrap_or(raw).trim();
+    if text_blob.is_empty() {
+        return None;
+    }
+    Some(vec![json!({
+        "source": "google",
+        "title": format!("Google results for: {}", query),
+        "url": url,
+        "text": crate::util::truncate_utf8(text_blob, 4000),
+    })])
+}
+
 async fn exec_web_search(args: &Value) -> Value {
     let query = args["query"].as_str().unwrap_or("");
     let client = Client::new();
     let mut all_results: Vec<Value> = Vec::new();
+
+    // When browser control is on, search Google through the live browser instead
+    // of the DuckDuckGo library (which is unreliable from Docker/datacenter IPs).
+    if mcp::is_server_connected("browser").await {
+        if let Some(results) = google_search_via_browser(query).await {
+            return json!({
+                "ok": true,
+                "results": results,
+                "note": "Results from the live browser (Google). Use fetch_url or the browser tools to open a specific link."
+            });
+        }
+        warn!("[web_search] browser/Google path yielded nothing; falling back to DDG/Wikipedia");
+    }
 
     // Primary: DuckDuckGo Python library (same as original TigrimOS)
     // This returns actual web search results with titles, URLs, and snippets
@@ -3832,11 +3944,17 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+            // Surface files the command created (heredocs, redirects, etc.) so they
+            // appear as clickable tags/links in chat — same as run_python/write_file.
+            let output_files = scan_output_files(sandbox_dir).await;
+
             json!({
                 "ok": output.status.success(),
                 "exit_code": output.status.code(),
                 "stdout": truncate(&stdout, MAX_CONTENT_LEN),
                 "stderr": truncate(&stderr, MAX_CONTENT_LEN),
+                "output_files": output_files,
             })
         }
         Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn shell: {e}") }),
