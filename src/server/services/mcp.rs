@@ -1,7 +1,9 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::OnceLock;
-use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex as TokioMutex;
 use tracing::{info, warn};
 
@@ -26,21 +28,168 @@ fn connections() -> &'static TokioMutex<HashMap<String, McpConnection>> {
     MCP_CONNECTIONS.get_or_init(|| TokioMutex::new(HashMap::new()))
 }
 
+/// A live, long-lived stdio MCP server process. Kept alive between tool calls
+/// so STATEFUL servers (e.g. a Playwright browser) retain their session — the
+/// page navigated in one call is still open for the next call. Each call goes
+/// through the same stdin/stdout, serialized by the per-process mutex.
+struct StdioProc {
+    _child: Child,
+    stdin: ChildStdin,
+    reader: BufReader<ChildStdout>,
+    next_id: i64,
+}
+
+impl StdioProc {
+    /// Send a JSON-RPC request and read until the response with the matching id
+    /// arrives (skipping interleaved notifications), bounded by `timeout_secs`.
+    async fn request(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout_secs: u64,
+    ) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let req = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+        let msg = format!("{}\n", serde_json::to_string(&req).unwrap());
+        self.stdin
+            .write_all(msg.as_bytes())
+            .await
+            .map_err(|e| format!("write failed: {e}"))?;
+        let _ = self.stdin.flush().await;
+
+        let reader = &mut self.reader;
+        let fut = async {
+            loop {
+                let mut line = String::new();
+                let n = reader
+                    .read_line(&mut line)
+                    .await
+                    .map_err(|e| format!("read failed: {e}"))?;
+                if n == 0 {
+                    return Err("MCP process closed its stdout".to_string());
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let v: Value = match serde_json::from_str(trimmed) {
+                    Ok(v) => v,
+                    Err(_) => continue, // not JSON (stray log line) — skip
+                };
+                // Match our request id; skip notifications / other ids.
+                if v.get("id").and_then(|x| x.as_i64()) == Some(id) {
+                    return Ok(v);
+                }
+            }
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), fut).await {
+            Ok(r) => r,
+            Err(_) => Err("timeout waiting for MCP response".to_string()),
+        }
+    }
+
+    /// Send a fire-and-forget JSON-RPC notification (no id, no response).
+    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+        let req = json!({ "jsonrpc": "2.0", "method": method, "params": params });
+        let msg = format!("{}\n", serde_json::to_string(&req).unwrap());
+        self.stdin
+            .write_all(msg.as_bytes())
+            .await
+            .map_err(|e| format!("write failed: {e}"))?;
+        let _ = self.stdin.flush().await;
+        Ok(())
+    }
+}
+
+// Live stdio processes, keyed by server name. Separate from MCP_CONNECTIONS
+// (which holds cloneable metadata) because a process handle can't be cloned.
+static MCP_PROCESSES: OnceLock<TokioMutex<HashMap<String, Arc<TokioMutex<StdioProc>>>>> =
+    OnceLock::new();
+
+fn processes() -> &'static TokioMutex<HashMap<String, Arc<TokioMutex<StdioProc>>>> {
+    MCP_PROCESSES.get_or_init(|| TokioMutex::new(HashMap::new()))
+}
+
+/// Spawn a stdio MCP server and perform the `initialize` handshake, leaving the
+/// process alive and ready for `tools/list` / `tools/call`. stderr is drained
+/// on a background task so a chatty server can't fill the pipe and stall.
+async fn spawn_and_init(command: &str, args: &[String]) -> Result<StdioProc, String> {
+    let mut child = Command::new(command)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to spawn MCP server: {e}"))?;
+
+    let stdin = child.stdin.take().ok_or("no stdin handle")?;
+    let stdout = child.stdout.take().ok_or("no stdout handle")?;
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(_)) = lines.next_line().await {
+                // discard server logs to keep the pipe drained
+            }
+        });
+    }
+
+    let mut proc = StdioProc {
+        _child: child,
+        stdin,
+        reader: BufReader::new(stdout),
+        next_id: 1,
+    };
+
+    proc.request(
+        "initialize",
+        json!({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "TigrimOS", "version": "0.5.3" }
+        }),
+        15,
+    )
+    .await?;
+    // Per MCP spec, signal readiness after initialize.
+    let _ = proc.notify("notifications/initialized", json!({})).await;
+    Ok(proc)
+}
+
+/// Get the live process for `name`, spawning a fresh one if absent (e.g. after
+/// a crash). Used by call_stdio_tool so a dead server transparently recovers.
+async fn get_or_spawn_proc(
+    name: &str,
+    command: &str,
+    args: &[String],
+) -> Result<Arc<TokioMutex<StdioProc>>, String> {
+    {
+        let procs = processes().lock().await;
+        if let Some(p) = procs.get(name) {
+            return Ok(p.clone());
+        }
+    }
+    let proc = spawn_and_init(command, args).await?;
+    let arc = Arc::new(TokioMutex::new(proc));
+    processes().lock().await.insert(name.to_string(), arc.clone());
+    Ok(arc)
+}
+
 /// Initialize MCP servers from settings (reads `mcpTools` array from settings.json)
 pub async fn init_mcp_servers() {
     use crate::server::data::get_settings;
 
     let settings = get_settings().await;
-    let mcp_tools = settings.mcp_tools;
+    let mcp_tools = &settings.mcp_tools;
 
     if mcp_tools.is_empty() {
-        info!("[MCP] No MCP tools configured");
-        return;
+        info!("[MCP] No user MCP tools configured");
+    } else {
+        info!("[MCP] Initializing {} MCP server(s)...", mcp_tools.len());
     }
 
-    info!("[MCP] Initializing {} MCP server(s)...", mcp_tools.len());
-
-    for tool in &mcp_tools {
+    for tool in mcp_tools {
         if !tool.enabled {
             info!("[MCP] Skipping disabled server '{}'", tool.name);
             continue;
@@ -98,6 +247,55 @@ pub async fn init_mcp_servers() {
             }
         }
     }
+
+    // Built-in browser control (Playwright MCP), gated by the safety toggle.
+    if settings.browser_control_enabled == Some(true) {
+        // Defer to a user-defined "browser" server if one exists.
+        let user_defined = settings.mcp_tools.iter().any(|t| t.enabled && t.name == "browser");
+        if user_defined {
+            info!("[MCP] Browser control on, but a user-defined 'browser' server exists — using that");
+        } else {
+            connect_builtin_browser(&settings).await;
+        }
+    }
+}
+
+/// Register the built-in browser-control server (Playwright MCP) with portable,
+/// per-install paths. Engine is "chromium" (bundled) or "chrome" (system).
+async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
+    let engine = settings
+        .browser_engine
+        .clone()
+        .unwrap_or_else(|| "chromium".to_string());
+
+    // Per-install dirs under the data directory — no hardcoded user paths.
+    let data_dir = crate::server::data::data_dir().to_string_lossy().to_string();
+    let profile = format!("{}/browser-profile-{}", data_dir, engine);
+    let output = format!("{}/browser-output", data_dir);
+
+    let config = json!({
+        "name": "browser",
+        "command": "npx",
+        "args": [
+            "@playwright/mcp@latest",
+            "--browser", engine.clone(),
+            "--user-data-dir", profile,
+            "--output-dir", output,
+        ],
+    });
+
+    let result = connect_server_impl("browser", "stdio", &config).await;
+    if result["ok"].as_bool().unwrap_or(false) {
+        info!(
+            "[MCP] Browser control enabled ({}) — {} tool(s)",
+            engine, result["tools"]
+        );
+    } else {
+        warn!(
+            "[MCP] Browser control failed to start (is Node/npx installed?): {}",
+            result["error"].as_str().unwrap_or("unknown")
+        );
+    }
 }
 
 /// Connect to a single MCP server
@@ -131,131 +329,61 @@ async fn connect_stdio(name: &str, config: &Value) -> Value {
         return json!({ "ok": false, "error": "No command specified for stdio transport" });
     }
 
-    // Spawn process and send JSON-RPC initialize
-    let result = match Command::new(&command)
-        .args(&args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(mut child) => {
-            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-            let stdin = child.stdin.as_mut();
-            let stdout = child.stdout.take();
-
-            if let (Some(stdin), Some(stdout)) = (stdin, stdout) {
-                // Send initialize request
-                let init_req = json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": { "name": "TigrimOS", "version": "0.5.3" }
-                    }
-                });
-                let msg = format!("{}\n", serde_json::to_string(&init_req).unwrap());
-                let _ = stdin.write_all(msg.as_bytes()).await;
-
-                // Read response
-                let mut reader = BufReader::new(stdout);
-                let mut line = String::new();
-                let read_result = tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    reader.read_line(&mut line),
-                )
-                .await;
-
-                match read_result {
-                    Ok(Ok(_)) => {
-                        // Send tools/list request
-                        let tools_req = json!({
-                            "jsonrpc": "2.0",
-                            "id": 2,
-                            "method": "tools/list",
-                            "params": {}
-                        });
-                        let stdin = child.stdin.as_mut().unwrap();
-                        let msg = format!("{}\n", serde_json::to_string(&tools_req).unwrap());
-                        let _ = stdin.write_all(msg.as_bytes()).await;
-
-                        let mut tools_line = String::new();
-                        let tools_result = tokio::time::timeout(
-                            std::time::Duration::from_secs(10),
-                            reader.read_line(&mut tools_line),
-                        )
-                        .await;
-
-                        let tools = match tools_result {
-                            Ok(Ok(_)) => {
-                                let resp: Value =
-                                    serde_json::from_str(&tools_line).unwrap_or(json!({}));
-                                resp["result"]["tools"]
-                                    .as_array()
-                                    .cloned()
-                                    .unwrap_or_default()
-                            }
-                            _ => vec![],
-                        };
-
-                        // Convert MCP tools to OpenAI format
-                        let openai_tools: Vec<Value> = tools
-                            .iter()
-                            .map(|t| {
-                                let tool_name = t["name"].as_str().unwrap_or("unknown");
-                                let prefixed = format!("mcp_{}_{}", name, tool_name);
-                                json!({
-                                    "type": "function",
-                                    "function": {
-                                        "name": prefixed,
-                                        "description": t["description"].as_str().unwrap_or(""),
-                                        "parameters": t.get("inputSchema").cloned().unwrap_or(json!({
-                                            "type": "object",
-                                            "properties": {}
-                                        }))
-                                    }
-                                })
-                            })
-                            .collect();
-
-                        let tool_count = openai_tools.len();
-
-                        // Store connection
-                        let conn = McpConnection {
-                            name: name.to_string(),
-                            transport: "stdio".to_string(),
-                            command: Some(command),
-                            args,
-                            url: None,
-                            headers: HashMap::new(),
-                            tools: openai_tools,
-                            connected: true,
-                            error: None,
-                        };
-                        connections().lock().await.insert(name.to_string(), conn);
-
-                        // Kill the discovery process (real MCP would keep it alive)
-                        let _ = child.kill().await;
-
-                        json!({ "ok": true, "tools": tool_count })
-                    }
-                    _ => {
-                        let _ = child.kill().await;
-                        json!({ "ok": false, "error": "Timeout waiting for MCP server response" })
-                    }
-                }
-            } else {
-                let _ = child.kill().await;
-                json!({ "ok": false, "error": "Failed to get stdio handles" })
-            }
-        }
-        Err(e) => json!({ "ok": false, "error": format!("Failed to spawn MCP server: {e}") }),
+    // Spawn the server and keep it ALIVE — stateful servers (e.g. a Playwright
+    // browser) need the same process across calls so the open page survives.
+    let mut proc = match spawn_and_init(&command, &args).await {
+        Ok(p) => p,
+        Err(e) => return json!({ "ok": false, "error": e }),
     };
 
-    result
+    // Discover tools over the same live connection.
+    let tools = match proc.request("tools/list", json!({}), 15).await {
+        Ok(resp) => resp["result"]["tools"].as_array().cloned().unwrap_or_default(),
+        Err(e) => return json!({ "ok": false, "error": format!("tools/list failed: {e}") }),
+    };
+
+    // Convert MCP tools to OpenAI format
+    let openai_tools: Vec<Value> = tools
+        .iter()
+        .map(|t| {
+            let tool_name = t["name"].as_str().unwrap_or("unknown");
+            let prefixed = format!("mcp_{}_{}", name, tool_name);
+            json!({
+                "type": "function",
+                "function": {
+                    "name": prefixed,
+                    "description": t["description"].as_str().unwrap_or(""),
+                    "parameters": t.get("inputSchema").cloned().unwrap_or(json!({
+                        "type": "object",
+                        "properties": {}
+                    }))
+                }
+            })
+        })
+        .collect();
+
+    let tool_count = openai_tools.len();
+
+    // Store metadata...
+    let conn = McpConnection {
+        name: name.to_string(),
+        transport: "stdio".to_string(),
+        command: Some(command),
+        args,
+        url: None,
+        headers: HashMap::new(),
+        tools: openai_tools,
+        connected: true,
+        error: None,
+    };
+    connections().lock().await.insert(name.to_string(), conn);
+    // ...and keep the live process for subsequent tool calls.
+    processes()
+        .lock()
+        .await
+        .insert(name.to_string(), Arc::new(TokioMutex::new(proc)));
+
+    json!({ "ok": true, "tools": tool_count })
 }
 
 /// Connect to an MCP server via SSE/HTTP
@@ -385,12 +513,16 @@ async fn connect_http(name: &str, transport: &str, config: &Value) -> Value {
 /// Disconnect a single MCP server
 pub async fn disconnect_server(name: &str) {
     connections().lock().await.remove(name);
+    // Dropping the StdioProc kills the child (kill_on_drop) once no in-flight
+    // call still holds the Arc.
+    processes().lock().await.remove(name);
     info!("[MCP] Disconnected server '{}'", name);
 }
 
 /// Disconnect all MCP servers
 pub async fn disconnect_all() {
     connections().lock().await.clear();
+    processes().lock().await.clear();
     info!("[MCP] All servers disconnected");
 }
 
@@ -463,79 +595,56 @@ async fn call_stdio_tool(conn: &McpConnection, tool_name: &str, args: &Value) ->
         None => return json!({ "ok": false, "error": "No command for stdio transport" }),
     };
 
-    // Spawn a fresh process for each call (stateless mode)
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let call_params = json!({ "name": tool_name, "arguments": args });
 
-    let mut child = match Command::new(&command)
-        .args(&conn.args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => return json!({ "ok": false, "error": format!("Failed to spawn: {e}") }),
+    // Reuse the live process so prior state (open browser page, etc.) persists.
+    let proc_arc = match get_or_spawn_proc(&conn.name, &command, &conn.args).await {
+        Ok(a) => a,
+        Err(e) => return json!({ "ok": false, "error": format!("MCP spawn failed: {e}") }),
     };
 
-    let stdin = child.stdin.as_mut().unwrap();
-    let stdout = child.stdout.take().unwrap();
-
-    // Initialize
-    let init_req = json!({
-        "jsonrpc": "2.0", "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": { "name": "TigrimOS", "version": "0.5.3" }
+    let first_err = {
+        let mut proc = proc_arc.lock().await;
+        match proc.request("tools/call", call_params.clone(), 120).await {
+            Ok(resp) => return stdio_result(resp),
+            Err(e) => e,
         }
-    });
-    let _ = stdin
-        .write_all(format!("{}\n", serde_json::to_string(&init_req).unwrap()).as_bytes())
-        .await;
+    };
 
-    let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), reader.read_line(&mut line)).await;
+    // The request failed — the process likely died. Drop it, respawn, retry once.
+    warn!(
+        "[MCP] '{}' tool call failed ({}); restarting server and retrying",
+        conn.name, first_err
+    );
+    processes().lock().await.remove(&conn.name);
+    let proc_arc = match get_or_spawn_proc(&conn.name, &command, &conn.args).await {
+        Ok(a) => a,
+        Err(e) => return json!({ "ok": false, "error": format!("MCP respawn failed: {e}") }),
+    };
+    let mut proc = proc_arc.lock().await;
+    match proc.request("tools/call", call_params, 120).await {
+        Ok(resp) => stdio_result(resp),
+        Err(e) => json!({
+            "ok": false,
+            "error": format!("MCP call failed after restart: {e} (first: {first_err})")
+        }),
+    }
+}
 
-    // Call tool
-    let call_req = json!({
-        "jsonrpc": "2.0", "id": 2,
-        "method": "tools/call",
-        "params": { "name": tool_name, "arguments": args }
-    });
-    let stdin = child.stdin.as_mut().unwrap();
-    let _ = stdin
-        .write_all(format!("{}\n", serde_json::to_string(&call_req).unwrap()).as_bytes())
-        .await;
-
-    let mut result_line = String::new();
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        reader.read_line(&mut result_line),
-    )
-    .await;
-
-    let _ = child.kill().await;
-
-    match result {
-        Ok(Ok(_)) => {
-            let resp: Value = serde_json::from_str(&result_line).unwrap_or(json!({}));
-            let content = &resp["result"]["content"];
-            if content.is_array() {
-                let text: String = content
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter_map(|c| c["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                json!({ "ok": true, "result": text })
-            } else {
-                json!({ "ok": true, "result": resp["result"] })
-            }
-        }
-        _ => json!({ "ok": false, "error": "Timeout waiting for MCP tool result" }),
+/// Shape an MCP `tools/call` JSON-RPC response into TigrimOS's tool-result form.
+fn stdio_result(resp: Value) -> Value {
+    let content = &resp["result"]["content"];
+    if content.is_array() {
+        let text: String = content
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        json!({ "ok": true, "result": text })
+    } else {
+        json!({ "ok": true, "result": resp["result"].clone() })
     }
 }
 

@@ -35,6 +35,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
+- **Browser control** — opt-in toggle that lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
 - **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
 - **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
@@ -735,6 +736,55 @@ See **[PLUGINS.md](PLUGINS.md)** for the full developer guide — manifest forma
 
 ---
 
+## Browser Control
+
+Let the agent drive a **real web browser** — navigate to pages, read content, click, fill forms, take screenshots, manage tabs, and run JavaScript. It's powered by [Playwright MCP](https://github.com/microsoft/playwright-mcp) running through TigrimOS's built-in MCP client, and is **off by default for safety** (once on, the agent can act in the browser — submit forms, click buttons, use logged-in sessions — as you).
+
+### Setup
+
+1. **Install Node.js** (v18+) so `npx` is available — Playwright MCP runs on Node. Check with `node --version`.
+2. In the app: **Settings → Security → Browser Control → ☑ Enable browser control**.
+3. Pick an **engine**:
+   - **Chromium** *(default)* — Playwright's bundled build. Portable, always available, no separate install.
+   - **Chrome** — your installed Google Chrome. Fewer bot/CAPTCHA blocks on big sites, but Chrome must be installed.
+4. That's it — the browser tools register immediately (saving the setting reconnects MCP). The agent gains tools like `mcp_browser_browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, and `browser_take_screenshot`. Screenshots render inline in chat.
+
+The first run downloads the browser on demand (or pre-fetch with `npx playwright install chromium`). A **dedicated browser profile** is kept under the app data dir (`<data-dir>/browser-profile-<engine>`), so the agent's browsing stays separate from your everyday browser — and any logins you do in that window persist for later runs.
+
+<details>
+<summary>How it works, advanced config & safety notes</summary>
+
+### How it works
+
+Enabling the toggle auto-registers a built-in stdio MCP server:
+
+```
+npx @playwright/mcp@latest --browser <chromium|chrome> \
+  --user-data-dir <data-dir>/browser-profile-<engine> \
+  --output-dir <data-dir>/browser-output
+```
+
+TigrimOS keeps the MCP server process **alive across tool calls**, so the browser session is stateful — a page opened by `browser_navigate` is still there for the next `browser_snapshot`/`browser_click`. (Each call is serialized per server and the process auto-restarts if it dies.)
+
+### Advanced: bring your own browser server
+
+If you define your own MCP server named `browser` under **Settings → MCP Tools** (or in `settings.json` → `mcpTools`), it **takes precedence** over the built-in one — useful for custom flags, a remote Playwright endpoint, or a different automation server. Settings keys:
+
+```json
+{
+  "browserControlEnabled": true,
+  "browserEngine": "chromium"
+}
+```
+
+### Safety
+
+The agent drives a real browser with your logged-in sessions, so treat browser actions with the same caution as shell commands. If Node/`npx` isn't installed, the toggle simply yields no tools (the log shows `Browser control failed to start (is Node/npx installed?)`) rather than crashing.
+
+</details>
+
+---
+
 ## Remote / Headless Setup
 
 TigrimOS can run on any cloud server (AWS, DigitalOcean, Hetzner, etc.) as a headless AI agent backend. You control it from your Mac desktop app, a mobile browser, or any web browser.
@@ -918,6 +968,7 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 - **Connect to System** — Pick a built-in AI provider (Claude Code, Gemini CLI, Codex, OpenRouter, xAI, Anthropic, MiniMax, Google AI Studio, Kimi, DeepSeek) to auto-fill the API URL + default model, **+ Add** your own custom provider, and **Test Connection** — all from the browser.
 - **Editable Web Search, Soul & Identity, and Agent Harness** — Toggle web search, edit the orchestrator's SOUL.md / IDENTITY.md, and tune the autonomous loop (max turns/tool-calls/tokens, temperature, reflection & step-verify thresholds, timeouts, unsandboxed-exec fallback) remotely.
 - **MCP Tools, Skill Update & Plugins over the web** — Add/remove/enable MCP servers and Reconnect All; configure skill auto-update (interval, max candidates, approval, human feedback) with a **Run Auto-Update Now** button + live status; and list/install(.zip)/enable/disable/remove plugins. Host-control actions (plugins) remain owner-token only by design.
+- **Browser control (opt-in)** — New **Settings → Security → Browser Control** toggle lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP. Off by default for safety; pick the bundled Chromium or your installed Chrome. Backed by persistent stdio MCP connections so the browser session stays alive across tool calls. Requires Node.js (`npx`).
 
 <details>
 <summary>v0.5.4 — Customizable themes, fonts, inline files, web file viewer</summary>

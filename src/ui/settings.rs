@@ -185,6 +185,10 @@ pub struct SettingsView {
     approval_file_delete: bool,
     approval_agent_spawn: bool,
 
+    // --- Browser control ---
+    browser_control_enabled: bool,
+    browser_engine: String,
+
     // --- Agent Harness ---
     agent_max_turns: u64,
     agent_max_tool_calls: u64,
@@ -293,6 +297,9 @@ impl Default for SettingsView {
             approval_file_write: false,
             approval_file_delete: true,
             approval_agent_spawn: false,
+
+            browser_control_enabled: false,
+            browser_engine: "chromium".to_string(),
 
             agent_max_turns: 15,
             agent_max_tool_calls: 25,
@@ -510,6 +517,13 @@ impl SettingsView {
         self.approval_file_delete = settings.approval_required_for_file_delete.unwrap_or(true);
         self.approval_agent_spawn = settings.approval_required_for_agent_spawn.unwrap_or(false);
 
+        // Browser control
+        self.browser_control_enabled = settings.browser_control_enabled.unwrap_or(false);
+        self.browser_engine = settings
+            .browser_engine
+            .clone()
+            .unwrap_or_else(|| "chromium".to_string());
+
         // Agent Harness (stored in extra map)
         self.agent_max_turns = settings.extra.get("agentMaxToolRounds")
             .and_then(|v| v.as_u64()).unwrap_or(15);
@@ -668,6 +682,10 @@ impl SettingsView {
         settings.approval_required_for_file_write = Some(self.approval_file_write);
         settings.approval_required_for_file_delete = Some(self.approval_file_delete);
         settings.approval_required_for_agent_spawn = Some(self.approval_agent_spawn);
+
+        // Browser control
+        settings.browser_control_enabled = Some(self.browser_control_enabled);
+        settings.browser_engine = Some(self.browser_engine.clone());
 
         // Agent Harness (stored in extra map)
         settings.extra.insert("agentMaxToolRounds".into(), serde_json::json!(self.agent_max_turns));
@@ -2816,6 +2834,64 @@ impl SettingsView {
             });
 
         if changed {
+            self.save_all_settings(runtime);
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.heading("Browser Control");
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Let the agent drive a real web browser (navigate, click, type, screenshot). \
+                 Off by default for safety: once on, the agent can act in the browser — submit \
+                 forms, click buttons, use logged-in sessions — as you. Requires Node.js (npx).",
+            )
+            .size(12.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(8.0);
+
+        let mut browser_changed = false;
+        if ui
+            .checkbox(&mut self.browser_control_enabled, "Enable browser control")
+            .changed()
+        {
+            browser_changed = true;
+        }
+
+        if self.browser_control_enabled {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label("Engine:");
+                if ui
+                    .radio_value(&mut self.browser_engine, "chromium".to_string(), "Chromium")
+                    .on_hover_text("Playwright's bundled Chromium — portable, always available.")
+                    .changed()
+                {
+                    browser_changed = true;
+                }
+                if ui
+                    .radio_value(&mut self.browser_engine, "chrome".to_string(), "Chrome")
+                    .on_hover_text("Your installed Google Chrome — fewer bot blocks, must be installed.")
+                    .changed()
+                {
+                    browser_changed = true;
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "Uses a dedicated browser profile (kept under the app data dir), so your \
+                     everyday browsing stays separate. First use downloads the browser on demand.",
+                )
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+            );
+        }
+
+        if browser_changed {
             self.save_all_settings(runtime);
         }
 
