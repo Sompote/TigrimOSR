@@ -7,6 +7,65 @@ mod vm;
 use std::sync::Arc;
 use vm::manager::VmManager;
 
+/// In headless mode on an interactive terminal, offer to install the Playwright
+/// browser and enable browser control. Skipped entirely on non-interactive
+/// startups (systemd / Docker / cron) so it never blocks waiting for input.
+fn maybe_prompt_browser_install(runtime: &tokio::runtime::Runtime) {
+    use std::io::{IsTerminal, Write};
+
+    if !std::io::stdin().is_terminal() {
+        return; // no TTY — don't block automated deploys
+    }
+
+    // Already enabled? Nothing to do.
+    let settings = runtime.block_on(server::data::get_settings());
+    if settings.browser_control_enabled == Some(true) {
+        return;
+    }
+
+    println!();
+    println!("Browser control lets the agent drive a real web browser");
+    println!("(search Google, click, fill forms, screenshot) — free, no search API.");
+    print!("Enable it now? Downloads the Playwright browser (~280 MB) [y/N]: ");
+    std::io::stdout().flush().ok();
+
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        return;
+    }
+    if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
+        println!("Skipped. Enable later in Settings → Security → Browser Control.");
+        println!();
+        return;
+    }
+
+    println!("Installing Playwright browser (chrome-for-testing)…");
+    match std::process::Command::new("npx")
+        .args(["@playwright/mcp@latest", "install-browser", "chrome-for-testing"])
+        .status()
+    {
+        Ok(s) if s.success() => {
+            let mut settings = runtime.block_on(server::data::get_settings());
+            settings.browser_control_enabled = Some(true);
+            if settings.browser_engine.is_none() {
+                settings.browser_engine = Some("chromium".to_string());
+            }
+            runtime.block_on(server::data::save_settings(&settings));
+            println!("✓ Browser control enabled (chromium, headless).");
+            println!("  On Linux you may also need: npx playwright install-deps chromium  (sudo)");
+        }
+        Ok(_) => {
+            println!("✗ Browser install failed. Ensure Node.js/npx is installed, then enable");
+            println!("  Browser Control later in Settings.");
+        }
+        Err(e) => {
+            println!("✗ Could not run npx ({e}). Install Node.js first, then enable Browser");
+            println!("  Control later in Settings.");
+        }
+    }
+    println!();
+}
+
 fn main() {
     // Load .env from data directory (same location as settings.json)
     let env_path = server::data::data_dir().join(".env");
@@ -74,6 +133,9 @@ fn main() {
             println!("Access token loaded from ACCESS_TOKEN env var.");
             access_token
         };
+
+        // Offer browser control setup (interactive terminals only).
+        maybe_prompt_browser_install(&runtime);
 
         tracing::info!("Running in headless mode (HTTP server only)");
         server::services::skill_synthesizer::start_cron(handle.clone());
