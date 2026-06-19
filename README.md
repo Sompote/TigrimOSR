@@ -652,6 +652,7 @@ On first launch, go to **Settings** to configure:
 | Agent mode | Fully Auto, Auto, Auto Swarm, or Manual |
 | Plugins | Install zip-based plugins with skills, MCP servers, and connectors |
 | MCP tools | Configure external tool servers (stdio/HTTP) in JSON format |
+| Browser control | Opt-in toggle to let the agent drive a real browser — see [Browser Control](#browser-control) |
 | Remote access | Enable remote + set token for web UI and remote connections |
 
 ---
@@ -830,7 +831,7 @@ You should see a download progress bar ending in `Chrome for Testing ... downloa
 - **Desktop app:** **Settings → Security → Browser Control → ☑ Enable browser control**.
 - **Web / mobile UI:** **Settings → AI / API → Browser Control → ☑ Enable browser control**.
 
-It's off by default; both places also let you choose the **Chromium** or **Chrome** engine, and saving reconnects MCP immediately.
+It's off by default — tick the box, then choose the engine (Step 4).
 
 #### Step 4 — Choose the engine
 
