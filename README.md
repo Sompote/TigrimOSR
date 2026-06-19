@@ -359,7 +359,18 @@ brew install python
 pip3 install duckduckgo-search matplotlib numpy pandas requests
 ```
 
-#### Step 3 — Clone, build, run
+#### Step 3 — (Optional) Browser control
+
+Only if you want the agent to drive a web browser. Install Node.js and Playwright's browser binary (~280 MB):
+
+```bash
+brew install node
+npx @playwright/mcp@latest install-browser chrome-for-testing
+```
+
+Then enable it later in **Settings → Security → Browser Control**. Full guide: [Browser Control](#browser-control).
+
+#### Step 4 — Clone, build, run
 
 ```bash
 git clone https://github.com/Sompote/TigrimOSR.git
@@ -414,7 +425,25 @@ sudo apt install python3 python3-pip
 pip3 install duckduckgo-search matplotlib numpy pandas requests
 ```
 
-#### Step 4 — Clone, build, run
+#### Step 4 — (Optional) Browser control
+
+Only if you want the agent to drive a web browser. Install Node.js and Playwright's browser binary (~280 MB):
+
+```bash
+# Debian / Ubuntu
+sudo apt install -y nodejs npm
+# Fedora: sudo dnf install -y nodejs ; Arch: sudo pacman -S nodejs npm
+npx @playwright/mcp@latest install-browser chrome-for-testing
+```
+
+A headless Linux server also needs the browser's runtime libraries:
+```bash
+npx playwright install-deps chromium
+```
+
+Then enable it later in **Settings → Security → Browser Control**. Full guide: [Browser Control](#browser-control).
+
+#### Step 5 — Clone, build, run
 
 ```bash
 git clone https://github.com/Sompote/TigrimOSR.git
@@ -503,7 +532,17 @@ python -m pip install duckduckgo-search matplotlib numpy pandas requests
 ```
 Or download from https://www.python.org/downloads/ — check **"Add Python to PATH"**.
 
-#### Step 6 — Clone, build, run
+#### Step 6 — (Optional) Browser control
+
+Only if you want the agent to drive a web browser. Install Node.js and Playwright's browser binary (~280 MB):
+
+```powershell
+winget install --id OpenJS.NodeJS.LTS -e
+npx @playwright/mcp@latest install-browser chrome-for-testing
+```
+Or download Node.js from https://nodejs.org. Then enable it later in **Settings → Security → Browser Control**. Full guide: [Browser Control](#browser-control).
+
+#### Step 7 — Clone, build, run
 
 ```powershell
 git clone https://github.com/Sompote/TigrimOSR.git
@@ -575,6 +614,7 @@ Design multi-agent systems visually — create architectures manually or generat
 - Rust 1.75+ (`rustup` recommended)
 - Python 3.8+ with pip (for tool execution)
 - macOS 12+ (primary target; Linux and Windows supported)
+- Node.js 18+ with `npx` — **optional**, only for [Browser Control](#browser-control) and the local CLI agents below
 
 ### Optional local CLI agents
 
