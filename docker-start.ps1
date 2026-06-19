@@ -4,10 +4,14 @@
 #
 #   Run from inside the repo:   .\docker-start.ps1
 #   Or straight from the web:   irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.ps1 | iex
+#
+#   Include browser control (agent can drive a real browser; adds ~400 MB):
+#     $env:INSTALL_BROWSER='true'; irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.ps1 | iex
 $ErrorActionPreference = 'Stop'
 
 $RepoUrl = 'https://github.com/Sompote/TigrimOSR.git'
 $Port = if ($env:PORT) { $env:PORT } else { '3001' }
+$InstallBrowser = if ($env:INSTALL_BROWSER -eq 'true') { 'true' } else { 'false' }
 
 function Write-Ok   ($m) { Write-Host "[OK] $m"   -ForegroundColor Green }
 function Write-Info ($m) { Write-Host $m          -ForegroundColor Cyan }
@@ -58,6 +62,11 @@ if (Test-Path '.env') {
 if ($existing -and $existing -ne 'change-me-to-a-long-random-secret') {
     $Token = $existing
     Write-Ok 'Using existing token from .env'
+    # Opt into browser control if requested and not already recorded.
+    if ($InstallBrowser -eq 'true' -and -not (Select-String -Path '.env' -Pattern '^INSTALL_BROWSER=' -Quiet)) {
+        Add-Content -Path '.env' -Value 'INSTALL_BROWSER=true' -Encoding ascii
+        Write-Ok 'Enabled browser control in .env (browser baked into the image)'
+    }
 } else {
     # 64 hex chars, like `openssl rand -hex 32`.
     $bytes = New-Object 'byte[]' 32
@@ -68,9 +77,13 @@ if ($existing -and $existing -ne 'change-me-to-a-long-random-secret') {
         "ACCESS_TOKEN=$Token"
     )
     if ($Port -ne '3001') { $lines += "PORT=$Port" }
+    if ($InstallBrowser -eq 'true') { $lines += 'INSTALL_BROWSER=true' }
     # ASCII, no trailing BOM, so the Linux container reads .env cleanly.
     [System.IO.File]::WriteAllLines((Join-Path (Get-Location) '.env'), $lines, (New-Object System.Text.ASCIIEncoding))
     Write-Ok 'Generated a new login token and saved it to .env'
+}
+if ($InstallBrowser -eq 'true') {
+    Write-Host 'Browser control enabled - the build downloads the browser (~400 MB), so the first build takes longer.' -ForegroundColor Yellow
 }
 
 # -- 4. Build and start --
@@ -105,6 +118,11 @@ Write-Host ''
 Write-Host '  (The token is saved in .env - paste it into the web UI to log in,'
 Write-Host '   then set your AI provider and API key under Settings.)'
 Write-Host ''
+if ($InstallBrowser -eq 'true') {
+    Write-Host '  Browser control: browser is baked in - enable it in'      -ForegroundColor Green
+    Write-Host '  Settings -> AI / API -> Browser Control (engine: Chromium).'
+    Write-Host ''
+}
 Write-Host '  Logs:   docker compose logs -f'
 Write-Host '  Stop:   docker compose down'
 Write-Host '  Start:  docker compose up -d'

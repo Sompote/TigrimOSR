@@ -222,9 +222,10 @@ this on networks you trust.
 The same container runs **headless on Windows** with no Rust, Python, or build
 tools installed on the host — only Docker Desktop. This is the easiest way to run
 TigrimOS on Windows: everything (and all agent code execution) stays inside the
-Linux container, and you use the app from your browser. The built-in **VM/QEMU
-terminal** is the only feature unavailable in containers; chat, tools, Python,
-web/remote UI all work.
+Linux container, and you use the app from your browser. Chat, tools, Python, and
+web/remote UI all work — and [Browser Control](#browser-control) works too when you
+build with `INSTALL_BROWSER=true` (shown below). The built-in **VM/QEMU terminal**
+is the only feature unavailable in containers.
 
 #### Easiest: one command (PowerShell)
 
@@ -236,9 +237,15 @@ server, and opens the browser — no manual `.env` editing:
 irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.ps1 | iex
 ```
 
+Want [Browser Control](#browser-control) too? Set `INSTALL_BROWSER=true` first (bakes
+the browser into the image, ~400 MB):
+```powershell
+$env:INSTALL_BROWSER='true'; irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.ps1 | iex
+```
+
 Already cloned the repo? Run it in place instead:
 ```powershell
-.\docker-start.ps1
+.\docker-start.ps1                          # or: $env:INSTALL_BROWSER='true'; .\docker-start.ps1
 ```
 It prints your token (also saved to `.env`) at the end. Re-running is safe — it
 reuses your existing token. Prefer to do it by hand? Follow the manual steps below.
@@ -275,6 +282,8 @@ later starts are instant.
 ```powershell
 docker compose up -d --build
 ```
+> For [Browser Control](#browser-control), add `INSTALL_BROWSER=true` to `.env`
+> before building (adds ~400 MB), then enable it in **Settings → AI / API**.
 
 **5. Open the app.** Browse to **http://localhost:3001/web/** and log in with the
 token from `.env`. Set your AI provider and API key under **Settings** (saved to
