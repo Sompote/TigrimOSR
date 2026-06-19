@@ -273,22 +273,34 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
     let profile = format!("{}/browser-profile-{}", data_dir, engine);
     let output = format!("{}/browser-output", data_dir);
 
+    // When TigrimOS itself runs headless (cloud/server, no display), the browser
+    // must run headless too — a headed launch fails with "Missing X server".
+    let headless = std::env::args().any(|a| a == "--headless");
+
+    let mut args: Vec<String> = vec!["@playwright/mcp@latest".to_string()];
+    if headless {
+        args.push("--headless".to_string());
+    }
+    args.push("--browser".to_string());
+    args.push(engine.clone());
+    args.push("--user-data-dir".to_string());
+    args.push(profile);
+    args.push("--output-dir".to_string());
+    args.push(output);
+
     let config = json!({
         "name": "browser",
         "command": "npx",
-        "args": [
-            "@playwright/mcp@latest",
-            "--browser", engine.clone(),
-            "--user-data-dir", profile,
-            "--output-dir", output,
-        ],
+        "args": args,
     });
 
     let result = connect_server_impl("browser", "stdio", &config).await;
     if result["ok"].as_bool().unwrap_or(false) {
         info!(
-            "[MCP] Browser control enabled ({}) — {} tool(s)",
-            engine, result["tools"]
+            "[MCP] Browser control enabled ({}{}) — {} tool(s)",
+            engine,
+            if headless { ", headless" } else { "" },
+            result["tools"]
         );
     } else {
         warn!(

@@ -864,6 +864,8 @@ npx @playwright/mcp@latest --browser <chromium|chrome> \
 
 TigrimOS keeps the MCP server process **alive across tool calls**, so the browser session is stateful — a page opened by `browser_navigate` is still there for the next `browser_snapshot`/`browser_click`. (Each call is serialized per server and the process auto-restarts if it dies.)
 
+**Headless / cloud servers:** when TigrimOS itself runs in `--headless` mode (no display), the built-in browser server **automatically adds `--headless`** so it works on a display-less server — just enable Browser Control as usual. The server still needs Node.js, the browser binary (`install-browser chrome-for-testing`), and the Linux runtime libs (`npx playwright install-deps chromium`). Use the **chromium** engine on servers. Screenshots stream back inline to the web/mobile UI.
+
 ### Advanced: bring your own browser server
 
 If you define your own MCP server named `browser` under **Settings → MCP Tools** (or in `settings.json` → `mcpTools`), it **takes precedence** over the built-in one — useful for custom flags, a remote Playwright endpoint, or a different automation server. Settings keys:
