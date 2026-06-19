@@ -3233,6 +3233,18 @@ async fn exec_fetch_url(args: &Value) -> Value {
         "POST" => client.post(url),
         _ => client.get(url),
     };
+    // Many sites (Wikipedia, etc.) reject requests without a browser-like
+    // User-Agent with a 403. Send one plus a standard Accept header.
+    let req = req
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        );
 
     match req.send().await {
         Ok(resp) => {
