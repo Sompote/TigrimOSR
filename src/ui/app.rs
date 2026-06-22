@@ -208,7 +208,6 @@ impl eframe::App for TigrimOSApp {
         let accent = super::theme::accent_color();
         let text_dim = super::theme::text_secondary_color();
         let text_dark = super::theme::text_primary_color();
-        let border_color = super::theme::border_color();
         let sidebar_bg = super::theme::hover_color();  // warm rail
 
         // ── Left sidebar (Kimi-style) ────────────────────────────────
@@ -220,7 +219,7 @@ impl eframe::App for TigrimOSApp {
             .frame(egui::Frame::new()
                 .fill(sidebar_bg)
                 .inner_margin(egui::Margin::symmetric(8, 12))
-                .stroke(egui::Stroke::new(0.5, border_color)))
+                .stroke(egui::Stroke::NONE))
             .show(ctx, |ui| {
                 ui.set_min_width(sidebar_w - 16.0);
                 ui.spacing_mut().item_spacing.y = 2.0;

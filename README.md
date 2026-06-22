@@ -891,6 +891,11 @@ TigrimOS keeps the MCP server process **alive across tool calls**, so the browse
 
 **Headless / cloud servers:** when TigrimOS itself runs in `--headless` mode (no display), the built-in browser server **automatically adds `--headless`** so it works on a display-less server. On an **interactive** headless startup, TigrimOS also **prompts you to install the browser and enable browser control** (`Enable it now? Downloads the Playwright browser (~280 MB) [y/N]`) — answer `y` and it runs the install and flips the setting on for you. Non-interactive startups (systemd / Docker / cron) skip the prompt, so install the browser yourself once (`npx @playwright/mcp@latest install-browser chrome-for-testing`) and set `browserControlEnabled: true`. Either way the server needs Node.js, and Linux needs the runtime libs (`npx playwright install-deps chromium`). Use the **chromium** engine on servers; screenshots stream back inline to the web/mobile UI.
 
+> ⚠️ **Heads-up: Google may block a headless browser.** In headless mode (and especially from a datacenter/cloud IP), Google is more likely to serve a **CAPTCHA / "are you a robot"** challenge or a consent wall instead of search results, so `web_search` and Google-driven browsing can fail. Headless browsers can't solve those challenges. If you hit this:
+> - Run with a **real display** (non-headless) and the **Chrome** engine, then log in / clear the CAPTCHA once in the visible window — the persistent profile remembers it.
+> - Or search from a residential IP rather than a cloud/datacenter IP.
+> - Or have the agent fetch results from a non-Google source.
+
 ### Advanced: bring your own browser server
 
 If you define your own MCP server named `browser` under **Settings → MCP Tools** (or in `settings.json` → `mcpTools`), it **takes precedence** over the built-in one — useful for custom flags, a remote Playwright endpoint, or a different automation server. Settings keys:
