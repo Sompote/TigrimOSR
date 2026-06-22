@@ -12,6 +12,103 @@ use tracing::{error, info, warn};
 use crate::server::services::protocols;
 use crate::server::services::compact;
 use crate::server::services::mcp;
+use crate::server::services::proc_registry;
+
+// ---------------------------------------------------------------------------
+// Per-session process execution context
+// ---------------------------------------------------------------------------
+//
+// Set around every tool dispatch (see execute_tool_dispatch) so that any child
+// process spawned deep inside a tool can be attributed to the owning session
+// and watched against that session's cancel flag — without threading both
+// values through every exec_* signature. Reads gracefully return None for
+// utility call paths that run outside a dispatch scope.
+#[derive(Clone)]
+struct ExecCtx {
+    session_id: String,
+    cancel: Arc<AtomicBool>,
+}
+
+tokio::task_local! {
+    static EXEC_CTX: ExecCtx;
+}
+
+/// Spawn `cmd` in its own process group, track it under the current session,
+/// and await completion against BOTH a timeout and the session cancel flag.
+///
+/// Drop-in for `timeout(Duration::from_secs(secs), cmd.kill_on_drop(true).output())`:
+/// returns `Ok(Ok(output))` when the process ran, `Ok(Err(e))` when it failed to
+/// spawn, and `Err(())` when it timed out or the chat task was killed. On the
+/// `Err(())` paths the whole process group is SIGKILLed so no child (or
+/// grandchild) outlives the cancellation.
+async fn run_guarded(
+    cmd: &mut Command,
+    timeout_secs: u64,
+) -> Result<std::io::Result<std::process::Output>, ()> {
+    #[cfg(unix)]
+    cmd.process_group(0); // child becomes its own group leader (pgid == pid)
+    cmd.kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let ctx = EXEC_CTX.try_with(|c| c.clone()).ok();
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return Ok(Err(e)),
+    };
+    let pid = child.id();
+    if let (Some(ctx), Some(pid)) = (ctx.as_ref(), pid) {
+        proc_registry::register(&ctx.session_id, pid);
+    }
+
+    let wait = child.wait_with_output();
+    tokio::pin!(wait);
+    let deadline = tokio::time::sleep(Duration::from_secs(timeout_secs));
+    tokio::pin!(deadline);
+
+    let outcome = loop {
+        tokio::select! {
+            out = &mut wait => break Some(out),
+            _ = &mut deadline => break None, // timed out
+            _ = tokio::time::sleep(Duration::from_millis(150)) => {
+                // Poll the session cancel flag between waits so a chat-kill
+                // interrupts a long-running process promptly.
+                if ctx.as_ref().map(|c| c.cancel.load(Ordering::Relaxed)).unwrap_or(false) {
+                    break None;
+                }
+            }
+        }
+    };
+
+    if let (Some(ctx), Some(pid)) = (ctx.as_ref(), pid) {
+        proc_registry::unregister(&ctx.session_id, pid);
+    }
+
+    match outcome {
+        Some(out) => Ok(out),
+        None => {
+            if let Some(pid) = pid {
+                proc_registry::kill_group(pid);
+            }
+            Err(())
+        }
+    }
+}
+
+/// Distinguish a user-cancelled run from a genuine timeout for an `Err(())`
+/// returned by `run_guarded`.
+fn interrupted_reason(timeout_secs: u64) -> String {
+    let cancelled = EXEC_CTX
+        .try_with(|c| c.cancel.load(Ordering::Relaxed))
+        .unwrap_or(false);
+    if cancelled {
+        "Execution stopped: task was cancelled by user".to_string()
+    } else {
+        format!("Execution timed out ({timeout_secs}s)")
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -145,8 +242,9 @@ async fn is_vm_running() -> bool {
 /// Run a command inside the VM via SSH. Returns Ok((stdout, stderr, success)) or Err.
 async fn run_in_vm(cmd: &str, timeout_secs: u64) -> Result<(String, String, bool), String> {
     let port = crate::vm::VmConfig::SSH_HOST_PORT.to_string();
-    let result = timeout(
-        Duration::from_secs(timeout_secs),
+    // Guard the local ssh client so a chat-kill SIGKILLs it (the remote command
+    // still runs on the VM, but the local SSH session is reaped, not orphaned).
+    let result = run_guarded(
         Command::new("sshpass")
             .args([
                 "-p", "tigris",
@@ -158,9 +256,8 @@ async fn run_in_vm(cmd: &str, timeout_secs: u64) -> Result<(String, String, bool
                 "-p", &port,
                 "tigris@localhost",
                 cmd,
-            ])
-            .kill_on_drop(true)
-            .output(),
+            ]),
+        timeout_secs,
     )
     .await;
 
@@ -171,7 +268,7 @@ async fn run_in_vm(cmd: &str, timeout_secs: u64) -> Result<(String, String, bool
             Ok((stdout, stderr, output.status.success()))
         }
         Ok(Err(e)) => Err(format!("Failed to run in VM: {e}")),
-        Err(_) => Err(format!("VM execution timed out ({timeout_secs}s)")),
+        Err(_) => Err(interrupted_reason(timeout_secs)),
     }
 }
 
@@ -391,6 +488,14 @@ pub struct RealtimeSession {
     /// Notified whenever a new result is published
     pub result_notify: Arc<Notify>,
     pub abort_tx: tokio::sync::broadcast::Sender<()>,
+    /// Shared cancel flag for every agent in this session. `abort_tx` only
+    /// unblocks an agent that is idle (waiting on its task channel); an agent
+    /// busy inside call_with_tools won't see the broadcast until its current
+    /// task finishes. This flag is threaded into each agent's SubAgentConfig so
+    /// the tool loop stops at the next round/tool boundary AND run_guarded
+    /// SIGKILLs any in-flight child process — closing the window where a killed
+    /// swarm keeps spawning processes that escape the one-shot registry sweep.
+    pub cancel_flag: Arc<AtomicBool>,
     /// Who is currently blocked in wait_result on whom (caller_id -> target_id).
     /// Used for self-wait and circular-wait (deadlock) detection.
     pub waiting_on: Arc<TokioMutex<HashMap<String, String>>>,
@@ -584,6 +689,7 @@ pub async fn start_realtime_session(
     };
 
     let (abort_tx, _) = tokio::sync::broadcast::channel::<()>(4);
+    let session_cancel = Arc::new(AtomicBool::new(false));
     let results = Arc::new(TokioMutex::new(HashMap::<String, Vec<AgentResult>>::new()));
     let result_notify = Arc::new(Notify::new());
 
@@ -618,6 +724,7 @@ pub async fn start_realtime_session(
                 status.clone(),
                 current_task_from.clone(),
                 abort_rx,
+                session_cancel.clone(),
             ));
         }
 
@@ -657,6 +764,7 @@ pub async fn start_realtime_session(
         results,
         result_notify,
         abort_tx,
+        cancel_flag: session_cancel,
         waiting_on: Arc::new(TokioMutex::new(HashMap::new())),
         wait_hard_timeouts: Arc::new(TokioMutex::new(HashMap::new())),
     }));
@@ -671,6 +779,11 @@ pub async fn shutdown_realtime_session(session_id: &str) {
     let mut map = realtime_sessions().lock().await;
     if let Some(session_arc) = map.remove(session_id) {
         let session = session_arc.lock().await;
+        // Set the shared cancel flag FIRST so any agent busy inside
+        // call_with_tools stops at its next round/tool boundary and
+        // run_guarded SIGKILLs its in-flight child; then broadcast abort to
+        // unblock idle agents waiting on their task channel.
+        session.cancel_flag.store(true, Ordering::Relaxed);
         let _ = session.abort_tx.send(());
         info!("[Realtime] Session {} shut down", session_id);
     }
@@ -1077,6 +1190,7 @@ async fn realtime_agent_loop(
     status: Arc<TokioMutex<String>>,
     current_task_from: Arc<TokioMutex<String>>,
     mut abort_rx: tokio::sync::broadcast::Receiver<()>,
+    cancel_flag: Arc<AtomicBool>,
 ) {
     let agent_id = agent_def["id"].as_str().unwrap_or("agent").to_string();
     let mut system_prompt = build_realtime_agent_prompt(&agent_def, &system_config);
@@ -1091,6 +1205,13 @@ async fn realtime_agent_loop(
     info!("[Realtime] Agent {} loop started", agent_id);
 
     loop {
+        // Session was killed while we were busy on the previous task — stop
+        // before picking up anything new (abort_rx may race with a buffered task).
+        if cancel_flag.load(Ordering::Relaxed) {
+            info!("[Realtime] Agent {} stopping — session cancelled", agent_id);
+            break;
+        }
+
         // Wait for a task or shutdown signal
         let task = tokio::select! {
             t = task_rx.recv() => match t {
@@ -1126,6 +1247,7 @@ async fn realtime_agent_loop(
                 enabled: false,
                 session_id: session_id.clone(),
                 agent_id: agent_id.clone(),
+                cancel_flag: cancel_flag.clone(),
                 ..SubAgentConfig::default()
             };
             let bid_log_tx = subagent_log_tx().clone();
@@ -1224,6 +1346,7 @@ async fn realtime_agent_loop(
             session_id: session_id.clone(),
             agent_id: agent_id.clone(),
             agent_role: role.to_string(),
+            cancel_flag: cancel_flag.clone(),
             ..SubAgentConfig::default()
         };
 
@@ -3660,8 +3783,7 @@ def save_output(filename, content=None, mode='w'):
     #[cfg(target_os = "macos")]
     let result = {
         // Primary: Apple container CLI (macOS containerization)
-        let r = timeout(
-            Duration::from_secs(60),
+        let r = run_guarded(
             Command::new("/usr/bin/container")
                 .args([
                     "run", "--rm",
@@ -3669,9 +3791,8 @@ def save_output(filename, content=None, mode='w'):
                     "-w", "/sandbox",
                     "python:3.11-slim",
                     "python3", "-c", code,
-                ])
-                .kill_on_drop(true)
-                .output(),
+                ]),
+            60,
         )
         .await;
 
@@ -3702,8 +3823,7 @@ def save_output(filename, content=None, mode='w'):
                 denies = secret_read_deny_rules(),
                 sandbox = abs_sandbox.display()
             );
-            let r2 = timeout(
-                Duration::from_secs(60),
+            let r2 = run_guarded(
                 Command::new("/usr/bin/sandbox-exec")
                     .arg("-p")
                     .arg(&sandbox_profile)
@@ -3712,9 +3832,8 @@ def save_output(filename, content=None, mode='w'):
                     .arg(code)
                     .current_dir(sandbox_dir)
                     .env("MPLCONFIGDIR", &mpl_config_dir)
-                    .env("HOME", sandbox_dir)
-                    .kill_on_drop(true)
-                    .output(),
+                    .env("HOME", sandbox_dir),
+                60,
             )
             .await;
 
@@ -3723,16 +3842,14 @@ def save_output(filename, content=None, mode='w'):
                 Ok(Err(_)) if allow_unsandboxed_exec() => {
                     // Fallback 2 (opt-in): direct unsandboxed execution
                     warn!("[sandbox] sandbox-exec unavailable — direct execution (agentAllowUnsandboxedExec=true)");
-                    timeout(
-                        Duration::from_secs(60),
+                    run_guarded(
                         python_command()
                             .arg("-c")
                             .arg(code)
                             .current_dir(sandbox_dir)
                             .env("MPLCONFIGDIR", &mpl_config_dir)
-                            .env("HOME", sandbox_dir)
-                            .kill_on_drop(true)
-                            .output(),
+                            .env("HOME", sandbox_dir),
+                        60,
                     )
                     .await
                 }
@@ -3749,16 +3866,14 @@ def save_output(filename, content=None, mode='w'):
     };
 
     #[cfg(not(target_os = "macos"))]
-    let result = timeout(
-        Duration::from_secs(60),
+    let result = run_guarded(
         python_command()
             .arg("-c")
             .arg(code)
             .current_dir(sandbox_dir)
             .env("MPLCONFIGDIR", &mpl_config_dir)
-            .env("HOME", sandbox_dir)
-            .kill_on_drop(true)
-            .output(),
+            .env("HOME", sandbox_dir),
+        60,
     )
     .await;
 
@@ -3778,7 +3893,7 @@ def save_output(filename, content=None, mode='w'):
             })
         }
         Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn python3: {e}") }),
-        Err(_) => json!({ "ok": false, "error": "Execution timed out (60s)" }),
+        Err(_) => json!({ "ok": false, "error": interrupted_reason(60) }),
     }
 }
 
@@ -3848,8 +3963,7 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
     #[cfg(target_os = "macos")]
     let result = {
         // Primary: Apple container CLI
-        let r = timeout(
-            Duration::from_secs(30),
+        let r = run_guarded(
             Command::new("/usr/bin/container")
                 .args([
                     "run", "--rm",
@@ -3857,9 +3971,8 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
                     "-w", "/sandbox",
                     "alpine:latest",
                     "sh", "-c", command,
-                ])
-                .kill_on_drop(true)
-                .output(),
+                ]),
+            30,
         )
         .await;
 
@@ -3888,17 +4001,15 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
                 denies = secret_read_deny_rules(),
                 sandbox = abs_sandbox.display()
             );
-            let r2 = timeout(
-                Duration::from_secs(30),
+            let r2 = run_guarded(
                 Command::new("/usr/bin/sandbox-exec")
                     .arg("-p")
                     .arg(&sandbox_profile)
                     .arg("/bin/sh")
                     .arg("-c")
                     .arg(command)
-                    .current_dir(&cwd)
-                    .kill_on_drop(true)
-                    .output(),
+                    .current_dir(&cwd),
+                30,
             )
             .await;
 
@@ -3907,14 +4018,12 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
                 Ok(Err(_)) if allow_unsandboxed_exec() => {
                     // Fallback 2 (opt-in): direct unsandboxed execution
                     warn!("[sandbox] sandbox-exec unavailable — direct execution (agentAllowUnsandboxedExec=true)");
-                    timeout(
-                        Duration::from_secs(30),
+                    run_guarded(
                         shell_command()
                             .arg("-c")
                             .arg(command)
-                            .current_dir(&cwd)
-                            .kill_on_drop(true)
-                            .output(),
+                            .current_dir(&cwd),
+                        30,
                     )
                     .await
                 }
@@ -3937,7 +4046,7 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
         cmd.arg("/c").arg(command);
         #[cfg(not(target_os = "windows"))]
         cmd.arg("-c").arg(command);
-        timeout(Duration::from_secs(30), cmd.current_dir(&cwd).kill_on_drop(true).output()).await
+        run_guarded(cmd.current_dir(&cwd), 30).await
     };
 
     match result {
@@ -3958,7 +4067,7 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
             })
         }
         Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn shell: {e}") }),
-        Err(_) => json!({ "ok": false, "error": "Execution timed out (30s)" }),
+        Err(_) => json!({ "ok": false, "error": interrupted_reason(30) }),
     }
 }
 
@@ -4594,12 +4703,10 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
                 { "npx".to_string() }
             }
         };
-        let compiled = timeout(
-            Duration::from_secs(30),
+        let compiled = run_guarded(
             Command::new(&npx_bin)
-                .args(["--yes", "esbuild", jsx_tmp.to_str().unwrap_or(""), "--bundle=false", "--loader=jsx"])
-                .kill_on_drop(true)
-                .output(),
+                .args(["--yes", "esbuild", jsx_tmp.to_str().unwrap_or(""), "--bundle=false", "--loader=jsx"]),
+            30,
         ).await;
         let _ = tokio::fs::remove_file(&jsx_tmp).await;
         if let Ok(Ok(out)) = compiled {
@@ -4760,7 +4867,7 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
 
     info!("[ClaudeCode] Spawning in {} (timeout: {}s, maxTurns: {})", sandbox_dir, timeout_secs, max_turns);
 
-    match timeout(Duration::from_secs(timeout_secs), Command::new("claude").args(&cli_args).current_dir(sandbox_dir).kill_on_drop(true).output()).await {
+    match run_guarded(Command::new("claude").args(&cli_args).current_dir(sandbox_dir), timeout_secs).await {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut result_text = String::new();
@@ -4787,7 +4894,7 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
             json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls, "output_files": output_files })
         }
         Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn claude: {e}. Is 'claude' in PATH?") }),
-        Err(_) => json!({ "ok": false, "error": format!("Claude Code timed out after {}s", timeout_secs) }),
+        Err(_) => json!({ "ok": false, "error": interrupted_reason(timeout_secs) }),
     }
 }
 
@@ -4821,14 +4928,13 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
     let home = resolve_home();
     info!("[GeminiCLI] Spawning agent in {} (timeout: {}s)", sandbox_dir, timeout_secs);
 
-    match timeout(Duration::from_secs(timeout_secs),
+    match run_guarded(
         Command::new("gemini")
             .args(&cli_args)
             .current_dir(sandbox_dir)
             .env("PATH", cli_env_path())
-            .env("HOME", &home)
-            .kill_on_drop(true)
-            .output()
+            .env("HOME", &home),
+        timeout_secs,
     ).await {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -4869,7 +4975,7 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
             json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls, "output_files": output_files })
         }
         Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn gemini: {e}. Is 'gemini' in PATH?") }),
-        Err(_) => json!({ "ok": false, "error": format!("Gemini CLI timed out after {}s", timeout_secs) }),
+        Err(_) => json!({ "ok": false, "error": interrupted_reason(timeout_secs) }),
     }
 }
 
@@ -6000,7 +6106,14 @@ pub async fn call_with_tools(
     on_update: impl Fn(ToolUpdate) + Send + Sync + 'static,
     sub_agent: SubAgentConfig,
 ) -> ToolLoopResult {
-    call_with_tools_inner(api_key, api_url, model, messages, system_prompt, sandbox_dir, on_update, sub_agent, false).await
+    // Bind the session exec context for the WHOLE loop so that even processes
+    // spawned outside tool dispatch — CLI model backends in llm_call
+    // (claude-code/gemini-cli/codex-cli) — are tracked and killed on cancel.
+    let ctx = ExecCtx { session_id: sub_agent.session_id.clone(), cancel: sub_agent.cancel_flag.clone() };
+    EXEC_CTX.scope(
+        ctx,
+        call_with_tools_inner(api_key, api_url, model, messages, system_prompt, sandbox_dir, on_update, sub_agent, false),
+    ).await
 }
 
 pub async fn call_with_tools_realtime(
@@ -6013,7 +6126,11 @@ pub async fn call_with_tools_realtime(
     on_update: impl Fn(ToolUpdate) + Send + Sync + 'static,
     sub_agent: SubAgentConfig,
 ) -> ToolLoopResult {
-    call_with_tools_inner(api_key, api_url, model, messages, system_prompt, sandbox_dir, on_update, sub_agent, true).await
+    let ctx = ExecCtx { session_id: sub_agent.session_id.clone(), cancel: sub_agent.cancel_flag.clone() };
+    EXEC_CTX.scope(
+        ctx,
+        call_with_tools_inner(api_key, api_url, model, messages, system_prompt, sandbox_dir, on_update, sub_agent, true),
+    ).await
 }
 
 // ---------------------------------------------------------------------------
@@ -6562,15 +6679,13 @@ async fn llm_call_claude_code(
     }
 
     let home = resolve_home();
-    let result = timeout(
-        Duration::from_secs(120),
+    let result = run_guarded(
         Command::new(&node_bin)
             .args(&cli_args)
             .env("PATH", cli_env_path())
             .env("HOME", &home)
-            .env("CLAUDE_MAX_OUTPUT_TOKENS", max_tokens.to_string())
-            .kill_on_drop(true)
-            .output(),
+            .env("CLAUDE_MAX_OUTPUT_TOKENS", max_tokens.to_string()),
+        120,
     ).await;
 
     match result {
@@ -6667,7 +6782,7 @@ async fn llm_call_claude_code(
             }))
         }
         Ok(Err(e)) => Err(format!("Failed to spawn claude CLI: {e}. Is 'claude' installed?")),
-        Err(_) => Err("Claude Code CLI timed out (120s)".to_string()),
+        Err(_) => Err(interrupted_reason(120)),
     }
 }
 
@@ -6741,15 +6856,12 @@ async fn llm_call_gemini_cli(
     }
 
     let home = resolve_home();
-    let result = timeout(
-        Duration::from_secs(180),
+    let result = run_guarded(
         Command::new("gemini")
             .args(&cli_args)
             .env("PATH", cli_env_path())
-            .env("HOME", &home)
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .output(),
+            .env("HOME", &home),
+        180,
     ).await;
 
     match result {
@@ -6862,7 +6974,7 @@ async fn llm_call_gemini_cli(
             }))
         }
         Ok(Err(e)) => Err(format!("Failed to spawn gemini CLI: {e}. Is 'gemini' in PATH?")),
-        Err(_) => Err("Gemini CLI timed out (120s)".to_string()),
+        Err(_) => Err(interrupted_reason(180)),
     }
 }
 
@@ -6949,17 +7061,13 @@ async fn llm_call_codex_cli(
         cli_args.push(model.to_string());
     }
 
-    let result = timeout(
-        Duration::from_secs(180),
+    let result = run_guarded(
         Command::new(&node_bin)
             .args(&cli_args)
             .current_dir(&sandbox_dir)
             .env("PATH", cli_env_path())
-            .env("HOME", &home)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .output(),
+            .env("HOME", &home),
+        180,
     ).await;
 
     match result {
@@ -7087,7 +7195,7 @@ async fn llm_call_codex_cli(
             }))
         }
         Ok(Err(e)) => Err(format!("Failed to spawn codex CLI (node={}, script={}, cwd={}): {e}", node_bin, script_path, sandbox_dir)),
-        Err(_) => Err("Codex CLI timed out (180s)".to_string()),
+        Err(_) => Err(interrupted_reason(180)),
     }
 }
 
@@ -8597,6 +8705,31 @@ async fn call_with_tools_inner(
 // ---------------------------------------------------------------------------
 
 async fn execute_tool_dispatch(
+    tool_name: &str,
+    tool_args: &Value,
+    sandbox_dir: &str,
+    sub_agent: &SubAgentConfig,
+    on_update: Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static>,
+    realtime: bool,
+) -> Value {
+    // Bind the owning session + its cancel flag for the whole dispatch so any
+    // child process spawned inside a tool is tracked and killed when this chat
+    // task is killed (see run_guarded / proc_registry).
+    let ctx = ExecCtx {
+        session_id: sub_agent.session_id.clone(),
+        cancel: sub_agent.cancel_flag.clone(),
+    };
+    EXEC_CTX
+        .scope(
+            ctx,
+            execute_tool_dispatch_inner(
+                tool_name, tool_args, sandbox_dir, sub_agent, on_update, realtime,
+            ),
+        )
+        .await
+}
+
+async fn execute_tool_dispatch_inner(
     tool_name: &str,
     tool_args: &Value,
     sandbox_dir: &str,

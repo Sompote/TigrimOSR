@@ -1517,6 +1517,10 @@ You have access to these tools: {}.{}",
 
             // FULLY_AUTO: create architecture → boot agents → directly delegate
             let mut sub_agent_config = sub_agent_config;
+            // Wire the Stop button's flag into the tool loop's cancel flag so a
+            // native-chat stop both halts the loop and lets run_guarded SIGKILL
+            // any in-flight child process (python/shell/CLI agents).
+            sub_agent_config.cancel_flag = cancelled.clone();
             let system_prompt = system_prompt;
             let mut fully_auto_handled = false;
             let fa_text = fa_text_pre;
@@ -1920,9 +1924,13 @@ You have access to these tools: {}.{}",
                     }
                 };
 
-                // Shutdown realtime session if cancelled
+                // Shutdown realtime session if cancelled. The select! above can
+                // DROP the tool future mid-tool; kill_on_drop only reaps the
+                // direct child, so sweep the registry to SIGKILL the whole
+                // process group (grandchildren included) for this session.
                 if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
                     crate::server::services::toolbox::shutdown_realtime_session(&sid).await;
+                    crate::server::services::proc_registry::kill_session(&sid);
                 }
 
                 r

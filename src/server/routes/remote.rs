@@ -254,10 +254,12 @@ async fn kill_task(headers: HeaderMap, Path(id): Path<String>) -> impl IntoRespo
             entry.completed_at = Some(now_iso());
             add_progress_inner(entry, "Task killed by user");
 
-            // Shutdown any realtime session
+            // Shutdown any realtime session and SIGKILL every process tree this
+            // remote task spawned (processes register under the same session_id).
             let sid = entry.session_id.clone();
             drop(tasks);
             shutdown_realtime_session(&sid).await;
+            crate::server::services::proc_registry::kill_session(&sid);
 
             (
                 StatusCode::OK,

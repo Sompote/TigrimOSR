@@ -1023,10 +1023,13 @@ impl TasksView {
                     }
                 }
                 active_chats().lock().unwrap().retain(|c| c.session_id != *kid);
-                // Shutdown any realtime session for this chat
+                // Shutdown any realtime session for this chat and SIGKILL every
+                // OS process tree it spawned (so killed tasks leave nothing
+                // running with filesystem/network access).
                 let kid_clone = kid.clone();
                 runtime.spawn(async move {
                     crate::server::services::toolbox::shutdown_realtime_session(&kid_clone).await;
+                    crate::server::services::proc_registry::kill_session(&kid_clone);
                 });
             }
             ui.add_space(8.0);

@@ -3,6 +3,7 @@ pub mod socket;
 #[allow(dead_code)]
 pub mod scheduler;
 pub mod toolbox;
+pub mod proc_registry;
 pub mod skill_synthesizer;
 #[allow(dead_code)]
 pub mod protocols;
