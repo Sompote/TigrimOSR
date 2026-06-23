@@ -188,6 +188,9 @@ pub struct SettingsView {
     // --- Browser control ---
     browser_control_enabled: bool,
     browser_engine: String,
+    /// None = Auto (follow the server's --headless flag); Some(true)/Some(false)
+    /// force the browser headless / headful independently of the server UI.
+    browser_headless: Option<bool>,
 
     // --- Agent Harness ---
     agent_max_turns: u64,
@@ -299,7 +302,8 @@ impl Default for SettingsView {
             approval_agent_spawn: false,
 
             browser_control_enabled: false,
-            browser_engine: "chromium".to_string(),
+            browser_engine: "chrome".to_string(),
+            browser_headless: None,
 
             agent_max_turns: 15,
             agent_max_tool_calls: 25,
@@ -522,7 +526,8 @@ impl SettingsView {
         self.browser_engine = settings
             .browser_engine
             .clone()
-            .unwrap_or_else(|| "chromium".to_string());
+            .unwrap_or_else(|| "chrome".to_string());
+        self.browser_headless = settings.browser_headless;
 
         // Agent Harness (stored in extra map)
         self.agent_max_turns = settings.extra.get("agentMaxToolRounds")
@@ -686,6 +691,7 @@ impl SettingsView {
         // Browser control
         settings.browser_control_enabled = Some(self.browser_control_enabled);
         settings.browser_engine = Some(self.browser_engine.clone());
+        settings.browser_headless = self.browser_headless;
 
         // Agent Harness (stored in extra map)
         settings.extra.insert("agentMaxToolRounds".into(), serde_json::json!(self.agent_max_turns));
@@ -2880,11 +2886,42 @@ impl SettingsView {
                     browser_changed = true;
                 }
             });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label("Window:");
+                if ui
+                    .radio_value(&mut self.browser_headless, None, "Auto")
+                    .on_hover_text("Follow the server: headless when started with --headless, otherwise headful.")
+                    .changed()
+                {
+                    browser_changed = true;
+                }
+                if ui
+                    .radio_value(&mut self.browser_headless, Some(false), "Real browser")
+                    .on_hover_text(
+                        "Force a real, visible (headful) browser even on a UI-less server. \
+                         Trips far fewer bot blocks (Google etc.). On a server with no display, \
+                         run TigrimOS under a virtual one, e.g. `xvfb-run`.",
+                    )
+                    .changed()
+                {
+                    browser_changed = true;
+                }
+                if ui
+                    .radio_value(&mut self.browser_headless, Some(true), "Headless")
+                    .on_hover_text("Force headless (no window). More likely to be blocked by Google and others.")
+                    .changed()
+                {
+                    browser_changed = true;
+                }
+            });
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(
                     "Uses a dedicated browser profile (kept under the app data dir), so your \
-                     everyday browsing stays separate. First use downloads the browser on demand.",
+                     everyday browsing stays separate. First use downloads the browser on demand. \
+                     To beat Google's headless blocking on Ubuntu: pick \"Chrome\" + \"Real browser\" \
+                     and launch the server under `xvfb-run -a ./TigrimOS --headless`.",
                 )
                 .size(11.0)
                 .color(egui::Color32::GRAY),

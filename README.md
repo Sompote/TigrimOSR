@@ -852,8 +852,8 @@ It's off by default — tick the box, then choose the engine (Step 4).
 
 | Engine | When to pick it |
 |--------|-----------------|
-| **Chromium** *(default, recommended)* | Playwright's managed Chromium build. Portable — works on any machine after Step 2. |
-| **Chrome** | Your installed Google Chrome channel. Fewer bot/CAPTCHA blocks on big sites, but Google Chrome must be installed. |
+| **Chrome** *(default, recommended)* | Your installed Google Chrome channel. **Far fewer bot/CAPTCHA blocks** on big sites (Google search especially), but Google Chrome must be installed. |
+| **Chromium** | Playwright's managed Chromium build. Portable — works on any machine after Step 2. Pick this on hosts without Google Chrome. |
 
 Saving the setting **reconnects MCP immediately** — no restart needed. The agent now has tools like `mcp_browser_browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, and `browser_take_screenshot`, and screenshots render inline in chat.
 
@@ -872,7 +872,7 @@ Expect the agent to call `browser_navigate` → `browser_snapshot` → `browser_
 | `Browser "chrome-for-testing" is not installed` | Step 2 was skipped or failed — run the `install-browser` command, then reconnect (toggle Browser Control off/on, or restart). |
 | `EPERM` / root-owned files during install | `sudo chown -R $(id -u):$(id -g) ~/.npm`, then re-run Step 2. |
 | Toggle on but no browser tools appear; log says `failed to start (is Node/npx installed?)` | Node isn't installed or `npx` isn't on PATH — complete Step 1. |
-| Lots of CAPTCHAs / "are you a robot" pages | Switch the engine to **Chrome** (Step 4) and log in once in the visible window. |
+| Lots of CAPTCHAs / "are you a robot" pages | Use the **Chrome** engine with a **real (headful) browser**, not headless — on a server run under `xvfb-run` with `browserHeadless: false`. See [Headless / cloud servers](#how-it-works) below. |
 
 <details>
 <summary>How it works, advanced config & safety notes</summary>
@@ -889,12 +889,24 @@ npx @playwright/mcp@latest --browser <chromium|chrome> \
 
 TigrimOS keeps the MCP server process **alive across tool calls**, so the browser session is stateful — a page opened by `browser_navigate` is still there for the next `browser_snapshot`/`browser_click`. (Each call is serialized per server and the process auto-restarts if it dies.)
 
-**Headless / cloud servers:** when TigrimOS itself runs in `--headless` mode (no display), the built-in browser server **automatically adds `--headless`** so it works on a display-less server. On an **interactive** headless startup, TigrimOS also **prompts you to install the browser and enable browser control** (`Enable it now? Downloads the Playwright browser (~280 MB) [y/N]`) — answer `y` and it runs the install and flips the setting on for you. Non-interactive startups (systemd / Docker / cron) skip the prompt, so install the browser yourself once (`npx @playwright/mcp@latest install-browser chrome-for-testing`) and set `browserControlEnabled: true`. Either way the server needs Node.js, and Linux needs the runtime libs (`npx playwright install-deps chromium`). Use the **chromium** engine on servers; screenshots stream back inline to the web/mobile UI.
+**Headless / cloud servers:** the browser's headless mode is **decoupled** from the server's UI mode via the `browserHeadless` setting:
 
-> ⚠️ **Heads-up: Google may block a headless browser.** In headless mode (and especially from a datacenter/cloud IP), Google is more likely to serve a **CAPTCHA / "are you a robot"** challenge or a consent wall instead of search results, so `web_search` and Google-driven browsing can fail. Headless browsers can't solve those challenges. If you hit this:
-> - Run with a **real display** (non-headless) and the **Chrome** engine, then log in / clear the CAPTCHA once in the visible window — the persistent profile remembers it.
-> - Or search from a residential IP rather than a cloud/datacenter IP.
-> - Or have the agent fetch results from a non-Google source.
+| `browserHeadless` | Browser runs… | Use it for |
+|-------------------|---------------|------------|
+| *(unset — default)* | Headless **if** the server was started with `--headless`, else headful | Legacy behaviour; "just works" on desktop |
+| `false` | **Headful (a real browser)** even on a UI-less server | Beating Google's headless blocking on a server |
+| `true` | Headless (no window) | Forcing headless regardless of UI |
+
+On an **interactive** headless startup, TigrimOS also **prompts you to install the browser and enable browser control** (`Enable it now? Downloads the Playwright browser (~280 MB) [y/N]`) — answer `y` and it runs the install and flips the setting on for you. Non-interactive startups (systemd / Docker / cron) skip the prompt, so install the browser yourself once (`npx @playwright/mcp@latest install-browser chrome-for-testing`) and set `browserControlEnabled: true`. Either way the server needs Node.js, and Linux needs the runtime libs (`npx playwright install-deps chromium`). Screenshots stream back inline to the web/mobile UI.
+
+> ⚠️ **Heads-up: Google blocks headless browsers.** A headless browser (especially from a datacenter/cloud IP) is likely to hit a **CAPTCHA / "are you a robot"** challenge or consent wall instead of results, so `web_search` and Google-driven browsing fail — headless browsers can't solve those. **The fix is to run a real, headful browser on the server:**
+> - Set **engine = Chrome** and **`browserHeadless: false`** (Settings → Browser Control → *Window: Real browser*).
+> - A server has no display, so give it a **virtual** one with [Xvfb](https://en.wikipedia.org/wiki/Xvfb): `sudo apt-get install -y xvfb`, then launch TigrimOS under it:
+>   ```bash
+>   xvfb-run -a ./target/release/tigrimos --headless
+>   ```
+>   The server stays UI-less, but the browser is now a *real* Chrome window inside the virtual display — Google can't tell it's headless. Clear any first CAPTCHA once in that window (via screenshots/clicks) and the **persistent profile** remembers it.
+> - This defeats **headless detection** but not **IP reputation** — a hardened datacenter IP may still be challenged. For those, use a **residential IP/proxy**, or have the agent fetch results from a non-Google source.
 
 ### Advanced: bring your own browser server
 
@@ -903,9 +915,12 @@ If you define your own MCP server named `browser` under **Settings → MCP Tools
 ```json
 {
   "browserControlEnabled": true,
-  "browserEngine": "chromium"
+  "browserEngine": "chrome",
+  "browserHeadless": false
 }
 ```
+
+`browserEngine` is `"chrome"` (default) or `"chromium"`. `browserHeadless` is `true`/`false` to force the browser headless/headful, or omit it to follow the server's `--headless` flag.
 
 ### Safety
 

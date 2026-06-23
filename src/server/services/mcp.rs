@@ -287,9 +287,15 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
     // web UI (file-server) can read/display them.
     let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
 
-    // When TigrimOS itself runs headless (cloud/server, no display), the browser
-    // must run headless too — a headed launch fails with "Missing X server".
-    let headless = std::env::args().any(|a| a == "--headless");
+    // Browser headless mode is decoupled from the server's UI-headless mode:
+    // an explicit `browserHeadless` setting wins, so a UI-less server can still
+    // drive a *real* (headful) browser to beat headless-detection blocking
+    // (Google etc.). With no display you must supply a virtual one (xvfb-run).
+    // When the setting is unset, fall back to the legacy behaviour of following
+    // the process `--headless` flag (a headed launch needs an X server).
+    let headless = settings
+        .browser_headless
+        .unwrap_or_else(|| std::env::args().any(|a| a == "--headless"));
 
     let mut args: Vec<String> = vec!["@playwright/mcp@latest".to_string()];
     if headless {

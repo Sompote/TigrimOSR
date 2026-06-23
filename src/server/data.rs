@@ -529,9 +529,19 @@ pub struct Settings {
     pub browser_control_enabled: Option<bool>,
     /// Which engine browser control drives: "chromium" (Playwright's bundled
     /// build — portable, always available) or "chrome" (the user's installed
-    /// Google Chrome). Defaults to "chromium".
+    /// Google Chrome). Defaults to "chrome" — real Chrome trips far fewer bot
+    /// blocks (e.g. Google search) than bundled Chromium. Falls back to nothing
+    /// if Chrome isn't installed, so set this to "chromium" on hosts without it.
     #[serde(rename = "browserEngine", skip_serializing_if = "Option::is_none")]
     pub browser_engine: Option<String>,
+    /// Whether browser control runs the browser headless (no visible window).
+    /// When unset, follows the process `--headless` flag (legacy behaviour: a
+    /// UI-less server also ran the browser headless). Set to `false` to force a
+    /// real, headful browser even on a UI-less server — required to beat
+    /// headless-detection blocking (Google etc.). On a server with no display
+    /// you must provide a virtual one (e.g. run under `xvfb-run`).
+    #[serde(rename = "browserHeadless", skip_serializing_if = "Option::is_none")]
+    pub browser_headless: Option<bool>,
     // Catch-all for unknown fields
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -593,8 +603,11 @@ pub async fn get_settings() -> Settings {
         settings.browser_control_enabled = Some(false);
     }
     if settings.browser_engine.is_none() {
-        settings.browser_engine = Some("chromium".to_string());
+        settings.browser_engine = Some("chrome".to_string());
     }
+    // browser_headless intentionally left None by default: None = follow the
+    // process --headless flag (legacy). Only an explicit Some(false)/Some(true)
+    // overrides the browser's headless mode independently of the server UI.
     settings
 }
 
