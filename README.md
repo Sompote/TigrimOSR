@@ -855,6 +855,8 @@ It's off by default — tick the box, then choose the engine (Step 4).
 | **Chrome** *(default, recommended)* | Your installed Google Chrome channel. **Far fewer bot/CAPTCHA blocks** on big sites (Google search especially), but Google Chrome must be installed. |
 | **Chromium** | Playwright's managed Chromium build. Portable — works on any machine after Step 2. Pick this on hosts without Google Chrome. |
 
+> ⚠️ **ARM64 Linux (e.g. AWS Graviton, Hetzner ARM, Raspberry Pi): there is NO Google Chrome.** Google has never shipped a `google-chrome-stable` package for desktop Linux on ARM — the `.deb` is amd64-only and `apt` will reject it with "unmet dependencies / not installable". On these hosts you **must** use **Chromium** (which has a native ARM64 build). Set `browserEngine: "chromium"`, install it with `npx playwright install chromium` + `npx playwright install-deps chromium`, then restart. Many cloud instances are ARM — check with `uname -m` (`aarch64`/`arm64` → Chromium only).
+
 Saving the setting **reconnects MCP immediately** — no restart needed. The agent now has tools like `mcp_browser_browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, and `browser_take_screenshot`, and screenshots render inline in chat.
 
 #### Step 5 — Test it
@@ -907,6 +909,13 @@ On an **interactive** headless startup, TigrimOS also **prompts you to install t
 >   ```
 >   The server stays UI-less, but the browser is now a *real* Chrome window inside the virtual display — Google can't tell it's headless. Clear any first CAPTCHA once in that window (via screenshots/clicks) and the **persistent profile** remembers it.
 > - This defeats **headless detection** but not **IP reputation** — a hardened datacenter IP may still be challenged. For those, use a **residential IP/proxy**, or have the agent fetch results from a non-Google source.
+>
+> ⚠️ **On ARM64 servers, "engine = Chrome" is not an option** — Google ships no Chrome for Linux ARM (see [Step 4](#step-4--choose-the-engine)). If `mcp_browser_browser_navigate` fails with `Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome`, your server is on the Chrome default but has no Chrome (common on ARM cloud boxes). Fix: install Chromium and switch the engine:
+>   ```bash
+>   npx playwright install chromium
+>   npx playwright install-deps chromium    # ARM-native runtime libs via apt
+>   ```
+>   Set `browserEngine: "chromium"` in `<data-dir>/settings.json` and **restart** the server (the engine is read once at browser launch). On ARM you can still beat headless detection with `browserHeadless: false` under `xvfb-run` — just with Chromium instead of Chrome.
 
 ### Advanced: bring your own browser server
 
