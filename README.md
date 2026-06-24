@@ -1,4 +1,4 @@
-# TigrimOSR v0.5.6
+# TigrimOSR v0.5.7
 
 **TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously.
 
@@ -692,10 +692,37 @@ Enable sub-agents in Settings and select an agent config file. Included configs 
 
 | Mode | Description |
 |------|-------------|
+| **Router** | Routing agentic system — triages each request, then fans out to a heterogeneous LLM team in parallel and merges (see below) |
 | **Fully Auto** | Starts with `create_architecture` tool, then switches to agent team |
 | **Auto** | Standard tool-calling loop with optional sub-agent delegation |
 | **Auto Swarm** | Starts with `select_swarm` to pick an existing YAML config, then boots agent team |
 | **Manual** | No automatic tool calling; agents respond with instructions only |
+
+### Router mode (routing agentic system)
+
+Inspired by the orchestrate-multiple-models pattern, **Router** is a self-contained
+agentic system that behaves like a single endpoint and **routes work across different
+LLMs**:
+
+1. **Triage first** — the orchestrator answers trivial messages directly, with no tools.
+   It has no research/execution tools of its own, so any real task forces it to build a team.
+2. **Heterogeneous model pool** — you define a pool of models in **Settings → Sub-Agent →
+   Router Model Pool**, each with its own `model`, `api_url`/`api_key` (mix providers freely),
+   a **tier** (`fast` / `balanced` / `deep`), and a free-text **strengths** field
+   (e.g. *"marketing research"*, *"mathematics"*, *"coding"*).
+3. **Per-agent routing** — for a real task it calls `create_architecture` to design a **flat**
+   team and assigns **each agent the best-fit LLM** from the pool, matching the agent's
+   sub-task to a model's *strengths* and *tier*. (You can also hard-set a `model:` on an agent
+   in YAML — it always wins.)
+4. **Parallel fan-out** — it dispatches `send_task` to all workers at once so they run
+   **concurrently**, each in its **own isolated browser window** (no shared-Chrome clobbering),
+   then collects every `wait_result` and **merges** them into the final answer.
+5. **Provider failover** — if a model rejects a call, the agent automatically retries on the
+   next model in the pool.
+
+Two tiers control the team profile: **Router (fast)** keeps teams small and prefers
+`fast`/`balanced` models for low latency; **Router Ultra** prefers `deep` models and adds a
+verifier for maximum accuracy.
 
 ### Inter-Agent Protocols
 
@@ -1115,6 +1142,12 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 ---
 
 ## Changelog
+
+### v0.5.7
+
+- **Router mode (routing agentic system)** — A new agent mode that triages each request, then routes work across a **heterogeneous pool of LLMs**. Configure a model pool in **Settings → Sub-Agent → Router Model Pool** (per-model `model`, `api_url`/`api_key`, `tier`, and free-text `strengths`); the orchestrator builds a flat team and assigns **each agent the best-fit model** by matching its sub-task to the model's strengths/tier. Workers run **in parallel**, each in its **own isolated browser window** (no shared-Chrome clobbering), and the orchestrator merges their results. Includes automatic **provider failover** and **Router / Router Ultra** tiers (fast vs deep).
+- **Per-agent isolated browsers** — In a parallel swarm, each sub-agent now drives its **own** Chromium window via a dedicated Playwright MCP instance (launched on first use, cleaned up with the session), so concurrent agents no longer fight over a single shared page.
+- **Reasoning-model temperature fix** — Models that only accept the default temperature (e.g. Kimi K2 / MiniMax reasoning models) are auto-pinned to `temperature = 1`, with a reactive retry if a provider rejects the value.
 
 ### v0.5.6
 
