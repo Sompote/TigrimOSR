@@ -438,7 +438,7 @@ async fn send_message(
     let request_mode = body.get("agent_mode").and_then(|v| v.as_str()).unwrap_or("single");
     let sub_agent_enabled = match request_mode {
         "single" => false,
-        "fully_auto" | "auto_swarm" => true, // these create their own config
+        "fully_auto" | "auto_swarm" | "router" => true, // these create their own config (router triages)
         "auto" | "manual" => {
             if !config_file.is_empty() {
                 true
@@ -458,6 +458,10 @@ async fn send_message(
         m => m.to_string(),
     };
 
+    // Router is self-contained — ignore any pre-set YAML team; it triages and
+    // builds its own LLM-assigned team via create_architecture.
+    let config_file = if effective_mode == "router" { String::new() } else { config_file };
+
     // Load agent IDs from YAML config (same as native UI)
     let agent_ids = if sub_agent_enabled && !config_file.is_empty() {
         crate::server::services::toolbox::load_agent_yaml(&config_file)
@@ -469,6 +473,21 @@ async fn send_message(
 
     let sub_agent_model = settings.sub_agent_model.clone()
         .unwrap_or_else(|| model.clone());
+
+    // Router mode: heterogeneous model pool + tier from settings (empty otherwise).
+    let (router_pool, router_tier) = if effective_mode == "router" {
+        let pool = settings
+            .model_pool
+            .clone()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| serde_json::to_value(e).ok())
+            .collect::<Vec<_>>();
+        let tier = settings.router_tier.clone().unwrap_or_else(|| "fast".into());
+        (pool, tier)
+    } else {
+        (Vec::new(), String::new())
+    };
 
     let mut sub_agent = SubAgentConfig {
         enabled: sub_agent_enabled,
@@ -483,6 +502,8 @@ async fn send_message(
         model: sub_agent_model,
         depth: 0,
         cancel_flag: Arc::new(AtomicBool::new(false)),
+        model_pool: router_pool,
+        router_tier,
     };
 
     // Register cancel flag so kill endpoint can abort this session

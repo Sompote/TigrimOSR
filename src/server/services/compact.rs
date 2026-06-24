@@ -372,7 +372,8 @@ pub fn truncate_largest_tool_result(messages: &mut Vec<Value>, max_len: usize) {
     if let Some(idx) = largest_idx {
         if largest_len > default_max {
             let original = messages[idx]["content"].as_str().unwrap_or("").to_string();
-            let truncated_content: String = original.chars().take(default_max).collect();
+            // Byte-based to match the byte-length threshold above; UTF-8 safe.
+            let truncated_content = crate::util::truncate_utf8(&original, default_max).to_string();
             let truncated = format!(
                 "{}\n\n[... truncated due to context overflow — original was {} chars ...]",
                 truncated_content,

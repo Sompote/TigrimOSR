@@ -330,6 +330,127 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Per-agent isolated browsers
+//
+// In a parallel swarm, every agent calling the single shared `browser` server
+// drives the SAME Chrome page — they clobber each other's navigation. To let
+// agents browse truly in parallel, each agent gets its OWN isolated Playwright
+// MCP server (its own Chromium window/profile), launched lazily on first use.
+// These servers are registered under the AGENT_BROWSER_PREFIX so they're hidden
+// from get_mcp_tools() (the LLM still calls the generic `mcp_browser_*` names;
+// we route them per-agent). Keyed by session+agent so they're cleaned up with
+// the session.
+// ---------------------------------------------------------------------------
+
+const AGENT_BROWSER_PREFIX: &str = "agentbrowser__";
+
+/// Serializes lazy browser launches so two concurrent first-calls can't spawn
+/// the same Chromium twice.
+static AGENT_BROWSER_LAUNCH_LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
+fn agent_browser_launch_lock() -> &'static TokioMutex<()> {
+    AGENT_BROWSER_LAUNCH_LOCK.get_or_init(|| TokioMutex::new(()))
+}
+
+fn agent_browser_key(session_id: &str, agent_id: &str) -> String {
+    // Keep it filesystem/identifier-safe.
+    let safe = |s: &str| s.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>();
+    format!("{}{}__{}", AGENT_BROWSER_PREFIX, safe(session_id), safe(agent_id))
+}
+
+/// Lazily launch an isolated Playwright MCP browser dedicated to one agent.
+/// No-op if already running. Returns true when a browser is available.
+pub async fn ensure_agent_browser(session_id: &str, agent_id: &str) -> bool {
+    let key = agent_browser_key(session_id, agent_id);
+    if is_server_connected(&key).await {
+        return true;
+    }
+    // Serialize launches and re-check inside the lock (avoid double-spawn).
+    let _guard = agent_browser_launch_lock().lock().await;
+    if is_server_connected(&key).await {
+        return true;
+    }
+
+    let settings = crate::server::data::get_settings().await;
+    let engine = settings.browser_engine.clone().unwrap_or_else(|| "chromium".to_string());
+    let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
+    let headless = settings
+        .browser_headless
+        .unwrap_or_else(|| std::env::args().any(|a| a == "--headless"));
+
+    let mut args: Vec<String> = vec!["@playwright/mcp@latest".to_string()];
+    if headless {
+        args.push("--headless".to_string());
+    }
+    args.push("--browser".to_string());
+    args.push(engine.clone());
+    // --isolated gives each instance its own ephemeral profile so multiple
+    // Chromium windows run side by side without a shared-profile lock.
+    args.push("--isolated".to_string());
+    args.push("--output-dir".to_string());
+    args.push(output);
+
+    let config = json!({ "name": key, "command": "npx", "args": args });
+    let result = connect_server_impl(&key, "stdio", &config).await;
+    let ok = result["ok"].as_bool().unwrap_or(false);
+    if ok {
+        info!("[MCP] Launched isolated browser for agent '{}' ({})", agent_id, engine);
+    } else {
+        warn!(
+            "[MCP] Failed to launch isolated browser for agent '{}': {} — falling back to shared browser",
+            agent_id,
+            result["error"].as_str().unwrap_or("unknown")
+        );
+    }
+    ok
+}
+
+/// Route a generic `mcp_browser_*` call to this agent's OWN isolated browser.
+/// Falls back to the shared browser if the per-agent one can't start.
+pub async fn call_browser_tool_for_agent(
+    session_id: &str,
+    agent_id: &str,
+    prefixed_name: &str,
+    args: &Value,
+) -> Value {
+    let tool = match prefixed_name.strip_prefix("mcp_browser_") {
+        Some(t) if !t.is_empty() => t.to_string(),
+        _ => return call_mcp_tool(prefixed_name, args).await,
+    };
+    if !ensure_agent_browser(session_id, agent_id).await {
+        return call_mcp_tool(prefixed_name, args).await; // fall back to shared
+    }
+    let key = agent_browser_key(session_id, agent_id);
+    let conn = {
+        let conns = connections().lock().await;
+        conns.get(&key).cloned()
+    };
+    match conn {
+        Some(c) if c.connected => call_stdio_tool(&c, &tool, args).await,
+        _ => call_mcp_tool(prefixed_name, args).await, // fall back
+    }
+}
+
+/// Shut down every per-agent browser belonging to a session (frees the Chromium
+/// instances). Called when the realtime session ends.
+pub async fn shutdown_agent_browsers(session_id: &str) {
+    let prefix = agent_browser_key(session_id, "");
+    // agent_browser_key(session_id, "") ends with "__" before the (empty) agent;
+    // match on the session portion so we get every agent for this session.
+    let session_marker = prefix.trim_end_matches('_');
+    let keys: Vec<String> = {
+        let conns = connections().lock().await;
+        conns
+            .keys()
+            .filter(|k| k.starts_with(session_marker) && k.starts_with(AGENT_BROWSER_PREFIX))
+            .cloned()
+            .collect()
+    };
+    for k in keys {
+        disconnect_server(&k).await;
+    }
+}
+
 /// Remove stale Chromium singleton lock files from a dedicated browser profile.
 ///
 /// Chromium guards a profile against concurrent use with `SingletonLock`,
@@ -592,7 +713,9 @@ pub async fn get_mcp_tools() -> Vec<Value> {
     let conns = connections().lock().await;
     conns
         .values()
-        .filter(|c| c.connected)
+        // Per-agent isolated browsers are routed to explicitly via the generic
+        // mcp_browser_* names — never expose their duplicated tools to the LLM.
+        .filter(|c| c.connected && !c.name.starts_with(AGENT_BROWSER_PREFIX))
         .flat_map(|c| c.tools.clone())
         .collect()
 }

@@ -1190,9 +1190,7 @@ impl OutputPanel {
     fn truncate_label(s: &str, max: usize) -> String {
         if s.len() <= max { s.to_string() }
         else {
-            let target = max.saturating_sub(2);
-            let mut end = target;
-            while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+            let end = crate::util::floor_char_boundary(s, max.saturating_sub(2));
             format!("{}..", &s[..end])
         }
     }

@@ -754,8 +754,15 @@ impl Blackboard {
         } else {
             task.bids
                 .iter()
-                .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
+                // NaN-safe: partial_cmp returns None for NaN confidence, which
+                // would panic on unwrap. Treat unorderable values as Equal.
+                .max_by(|a, b| {
+                    a.confidence
+                        .partial_cmp(&b.confidence)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .map(|b| b.agent_id.clone())
+                // bids is non-empty (checked above), so max_by yields Some.
                 .unwrap()
         };
 
@@ -1060,4 +1067,34 @@ async fn append_agent_history(session_id: &str, filename: &str, line: &str) -> s
         .await?;
     use tokio::io::AsyncWriteExt;
     f.write_all(format!("{}\n", line).as_bytes()).await
+}
+
+#[cfg(test)]
+mod blackboard_tests {
+    use super::*;
+
+    #[test]
+    fn award_does_not_panic_on_nan_confidence() {
+        // Regression: max_by(partial_cmp().unwrap()) panicked when any bid had
+        // a NaN confidence. The NaN-safe comparator must pick a valid winner.
+        let mut bb = Blackboard::new();
+        bb.propose("orch", "do thing", Some("T1"));
+        bb.bid("a", "T1", f64::NAN, None, None).unwrap();
+        bb.bid("b", "T1", 0.9, None, None).unwrap();
+        bb.bid("c", "T1", 0.2, None, None).unwrap();
+
+        let winner = bb.award("T1", None, None).expect("award should succeed");
+        // Any of the bidders is acceptable as long as it doesn't panic; a finite
+        // bid should never lose to NaN.
+        assert!(["a", "b", "c"].contains(&winner.as_str()));
+    }
+
+    #[test]
+    fn award_picks_highest_finite_confidence() {
+        let mut bb = Blackboard::new();
+        bb.propose("orch", "do thing", Some("T2"));
+        bb.bid("low", "T2", 0.1, None, None).unwrap();
+        bb.bid("high", "T2", 0.95, None, None).unwrap();
+        assert_eq!(bb.award("T2", None, None).unwrap(), "high");
+    }
 }

@@ -21,6 +21,20 @@ pub fn truncate_utf8_ellipsis(s: &str, max_bytes: usize) -> String {
     }
 }
 
+/// Largest byte index `<= max_bytes` that lies on a UTF-8 char boundary.
+/// Use this when you need the index itself (e.g. to slice `&s[..idx]`);
+/// prefer `truncate_utf8` when you just want the truncated string.
+pub fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() {
+        return s.len();
+    }
+    let mut i = max_bytes;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,5 +56,19 @@ mod tests {
         assert_eq!(truncate_utf8("hello", 10), "hello");
         assert_eq!(truncate_utf8("hello world", 5), "hello");
         assert_eq!(truncate_utf8_ellipsis("hello", 3), "hel...");
+    }
+
+    #[test]
+    fn floor_char_boundary_never_splits_utf8() {
+        let thai = "สวัสดีครับ".repeat(5);
+        for max in 0..=thai.len() + 5 {
+            let idx = floor_char_boundary(&thai, max);
+            assert!(idx <= max.min(thai.len()));
+            assert!(thai.is_char_boundary(idx));
+            // Slicing at the returned index must never panic.
+            let _ = &thai[..idx];
+        }
+        assert_eq!(floor_char_boundary("abc", 10), 3);
+        assert_eq!(floor_char_boundary("abc", 2), 2);
     }
 }

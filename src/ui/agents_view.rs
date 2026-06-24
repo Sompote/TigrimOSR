@@ -1523,13 +1523,15 @@ Rules:
             );
 
             let client = reqwest::Client::new();
+            // Kimi "thinking" / reasoning models reject any temperature but 1.
+            let temperature = if crate::server::services::toolbox::model_requires_default_temperature(&model) { 1.0 } else { 0.3 };
             let body = json!({
                 "model": model,
                 "messages": [
                     {"role": "system", "content": "You are an expert multi-agent system architect. Return ONLY valid JSON, nothing else."},
                     {"role": "user", "content": user_msg}
                 ],
-                "temperature": 0.3,
+                "temperature": temperature,
                 "max_tokens": 16384,
             });
 

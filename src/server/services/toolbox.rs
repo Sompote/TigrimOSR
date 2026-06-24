@@ -418,9 +418,12 @@ pub struct SubAgentConfig {
     pub depth: usize,                 // recursion depth (prevent infinite loops)
     pub session_id: String,           // for JSONL history logging
     pub agent_id: String,             // current agent's own ID (for protocol tools)
-    pub mode: String,                 // "fully_auto", "auto", "auto_swarm", "manual"
+    pub mode: String,                 // "fully_auto", "auto", "auto_swarm", "manual", "router"
     pub agent_role: String,            // "orchestrator", "worker", etc. — used for tool filtering
     pub cancel_flag: Arc<AtomicBool>,  // set to true to abort the tool loop (saves checkpoint)
+    // --- Router mode only (empty/ignored in every other mode) ---
+    pub model_pool: Vec<Value>,        // serialized ModelPoolEntry list (id/label/model/api_url/api_key/tier/strengths)
+    pub router_tier: String,           // "fast" | "ultra"; "" outside router mode
 }
 
 impl Default for SubAgentConfig {
@@ -438,6 +441,8 @@ impl Default for SubAgentConfig {
             mode: "auto".to_string(),
             agent_role: String::new(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            model_pool: Vec::new(),
+            router_tier: String::new(),
         }
     }
 }
@@ -594,13 +599,15 @@ static PENDING_ARCH_FILE: std::sync::OnceLock<std::sync::Mutex<Option<String>>> 
 /// Set the pending architecture file for the Agents tab to auto-load.
 pub fn set_pending_arch_file(filename: &str) {
     let m = PENDING_ARCH_FILE.get_or_init(|| std::sync::Mutex::new(None));
-    *m.lock().unwrap() = Some(filename.to_string());
+    // Recover from a poisoned mutex rather than propagating the panic across the
+    // long-running server — a prior holder panicking must not wedge this signal.
+    *m.lock().unwrap_or_else(|e| e.into_inner()) = Some(filename.to_string());
 }
 
 /// Take the pending architecture file (clears it after reading).
 pub fn take_pending_arch_file() -> Option<String> {
     let m = PENDING_ARCH_FILE.get_or_init(|| std::sync::Mutex::new(None));
-    m.lock().unwrap().take()
+    m.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 /// Query live agent statuses from the active realtime session.
@@ -787,6 +794,8 @@ pub async fn shutdown_realtime_session(session_id: &str) {
         let _ = session.abort_tx.send(());
         info!("[Realtime] Session {} shut down", session_id);
     }
+    // Free any per-agent isolated browser windows this session launched.
+    crate::server::services::mcp::shutdown_agent_browsers(session_id).await;
 }
 
 /// Get all non-human agent IDs from the system config.
@@ -1193,6 +1202,17 @@ async fn realtime_agent_loop(
     cancel_flag: Arc<AtomicBool>,
 ) {
     let agent_id = agent_def["id"].as_str().unwrap_or("agent").to_string();
+
+    // Per-agent model resolution (router mode). Each agent may carry its own
+    // model/api_url/api_key from the generated YAML; fall back to the shared
+    // session values when absent, so every other mode is unchanged.
+    let agent_model = agent_def.get("model").and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| model.clone());
+    let agent_api_url = agent_def.get("api_url").and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| api_url.clone());
+    let agent_api_key = agent_def.get("api_key").and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| api_key.clone());
+
     let mut system_prompt = build_realtime_agent_prompt(&agent_def, &system_config);
 
     // Advertise enabled skills (incl. auto-generated) — same block the
@@ -1316,6 +1336,10 @@ async fn realtime_agent_loop(
             "mesh" => true,           // all agents can send to any other
             "pipeline" => !downstream.is_empty(), // only if has next stage
             "p2p" | "p2p_orchestrator" => true, // all peers can delegate
+            // Flat fan-out (router): workers are LEAF nodes. Only the top-level
+            // caller orchestrates — workers must not delegate to each other or to
+            // a stray sub-orchestrator, which otherwise tangles into queued loops.
+            "flat" => false,
             _ => is_orchestrator || !downstream.is_empty(),
         };
 
@@ -1477,21 +1501,50 @@ async fn realtime_agent_loop(
                     }
                 }
                 _ => {
-                    // Default LLM agent
-                    let cb = on_update_arc.clone();
-                    if can_delegate {
-                        call_with_tools_realtime(
-                            &api_key, &api_url, &model, attempt_messages.clone(),
-                            Some(system_prompt.clone()), &sandbox_dir,
-                            move |u| cb(u), sub_agent.clone(),
-                        ).await
-                    } else {
-                        call_with_tools(
-                            &api_key, &api_url, &model, attempt_messages.clone(),
-                            Some(system_prompt.clone()), &sandbox_dir,
-                            move |u| cb(u), sub_agent.clone(),
-                        ).await
+                    // Default LLM agent — run on the agent's own model, with
+                    // bounded failover to the next pool model on a terminal error.
+                    // Outside router mode the candidate list is just [self], so
+                    // this loop runs exactly once (identical to before).
+                    let candidates = build_failover_candidates(
+                        &agent_def, &system_config,
+                        &agent_model, &agent_api_url, &agent_api_key,
+                    );
+                    let mut llm_result = ToolLoopResult {
+                        content: String::new(), tool_results: vec![], files: vec![],
+                    };
+                    for (i, (m, u, k)) in candidates.iter().take(3).enumerate() {
+                        let cb = on_update_arc.clone();
+                        llm_result = if can_delegate {
+                            call_with_tools_realtime(
+                                k, u, m, attempt_messages.clone(),
+                                Some(system_prompt.clone()), &sandbox_dir,
+                                move |x| cb(x), sub_agent.clone(),
+                            ).await
+                        } else {
+                            call_with_tools(
+                                k, u, m, attempt_messages.clone(),
+                                Some(system_prompt.clone()), &sandbox_dir,
+                                move |x| cb(x), sub_agent.clone(),
+                            ).await
+                        };
+                        if !is_terminal_llm_error(&llm_result.content) {
+                            break;
+                        }
+                        if i + 1 < candidates.len().min(3) {
+                            warn!(
+                                "[Router] Agent {} model '{}' failed (attempt {}), routing to next model",
+                                agent_id, m, i + 1
+                            );
+                            append_session_progress(
+                                &session_id,
+                                &format!(
+                                    "> ⚠ **{}** model `{}` failed — routing to next model\n",
+                                    agent_id, m
+                                ),
+                            );
+                        }
                     }
+                    llm_result
                 }
             };
 
@@ -3000,7 +3053,7 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
     // For fully_auto/auto_swarm, agent_ids might be empty before architecture is created
     // — that's OK, the mode logic handles it
     if sub_agent.agent_ids.is_empty()
-        && !matches!(sub_agent.mode.as_str(), "fully_auto" | "auto_swarm")
+        && !matches!(sub_agent.mode.as_str(), "fully_auto" | "auto_swarm" | "router")
     {
         return tools;
     }
@@ -3050,6 +3103,41 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
                 }
             }
             return rt_tools;
+        }
+        "router" => {
+            // Router (Fugu-style): TRIAGE first. Unlike fully_auto (which forces
+            // create_architecture before anything else), the orchestrator keeps ALL
+            // base tools so it can answer simple queries directly, AND gets
+            // create_architecture to assemble a heterogeneous team when warranted.
+            if session_activated {
+                // Team is LIVE — restrict to coordination + output formatting so the
+                // orchestrator MUST delegate via send_task/wait_result, not redo the
+                // work itself or reach for low-level proto_*/bb_* protocol tools.
+                let mut rt_tools = realtime_tools(&agent_list);
+                rt_tools.push(create_architecture_tool()); // allow re-architecting
+                for t in &tools {
+                    let name = t["function"]["name"].as_str().unwrap_or("");
+                    if matches!(name, "write_file" | "run_python" | "read_file" | "list_files") {
+                        rt_tools.push(t.clone());
+                    }
+                }
+                return rt_tools;
+            } else {
+                // No team yet. Router's job is to ORCHESTRATE LLMs — it deliberately
+                // has NO research/execution tools of its own (no web_search, browser,
+                // run_shell, read_file …). So any task that needs real work forces it
+                // to build a specialist team via create_architecture and delegate.
+                // It keeps only create_architecture + light formatting so it can still
+                // answer a trivial conversational message directly.
+                let mut rt = vec![create_architecture_tool()];
+                for t in &tools {
+                    let name = t["function"]["name"].as_str().unwrap_or("");
+                    if matches!(name, "write_file" | "run_python") {
+                        rt.push(t.clone());
+                    }
+                }
+                return rt;
+            }
         }
         _ => {
             // "auto" mode: spawn_subagent only — agents come from YAML config
@@ -4092,7 +4180,7 @@ async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
 
         // Get text from cache or extract
         let text = {
-            let cache = pdf_cache().lock().unwrap();
+            let cache = pdf_cache().lock().unwrap_or_else(|e| e.into_inner());
             cache.get(&key).cloned()
         };
         let text = if let Some(t) = text {
@@ -4105,7 +4193,7 @@ async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
             match result {
                 Ok(Ok(t)) => {
                     compact::track_file_read(&key, &t);
-                    let mut cache = pdf_cache().lock().unwrap();
+                    let mut cache = pdf_cache().lock().unwrap_or_else(|e| e.into_inner());
                     // Memory guard: extracted PDF text accumulates forever in a
                     // long-running server — reset the cache past 24 entries.
                     if cache.len() >= 24 { cache.clear(); }
@@ -5104,7 +5192,7 @@ async fn exec_bb_award(args: &Value, session_id: &str, agent_id: &str) -> Value 
                     let orch = scores.iter().find(|s| s["agent_id"].as_str() == Some(&bid.agent_id))
                         .and_then(|s| s["score"].as_f64()).unwrap_or(0.5);
                     (bid.agent_id.clone(), bid.confidence * 0.5 + orch * 0.5)
-                }).max_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                }).max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
                 best.map(|(id, _)| id)
             } else { None }
         } else { None }
@@ -5377,10 +5465,16 @@ async fn exec_create_architecture(
         return json!({ "ok": false, "error": "description is required" });
     }
 
-    let arch_type = args["architectureType"]
+    let mut arch_type = args["architectureType"]
         .as_str()
         .unwrap_or("hierarchical")
         .to_string();
+    // Router fans out to all workers in parallel then merges — a sequential
+    // pipeline defeats that, so coerce it to a flat team the orchestrator can
+    // dispatch to directly and concurrently.
+    if sub_agent.mode == "router" && arch_type == "pipeline" {
+        arch_type = "flat".to_string();
+    }
     let count = args["agentCount"]
         .as_str()
         .unwrap_or("auto")
@@ -5416,6 +5510,38 @@ async fn exec_create_architecture(
         }
     }
 
+    // Router mode: expose the model pool + tier so the designer LLM can assign
+    // each agent a best-fit model. Empty in every other mode (no behavior change).
+    let is_router = sub_agent.mode == "router";
+    let pool_block = if is_router && !sub_agent.model_pool.is_empty() {
+        let lines: Vec<String> = sub_agent.model_pool.iter().map(|e| format!(
+            "- model \"{}\" [{} tier]: {}",
+            e["model"].as_str().unwrap_or("?"),
+            e["tier"].as_str().unwrap_or("balanced"),
+            e["strengths"].as_str().unwrap_or(""),
+        )).collect();
+        format!(
+            "\n\nAVAILABLE MODEL POOL — assign each non-human agent a best-fit \"model\" from this list (match the agent's role to the model's tier/strengths):\n{}",
+            lines.join("\n"),
+        )
+    } else {
+        String::new()
+    };
+    let tier_guidance = match sub_agent.router_tier.as_str() {
+        "ultra" if is_router => "\nROUTER ULTRA: maximize accuracy. Prefer 'deep' tier models for reasoning/verification roles; you may use up to 6 worker agents and add a dedicated checker/verifier agent.",
+        _ if is_router => "\nROUTER (fast): minimize latency. Prefer 'fast'/'balanced' tier models; keep the team small (2-3 workers); only add a checker if the task is high-stakes.",
+        _ => "",
+    };
+    // Router runs agents in PARALLEL (fan-out then merge), so the team must be
+    // independent workers under one orchestrator — never a sequential pipeline.
+    let parallel_guidance = if is_router {
+        "\nPARALLEL TEAM (flat fan-out): Use orchestration_mode 'flat'. Do NOT use 'pipeline'. \
+CRITICAL: Do NOT create any agent with role 'orchestrator' or 'reporter' — the CALLER is the sole orchestrator and merges results itself. Every non-human agent must be a self-contained WORKER (role 'worker' or 'researcher') that completes its INDEPENDENT sub-task and returns its findings directly to the caller. \
+Workers must NOT depend on, wait for, or send tasks to each other. Give NO connections between workers. Split the request into independent sub-tasks, one per worker, so the caller can dispatch them all at once and run them concurrently."
+    } else {
+        ""
+    };
+
     // Use LLM to generate architecture
     let prompt = format!(
         r#"Based on this description, generate a complete multi-agent system configuration as a JSON object.
@@ -5425,6 +5551,9 @@ User Request: {description}
 Architecture Type: {arch_type}
 Number of Agents: {count}
 Connection Protocol: tcp
+{pool_block}
+{tier_guidance}
+{parallel_guidance}
 
 Return ONLY a valid JSON object (no markdown, no code fences) with this structure:
 {{
@@ -5441,6 +5570,7 @@ Return ONLY a valid JSON object (no markdown, no code fences) with this structur
       "role": "one of: human, orchestrator, worker, checker, reporter, researcher, peer",
       "persona": "Detailed 2-3 sentence persona description",
       "responsibilities": ["r1", "r2", "r3"],
+      "model": "(router mode only) one of the AVAILABLE MODEL POOL model ids, chosen by tier+strengths; omit entirely to use the default model",
       "bus": {{ "enabled": true, "topics": ["topic1"] }},
       "mesh": {{ "enabled": false }}
     }}
@@ -5465,7 +5595,8 @@ RULES:
 - For p2p: all non-human agents use role "peer", no connections
 - Agent IDs must be snake_case
 - Generate 3-8 agents including human
-- Always include workflow.sequence listing the processing order"#
+- Always include workflow.sequence listing the processing order
+- If an AVAILABLE MODEL POOL is provided, set each non-human agent's "model" to a model from that pool, matching the agent's role to the model's strengths. The orchestrator should use a fast/balanced model; verifier/checker agents should use a deep model. Omit "model" only to fall back to the default."#
     );
 
     // Call the LLM to generate the architecture (routes through claude-code if needed)
@@ -5504,13 +5635,46 @@ RULES:
         content_text
     };
 
-    let parsed: Value = match serde_json::from_str(json_str) {
+    let mut parsed: Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(_) => return json!({ "ok": false, "error": "Failed to parse generated architecture" }),
     };
 
     if parsed["system"].is_null() || !parsed["agents"].is_array() {
         return json!({ "ok": false, "error": "Generated architecture has invalid structure" });
+    }
+
+    // Router mode post-processing: persist the pool into the config (failover
+    // reads it from system.model_pool) and resolve each agent's chosen model to
+    // its provider endpoint. Auto-assignment with MANUAL OVERRIDE — a "model"
+    // already present on an agent is kept; we only fill provider details and
+    // never overwrite a model the designer/user set.
+    if is_router && !sub_agent.model_pool.is_empty() {
+        parsed["system"]["model_pool"] = json!(sub_agent.model_pool);
+        if let Some(agents) = parsed["agents"].as_array_mut() {
+            for agent in agents.iter_mut() {
+                let chosen = agent.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if chosen.is_empty() {
+                    continue; // no per-agent model → falls back to session model
+                }
+                // Find the pool entry whose model id matches and graft its
+                // non-empty api_url/api_key onto the agent so the agent loop can
+                // reach a different provider.
+                if let Some(entry) = sub_agent.model_pool.iter()
+                    .find(|e| e["model"].as_str() == Some(chosen.as_str()))
+                {
+                    if let Some(u) = entry["api_url"].as_str().filter(|s| !s.is_empty()) {
+                        agent["api_url"] = json!(u);
+                    }
+                    if let Some(k) = entry["api_key"].as_str().filter(|s| !s.is_empty()) {
+                        agent["api_key"] = json!(k);
+                    }
+                    if let Some(t) = entry["tier"].as_str().filter(|s| !s.is_empty()) {
+                        agent["tier"] = json!(t); // used to order failover candidates
+                    }
+                }
+            }
+        }
     }
 
     // Convert to YAML and save
@@ -5797,6 +5961,8 @@ fn exec_spawn_subagent(
         mode: sub_agent.mode.clone(),
         agent_role: agent_role.to_string(),
         cancel_flag: sub_agent.cancel_flag.clone(),
+        model_pool: sub_agent.model_pool.clone(),
+        router_tier: sub_agent.router_tier.clone(),
     };
 
     // Recursive call — propagate ToolCall/ToolResult to parent UI (drop TextChunk to avoid mangling main text)
@@ -6040,8 +6206,16 @@ async fn execute_tool_with_context(
         "cron_delete" => exec_cron_delete(args).await,
         "cron_run_now" => exec_cron_run_now(args).await,
         _ if mcp::is_mcp_tool(name) => {
-            info!("[execute_tool] Routing MCP tool call: {name}");
-            mcp::call_mcp_tool(name, args).await
+            // In a parallel swarm each sub-agent drives its OWN isolated browser
+            // window so concurrent agents don't clobber a shared Chrome page.
+            // The main orchestrator keeps the shared browser.
+            if name.starts_with("mcp_browser_") && agent_id != "main" && !session_id.is_empty() {
+                info!("[execute_tool] Routing browser call to agent '{}' own window: {name}", agent_id);
+                mcp::call_browser_tool_for_agent(session_id, agent_id, name, args).await
+            } else {
+                info!("[execute_tool] Routing MCP tool call: {name}");
+                mcp::call_mcp_tool(name, args).await
+            }
         }
         _ => json!({ "ok": false, "error": format!("Unknown tool: {name}") }),
     }
@@ -7338,6 +7512,93 @@ fn sanitize_messages(messages: &[Value]) -> Vec<Value> {
     deduped
 }
 
+/// Heuristic: did a `call_with_tools*` result terminate on a provider failure
+/// rather than real work? `call_with_tools` returns its outcome as text (no
+/// Result), so a dead/overloaded provider surfaces as an error string or an
+/// empty final answer. Router mode uses this to fail over to the next pool model.
+fn is_terminal_llm_error(content: &str) -> bool {
+    let c = content.to_ascii_lowercase();
+    content.trim().is_empty()
+        || c.contains("api request failed")
+        || c.contains("request failed")
+        || c.contains("rate limit")
+        || c.contains(" 429")
+        || c.contains(" 500")
+        || c.contains(" 502")
+        || c.contains(" 503")
+        || c.contains("overloaded")
+        || c.contains("upstream error")
+}
+
+/// Build the failover candidate list for a router agent: its own resolved model
+/// first, then the remaining pool entries (same-tier preferred) read from the
+/// session config's `system.model_pool`. Outside router mode the pool is empty,
+/// so the list is just `[self]` and behavior is identical to today.
+fn build_failover_candidates(
+    agent_def: &Value,
+    system_config: &Value,
+    self_model: &str,
+    self_url: &str,
+    self_key: &str,
+) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> =
+        vec![(self_model.to_string(), self_url.to_string(), self_key.to_string())];
+
+    let pool = match system_config["system"]["model_pool"].as_array() {
+        Some(p) => p,
+        None => return out,
+    };
+
+    // Prefer entries sharing the agent's tier (if the agent recorded one).
+    let self_tier = agent_def.get("tier").and_then(|v| v.as_str()).unwrap_or("");
+    let mut ordered: Vec<&Value> = pool.iter().collect();
+    if !self_tier.is_empty() {
+        ordered.sort_by_key(|e| {
+            if e["tier"].as_str().unwrap_or("") == self_tier { 0 } else { 1 }
+        });
+    }
+
+    for e in ordered {
+        let m = e["model"].as_str().unwrap_or("");
+        if m.is_empty() || m == self_model {
+            continue; // skip empties and the model we already lead with
+        }
+        let url = match e["api_url"].as_str() {
+            Some(u) if !u.is_empty() => u.to_string(),
+            _ => self_url.to_string(),
+        };
+        let key = match e["api_key"].as_str() {
+            Some(k) if !k.is_empty() => k.to_string(),
+            _ => self_key.to_string(),
+        };
+        out.push((m.to_string(), url, key));
+    }
+    out
+}
+
+/// Models that only accept the default temperature of 1 and 400 on anything
+/// else (Kimi K2 "thinking" and similar reasoning models). For these we must
+/// pin temperature to 1.0 instead of the configured agent temperature.
+pub fn model_requires_default_temperature(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.contains("thinking")
+        || m.contains("kimi-k2")   // kimi-k2.x-code etc. enforce temperature=1
+        || m.contains("kimi_k2")
+        || m.contains("minimax-m2")
+        || m.contains("minimax-m3")
+}
+
+/// Does this API error payload complain about the temperature parameter?
+/// Providers phrase it differently ("only 1 is allowed for this model",
+/// "invalid temperature", "temperature must be ...") so we just look for the
+/// word in the message, on both top-level and nested `error` shapes.
+fn is_temperature_error(resp: &Value) -> bool {
+    let msg = resp.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str())
+        .or_else(|| resp.get("message").and_then(|m| m.as_str()))
+        .unwrap_or("");
+    msg.to_ascii_lowercase().contains("temperature")
+}
+
 async fn llm_call(
     client: &Client,
     api_key: &str,
@@ -7358,6 +7619,19 @@ async fn llm_call(
     if api_url.starts_with("codex-cli") {
         return llm_call_codex_cli(model, messages, tools, max_tokens).await;
     }
+
+    // Some models (Kimi K2 / kimi-k2.x-code, MiniMax-M2/M3, other reasoning
+    // models) reject any temperature other than the default 1 — sending 0.7
+    // fails with "invalid temperature: only 1 is allowed for this model".
+    // Proactively pin to 1.0 for known cases; a reactive retry below catches
+    // anything this misses.
+    let temperature = if model_requires_default_temperature(model)
+        || api_url.contains("api.kimi.com")
+    {
+        1.0
+    } else {
+        temperature
+    };
 
     // Sanitize messages before sending (tiger_cowork: sanitizeMessages)
     let messages = sanitize_messages(messages);
@@ -7417,12 +7691,30 @@ async fn llm_call(
         (body, api_url.to_string(), hdrs)
     };
 
-    let mut req = client.post(&url);
-    for (k, v) in &headers {
-        req = req.header(k.as_str(), v.as_str());
-    }
-    let response = req.json(&body).send().await.map_err(|e| format!("API request failed: {e}"))?;
-    let resp_json: Value = response.json().await.map_err(|e| format!("Failed to parse API response: {e}"))?;
+    // Send, with a single automatic retry if the provider rejects our
+    // temperature (e.g. Kimi/MiniMax reasoning models that only allow 1).
+    // This catches any model the proactive pin above missed.
+    let mut body = body;
+    let mut retried_temp = false;
+    let resp_json: Value = loop {
+        let mut req = client.post(&url);
+        for (k, v) in &headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+        let response = req.json(&body).send().await.map_err(|e| format!("API request failed: {e}"))?;
+        let rj: Value = response.json().await.map_err(|e| format!("Failed to parse API response: {e}"))?;
+
+        if !retried_temp
+            && is_temperature_error(&rj)
+            && body.get("temperature").and_then(|t| t.as_f64()) != Some(1.0)
+        {
+            warn!("[llm_call] model '{}' rejected temperature; retrying with temperature=1", model);
+            body["temperature"] = json!(1.0);
+            retried_temp = true;
+            continue;
+        }
+        break rj;
+    };
 
     // Normalize Anthropic response to OpenAI format
     if is_anthropic {
@@ -8373,6 +8665,21 @@ async fn call_with_tools_inner(
                             sub_agent.config_file = filename.to_string();
                             if let Some((_, ids)) = load_agent_yaml(filename) {
                                 sub_agent.agent_ids = ids;
+                            }
+                            // Router mode boots the team here: the orchestrator calls
+                            // create_architecture mid-loop (triage), so there's no UI
+                            // proactive boot like fully_auto. Idempotent — start_realtime_session
+                            // no-ops if the session is already running. Gated to router so
+                            // other modes are unchanged.
+                            if sub_agent.mode == "router" {
+                                boot_realtime_session_deferred(
+                                    sub_agent.session_id.clone(),
+                                    sub_agent.config_file.clone(),
+                                    sub_agent.api_key.clone(),
+                                    sub_agent.api_url.clone(),
+                                    sub_agent.model.clone(),
+                                    sandbox_dir.to_string(),
+                                );
                             }
                         }
                     }

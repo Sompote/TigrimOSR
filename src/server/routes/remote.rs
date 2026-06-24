@@ -363,6 +363,24 @@ async fn process_remote_task(
         return;
     }
 
+    // Router is self-contained: it ignores any pre-set YAML team and builds its
+    // own LLM-assigned team via create_architecture (no up-front boot).
+    let config_file = if mode == "router" { None } else { config_file };
+
+    // Router heterogeneous model pool + tier from settings (empty otherwise).
+    let (router_pool, router_tier) = if mode == "router" {
+        let pool = settings
+            .model_pool
+            .clone()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| serde_json::to_value(e).ok())
+            .collect::<Vec<_>>();
+        (pool, settings.router_tier.clone().unwrap_or_else(|| "fast".into()))
+    } else {
+        (Vec::new(), String::new())
+    };
+
     // Check if we have a config file for realtime agents
     let has_agents = config_file
         .as_ref()
@@ -397,7 +415,22 @@ async fn process_remote_task(
             "You are a helpful assistant processing a remote task. Complete the task thoroughly and return a clear result.".to_string()
         );
 
-        let sub_agent = if let Some(ref cf) = config_file {
+        let sub_agent = if mode == "router" {
+            // Self-contained router: enabled with the model pool, no pre-set team.
+            SubAgentConfig {
+                enabled: true,
+                api_key: api_key.clone(),
+                api_url: api_url.clone(),
+                model: model.clone(),
+                session_id: session_id.clone(),
+                agent_id: "main".to_string(),
+                mode: "router".to_string(),
+                agent_role: "orchestrator".to_string(),
+                model_pool: router_pool.clone(),
+                router_tier: router_tier.clone(),
+                ..SubAgentConfig::default()
+            }
+        } else if let Some(ref cf) = config_file {
             if let Some((_, ids)) = load_agent_yaml(cf) {
                 SubAgentConfig {
                     enabled: !ids.is_empty(),
@@ -412,6 +445,7 @@ async fn process_remote_task(
                     mode: if mode == "single" { "auto".to_string() } else { mode.clone() },
                     agent_role: "orchestrator".to_string(),
                     cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    ..SubAgentConfig::default()
                 }
             } else {
                 SubAgentConfig {

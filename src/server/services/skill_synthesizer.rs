@@ -1231,11 +1231,13 @@ pub async fn get_proposed_diff(
 
 async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value>) -> Result<String, String> {
     let client = Client::new();
+    // Kimi "thinking" / reasoning models reject any temperature but 1.
+    let temperature = if crate::server::services::toolbox::model_requires_default_temperature(model) { 1.0 } else { 0.3 };
     let body = json!({
         "model": model,
         "messages": messages,
         "max_tokens": 16384,
-        "temperature": 0.3,
+        "temperature": temperature,
     });
 
     let mut req = client

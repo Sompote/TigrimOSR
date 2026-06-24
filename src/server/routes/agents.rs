@@ -477,13 +477,15 @@ async fn call_llm_simple(
     };
 
     let client = Client::new();
+    // Kimi "thinking" / reasoning models reject any temperature but 1.
+    let temperature = if crate::server::services::toolbox::model_requires_default_temperature(model) { 1.0 } else { 0.3 };
     let body = json!({
         "model": model,
         "messages": [
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg}
         ],
-        "temperature": 0.3,
+        "temperature": temperature,
         "max_tokens": 4096,
     });
 

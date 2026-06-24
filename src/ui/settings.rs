@@ -5,7 +5,7 @@ use eframe::egui;
 
 use crate::server::data::{
     generate_token, get_file_tokens, get_settings, save_file_tokens, save_settings, FileToken,
-    LocalFileMount, McpTool, RemoteInstance,
+    LocalFileMount, McpTool, ModelPoolEntry, RemoteInstance,
 };
 use crate::vm::{VmConfig, VmManager, VmState};
 
@@ -145,6 +145,9 @@ pub struct SettingsView {
     sub_agent_enabled: bool,
     sub_agent_mode: String,
     sub_agent_model: String,
+    // --- Router mode: heterogeneous model pool + tier ---
+    model_pool: Vec<ModelPoolEntry>,
+    router_tier: String,
     agent_config_files: Vec<String>,
     selected_agent_config: String,
 
@@ -266,6 +269,8 @@ impl Default for SettingsView {
             sub_agent_enabled: false,
             sub_agent_mode: "auto".to_string(),
             sub_agent_model: String::new(),
+            model_pool: Vec::new(),
+            router_tier: "fast".to_string(),
             agent_config_files: Vec::new(),
             selected_agent_config: String::new(),
 
@@ -494,6 +499,8 @@ impl SettingsView {
         self.sub_agent_enabled = settings.sub_agent_enabled.unwrap_or(false);
         self.sub_agent_mode = settings.sub_agent_mode.unwrap_or_else(|| "auto".into());
         self.sub_agent_model = settings.sub_agent_model.unwrap_or_default();
+        self.model_pool = settings.model_pool.unwrap_or_default();
+        self.router_tier = settings.router_tier.unwrap_or_else(|| "fast".into());
         self.selected_agent_config = settings.sub_agent_config_file.unwrap_or_default();
 
         // Scan for agent config YAML files (local or remote)
@@ -622,6 +629,33 @@ impl SettingsView {
         } else {
             Some(self.sub_agent_model.clone())
         };
+        settings.model_pool = if self.model_pool.is_empty() {
+            None
+        } else {
+            // Backfill a stable id from the label (slugified) when the user
+            // didn't set one — pool routing matches agents by `model`, but a
+            // non-empty id keeps entries identifiable.
+            let pool: Vec<ModelPoolEntry> = self
+                .model_pool
+                .iter()
+                .map(|e| {
+                    let mut e = e.clone();
+                    if e.id.trim().is_empty() {
+                        let base = if e.label.trim().is_empty() { &e.model } else { &e.label };
+                        e.id = base
+                            .to_lowercase()
+                            .chars()
+                            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                            .collect::<String>()
+                            .trim_matches('_')
+                            .to_string();
+                    }
+                    e
+                })
+                .collect();
+            Some(pool)
+        };
+        settings.router_tier = Some(self.router_tier.clone());
         settings.sub_agent_config_file = if self.selected_agent_config.is_empty() {
             None
         } else {
@@ -1565,6 +1599,7 @@ impl SettingsView {
                             "auto",
                             "auto_swarm",
                             "manual",
+                            "router",
                         ] {
                             ui.selectable_value(
                                 &mut self.sub_agent_mode,
@@ -1632,6 +1667,142 @@ impl SettingsView {
                 }
             }
         });
+
+        // ── Router mode: heterogeneous model pool + tier ──────────────────
+        if self.sub_agent_mode == "router" {
+            ui.add_space(12.0);
+            ui.separator();
+            ui.heading("Router Model Pool");
+            ui.label(
+                egui::RichText::new(
+                    "Define the pool of LLMs the orchestrator can route agents to. Each entry \
+                     has its own model id, endpoint and key — mix providers freely. Empty \
+                     URL/key inherit the main Tiger Bot settings.",
+                )
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+            );
+            ui.add_space(6.0);
+
+            ui.horizontal(|ui| {
+                ui.label("Tier:");
+                egui::ComboBox::from_id_salt("router_tier_picker")
+                    .selected_text(match self.router_tier.as_str() {
+                        "ultra" => "Router Ultra (deep teams)",
+                        _ => "Router (fast)",
+                    })
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.router_tier, "fast".to_string(), "Router (fast)");
+                        ui.selectable_value(
+                            &mut self.router_tier,
+                            "ultra".to_string(),
+                            "Router Ultra (deep teams)",
+                        );
+                    });
+            });
+            ui.add_space(6.0);
+
+            let mut pool_to_delete: Option<usize> = None;
+            for (idx, entry) in self.model_pool.iter_mut().enumerate() {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("#{}", idx + 1)).strong());
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui
+                                    .add(egui::Button::new(
+                                        egui::RichText::new("Remove")
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(239, 68, 68)),
+                                    ))
+                                    .clicked()
+                                {
+                                    pool_to_delete = Some(idx);
+                                }
+                            },
+                        );
+                    });
+                    egui::Grid::new(format!("model_pool_grid_{}", idx))
+                        .num_columns(2)
+                        .spacing([10.0, 6.0])
+                        .show(ui, |ui| {
+                            ui.label("Label:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut entry.label)
+                                    .desired_width(280.0)
+                                    .hint_text("Display name, e.g. Opus (deep)"),
+                            );
+                            ui.end_row();
+
+                            ui.label("Model:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut entry.model)
+                                    .desired_width(280.0)
+                                    .hint_text("model id, e.g. claude-opus-4-8"),
+                            );
+                            ui.end_row();
+
+                            ui.label("API URL:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut entry.api_url)
+                                    .desired_width(280.0)
+                                    .hint_text("(optional) inherit if blank"),
+                            );
+                            ui.end_row();
+
+                            ui.label("API Key:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut entry.api_key)
+                                    .password(true)
+                                    .desired_width(280.0)
+                                    .hint_text("(optional) inherit if blank"),
+                            );
+                            ui.end_row();
+
+                            ui.label("Tier:");
+                            egui::ComboBox::from_id_salt(format!("pool_tier_{}", idx))
+                                .selected_text(if entry.tier.is_empty() {
+                                    "balanced"
+                                } else {
+                                    entry.tier.as_str()
+                                })
+                                .width(160.0)
+                                .show_ui(ui, |ui| {
+                                    for t in &["fast", "balanced", "deep"] {
+                                        ui.selectable_value(
+                                            &mut entry.tier,
+                                            t.to_string(),
+                                            *t,
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+
+                            ui.label("Strengths:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut entry.strengths)
+                                    .desired_width(280.0)
+                                    .hint_text("hint for the designer, e.g. hard reasoning"),
+                            );
+                            ui.end_row();
+                        });
+                });
+                ui.add_space(4.0);
+            }
+
+            if let Some(idx) = pool_to_delete {
+                self.model_pool.remove(idx);
+            }
+
+            if ui.button("+ Add Model").clicked() {
+                self.model_pool.push(ModelPoolEntry {
+                    tier: "balanced".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
 
         ui.add_space(16.0);
         ui.horizontal(|ui| {

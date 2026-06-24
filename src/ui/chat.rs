@@ -13,13 +13,7 @@ use crate::server::services::toolbox::{
 };
 use crate::ui::output_panel::OutputPanel;
 
-/// Return the largest byte index <= `max_bytes` that is on a char boundary.
-fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
-    if max_bytes >= s.len() { return s.len(); }
-    let mut i = max_bytes;
-    while i > 0 && !s.is_char_boundary(i) { i -= 1; }
-    i
-}
+use crate::util::floor_char_boundary;
 
 // -------------------------------------------------------------------------
 // Lightweight sidebar summary (avoids cloning all messages for the list)
@@ -894,9 +888,16 @@ impl ChatView {
                 })
                 .unwrap_or_default();
 
-            // fully_auto and auto_swarm don't need a config file upfront.
+            // Router is self-contained: it never inherits a manual YAML team. It
+            // triages and builds its OWN team — each agent assigned a specific LLM
+            // from the model pool — via create_architecture. So start with no
+            // config file/agents and let the orchestrator route the LLMs.
+            let config_file = if sub_agent_mode == "router" { String::new() } else { config_file };
+
+            // fully_auto, auto_swarm and router don't need a config file upfront.
             // "auto" mode requires a YAML config — agents must come from the YAML.
-            let needs_config = !matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm");
+            // (router triages: it answers directly or builds a team on demand.)
+            let needs_config = !matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm" | "router");
 
             // Debug: log why sub-agent config might be disabled
             eprintln!("[SubAgent] enabled={}, mode={}, config_file='{}', needs_config={}, data_dir={:?}",
@@ -929,6 +930,21 @@ impl ChatView {
                     });
                 }
 
+                // Router mode: load the heterogeneous model pool + tier from settings.
+                let (router_pool, router_tier) = if sub_agent_mode == "router" {
+                    let pool = settings
+                        .model_pool
+                        .clone()
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|e| serde_json::to_value(e).ok())
+                        .collect::<Vec<_>>();
+                    let tier = settings.router_tier.clone().unwrap_or_else(|| "fast".into());
+                    (pool, tier)
+                } else {
+                    (Vec::new(), String::new())
+                };
+
                 SubAgentConfig {
                     enabled: true,
                     config_file,
@@ -942,6 +958,8 @@ impl ChatView {
                     mode: sub_agent_mode.clone(),
                     agent_role: "orchestrator".to_string(),
                     cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    model_pool: router_pool,
+                    router_tier,
                 }
             } else {
                 SubAgentConfig::default()
@@ -951,7 +969,7 @@ impl ChatView {
         // Build system prompt: base + project context + sub-agent info
         let (sub_agent_prompt, research_instruction) = if sub_agent_config.enabled
             && (!sub_agent_config.agent_ids.is_empty()
-                || matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm"))
+                || matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm" | "router"))
         {
             let agents = sub_agent_config.agent_ids.join(", ");
             match sub_agent_mode.as_str() {
@@ -1049,6 +1067,35 @@ Always delegate, even for simple tasks. If an orchestrator exists, send tasks ON
                     };
                     (prompt, "Use send_task/wait_result to delegate ALL tasks to agents.")
                 }
+                "router" => {
+                    let tier = sub_agent_config.router_tier.as_str();
+                    let pool_count = sub_agent_config.model_pool.len();
+                    let tier_line = if tier == "ultra" {
+                        "Tier: ROUTER ULTRA — favor accuracy; build a deeper team with a dedicated checker when the task is hard."
+                    } else {
+                        "Tier: ROUTER (fast) — favor low latency; keep teams small and only build one when it clearly helps."
+                    };
+                    let prompt = if sub_agent_config.agent_ids.is_empty() {
+                        format!(
+                            "\n\nROUTER MODE: You are an LLM ORCHESTRATOR. {tier_line} A pool of {pool_count} model(s) is available for specialist agents.\n\
+You do NOT have research or execution tools (no web_search, browser, run_shell, read_file). Your ONLY tools are create_architecture (to build a team) and write_file/run_python (to format a direct reply).\n\
+DECIDE: If the message is a trivial conversational reply you can answer from your own knowledge with no tools, just answer in text. \
+For ANYTHING that needs research, data, code, files, analysis, or multiple steps (e.g. 'research X', 'analyze Y', 'build Z'), you MUST call create_architecture to design and boot a specialist team — each agent is assigned a best-fit LLM from the pool.\n\
+DESIGN FOR PARALLELISM: build a team of INDEPENDENT specialists working concurrently — use architectureType 'flat' (you talk to every worker directly), NOT 'pipeline' (sequential and slow). Split the task into independent sub-tasks, one per worker, where no worker depends on another's output.\n\
+DISPATCH IN PARALLEL: fire send_task to ALL relevant agents in the SAME step (multiple send_task calls at once) so they run asynchronously at the same time; THEN call wait_result for each agent to collect their outputs; THEN combine/synthesize into the final answer. Do not wait for one agent before sending the next. \
+You cannot do the work yourself; orchestrate the LLMs in parallel and merge their results."
+                        )
+                    } else {
+                        format!(
+                            "\n\nROUTER MODE: An expert team is LIVE. Available agents: [{}]. {tier_line}\n\
+DISPATCH IN PARALLEL: fire send_task to ALL relevant agents in the SAME step (multiple send_task calls at once) so they work asynchronously at the same time; THEN wait_result for each; THEN combine/synthesize. Do not wait for one agent before sending the next. \
+If a single orchestrator agent exists, send to it; otherwise fan out to the workers directly. Use run_python/write_file only to format the final output. \
+You may still answer trivial follow-ups directly without delegating.",
+                            agents
+                        )
+                    };
+                    (prompt, "Orchestrate LLMs in parallel: fan out send_task to multiple agents at once, then wait_result on each and merge.")
+                }
                 _ => {
                     // "auto" mode
                     let prompt = format!(
@@ -1069,6 +1116,7 @@ Only use your own tools (web_search, run_python, etc.) for quick lookups or task
             "fully_auto" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
             "auto_swarm" => "select_swarm, send_task, wait_result, check_agents, run_python, write_file",
             "manual" => "send_task, wait_result, check_agents, run_python, write_file, read_file, list_files",
+            "router" => "create_architecture, send_task, wait_result, check_agents, write_file, run_python",
             _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
         };
 
@@ -3217,6 +3265,7 @@ You have access to these tools: {}.{}",
                     "auto" => "Auto",
                     "auto_swarm" => "Auto Swarm",
                     "manual" => "Manual",
+                    "router" => "Router",
                     _ => "Swarm",
                 }
             };
@@ -3229,6 +3278,7 @@ You have access to these tools: {}.{}",
                     "auto" => egui::Color32::from_rgb(34, 197, 94),         // green
                     "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),  // purple
                     "manual" => egui::Color32::from_rgb(239, 68, 68),       // red
+                    "router" => egui::Color32::from_rgb(255, 140, 0),       // orange
                     _ => egui::Color32::from_rgb(18, 154, 145),             // blue
                 }
             };
@@ -3663,6 +3713,7 @@ You have access to these tools: {}.{}",
                                     "auto" => "Auto",
                                     "auto_swarm" => "Auto Swarm",
                                     "manual" => "Manual",
+                                    "router" => "Router",
                                     _ => "Single Agent",
                                 };
                                 let mode_color = match current_mode {
@@ -3670,6 +3721,7 @@ You have access to these tools: {}.{}",
                                     "auto" => egui::Color32::from_rgb(34, 197, 94),
                                     "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),
                                     "manual" => egui::Color32::from_rgb(239, 68, 68),
+                                    "router" => egui::Color32::from_rgb(255, 140, 0),
                                     _ => egui::Color32::from_rgb(168, 158, 144),
                                 };
                                 let pill = egui::Button::new(
@@ -3690,6 +3742,7 @@ You have access to these tools: {}.{}",
                                         ("auto", "Auto", egui::Color32::from_rgb(34, 197, 94)),
                                         ("auto_swarm", "Auto Swarm", egui::Color32::from_rgb(168, 85, 247)),
                                         ("manual", "Manual", egui::Color32::from_rgb(239, 68, 68)),
+                                        ("router", "Router", egui::Color32::from_rgb(255, 140, 0)),
                                     ];
                                     for &(mode_key, label, color) in modes {
                                         let is_selected = current_mode == mode_key;
@@ -5726,11 +5779,7 @@ fn render_markdown_table(ui: &mut egui::Ui, lines: &[&str], default_color: egui:
 // -------------------------------------------------------------------------
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..floor_char_boundary(s, max_len)])
-    }
+    crate::util::truncate_utf8_ellipsis(s, max_len)
 }
 
 fn format_timestamp(ts: &str) -> String {

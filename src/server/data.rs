@@ -448,6 +448,25 @@ pub struct RemoteInstance {
     pub token: String,
 }
 
+/// One entry in the "router" mode model pool — a single, self-contained LLM
+/// endpoint (its own model id, URL and key) that the orchestrator can route an
+/// agent to. Different providers coexist because each entry carries its own
+/// `api_url`/`api_key`; empty values inherit the main session's.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelPoolEntry {
+    pub id: String,        // stable key, e.g. "claude_opus"
+    pub label: String,     // display name
+    pub model: String,     // model id passed to llm_call
+    #[serde(default)]
+    pub api_url: String,   // empty -> inherit session api_url
+    #[serde(default)]
+    pub api_key: String,   // empty -> inherit session api_key
+    #[serde(default)]
+    pub tier: String,      // "fast" | "balanced" | "deep"
+    #[serde(default)]
+    pub strengths: String, // freeform hint for the designer LLM
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LocalFileMount {
     pub id: String,
@@ -483,6 +502,10 @@ pub struct Settings {
     pub sub_agent_model: Option<String>,
     #[serde(rename = "subAgentConfigFile", skip_serializing_if = "Option::is_none")]
     pub sub_agent_config_file: Option<String>,
+    #[serde(rename = "modelPool", skip_serializing_if = "Option::is_none")]
+    pub model_pool: Option<Vec<ModelPoolEntry>>,
+    #[serde(rename = "routerTier", skip_serializing_if = "Option::is_none")]
+    pub router_tier: Option<String>,
     #[serde(rename = "remoteEnabled", skip_serializing_if = "Option::is_none")]
     pub remote_enabled: Option<bool>,
     #[serde(rename = "remoteToken", skip_serializing_if = "Option::is_none")]

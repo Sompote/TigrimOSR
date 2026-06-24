@@ -4,14 +4,8 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use serde_json::Value;
 
-fn floor_char_boundary(s: &str, max_bytes: usize) -> usize {
-    if max_bytes >= s.len() { return s.len(); }
-    let mut i = max_bytes;
-    while i > 0 && !s.is_char_boundary(i) { i -= 1; }
-    i
-}
-
 use crate::server::data::{get_settings, RemoteInstance};
+use crate::util::floor_char_boundary;
 
 // ---------------------------------------------------------------------------
 // Remote sub-tab
