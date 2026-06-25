@@ -865,7 +865,8 @@ impl ChatView {
         // Router: the ORCHESTRATOR (triage + dispatch + merge) can run on a
         // user-chosen pool model. Empty/unset → main model. Worker agents keep
         // their own per-agent pool models. For other modes orch_* == the main vars.
-        let (orch_model, orch_api_url, orch_api_key) = match (sub_agent_mode == "router")
+        let router_active = settings.sub_agent_enabled == Some(true) && sub_agent_mode == "router";
+        let (orch_model, orch_api_url, orch_api_key) = match router_active
             .then(|| settings.router_orchestrator_model.as_ref().filter(|s| !s.is_empty()))
             .flatten()
         {

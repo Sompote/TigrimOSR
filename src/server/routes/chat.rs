@@ -826,7 +826,7 @@ You have access to these tools: {}.{}",
 
     // Router: run the ORCHESTRATOR on the user-chosen pool model (worker agents
     // keep their own per-agent models). Empty/unset → main model.
-    let (api_key, api_url, model) = match (effective_mode == "router")
+    let (api_key, api_url, model) = match (sub_agent_enabled && effective_mode == "router")
         .then(|| settings.router_orchestrator_model.as_ref().filter(|s| !s.is_empty()))
         .flatten()
     {
