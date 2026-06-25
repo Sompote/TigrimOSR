@@ -10,6 +10,7 @@
 - **Browser control** — let the agent drive a real **Chrome / Chromium** browser to **search Google** and read the live web directly. It's a real browser, not a paid search-API — **no API keys, free of charge, saves money**. Opt-in toggle, off by default for safety.
 - **Plugin system** — zip plugins bundling skills, MCP servers, agents, and connectors. Compatible with Claude Desktop/Code plugins and npm MCP packages.
 - **Run it your way** — as a native **Rust desktop UI** on your machine, **headless** on a machine or in **Docker**, and connect from any browser via the built-in **web UI**. Toggle Local/Remote from one interface.
+- **Private remote access (VPN)** — reach a remote host over your own **[Tailscale](https://tailscale.com) VPN** instead of exposing it publicly — devices talk over private `100.x` addresses, nothing is published to the internet. Opt-in toggle, an alternative to the public Cloudflare tunnel.
 - **Built in Rust** — fast, low-memory, single binary, no Node/Python runtime. Rewritten from [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
 
 ### Native Rust desktop app
@@ -1314,6 +1315,7 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ### v0.5.7
 
+- **Private VPN for remote connect (Tailscale)** — A new opt-in way to reach a host remotely over your own [Tailscale](https://tailscale.com) tailnet instead of a public Cloudflare tunnel (the two are mutually-exclusive alternatives). Toggle **Use VPN (Tailscale) for remote connect** in **Settings → Remote** (web/mobile and desktop); the host then surfaces its private `100.x` connect address with a copy button, and binds for tailnet reachability when a remote token is set. Off by default, with **Start/Stop/Refresh** controls and owner-only `/api/vpn/{status,start,stop}` endpoints. See [Remote access over a private VPN](#remote-access-over-a-private-vpn-tailscale).
 - **Router mode (routing agentic system)** — A new agent mode that triages each request, then routes work across a **heterogeneous pool of LLMs**. Configure a model pool in **Settings → Sub-Agent → Router Model Pool** (per-model `model`, `api_url`/`api_key`, `tier`, and free-text `strengths`); the orchestrator builds a flat team and assigns **each agent the best-fit model** by matching its sub-task to the model's strengths/tier. Workers run **in parallel**, each in its **own isolated browser window** (no shared-Chrome clobbering), and the orchestrator merges their results. Includes automatic **provider failover** and **Router / Router Ultra** tiers (fast vs deep).
 - **User-set orchestrator model** — A free-text **Orchestrator model** field in the Router Model Pool sets which model does the triaging, team-building and merging (blank = main model; a pool id uses that entry's endpoint/key; any other id runs on the main endpoint/key). Worker agents keep their own per-agent models.
 - **Per-agent isolated browsers** — In a parallel swarm, each sub-agent now drives its **own** Chromium window via a dedicated Playwright MCP instance (launched on first use), so concurrent agents no longer fight over a single shared page.
