@@ -1149,6 +1149,36 @@ cargo build --release
 ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/tigrimos --headless
 ```
 
+### Headless + VPN (Tailscale)
+
+To reach a headless server privately over a [Tailscale](https://tailscale.com) tailnet
+instead of exposing a public port (see [Remote access over a private VPN](#remote-access-over-a-private-vpn-tailscale)
+for the full guide):
+
+```bash
+# 1. Install + connect Tailscale on the server, note the 100.x.y.z address
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+tailscale ip -4
+
+# 2. Enable VPN + remote token in data/settings.json (or Settings → Remote in the web UI):
+#    { "remoteEnabled": true, "remoteToken": "my-secret-token", "vpnEnabled": true }
+
+# 3. (Re)start headless — on boot the log prints the tailnet URL:
+#    [VPN] Reachable at http://100.x.y.z:3001
+ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/tigrimos --headless
+```
+
+On a native (non-Docker) headless box, Tailscale and the server share the same machine,
+so `vpnEnabled` auto-detects the tailnet IP at boot. From another tailnet device, add a
+Remote Instance pointing at `http://100.x.y.z:3001` with the token. Verify with the
+owner-only endpoint:
+
+```bash
+curl -H "Authorization: Bearer my-secret-token" http://127.0.0.1:3001/api/vpn/status
+# → {"running":true,"ip":"100.x.y.z","url":"http://100.x.y.z:3001"}
+```
+
 The server will prompt for a token on first run:
 ```
 ===========================================
