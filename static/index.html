@@ -850,6 +850,7 @@ h4.md-h { font-size: 1em; }
         <label>Mode:</label>
         <select id="agents-mode-select" onchange="selectAgentMode()">
           <option value="single">Single</option>
+          <option value="router">Router</option>
           <option value="auto">Auto</option>
           <option value="manual">Manual</option>
           <option value="fully_auto">Fully Auto</option>
@@ -1338,8 +1339,8 @@ function newSession() {
 let sending = false;
 function getAgentMode() { return localStorage.getItem('tigrimos_agent_mode') || 'single'; }
 
-const agentModes = ['single', 'auto', 'manual', 'fully_auto'];
-const agentModeLabels = { single: 'Single Agent', auto: 'Auto Swarm', manual: 'Manual', fully_auto: 'Fully Auto' };
+const agentModes = ['single', 'router', 'auto', 'manual', 'fully_auto'];
+const agentModeLabels = { single: 'Single Agent', router: 'Router', auto: 'Auto Swarm', manual: 'Manual', fully_auto: 'Fully Auto' };
 function cycleAgentMode() {
   const cur = getAgentMode();
   const next = agentModes[(agentModes.indexOf(cur) + 1) % agentModes.length];
@@ -2682,6 +2683,20 @@ function loadSettings() {
             </select></div>
         </div>
         <div class="settings-group">
+          <h3>Router Model Pool</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">Used by <b>Router</b> mode. Define the pool of LLMs the orchestrator routes agents to. Each entry has its own model id, endpoint and key — mix providers freely. Blank URL/Key inherit the main AI Provider settings. The orchestrator assigns each agent a best-fit model by <b>tier</b> + <b>strengths</b>.</div>
+          <div class="settings-row-field"><label>Tier</label>
+            <select id="s-router-tier" style="flex:1">
+              <option value="fast" ${data.routerTier !== 'ultra' ? 'selected' : ''}>Router (fast)</option>
+              <option value="ultra" ${data.routerTier === 'ultra' ? 'selected' : ''}>Router Ultra (deep teams)</option>
+            </select></div>
+          <div class="settings-row-field"><label>Orchestrator model</label>
+            <input id="s-router-orch" value="${esc(data.routerOrchestratorModel || '')}" placeholder="(blank = main model) e.g. kimi-k2.7-code"></div>
+          <div style="color:var(--ink-soft);font-size:11px;margin:2px 0 8px">Blank = main model · a pool model id uses that entry's endpoint/key · any other id runs on the main endpoint/key. Workers keep their own per-agent models.</div>
+          <div id="router-pool-list">${(data.modelPool || []).map(routerPoolRowHTML).join('')}</div>
+          <button class="pill-btn" onclick="addRouterPoolRow()" style="flex:none;margin-top:6px">+ Add Model</button>
+        </div>
+        <div class="settings-group">
           <h3>Tool Approval</h3>
           <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">When enabled, the agent must ask for your approval before running each tool type. Turn these off for hands-free / autonomous runs.</div>
           <div class="settings-row-field"><label></label>
@@ -2982,6 +2997,34 @@ function testConnection() {
   }).catch(() => { s.textContent = 'Request failed'; s.style.color = 'var(--red)'; });
 }
 
+// ── Router Model Pool editor (web/mobile) ──────────────────────────────────
+function routerPoolRowHTML(e) {
+  e = e || {};
+  const t = e.tier || 'balanced';
+  const opt = (v) => `<option value="${v}" ${t === v ? 'selected' : ''}>${v}</option>`;
+  return `<div class="router-pool-row" style="border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px">
+    <div class="settings-row-field"><label>Label</label><input class="rp-label" value="${esc(e.label || '')}" placeholder="display name"></div>
+    <div class="settings-row-field"><label>Model</label><input class="rp-model" value="${esc(e.model || '')}" placeholder="model id (e.g. MiniMax-M3)"></div>
+    <div class="settings-row-field"><label>API URL</label><input class="rp-apiurl" value="${esc(e.api_url || '')}" placeholder="(optional) inherit if blank"></div>
+    <div class="settings-row-field"><label>API Key</label><input class="rp-apikey" type="password" value="${esc(e.api_key || '')}" placeholder="(optional) inherit if blank"></div>
+    <div class="settings-row-field"><label>Tier</label><select class="rp-tier" style="flex:1">${opt('fast')}${opt('balanced')}${opt('deep')}</select></div>
+    <div class="settings-row-field"><label>Strengths</label><input class="rp-strengths" value="${esc(e.strengths || '')}" placeholder="e.g. marketing research, mathematics, coding"></div>
+    <div class="settings-row-field"><label></label><button class="pill-btn danger" onclick="this.closest('.router-pool-row').remove()" style="flex:none;font-size:11px;padding:5px 10px">Remove</button></div>
+  </div>`;
+}
+function addRouterPoolRow() {
+  const list = document.getElementById('router-pool-list');
+  if (list) list.insertAdjacentHTML('beforeend', routerPoolRowHTML({ tier: 'balanced' }));
+}
+function gatherRouterPool() {
+  return [...document.querySelectorAll('.router-pool-row')].map(row => {
+    const g = sel => { const el = row.querySelector(sel); return el ? el.value : ''; };
+    const label = g('.rp-label'), model = g('.rp-model');
+    const id = (label || model).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    return { id, label, model, api_url: g('.rp-apiurl'), api_key: g('.rp-apikey'), tier: g('.rp-tier'), strengths: g('.rp-strengths') };
+  }).filter(e => e.model);
+}
+
 function saveSettings() {
   const s = document.getElementById('s-save-status');
   const body = {
@@ -3008,6 +3051,15 @@ function saveSettings() {
     skillAutoUpdateRequireApproval: document.getElementById('s-skill-approval').checked,
     skillAutoUpdateHumanFeedbackEnabled: document.getElementById('s-skill-feedback').checked,
   };
+  // Router Model Pool (used by Router mode)
+  {
+    const tierEl = document.getElementById('s-router-tier');
+    const orchEl = document.getElementById('s-router-orch');
+    if (tierEl) body.routerTier = tierEl.value;
+    if (orchEl) body.routerOrchestratorModel = orchEl.value || null;
+    const pool = gatherRouterPool();
+    body.modelPool = pool.length ? pool : null;
+  }
   // Numeric harness fields (ints unless flagged float)
   [].concat(HARNESS_NUM, HARNESS_REFLECT, HARNESS_VERIFY).forEach(f => {
     const raw = document.getElementById('s-h-' + f.key).value;
