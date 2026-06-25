@@ -506,6 +506,10 @@ pub struct Settings {
     pub model_pool: Option<Vec<ModelPoolEntry>>,
     #[serde(rename = "routerTier", skip_serializing_if = "Option::is_none")]
     pub router_tier: Option<String>,
+    /// Which pool model the router ORCHESTRATOR runs on (triage + dispatch +
+    /// merge). Stores the entry's `model` id; empty/unset = use the main model.
+    #[serde(rename = "routerOrchestratorModel", skip_serializing_if = "Option::is_none")]
+    pub router_orchestrator_model: Option<String>,
     #[serde(rename = "remoteEnabled", skip_serializing_if = "Option::is_none")]
     pub remote_enabled: Option<bool>,
     #[serde(rename = "remoteToken", skip_serializing_if = "Option::is_none")]

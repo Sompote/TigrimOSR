@@ -34,9 +34,24 @@ fn connections() -> &'static TokioMutex<HashMap<String, McpConnection>> {
 /// through the same stdin/stdout, serialized by the per-process mutex.
 struct StdioProc {
     _child: Child,
+    /// PID of the spawned server (== its process-group id, since we spawn it as
+    /// a group leader). Used to SIGKILL the whole tree on drop — `npx` spawns
+    /// `node` which spawns Chromium, and kill_on_drop only reaps the direct
+    /// child, leaving the browser running and holding memory.
+    pid: Option<u32>,
     stdin: ChildStdin,
     reader: BufReader<ChildStdout>,
     next_id: i64,
+}
+
+impl Drop for StdioProc {
+    fn drop(&mut self) {
+        // Reap the entire process group (server + node + Chromium grandchildren)
+        // so a finished/cancelled session doesn't leak browser processes.
+        if let Some(pid) = self.pid {
+            crate::server::services::proc_registry::kill_group(pid);
+        }
+    }
 }
 
 impl StdioProc {
@@ -119,15 +134,21 @@ async fn spawn_and_init(command: &str, args: &[String]) -> Result<StdioProc, Str
     // (e.g. a browser screenshot saved as `./shot.png`) land inside the sandbox,
     // where the agent's read_file and the web file-server can reach them.
     let sandbox = crate::server::data::get_sandbox_dir_sync();
-    let mut child = Command::new(command)
-        .args(args)
+    let mut cmd = Command::new(command);
+    cmd.args(args)
         .current_dir(&sandbox)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    // Own process group (pgid == child pid) so we can SIGKILL the whole tree —
+    // the server's node + Chromium grandchildren — on drop.
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn MCP server: {e}"))?;
+    let pid = child.id();
 
     let stdin = child.stdin.take().ok_or("no stdin handle")?;
     let stdout = child.stdout.take().ok_or("no stdout handle")?;
@@ -142,6 +163,7 @@ async fn spawn_and_init(command: &str, args: &[String]) -> Result<StdioProc, Str
 
     let mut proc = StdioProc {
         _child: child,
+        pid,
         stdin,
         reader: BufReader::new(stdout),
         next_id: 1,

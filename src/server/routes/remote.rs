@@ -381,6 +381,31 @@ async fn process_remote_task(
         (Vec::new(), String::new())
     };
 
+    // Router: orchestrator runs on the user-chosen pool model (workers keep
+    // their own per-agent models). Empty/unset → main model.
+    let (api_key, api_url, model) = match (mode == "router")
+        .then(|| settings.router_orchestrator_model.as_ref().filter(|s| !s.is_empty()))
+        .flatten()
+    {
+        Some(want) => {
+            match settings.model_pool.as_ref().and_then(|pool| pool.iter().find(|e| &e.model == want)) {
+                Some(e) => {
+                    let u = if e.api_url.trim().is_empty() {
+                        api_url.clone()
+                    } else if e.api_url == "claude-code" || e.api_url.ends_with("/chat/completions") {
+                        e.api_url.clone()
+                    } else {
+                        format!("{}/chat/completions", e.api_url.trim_end_matches('/'))
+                    };
+                    let k = if e.api_key.trim().is_empty() { api_key.clone() } else { e.api_key.clone() };
+                    (k, u, e.model.clone())
+                }
+                None => (api_key, api_url, want.clone()),
+            }
+        }
+        None => (api_key, api_url, model),
+    };
+
     // Check if we have a config file for realtime agents
     let has_agents = config_file
         .as_ref()

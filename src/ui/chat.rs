@@ -862,6 +862,34 @@ impl ChatView {
         let sub_agent_mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string());
         let is_realtime = sub_agent_mode == "manual";
 
+        // Router: the ORCHESTRATOR (triage + dispatch + merge) can run on a
+        // user-chosen pool model. Empty/unset → main model. Worker agents keep
+        // their own per-agent pool models. For other modes orch_* == the main vars.
+        let (orch_model, orch_api_url, orch_api_key) = match (sub_agent_mode == "router")
+            .then(|| settings.router_orchestrator_model.as_ref().filter(|s| !s.is_empty()))
+            .flatten()
+        {
+            Some(want) => {
+                // Typed model: if it matches a pool entry use that entry's
+                // endpoint/key; otherwise run it on the main endpoint/key.
+                match settings.model_pool.as_ref().and_then(|pool| pool.iter().find(|e| &e.model == want)) {
+                    Some(e) => {
+                        let u = if e.api_url.trim().is_empty() {
+                            api_url.clone()
+                        } else if e.api_url == "claude-code" || e.api_url.ends_with("/chat/completions") {
+                            e.api_url.clone()
+                        } else {
+                            format!("{}/chat/completions", e.api_url.trim_end_matches('/'))
+                        };
+                        let k = if e.api_key.trim().is_empty() { api_key.clone() } else { e.api_key.clone() };
+                        (e.model.clone(), u, k)
+                    }
+                    None => (want.clone(), api_url.clone(), api_key.clone()),
+                }
+            }
+            None => (model.clone(), api_url.clone(), api_key.clone()),
+        };
+
         let sub_agent_config = {
             let enabled = settings.sub_agent_enabled.unwrap_or(false);
 
@@ -1948,12 +1976,12 @@ You have access to these tools: {}.{}",
                 let tool_future = async {
                     if use_realtime {
                         call_with_tools_realtime(
-                            &api_key, &api_url, &model, messages, system_prompt, &sandbox_dir,
+                            &orch_api_key, &orch_api_url, &orch_model, messages, system_prompt, &sandbox_dir,
                             on_update_cb, sub_agent_config,
                         ).await
                     } else {
                         call_with_tools(
-                            &api_key, &api_url, &model, messages, system_prompt, &sandbox_dir,
+                            &orch_api_key, &orch_api_url, &orch_model, messages, system_prompt, &sandbox_dir,
                             on_update_cb, sub_agent_config,
                         ).await
                     }
@@ -1979,6 +2007,12 @@ You have access to these tools: {}.{}",
                 if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
                     crate::server::services::toolbox::shutdown_realtime_session(&sid).await;
                     crate::server::services::proc_registry::kill_session(&sid);
+                } else if sub_agent_mode == "router" {
+                    // Router rebuilds its team per message, so free the realtime
+                    // session + its per-agent browser windows now — otherwise the
+                    // npx/Chromium processes pile up across chats and never return
+                    // their memory. (Manual mode keeps its persistent team.)
+                    crate::server::services::toolbox::shutdown_realtime_session(&sid).await;
                 }
 
                 r

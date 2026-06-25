@@ -148,6 +148,7 @@ pub struct SettingsView {
     // --- Router mode: heterogeneous model pool + tier ---
     model_pool: Vec<ModelPoolEntry>,
     router_tier: String,
+    router_orchestrator_model: String, // "" = use main model
     agent_config_files: Vec<String>,
     selected_agent_config: String,
 
@@ -271,6 +272,7 @@ impl Default for SettingsView {
             sub_agent_model: String::new(),
             model_pool: Vec::new(),
             router_tier: "fast".to_string(),
+            router_orchestrator_model: String::new(),
             agent_config_files: Vec::new(),
             selected_agent_config: String::new(),
 
@@ -501,6 +503,7 @@ impl SettingsView {
         self.sub_agent_model = settings.sub_agent_model.unwrap_or_default();
         self.model_pool = settings.model_pool.unwrap_or_default();
         self.router_tier = settings.router_tier.unwrap_or_else(|| "fast".into());
+        self.router_orchestrator_model = settings.router_orchestrator_model.unwrap_or_default();
         self.selected_agent_config = settings.sub_agent_config_file.unwrap_or_default();
 
         // Scan for agent config YAML files (local or remote)
@@ -656,6 +659,11 @@ impl SettingsView {
             Some(pool)
         };
         settings.router_tier = Some(self.router_tier.clone());
+        settings.router_orchestrator_model = if self.router_orchestrator_model.is_empty() {
+            None
+        } else {
+            Some(self.router_orchestrator_model.clone())
+        };
         settings.sub_agent_config_file = if self.selected_agent_config.is_empty() {
             None
         } else {
@@ -1701,6 +1709,29 @@ impl SettingsView {
                         );
                     });
             });
+            ui.add_space(4.0);
+
+            // Which model the ORCHESTRATOR itself runs on (triage + dispatch +
+            // merge). Empty = use the main Tiger Bot model. Workers still get
+            // their own per-agent models from the pool.
+            ui.horizontal(|ui| {
+                ui.label("Orchestrator model:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.router_orchestrator_model)
+                        .desired_width(280.0)
+                        .hint_text("(blank = main model) e.g. kimi-k2.7-code"),
+                );
+            });
+            ui.label(
+                egui::RichText::new(
+                    "The orchestrator triages, builds the team and merges results. \
+                     Type any model id — if it matches a pool entry it uses that entry's \
+                     endpoint/key, otherwise it runs on the main Tiger Bot endpoint/key. \
+                     Workers run on their own per-agent models regardless of this.",
+                )
+                .size(10.0)
+                .color(egui::Color32::GRAY),
+            );
             ui.add_space(6.0);
 
             let mut pool_to_delete: Option<usize> = None;
