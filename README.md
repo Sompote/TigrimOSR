@@ -714,10 +714,15 @@ LLMs**:
    team and assigns **each agent the best-fit LLM** from the pool, matching the agent's
    sub-task to a model's *strengths* and *tier*. (You can also hard-set a `model:` on an agent
    in YAML — it always wins.)
-4. **Parallel fan-out** — it dispatches `send_task` to all workers at once so they run
+4. **Choose the orchestrator's own model** — the **Orchestrator model** field (same panel)
+   sets which model does the triaging, team-building and merging. Leave it blank to use your
+   main model, enter a pool model id to run it on that entry's endpoint/key, or any other id
+   to run it on the main endpoint/key. Workers still use their own per-agent models.
+5. **Parallel fan-out** — it dispatches `send_task` to all workers at once so they run
    **concurrently**, each in its **own isolated browser window** (no shared-Chrome clobbering),
-   then collects every `wait_result` and **merges** them into the final answer.
-5. **Provider failover** — if a model rejects a call, the agent automatically retries on the
+   then collects every `wait_result` and **merges** them into the final answer. Each agent's
+   browser is released when the chat finishes, so processes don't pile up.
+6. **Provider failover** — if a model rejects a call, the agent automatically retries on the
    next model in the pool.
 
 Two tiers control the team profile: **Router (fast)** keeps teams small and prefers
@@ -1146,7 +1151,9 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 ### v0.5.7
 
 - **Router mode (routing agentic system)** — A new agent mode that triages each request, then routes work across a **heterogeneous pool of LLMs**. Configure a model pool in **Settings → Sub-Agent → Router Model Pool** (per-model `model`, `api_url`/`api_key`, `tier`, and free-text `strengths`); the orchestrator builds a flat team and assigns **each agent the best-fit model** by matching its sub-task to the model's strengths/tier. Workers run **in parallel**, each in its **own isolated browser window** (no shared-Chrome clobbering), and the orchestrator merges their results. Includes automatic **provider failover** and **Router / Router Ultra** tiers (fast vs deep).
-- **Per-agent isolated browsers** — In a parallel swarm, each sub-agent now drives its **own** Chromium window via a dedicated Playwright MCP instance (launched on first use, cleaned up with the session), so concurrent agents no longer fight over a single shared page.
+- **User-set orchestrator model** — A free-text **Orchestrator model** field in the Router Model Pool sets which model does the triaging, team-building and merging (blank = main model; a pool id uses that entry's endpoint/key; any other id runs on the main endpoint/key). Worker agents keep their own per-agent models.
+- **Per-agent isolated browsers** — In a parallel swarm, each sub-agent now drives its **own** Chromium window via a dedicated Playwright MCP instance (launched on first use), so concurrent agents no longer fight over a single shared page.
+- **Browser process cleanup** — MCP servers now run as their own process group, and a finished or cancelled chat **SIGKILLs the whole browser tree** (`npx` → `node` → Chromium) instead of orphaning Chromium and holding memory. Router chats tear down their per-agent browser windows on completion.
 - **Reasoning-model temperature fix** — Models that only accept the default temperature (e.g. Kimi K2 / MiniMax reasoning models) are auto-pinned to `temperature = 1`, with a reactive retry if a provider rejects the value.
 
 ### v0.5.6
