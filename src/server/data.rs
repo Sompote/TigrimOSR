@@ -518,6 +518,11 @@ pub struct Settings {
     pub remote_task_max_retries: Option<u64>,
     #[serde(rename = "remoteInstances", skip_serializing_if = "Option::is_none")]
     pub remote_instances: Option<Vec<RemoteInstance>>,
+    /// When true, reach this host remotely over a Tailscale VPN instead of a
+    /// public Cloudflare tunnel (mutually exclusive "remote connection method").
+    /// Off by default — behavior is unchanged unless the user opts in.
+    #[serde(rename = "vpnEnabled", skip_serializing_if = "Option::is_none")]
+    pub vpn_enabled: Option<bool>,
     #[serde(rename = "localFileMounts", skip_serializing_if = "Option::is_none")]
     pub local_file_mounts: Option<Vec<LocalFileMount>>,
     #[serde(rename = "skillAutoUpdateEnabled", skip_serializing_if = "Option::is_none")]

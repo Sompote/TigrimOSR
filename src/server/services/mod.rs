@@ -13,6 +13,7 @@ pub mod clawhub;
 pub mod mcp;
 #[allow(dead_code)]
 pub mod tunnel;
+pub mod vpn;
 #[allow(dead_code)]
 pub mod compact;
 pub mod plugin;

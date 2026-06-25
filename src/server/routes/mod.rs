@@ -12,6 +12,7 @@ pub mod python;
 pub mod tools;
 pub mod clawhub;
 pub mod remote;
+pub mod vpn;
 pub mod plugins;
 pub mod web_ui;
 
@@ -34,5 +35,6 @@ pub fn build_api_routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
         .nest("/tools", tools::router())
         .nest("/clawhub", clawhub::router())
         .nest("/remote", remote::router())
+        .nest("/vpn", vpn::router())
         .nest("/plugins", plugins::router())
 }

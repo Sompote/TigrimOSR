@@ -164,6 +164,7 @@ pub struct SettingsView {
 
     // --- Remote Instances ---
     remote_enabled: bool,
+    vpn_enabled: bool,
     remote_token: String,
     remote_instances: Vec<RemoteInstance>,
     new_remote_name: String,
@@ -286,6 +287,7 @@ impl Default for SettingsView {
             mcp_connection_status: Arc::new(Mutex::new(Vec::new())),
 
             remote_enabled: false,
+            vpn_enabled: false,
             remote_token: String::new(),
             remote_instances: Vec::new(),
             new_remote_name: String::new(),
@@ -518,6 +520,7 @@ impl SettingsView {
 
         // Remote
         self.remote_enabled = settings.remote_enabled.unwrap_or(false);
+        self.vpn_enabled = settings.vpn_enabled.unwrap_or(false);
         self.remote_token = settings.remote_token.unwrap_or_default();
         self.remote_instances = settings.remote_instances.unwrap_or_default();
 
@@ -705,6 +708,7 @@ impl SettingsView {
 
         // Remote
         settings.remote_enabled = Some(self.remote_enabled);
+        settings.vpn_enabled = Some(self.vpn_enabled);
         settings.remote_token = if self.remote_token.is_empty() {
             None
         } else {
@@ -2249,6 +2253,49 @@ impl SettingsView {
         ui.add_space(4.0);
 
         ui.checkbox(&mut self.remote_enabled, "Enable remote agent access");
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.heading("Remote Connection Method");
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Reach this host over a private Tailscale VPN instead of a public \
+                 Cloudflare tunnel. VPN and tunnel are alternatives — use one.",
+            )
+            .size(11.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.checkbox(&mut self.vpn_enabled, "Use VPN (Tailscale) for remote connect");
+
+        // Show the detected tailnet address (cached; populated at boot / Start).
+        let vpn = runtime.block_on(crate::server::services::vpn::get_vpn_state());
+        let vpn_url = vpn["url"].as_str().unwrap_or("").to_string();
+        ui.horizontal(|ui| {
+            ui.label("Connect address:");
+            ui.label(
+                egui::RichText::new(if vpn_url.is_empty() { "(not detected)" } else { &vpn_url })
+                    .monospace()
+                    .color(egui::Color32::GRAY),
+            );
+            if !vpn_url.is_empty() && ui.button("Copy").clicked() {
+                ui.ctx().copy_text(vpn_url.clone());
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.button("Start VPN").clicked() {
+                let port = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3001u16);
+                runtime.block_on(crate::server::services::vpn::start_vpn(port));
+            }
+            if ui.button("Stop VPN").clicked() {
+                runtime.block_on(crate::server::services::vpn::stop_vpn());
+            }
+            if let Some(auth) = vpn["authUrl"].as_str() {
+                ui.hyperlink_to("Authenticate Tailscale", auth);
+            } else if vpn["running"].as_bool().unwrap_or(false) {
+                ui.label(egui::RichText::new("● connected").color(egui::Color32::from_rgb(74, 222, 128)));
+            }
+        });
 
         ui.add_space(8.0);
         ui.separator();

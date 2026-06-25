@@ -122,7 +122,7 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
 /// execution on the bare host or reconfigure security. The OWNER token
 /// (ACCESS_TOKEN env / headless setup token) retains full access, and the
 /// user can opt remote sessions back in with settings `remoteFullAccess: true`.
-const REMOTE_BLOCKED_PREFIXES: &[&str] = &["/api/terminal", "/api/local-files", "/api/plugins"];
+const REMOTE_BLOCKED_PREFIXES: &[&str] = &["/api/terminal", "/api/local-files", "/api/plugins", "/api/vpn"];
 
 async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
@@ -341,10 +341,14 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     // Cloudflare tunnels connect via loopback, so tunnels keep working either way.
     let bind_all = {
         let settings = get_settings().await;
-        let remote_ready = settings.remote_enabled == Some(true)
-            && settings.remote_token.as_deref().map(|t| !t.is_empty()).unwrap_or(false);
+        let token_set = settings.remote_token.as_deref().map(|t| !t.is_empty()).unwrap_or(false);
+        let remote_ready = settings.remote_enabled == Some(true) && token_set;
+        // VPN reachability also needs the server on all interfaces so tailnet
+        // peers (the 100.x address) can reach it — but only with a token set.
+        let vpn_ready = settings.vpn_enabled == Some(true) && token_set;
         owner_token_set
             || remote_ready
+            || vpn_ready
             || std::env::var("TIGRIMOS_BIND_ALL").ok().as_deref() == Some("1")
     };
     let bind_host = if bind_all { "0.0.0.0" } else { "127.0.0.1" };
@@ -367,6 +371,10 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     }
     tracing::info!("TigrimOS server running on http://localhost:{}", port);
     tracing::info!("Sandbox directory: {}", sandbox_dir);
+
+    // Optional Tailscale VPN: detect/refresh the tailnet address if enabled so
+    // the reachable URL is ready to show in Settings.
+    crate::server::services::vpn::init_vpn(port).await;
 
     if let Err(e) = axum::serve(listener, app).await {
         tracing::error!("Server error: {}", e);

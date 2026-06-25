@@ -39,6 +39,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 - **Browser control** — opt-in toggle that lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
 - **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
+- **Private VPN access (Tailscale)** — reach a remote host over your own tailnet instead of a public tunnel — see [Remote access over a private VPN](#remote-access-over-a-private-vpn-tailscale)
 - **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
 - **Customizable themes** — color presets (Default, Dark, Minimal, Transparent, Colorful), full per-color editing, font selection (Inter, Geist, Roboto, IBM Plex Sans, Plus Jakarta Sans, or your own) and per-style sizes — all saved to `data/theme.yaml`
 - **Output panel or inline files** — render images (PNG/JPG), markdown, CSV tables, JSON, PDF, HTML either in a side panel or embedded inline in chat with click-to-zoom (default)
@@ -669,6 +670,139 @@ On first launch, go to **Settings** to configure:
 | MCP tools | Configure external tool servers (stdio/HTTP) in JSON format |
 | Browser control | Opt-in toggle to let the agent drive a real browser — see [Browser Control](#browser-control) |
 | Remote access | Enable remote + set token for web UI and remote connections |
+| VPN (Tailscale) | Reach this host over a private VPN instead of a public tunnel — see [Remote access over a private VPN](#remote-access-over-a-private-vpn-tailscale) |
+
+---
+
+## Remote access over a private VPN (Tailscale)
+
+Connect your desktop/phone to a remote TigrimOS host **privately**, over a
+[Tailscale](https://tailscale.com) VPN, instead of exposing the host to the public
+internet. Both devices join your personal *tailnet* and talk over private `100.x`
+addresses — nothing is published publicly. This is the recommended way to reach a
+home/office machine from elsewhere.
+
+> VPN and the public Cloudflare tunnel are **alternative** remote-connection
+> methods — pick one. The VPN toggle is **off by default**, so nothing changes
+> unless you opt in.
+
+### 1. Install Tailscale (one-time, on **both** devices)
+
+```bash
+# macOS (CLI via Homebrew)
+brew install tailscale
+sudo tailscaled install-system-daemon      # installs + starts the daemon
+tailscale up                                # prints a login URL — open it & sign in
+
+# Linux
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+> macOS users can instead install the **Mac App Store** app, which bundles the
+> daemon. Sign in with the **same account** on every device so they share a tailnet.
+
+Verify it's connected:
+
+```bash
+tailscale status      # should show "Running"
+tailscale ip -4       # your 100.x.y.z address
+```
+
+### 2. On the HOST (the machine running TigrimOS)
+
+In **Settings → Remote**:
+
+1. Enable **Remote agent access** and **Generate** a remote token (copy it).
+2. Check **Use VPN (Tailscale) for remote connect**.
+3. **Save**, then **restart** TigrimOS (the network bind decision happens at startup).
+
+After restart the **Connect address** field shows `http://100.x.y.z:3001`. Click
+**Copy**. If it shows *(not detected)*, click **Start VPN** / **Refresh status** and
+confirm `tailscale status` is Running.
+
+### 3. On the CLIENT device (also on the tailnet)
+
+**Settings → Remote → Add Remote Instance:**
+
+| Field | Value |
+|-------|-------|
+| Name  | anything |
+| URL   | the `http://100.x.y.z:3001` from the host |
+| Token | the remote token generated on the host |
+
+Open the **Remote** tab and select the instance — a green dot means connected. Chat,
+tasks, terminal, and files now run against the host over the private VPN.
+
+### Notes & safety
+
+- The VPN toggle only forces the server onto all interfaces **when a remote token
+  is also set** — that token is still required for every request.
+- VPN **start/stop/status** is **owner-only**: a remote-access token cannot control
+  the host's VPN.
+- You must **restart** the host after toggling for the bind change to take effect.
+- The host control endpoints live at `/api/vpn/{status,start,stop}` (owner token).
+
+<details>
+<summary>Using the VPN in <b>headless / Docker</b> mode</summary>
+
+In headless mode there's no native Settings window — configure through the
+**embedded web UI** (`http://localhost:3001/web` → **Settings → Remote**) or by
+editing `data/settings.json`. Tailscale must run on whatever machine owns the
+network interface the server binds to, which splits into two cases.
+
+#### Case A — Headless **native** server (Linux/macOS, not Docker)
+
+The server and Tailscale share the same machine, so the in-app auto-detect works.
+
+```bash
+# 1. Install + connect Tailscale on that box
+curl -fsSL https://tailscale.com/install.sh | sh    # Linux (macOS: brew install tailscale)
+sudo tailscale up
+tailscale ip -4                                      # note the 100.x.y.z
+
+# 2. Enable the setting without a browser (or use Settings → Remote in the web UI)
+#    data/settings.json:
+#    { "remoteEnabled": true, "remoteToken": "<token>", "vpnEnabled": true }
+
+# 3. Restart — boot log prints: [VPN] Reachable at http://100.x.y.z:3001
+PORT=3001 ./tigrimos --headless
+```
+
+From another tailnet device, add a Remote Instance pointing at
+`http://100.x.y.z:3001` + the token.
+
+#### Case B — Headless in **Docker**
+
+The container is network-isolated and usually has **no `tailscale` CLI inside it**,
+so the in-app detection shows *(not detected)* — that's expected. Run Tailscale on
+the **Docker host** and reach the published port over the host's tailnet IP:
+
+1. `sudo tailscale up` **on the host** (not the container); grab `tailscale ip -4`.
+2. The container already publishes `3001` and the owner `ACCESS_TOKEN` already
+   forces all-interfaces binding, so no rebind is needed. (Flipping `vpnEnabled`
+   is optional here.)
+3. By default `docker-compose.yml` publishes to `127.0.0.1:3001` only. To let the
+   host's Tailscale forward into the container, change the mapping to `"3001:3001"`
+   (or bind it to the tailscale interface), then `docker compose up -d`. The tailnet
+   still keeps it private — only your devices can reach it.
+4. From another tailnet device, use `http://<HOST-tailnet-ip>:3001` + token.
+
+> **Advanced:** run Tailscale *inside* the container with
+> `--cap-add=NET_ADMIN --device=/dev/net/tun` and `tailscale up` in the entrypoint —
+> then in-app detection works and the `100.x` URL auto-populates.
+
+#### Verify (owner token required — VPN endpoints are owner-only)
+
+```bash
+curl -H "Authorization: Bearer <OWNER_TOKEN>" http://127.0.0.1:3001/api/vpn/status
+```
+
+Case A returns `{"running":true,"ip":"100.x.y.z","url":"http://100.x.y.z:3001"}`.
+Case B reports not-detected from inside the container even though the host is
+reachable — that's normal; use the host IP.
+
+</details>
 
 ---
 

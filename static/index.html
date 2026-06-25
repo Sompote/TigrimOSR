@@ -2810,6 +2810,25 @@ function loadSettings() {
           <div class="settings-row-field"><label>Remote Enabled</label><span style="font-weight:600;color:${data.remoteEnabled ? 'var(--green)' : 'var(--ink-soft)'}">${data.remoteEnabled ? 'Yes' : 'No'}</span></div>
           <div class="settings-row-field"><label>Sandbox Dir</label><span style="font-size:13px;color:var(--ink-soft)">${esc(data.sandboxDir || '')}</span></div>
         </div>
+        <div class="settings-group">
+          <h3>Remote Connection Method</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">
+            Reach this host over a private Tailscale VPN instead of a public Cloudflare tunnel.
+            VPN and tunnel are alternatives — use one. Requires Remote Access (with a token) to be enabled.
+          </div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-vpn-enabled" ${ck(data.vpnEnabled)} style="flex:none;width:auto"> Use VPN (Tailscale) for remote connect</label></div>
+          <div class="settings-row-field"><label>Connect address</label>
+            <span id="s-vpn-url" style="font-size:13px;color:var(--ink-soft);font-family:monospace">${esc(data.vpnUrl || '(not detected)')}</span>
+            <button class="pill-btn" onclick="copyVpnUrl()" style="flex:none;margin-left:8px">Copy</button></div>
+          <div style="margin-top:8px">
+            <button class="pill-btn" onclick="vpnAction('start')">Start VPN</button>
+            <button class="pill-btn" onclick="vpnAction('stop')">Stop VPN</button>
+            <button class="pill-btn" onclick="loadVpnStatus()">Refresh status</button>
+            <span id="s-vpn-status" style="font-size:13px;margin-left:10px;color:var(--ink-soft)"></span>
+          </div>
+        </div>
       </div>
 
       <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:16px"><button class="pill-btn primary" onclick="saveSettings()" style="padding:12px 28px;font-size:14px">Save Settings</button>
@@ -2984,6 +3003,36 @@ function reconnectMcp() {
     .catch(() => { s.textContent = 'Failed (need full access)'; s.style.color = 'var(--red)'; });
 }
 
+// ---- VPN (Tailscale) for remote connect ----
+function renderVpnStatus(d) {
+  d = d || {};
+  const urlEl = document.getElementById('s-vpn-url');
+  if (urlEl) urlEl.textContent = d.url || '(not detected)';
+  const s = document.getElementById('s-vpn-status');
+  if (!s) return;
+  if (d.authUrl) { s.innerHTML = 'Authenticate: <a href="' + d.authUrl + '" target="_blank">' + d.authUrl + '</a>'; s.style.color = 'var(--ink-soft)'; }
+  else if (d.running) { s.textContent = 'Connected' + (d.hostname ? ' (' + d.hostname + ')' : ''); s.style.color = 'var(--green)'; }
+  else { s.textContent = d.error || 'Not connected'; s.style.color = 'var(--ink-soft)'; }
+}
+function loadVpnStatus() {
+  const s = document.getElementById('s-vpn-status');
+  if (s) { s.textContent = 'Checking…'; s.style.color = 'var(--ink-soft)'; }
+  api('/api/vpn/status').then(renderVpnStatus)
+    .catch(() => { if (s) { s.textContent = 'Failed (need owner access)'; s.style.color = 'var(--red)'; } });
+}
+function vpnAction(action) {
+  const s = document.getElementById('s-vpn-status');
+  if (s) { s.textContent = action === 'start' ? 'Starting…' : 'Stopping…'; s.style.color = 'var(--ink-soft)'; }
+  api('/api/vpn/' + action, { method: 'POST', body: '{}' })
+    .then(renderVpnStatus)
+    .catch(() => { if (s) { s.textContent = 'Failed (need owner access)'; s.style.color = 'var(--red)'; } });
+}
+function copyVpnUrl() {
+  const urlEl = document.getElementById('s-vpn-url');
+  const v = urlEl ? urlEl.textContent : '';
+  if (v && v !== '(not detected)' && navigator.clipboard) navigator.clipboard.writeText(v);
+}
+
 function testConnection() {
   const s = document.getElementById('s-test-status');
   s.textContent = 'Testing…'; s.style.color = 'var(--ink-soft)';
@@ -3051,6 +3100,8 @@ function saveSettings() {
     skillAutoUpdateRequireApproval: document.getElementById('s-skill-approval').checked,
     skillAutoUpdateHumanFeedbackEnabled: document.getElementById('s-skill-feedback').checked,
   };
+  // VPN (Tailscale) toggle for remote connect
+  { const vpnEl = document.getElementById('s-vpn-enabled'); if (vpnEl) body.vpnEnabled = vpnEl.checked; }
   // Router Model Pool (used by Router mode)
   {
     const tierEl = document.getElementById('s-router-tier');
