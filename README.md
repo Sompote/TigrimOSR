@@ -687,6 +687,14 @@ home/office machine from elsewhere.
 > methods — pick one. The VPN toggle is **off by default**, so nothing changes
 > unless you opt in.
 
+> **VPN is exclusive.** While the VPN toggle is on, TigrimOS binds **only** to
+> loopback (`127.0.0.1`) and your tailnet IP (`100.x`). The ordinary LAN/public IP
+> can no longer reach the server, even with a valid token — so "running over VPN"
+> is genuinely private rather than just an extra path. Turn the VPN toggle off to
+> return to the default token-based behavior (reachable on all interfaces). If
+> Tailscale isn't up at startup, TigrimOS falls back to loopback-only and logs a
+> warning — start Tailscale, then restart.
+
 ### 1. Install Tailscale (one-time, on **both** devices)
 
 ```bash
@@ -737,8 +745,18 @@ tasks, terminal, and files now run against the host over the private VPN.
 
 ### Notes & safety
 
-- The VPN toggle only forces the server onto all interfaces **when a remote token
-  is also set** — that token is still required for every request.
+- **VPN mode is exclusive and takes precedence over token mode.** While the VPN
+  toggle is on, the server binds **only** to loopback (`127.0.0.1`) and your tailnet
+  IP (`100.x`) — the ordinary LAN/public IP is **not** reachable, even with a valid
+  token. This is what makes "run over VPN" genuinely private instead of just adding
+  a second path. The token is still required on every request over the tailnet.
+- **Token mode is the default** (VPN toggle off): with a remote token set the server
+  binds **all interfaces** (`0.0.0.0`) so the token works from any IP/LAN/mobile.
+  Turn the VPN toggle off to return to this behavior.
+- A token is still required for VPN mode (`remoteToken` set) — without one the server
+  stays on loopback only, since an unauthenticated TigrimOS must never be on a network.
+- If Tailscale isn't up at startup, VPN mode **fails closed** to loopback-only and logs
+  a warning — start Tailscale, then restart.
 - VPN **start/stop/status** is **owner-only**: a remote-access token cannot control
   the host's VPN.
 - You must **restart** the host after toggling for the bind change to take effect.
@@ -1172,8 +1190,15 @@ ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/tigrimos --headless
 
 On a native (non-Docker) headless box, Tailscale and the server share the same machine,
 so `vpnEnabled` auto-detects the tailnet IP at boot. From another tailnet device, add a
-Remote Instance pointing at `http://100.x.y.z:3001` with the token. Verify with the
-owner-only endpoint:
+Remote Instance pointing at `http://100.x.y.z:3001` with the token.
+
+> With `vpnEnabled: true` the headless server binds **only** to `127.0.0.1` + the
+> tailnet IP — the box's ordinary public/LAN IP refuses connections, so the only way
+> in is over the VPN (or from the host itself). The boot log confirms it:
+> `VPN-exclusive mode: listening on 127.0.0.1 + tailnet IP 100.x.y.z only`. Set
+> `vpnEnabled: false` to fall back to the default token-on-all-interfaces mode.
+
+Verify with the owner-only endpoint:
 
 ```bash
 curl -H "Authorization: Bearer my-secret-token" http://127.0.0.1:3001/api/vpn/status

@@ -83,6 +83,20 @@ async fn tailscale_status(bin: &str) -> (bool, Option<String>, Option<String>) {
     (running, ip, hostname)
 }
 
+/// Resolve the current tailnet IP by querying Tailscale directly. Used at
+/// startup to bind the server to the VPN interface only (VPN-exclusive mode),
+/// before the cached VPN state has been populated by `init_vpn`. Returns `None`
+/// if Tailscale isn't installed or the node isn't connected.
+pub async fn tailnet_ip() -> Option<String> {
+    let bin = find_tailscale().await?;
+    let (running, ip, _) = tailscale_status(&bin).await;
+    if running {
+        ip
+    } else {
+        None
+    }
+}
+
 /// Get current VPN status as JSON.
 pub async fn get_vpn_state() -> Value {
     let state = vpn_state().lock().await;

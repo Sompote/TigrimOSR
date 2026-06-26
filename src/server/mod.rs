@@ -334,41 +334,70 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3001);
 
-    // Network exposure policy: only listen on all interfaces when some form
-    // of auth is actually configured (owner token, or remote access enabled
-    // WITH a token). Otherwise bind loopback — an unauthenticated TigrimOS
-    // must never be reachable from the network ("/api/terminal/exec" is RCE).
-    // Cloudflare tunnels connect via loopback, so tunnels keep working either way.
-    let bind_all = {
+    // Network exposure policy. Default is token-based: only listen on all
+    // interfaces when some form of auth is configured (owner token, or remote
+    // access enabled WITH a token). Otherwise bind loopback — an unauthenticated
+    // TigrimOS must never be reachable from the network ("/api/terminal/exec" is
+    // RCE). Cloudflare tunnels connect via loopback, so tunnels keep working.
+    //
+    // VPN-exclusive override: when VPN is enabled it takes precedence — the
+    // server binds loopback + the tailnet (100.x) IP ONLY, so the ordinary
+    // LAN/public IP can't reach it even though a token is set. This is what makes
+    // "run over VPN" actually private rather than just adding a second path.
+    let (settings_remote_ready, settings_vpn_enabled) = {
         let settings = get_settings().await;
         let token_set = settings.remote_token.as_deref().map(|t| !t.is_empty()).unwrap_or(false);
         let remote_ready = settings.remote_enabled == Some(true) && token_set;
-        // VPN reachability also needs the server on all interfaces so tailnet
-        // peers (the 100.x address) can reach it — but only with a token set.
-        let vpn_ready = settings.vpn_enabled == Some(true) && token_set;
-        owner_token_set
-            || remote_ready
-            || vpn_ready
-            || std::env::var("TIGRIMOS_BIND_ALL").ok().as_deref() == Some("1")
+        (remote_ready, settings.vpn_enabled == Some(true))
     };
-    let bind_host = if bind_all { "0.0.0.0" } else { "127.0.0.1" };
+    let env_bind_all = std::env::var("TIGRIMOS_BIND_ALL").ok().as_deref() == Some("1");
 
-    let listener = match tokio::net::TcpListener::bind(format!("{}:{}", bind_host, port)).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!("Failed to bind port {}: {} — server not started", port, e);
-            return;
+    // Resolve the concrete addresses to listen on.
+    let bind_addrs: Vec<String> = if settings_vpn_enabled {
+        // VPN on => exclusive. Loopback (host + Cloudflare tunnel) + tailnet IP.
+        let mut addrs = vec!["127.0.0.1".to_string()];
+        match crate::server::services::vpn::tailnet_ip().await {
+            Some(ip) => {
+                tracing::info!(
+                    "TigrimOS server in VPN-exclusive mode: listening on 127.0.0.1 + tailnet IP {} only \
+                     (ordinary LAN/public IP is NOT reachable)",
+                    ip
+                );
+                addrs.push(ip);
+            }
+            None => {
+                tracing::warn!(
+                    "VPN enabled but no tailnet IP available (is Tailscale up?) — binding 127.0.0.1 only. \
+                     Start Tailscale, then restart TigrimOS."
+                );
+            }
         }
-    };
-
-    if bind_all {
-        tracing::info!("TigrimOS server listening on ALL interfaces (auth configured)");
+        addrs
+    } else if owner_token_set || settings_remote_ready || env_bind_all {
+        tracing::info!("TigrimOS server listening on ALL interfaces (token auth configured)");
+        vec!["0.0.0.0".to_string()]
     } else {
         tracing::info!(
             "TigrimOS server listening on 127.0.0.1 only (no auth configured). \
              Enable Remote Access with a token in Settings (then restart) for LAN/mobile access."
         );
+        vec!["127.0.0.1".to_string()]
+    };
+
+    // Bind every resolved address; skip (with a warning) any that fail rather
+    // than aborting the whole server for one bad interface.
+    let mut listeners = Vec::with_capacity(bind_addrs.len());
+    for addr in &bind_addrs {
+        match tokio::net::TcpListener::bind(format!("{}:{}", addr, port)).await {
+            Ok(l) => listeners.push(l),
+            Err(e) => tracing::error!("Failed to bind {}:{}: {}", addr, port, e),
+        }
     }
+    if listeners.is_empty() {
+        tracing::error!("No listeners bound on port {} — server not started", port);
+        return;
+    }
+
     tracing::info!("TigrimOS server running on http://localhost:{}", port);
     tracing::info!("Sandbox directory: {}", sandbox_dir);
 
@@ -376,8 +405,18 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     // the reachable URL is ready to show in Settings.
     crate::server::services::vpn::init_vpn(port).await;
 
-    if let Err(e) = axum::serve(listener, app).await {
-        tracing::error!("Server error: {}", e);
+    // Serve the same app on every bound listener.
+    let mut handles = Vec::with_capacity(listeners.len());
+    for listener in listeners {
+        let app = app.clone();
+        handles.push(tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, app).await {
+                tracing::error!("Server error: {}", e);
+            }
+        }));
+    }
+    for handle in handles {
+        let _ = handle.await;
     }
 }
 
