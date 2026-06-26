@@ -3123,20 +3123,16 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
                 }
                 return rt_tools;
             } else {
-                // No team yet. Router's job is to ORCHESTRATE LLMs — it deliberately
-                // has NO research/execution tools of its own (no web_search, browser,
-                // run_shell, read_file …). So any task that needs real work forces it
-                // to build a specialist team via create_architecture and delegate.
-                // It keeps only create_architecture + light formatting so it can still
-                // answer a trivial conversational message directly.
-                let mut rt = vec![create_architecture_tool()];
-                for t in &tools {
-                    let name = t["function"]["name"].as_str().unwrap_or("");
-                    if matches!(name, "write_file" | "run_python") {
-                        rt.push(t.clone());
-                    }
-                }
-                return rt;
+                // No team yet — TRIAGE. The orchestrator keeps its full base toolset
+                // (web_search, fetch_url, run_python, run_shell, read_file, write_file,
+                // list_files, list_skills, load_skill) AND gets create_architecture.
+                // It decides per request: if the task is simple / single-step (a greeting,
+                // a quick lookup, plot a graph, a small calculation) it just does it
+                // itself with these tools — no team needed. Only when the task is genuinely
+                // complex / multi-step does it call create_architecture to build and
+                // orchestrate a specialist team. The system prompt enforces this split.
+                tools.push(create_architecture_tool());
+                return tools;
             }
         }
         _ => {

@@ -1106,13 +1106,14 @@ Always delegate, even for simple tasks. If an orchestrator exists, send tasks ON
                     };
                     let prompt = if sub_agent_config.agent_ids.is_empty() {
                         format!(
-                            "\n\nROUTER MODE: You are an LLM ORCHESTRATOR. {tier_line} A pool of {pool_count} model(s) is available for specialist agents.\n\
-You do NOT have research or execution tools (no web_search, browser, run_shell, read_file). Your ONLY tools are create_architecture (to build a team) and write_file/run_python (to format a direct reply).\n\
-DECIDE: If the message is a trivial conversational reply you can answer from your own knowledge with no tools, just answer in text. \
-For ANYTHING that needs research, data, code, files, analysis, or multiple steps (e.g. 'research X', 'analyze Y', 'build Z'), you MUST call create_architecture to design and boot a specialist team — each agent is assigned a best-fit LLM from the pool.\n\
-DESIGN FOR PARALLELISM: build a team of INDEPENDENT specialists working concurrently — use architectureType 'flat' (you talk to every worker directly), NOT 'pipeline' (sequential and slow). Split the task into independent sub-tasks, one per worker, where no worker depends on another's output.\n\
-DISPATCH IN PARALLEL: fire send_task to ALL relevant agents in the SAME step (multiple send_task calls at once) so they run asynchronously at the same time; THEN call wait_result for each agent to collect their outputs; THEN combine/synthesize into the final answer. Do not wait for one agent before sending the next. \
-You cannot do the work yourself; orchestrate the LLMs in parallel and merge their results."
+                            "\n\nROUTER MODE: You are the ORCHESTRATOR. {tier_line} A pool of {pool_count} model(s) is available for specialist agents.\n\
+TRIAGE EVERY REQUEST — decide how much firepower it needs:\n\
+1) TRIVIAL chat (a greeting, a quick fact, a clarifying question): just answer in text, no tools.\n\
+2) SIMPLE single-step task (plot a graph, a quick calculation, one web lookup, read/write a file, run a short script): DO IT YOURSELF with your own tools (run_python, web_search, fetch_url, run_shell, read_file, write_file, list_files, load_skill). Do NOT build a team for these — spinning up agents for a one-step task is wasted latency.\n\
+3) COMPLEX / multi-step task (research across many sources, build a multi-part deliverable, analyze + cross-check, anything that naturally splits into independent sub-tasks): call create_architecture to design and boot a specialist team — each agent is assigned a best-fit LLM from the pool — then orchestrate it.\n\
+When in doubt and the task plausibly needs only one or two of your own tool calls, do it yourself; reserve teams for work that truly benefits from parallel specialists.\n\
+WHEN YOU DO BUILD A TEAM — DESIGN FOR PARALLELISM: use architectureType 'flat' (you talk to every worker directly), NOT 'pipeline' (sequential and slow). Split the task into independent sub-tasks, one per worker, where no worker depends on another's output.\n\
+DISPATCH IN PARALLEL: fire send_task to ALL relevant agents in the SAME step (multiple send_task calls at once) so they run asynchronously at the same time; THEN call wait_result for each agent to collect their outputs; THEN combine/synthesize into the final answer. Do not wait for one agent before sending the next."
                         )
                     } else {
                         format!(
@@ -1145,7 +1146,7 @@ Only use your own tools (web_search, run_python, etc.) for quick lookups or task
             "fully_auto" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
             "auto_swarm" => "select_swarm, send_task, wait_result, check_agents, run_python, write_file",
             "manual" => "send_task, wait_result, check_agents, run_python, write_file, read_file, list_files",
-            "router" => "create_architecture, send_task, wait_result, check_agents, write_file, run_python",
+            "router" => "create_architecture, send_task, wait_result, check_agents, web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill",
             _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
         };
 

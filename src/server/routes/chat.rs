@@ -610,6 +610,7 @@ async fn send_message(
             match effective_mode.as_str() {
                 "auto" => "create_architecture, send_task, wait_result, check_agents, web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill",
                 "fully_auto" => "create_architecture, send_task, wait_result, check_agents, run_python, write_file",
+                "router" => "create_architecture, send_task, wait_result, check_agents, web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill",
                 "manual" => "send_task, wait_result, check_agents, run_python, write_file, read_file, list_files",
                 _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
             }
@@ -723,6 +724,17 @@ Workflow: send_task({{\"to\": \"<agentId>\", \"task\": \"<detailed task>\"}}) �
                         )
                     }
                 }
+                "router" => {
+                    format!(
+                        "\n\n═══ ROUTER MODE — TEAM LIVE ═══\n\
+A specialist team is running. You are the ORCHESTRATOR.\n\n\
+Agent Roster:\n{}\n\n\
+DISPATCH IN PARALLEL: fire send_task to ALL relevant agents in the SAME step (multiple send_task calls at once) so they work asynchronously; THEN wait_result for each; THEN combine/synthesize. Do not wait for one agent before sending the next.{}\n\
+You may still answer trivial follow-ups directly without delegating.\n\n\
+Workflow: send_task({{\"to\": \"<agentId>\", \"task\": \"<detailed task>\"}}) (×N at once) → wait_result({{\"from\": \"<agentId>\"}}) (×N) → synthesize.",
+                        agent_roster, routing_rule
+                    )
+                }
                 "auto" | _ => {
                     format!(
                         "\n\n═══ MULTI-AGENT SYSTEM ACTIVE ═══\n\
@@ -738,6 +750,14 @@ Workflow: send_task({{\"to\": \"<agentId>\", \"task\": \"<detailed task>\"}}) �
                     )
                 }
             }
+        } else if sub_agent_enabled && effective_mode == "router" {
+            "\n\n═══ ROUTER MODE ═══\n\
+You are the ORCHESTRATOR. TRIAGE EVERY REQUEST — decide how much firepower it needs:\n\
+1. TRIVIAL chat (greeting, quick fact, clarifying question): answer in text, no tools.\n\
+2. SIMPLE single-step task (plot a graph, a quick calculation, one web lookup, read/write a file, run a short script): DO IT YOURSELF with your own tools (run_python, web_search, fetch_url, run_shell, read_file, write_file, list_files, load_skill). Do NOT build a team for these.\n\
+3. COMPLEX / multi-step task (research across many sources, build a multi-part deliverable, analyze + cross-check, anything that splits into independent sub-tasks): call create_architecture to design and boot a specialist team, then orchestrate it.\n\
+When you build a team, use architectureType 'flat', split into INDEPENDENT sub-tasks, fire send_task to ALL workers at once, then wait_result on each, then synthesize.\n\
+When in doubt and the task needs only one or two of your own tool calls, do it yourself.".to_string()
         } else if sub_agent_enabled {
             "\n\n═══ FULLY AUTO MODE ═══\n\
 An agent team is being created for this task. You are the COORDINATOR.\n\
@@ -748,7 +768,9 @@ An agent team is being created for this task. You are the COORDINATOR.\n\
             String::new()
         };
 
-        let research_instruction = if sub_agent_enabled {
+        let research_instruction = if sub_agent_enabled && effective_mode == "router" {
+            "Triage first: do simple single-step tasks yourself; only delegate complex multi-step work to a team via create_architecture + send_task/wait_result."
+        } else if sub_agent_enabled {
             "Delegate ALL tasks to agents via send_task/wait_result."
         } else {
             "For research tasks, gather info from multiple sources using web_search/fetch_url, then synthesize results"
