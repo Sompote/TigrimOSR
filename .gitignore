@@ -52,3 +52,12 @@ nohup.out
 # Environment / secrets
 .env
 *.key
+ecosystem.config.js
+
+# Build / install artifacts
+dist/
+*.deb
+
+# Local orchestrator persona files
+data/IDENTITY.md
+data/SOUL.md

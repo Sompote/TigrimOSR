@@ -86,6 +86,69 @@ async fn project_file_rel_path(resolved_folder: &str, sub_file_path: &str) -> St
         .unwrap_or_else(|_| full.to_string_lossy().to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Project run-context — lets the web/remote chat flow apply a project the same
+// way the desktop "run in project" does: working folder becomes the sandbox,
+// project memory + custom instructions are injected into the system prompt, and
+// an enabled project agent override selects the sub-agent config file.
+// ---------------------------------------------------------------------------
+
+pub struct ProjectRunContext {
+    /// Resolved absolute working folder to use as the chat sandbox, if set.
+    pub sandbox_dir: Option<String>,
+    /// System-prompt block describing the project.
+    pub system_block: String,
+    /// Sub-agent config file from an enabled project agent override, if any.
+    pub agent_config_file: Option<String>,
+    /// Skills assigned to this project (filters the installed-skills block).
+    pub skills: Vec<String>,
+}
+
+/// Load the run context for a project id. Mirrors the desktop UI's
+/// `build_project_system_prompt` plus working-folder-as-sandbox behavior.
+pub async fn load_project_run_context(project_id: &str) -> Option<ProjectRunContext> {
+    let projects = get_projects().await;
+    let project = projects.iter().find(|p| p.id == project_id)?.clone();
+
+    let sandbox_dir = if project.working_folder.is_empty() {
+        None
+    } else {
+        Some(resolve_working_folder(&project).await)
+    };
+
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(format!("You are assisting with the project: {}", project.name));
+    if !project.description.is_empty() {
+        parts.push(format!("Project description: {}", project.description));
+    }
+    if !project.working_folder.is_empty() {
+        parts.push(format!("Working folder: {}", project.working_folder));
+    }
+    if !project.memory.is_empty() {
+        parts.push(format!("Project memory/context:\n{}", project.memory));
+    }
+    if let Some(ref sp) = project.system_prompt {
+        if !sp.is_empty() {
+            parts.push(format!("Custom instructions:\n{}", sp));
+        }
+    }
+
+    let agent_config_file = project.agent_override.as_ref().and_then(|ov| {
+        if ov.enabled.unwrap_or(false) {
+            ov.sub_agent_config_file.clone().filter(|s| !s.is_empty())
+        } else {
+            None
+        }
+    });
+
+    Some(ProjectRunContext {
+        sandbox_dir,
+        system_block: parts.join("\n\n"),
+        agent_config_file,
+        skills: project.skills.clone(),
+    })
+}
+
 /// Find a project by ID from the projects list, returning (index, project).
 fn find_project(projects: &[Project], id: &str) -> Option<(usize, Project)> {
     projects
@@ -206,6 +269,16 @@ async fn create_project(
         .get("skills")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
+    let memory = body
+        .get("memory")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let system_prompt = body
+        .get("systemPrompt")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
 
     // Resolve working folder relative to sandbox if not absolute
     let resolved_folder = if working_folder_raw.is_empty() {
@@ -225,9 +298,9 @@ async fn create_project(
         name,
         description,
         working_folder: resolved_folder.clone(),
-        memory: String::new(),
+        memory,
         skills,
-        system_prompt: None,
+        system_prompt,
         agent_override: None,
         created_at: now.clone(),
         updated_at: now,

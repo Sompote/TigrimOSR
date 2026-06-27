@@ -174,6 +174,11 @@ async fn create_session(Json(body): Json<Value>) -> impl IntoResponse {
         .and_then(|v| v.as_str())
         .unwrap_or("New Chat")
         .to_string();
+    let project_id = body.get("projectId")
+        .or_else(|| body.get("project_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
     let now = chrono::Utc::now().to_rfc3339();
     let session = ChatSession {
         id: Uuid::new_v4().to_string(),
@@ -183,7 +188,7 @@ async fn create_session(Json(body): Json<Value>) -> impl IntoResponse {
         updated_at: now,
         skill_candidate: None,
         skill_feedback: None,
-        project_id: None,
+        project_id,
     };
     sessions.push(session.clone());
     save_chat_history(&sessions).await;
@@ -356,6 +361,16 @@ async fn send_message(
         .unwrap_or("")
         .to_string();
 
+    // Active project: request body wins, else fall back to the session's stored
+    // project. Persist it so later messages in this session stay project-scoped.
+    let project_id = body.get("projectId")
+        .or_else(|| body.get("project_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| session.project_id.clone());
+    session.project_id = project_id.clone();
+
     let now = chrono::Utc::now().to_rfc3339();
 
     // Save user message
@@ -395,7 +410,20 @@ async fn send_message(
     } else {
         format!("{}/chat/completions", raw_url.trim_end_matches('/'))
     };
-    let sandbox_dir = crate::server::data::get_sandbox_dir_sync();
+    let mut sandbox_dir = crate::server::data::get_sandbox_dir_sync();
+
+    // Project run-context: working folder → sandbox, memory/instructions → prompt,
+    // agent override → config file, assigned skills → installed-skills filter.
+    let project_ctx = match &project_id {
+        Some(pid) => crate::server::routes::projects::load_project_run_context(pid).await,
+        None => None,
+    };
+    if let Some(ref ctx) = project_ctx {
+        if let Some(ref folder) = ctx.sandbox_dir {
+            let _ = std::fs::create_dir_all(folder);
+            sandbox_dir = folder.clone();
+        }
+    }
 
     if api_key.is_empty() {
         let err = "API key not configured. Set it in Settings > AI Configuration.".to_string();
@@ -431,6 +459,7 @@ async fn send_message(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
+        .or_else(|| project_ctx.as_ref().and_then(|c| c.agent_config_file.clone()))
         .or_else(|| settings.sub_agent_config_file.clone())
         .unwrap_or_default();
     // Per-request agent_mode overrides settings: "single" disables sub-agents,
@@ -752,12 +781,12 @@ Workflow: send_task({{\"to\": \"<agentId>\", \"task\": \"<detailed task>\"}}) �
             }
         } else if sub_agent_enabled && effective_mode == "router" {
             "\n\n═══ ROUTER MODE ═══\n\
-You are the ORCHESTRATOR. TRIAGE EVERY REQUEST — decide how much firepower it needs:\n\
+You are the ORCHESTRATOR. Your DEFAULT is to delegate to a specialist team — TRIAGE EVERY REQUEST and only solo the smallest tasks:\n\
 1. TRIVIAL chat (greeting, quick fact, clarifying question): answer in text, no tools.\n\
-2. SIMPLE single-step task (plot a graph, a quick calculation, one web lookup, read/write a file, run a short script): DO IT YOURSELF with your own tools (run_python, web_search, fetch_url, run_shell, read_file, write_file, list_files, load_skill). Do NOT build a team for these.\n\
-3. COMPLEX / multi-step task (research across many sources, build a multi-part deliverable, analyze + cross-check, anything that splits into independent sub-tasks): call create_architecture to design and boot a specialist team, then orchestrate it.\n\
+2. TINY single-step task (one quick lookup, one short calculation, read/write a single file): DO IT YOURSELF with your own tools (run_python, web_search, fetch_url, run_shell, read_file, write_file, list_files, load_skill).\n\
+3. EVERYTHING ELSE — any task that touches multiple sources, produces a real deliverable, needs analysis or cross-checking, or could plausibly split into 2+ sub-tasks: call create_architecture to design and boot a specialist team, then orchestrate it. This is the common case.\n\
 When you build a team, use architectureType 'flat', split into INDEPENDENT sub-tasks, fire send_task to ALL workers at once, then wait_result on each, then synthesize.\n\
-When in doubt and the task needs only one or two of your own tool calls, do it yourself.".to_string()
+WHEN IN DOUBT, BUILD A TEAM. Only solo when the task is unmistakably trivial or a single tool call.".to_string()
         } else if sub_agent_enabled {
             "\n\n═══ FULLY AUTO MODE ═══\n\
 An agent team is being created for this task. You are the COORDINATOR.\n\
@@ -769,7 +798,7 @@ An agent team is being created for this task. You are the COORDINATOR.\n\
         };
 
         let research_instruction = if sub_agent_enabled && effective_mode == "router" {
-            "Triage first: do simple single-step tasks yourself; only delegate complex multi-step work to a team via create_architecture + send_task/wait_result."
+            "Triage first, but default to delegating: solo only trivial chat or a single tool call; for anything multi-step or multi-source, build a team via create_architecture + send_task/wait_result."
         } else if sub_agent_enabled {
             "Delegate ALL tasks to agents via send_task/wait_result."
         } else {
@@ -794,8 +823,18 @@ You have access to these tools: {}.{}",
             research_instruction, sandbox_dir, tool_list, sub_agent_prompt
         );
 
-        // Append installed skills
-        let skills_block = crate::server::services::toolbox::build_enabled_skills_block_pub(None).await;
+        // Inject active project context (name/description/memory/custom instructions).
+        if let Some(ref ctx) = project_ctx {
+            if !ctx.system_block.is_empty() {
+                base.push_str(&format!("\n\n=== ACTIVE PROJECT ===\n{}", ctx.system_block));
+            }
+        }
+
+        // Append installed skills — filtered to the project's assigned skills if any.
+        let project_skills = project_ctx.as_ref()
+            .map(|c| c.skills.as_slice())
+            .filter(|s| !s.is_empty());
+        let skills_block = crate::server::services::toolbox::build_enabled_skills_block_pub(project_skills).await;
         if !skills_block.is_empty() {
             base.push_str(&skills_block);
         }

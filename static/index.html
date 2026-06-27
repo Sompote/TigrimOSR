@@ -34,6 +34,165 @@
   --shadow-pop:  0 18px 50px -16px rgba(52,48,42,.34);
   --font: "Plus Jakarta Sans", "Noto Sans Thai", system-ui, sans-serif;
 }
+
+/* ===== UI Themes (color of the web remote) ===== */
+/* Light = the default :root values above. */
+
+html[data-theme="dark"] {
+  --bg:        #15171C;
+  --surface:   #1D2026;
+  --rail:      #20242B;
+  --card:      #23272F;
+  --line:      #30353F;
+  --line-soft: #272C34;
+  --ink:       #E8EAEE;
+  --ink-soft:  #9AA1AC;
+  --ink-faint: #6B727D;
+  --accent:      #2DD4BF;
+  --accent-deep: #14B8A6;
+  --accent-soft: #15403C;
+  --accent-ink:  #5EEAD4;
+  --green: #58C45F;
+  --red:   #E5645C;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.30), 0 10px 28px -14px rgba(0,0,0,.65);
+  --shadow-pop:  0 22px 56px -18px rgba(0,0,0,.75);
+}
+
+html[data-theme="transparent"] {
+  --bg:        #0E1116;
+  --surface:   rgba(255,255,255,.06);
+  --rail:      rgba(255,255,255,.05);
+  --card:      rgba(255,255,255,.08);
+  --line:      rgba(255,255,255,.14);
+  --line-soft: rgba(255,255,255,.08);
+  --ink:       #F1F3F6;
+  --ink-soft:  #B8BFC9;
+  --ink-faint: #8A93A0;
+  --accent:      #38BDF8;
+  --accent-deep: #0EA5E9;
+  --accent-soft: rgba(56,189,248,.18);
+  --accent-ink:  #BAE6FD;
+  --green: #4ADE80;
+  --red:   #F87171;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.25), 0 12px 36px -16px rgba(0,0,0,.6);
+  --shadow-pop:  0 24px 60px -18px rgba(0,0,0,.7);
+}
+html[data-theme="transparent"] body {
+  background:
+    radial-gradient(1200px 800px at 80% -10%, rgba(56,189,248,.18), transparent 55%),
+    radial-gradient(900px 700px at -10% 110%, rgba(168,85,247,.18), transparent 55%),
+    linear-gradient(160deg, #0B0E13, #141A24);
+  background-attachment: fixed;
+}
+html[data-theme="transparent"] .card,
+html[data-theme="transparent"] .drawer,
+html[data-theme="transparent"] .modal-card,
+html[data-theme="transparent"] input,
+html[data-theme="transparent"] textarea,
+html[data-theme="transparent"] select { backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+
+html[data-theme="vivid"] {
+  --bg:        #0F0A1E;
+  --surface:   #1A1233;
+  --rail:      #1E1640;
+  --card:      #221842;
+  --line:      #382A66;
+  --line-soft: #2A1F50;
+  --ink:       #F4EEFF;
+  --ink-soft:  #BBA9E6;
+  --ink-faint: #8979B8;
+  --accent:      #C026D3;
+  --accent-deep: #A21CAF;
+  --accent-soft: rgba(192,38,211,.20);
+  --accent-ink:  #F0ABFC;
+  --green: #34D399;
+  --red:   #FB7185;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.35), 0 12px 34px -14px rgba(124,58,237,.55);
+  --shadow-pop:  0 24px 60px -18px rgba(124,58,237,.65);
+}
+html[data-theme="vivid"] body {
+  background:
+    radial-gradient(900px 700px at 90% -10%, rgba(236,72,153,.22), transparent 55%),
+    radial-gradient(900px 700px at -10% 100%, rgba(59,130,246,.22), transparent 55%),
+    #0F0A1E;
+  background-attachment: fixed;
+}
+
+html[data-theme="chatgpt"] {
+  --bg:        #FFFFFF;
+  --surface:   #F7F7F8;
+  --rail:      #F0F0F1;
+  --card:      #FFFFFF;
+  --line:      #E5E5E6;
+  --line-soft: #ECECED;
+  --ink:       #2D333A;
+  --ink-soft:  #6E7681;
+  --ink-faint: #9CA3AF;
+  --accent:      #10A37F;
+  --accent-deep: #0D8C6D;
+  --accent-soft: #E7F6F1;
+  --accent-ink:  #0A6E55;
+  --green: #10A37F;
+  --red:   #EF4444;
+  --shadow-card: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px -14px rgba(16,24,40,.16);
+  --shadow-pop:  0 18px 50px -18px rgba(16,24,40,.28);
+}
+
+html[data-theme="minimal"] {
+  --bg:        #FFFFFF;
+  --surface:   #FAFAFA;
+  --rail:      #F5F5F5;
+  --card:      #FFFFFF;
+  --line:      #ECECEC;
+  --line-soft: #F2F2F2;
+  --ink:       #18181B;
+  --ink-soft:  #71717A;
+  --ink-faint: #A1A1AA;
+  --accent:      #18181B;
+  --accent-deep: #000000;
+  --accent-soft: #F0F0F0;
+  --accent-ink:  #18181B;
+  --green: #16A34A;
+  --red:   #DC2626;
+  --shadow-card: 0 1px 2px rgba(0,0,0,.03), 0 6px 18px -14px rgba(0,0,0,.14);
+  --shadow-pop:  0 16px 44px -20px rgba(0,0,0,.22);
+}
+
+html[data-theme="teal"] {
+  --bg:        #EAF5F3;
+  --surface:   #F4FBF9;
+  --rail:      #DCEFEB;
+  --card:      #FFFFFF;
+  --line:      #CCE6E1;
+  --line-soft: #DDEFEB;
+  --ink:       #133E3A;
+  --ink-soft:  #4F7A74;
+  --ink-faint: #82A8A2;
+  --accent:      #0D9488;
+  --accent-deep: #0B7C72;
+  --accent-soft: #CBEDE8;
+  --accent-ink:  #0A5F58;
+  --green: #16A34A;
+  --red:   #DC5A52;
+  --shadow-card: 0 1px 2px rgba(13,148,136,.05), 0 8px 24px -14px rgba(13,62,58,.22);
+  --shadow-pop:  0 18px 50px -18px rgba(13,62,58,.32);
+}
+
+/* Theme picker (settings → Appearance) */
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 4px; }
+.theme-card {
+  border: 2px solid var(--line); border-radius: var(--r-md); padding: 12px;
+  cursor: pointer; background: var(--card); text-align: left;
+  transition: border-color .15s ease, transform .1s ease, box-shadow .15s ease;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.theme-card:active { transform: translateY(1px); }
+.theme-card.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.theme-card .tc-name { font-size: 13.5px; font-weight: 700; color: var(--ink); display: flex; align-items: center; justify-content: space-between; }
+.theme-card .tc-check { color: var(--accent); font-weight: 800; opacity: 0; }
+.theme-card.active .tc-check { opacity: 1; }
+.theme-swatch { display: flex; gap: 6px; height: 30px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line-soft); }
+.theme-swatch span { flex: 1; }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; }
 body {
@@ -345,6 +504,37 @@ select {
   padding: 12px 16px; background: var(--rail); border-bottom: 1px solid var(--line);
 }
 .file-path-bar input { flex: 1; }
+.file-tools {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px; background: var(--rail); border-bottom: 1px solid var(--line);
+}
+.file-tools input { flex: 1; }
+.sort-btn { white-space: nowrap; }
+.sort-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.file-meta { margin-left: auto; font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+.file-dl {
+  flex-shrink: 0; width: 32px; height: 32px; padding: 0;
+  border-radius: var(--r-md); border: 1px solid var(--line);
+  background: var(--card); color: var(--accent); font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all .12s ease;
+}
+.file-dl:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.proj-field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
+.proj-field input, .proj-field textarea {
+  font-weight: 400; font-size: 14px; color: var(--ink);
+  padding: 9px 11px; border-radius: var(--r-md); border: 1px solid var(--line);
+  background: var(--card); width: 100%; box-sizing: border-box; resize: vertical;
+}
+.proj-card {
+  padding: 14px 16px; border-bottom: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 12px;
+}
+.proj-card.selected { background: var(--accent-soft); }
+.proj-card .pc-main { flex: 1; min-width: 0; cursor: pointer; }
+.proj-card .pc-name { font-size: 14.5px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+.proj-card .pc-desc { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj-card .pc-folder { font-size: 11.5px; color: var(--ink-faint); margin-top: 2px; font-family: 'SF Mono', monospace; }
+.pc-badge { font-size: 10.5px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 7px; }
 .pill-btn {
   padding: 9px 16px; border-radius: var(--r-md); font-size: 13px; font-weight: 600;
   background: var(--card); border: 1px solid var(--line); color: var(--ink-soft);
@@ -798,8 +988,8 @@ h4.md-h { font-size: 1em; }
       <div class="composer-wrap">
         <div class="chips">
           <button class="chip" id="agent-mode-chip" onclick="cycleAgentMode()"><span class="lead"></span><span id="agent-mode-label">Single Agent</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button class="chip" id="project-chip" onclick="switchTab('projects')" title="Active project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="project-chip-label">No Project</span></button>
           <button class="chip arch-tag-chip hidden" id="agent-arch-tag" onclick="switchTab('agents')" title="Active architecture — tap to change"></button>
-          <button class="chip" onclick="switchTab('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</button>
         </div>
         <div class="attach-bar" id="attach-bar"></div>
         <div class="composer">
@@ -816,12 +1006,76 @@ h4.md-h { font-size: 1em; }
     </div>
   </div>
 
+  <!-- PROJECTS PAGE -->
+  <div class="page" id="page-projects">
+    <div class="file-path-bar">
+      <strong style="flex:1;font-size:15px">Projects</strong>
+      <button class="pill-btn primary" onclick="openProjectEditor()">+ New Project</button>
+    </div>
+    <div class="page-content" id="projects-content">
+      <div style="padding:20px;color:var(--ink-soft)">Loading...</div>
+    </div>
+  </div>
+
+  <!-- PROJECT EDITOR MODAL -->
+  <div id="project-modal" class="hidden" style="position:fixed;inset:0;z-index:100">
+    <div class="modal-overlay" onclick="if(event.target===this)closeProjectEditor()">
+      <div class="modal-card" style="max-width:620px;max-height:90vh">
+        <div class="modal-head">
+          <h3 id="project-modal-title">New Project</h3>
+          <button class="pill-btn" onclick="closeProjectEditor()">Close</button>
+        </div>
+        <div style="padding:16px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:12px">
+          <input type="hidden" id="proj-id">
+          <label class="proj-field"><span>Name</span>
+            <input id="proj-name" placeholder="My Project"></label>
+          <label class="proj-field"><span>Description</span>
+            <input id="proj-desc" placeholder="Short description"></label>
+          <label class="proj-field"><span>Working folder</span>
+            <input id="proj-folder" placeholder="e.g. my-project (relative to sandbox) or absolute path"></label>
+          <label class="proj-field"><span>Project memory / context</span>
+            <textarea id="proj-memory" rows="4" placeholder="Persistent context injected into every chat in this project"></textarea></label>
+          <label class="proj-field"><span>Custom instructions (system prompt)</span>
+            <textarea id="proj-sysprompt" rows="4" placeholder="Extra instructions for the assistant"></textarea></label>
+        </div>
+        <div class="modal-head" style="border-top:1px solid var(--line);border-bottom:none">
+          <button class="pill-btn danger" id="proj-delete-btn" onclick="deleteProjectFromEditor()" style="visibility:hidden">Delete</button>
+          <div style="display:flex;gap:8px;margin-left:auto">
+            <button class="pill-btn" onclick="closeProjectEditor()">Cancel</button>
+            <button class="pill-btn primary" onclick="saveProject()">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SKILL DETAIL MODAL -->
+  <div id="skill-modal" class="hidden" style="position:fixed;inset:0;z-index:100">
+    <div class="modal-overlay" onclick="if(event.target===this)document.getElementById('skill-modal').classList.add('hidden')">
+      <div class="modal-card" style="max-width:760px;max-height:90vh">
+        <div class="modal-head">
+          <h3 id="skill-modal-title">Skill</h3>
+          <div style="display:flex;gap:6px">
+            <button class="pill-btn" id="skill-modal-dl" onclick="downloadSkillFromModal()">⭳ Download</button>
+            <button class="pill-btn" onclick="document.getElementById('skill-modal').classList.add('hidden')">Close</button>
+          </div>
+        </div>
+        <pre id="skill-modal-content" style="padding:16px;overflow:auto;flex:1;font-size:12.5px;line-height:1.6;margin:0;background:var(--surface);color:var(--ink);white-space:pre-wrap;word-break:break-word"></pre>
+      </div>
+    </div>
+  </div>
+
   <!-- FILES PAGE -->
   <div class="page" id="page-files">
     <div class="file-path-bar">
       <button class="pill-btn" onclick="fileUp()">&#8593;</button>
       <input id="file-path-input" value="." placeholder="Path...">
       <button class="pill-btn primary" onclick="loadFiles()">Go</button>
+    </div>
+    <div class="file-tools" id="file-tools">
+      <input id="file-search" placeholder="&#128269; Search files..." oninput="renderFiles()" autocomplete="off">
+      <button class="pill-btn sort-btn" id="sort-name" onclick="setFileSort('name')">Name</button>
+      <button class="pill-btn sort-btn" id="sort-date" onclick="setFileSort('date')">Date</button>
     </div>
     <div class="page-content" id="files-content">
       <ul class="file-list" id="file-list"></ul>
@@ -996,6 +1250,10 @@ h4.md-h { font-size: 1em; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Chat<span class="tdot"></span>
     </button>
+    <button class="tab-item" data-tab="projects">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11h18" stroke-linecap="round"/></svg>
+      Projects<span class="tdot"></span>
+    </button>
     <button class="tab-item" data-tab="files">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Files<span class="tdot"></span>
@@ -1067,6 +1325,10 @@ h4.md-h { font-size: 1em; }
 </div>
 
 <script>
+// Apply saved UI theme before first paint to avoid a flash of the default.
+(function(){ var t = localStorage.getItem('tigrimos_theme');
+  if (t && t !== 'light') document.documentElement.setAttribute('data-theme', t); })();
+
 // ========== API ==========
 let backendMode = localStorage.getItem('tigrimos_backend_mode') || 'local';
 let BASE = backendMode === 'remote' ? (localStorage.getItem('tigrimos_backend') || location.origin) : location.origin;
@@ -1188,6 +1450,7 @@ function showApp() {
     loadSessions();
     loadFiles();
     loadAgents();
+    loadProjects();
     updateAgentModeChip();
   } catch(e) { console.error('[TigrimOS] showApp error:', e); }
 }
@@ -1244,6 +1507,7 @@ function switchTab(name) {
   if (name === 'tasks') loadTasks();
   if (name === 'settings') loadSettings();
   if (name === 'files') loadFiles();
+  if (name === 'projects') loadProjects();
 }
 
 document.getElementById('tabbar').addEventListener('click', e => {
@@ -1251,6 +1515,110 @@ document.getElementById('tabbar').addEventListener('click', e => {
   if (!t) return;
   switchTab(t.dataset.tab);
 });
+
+// ========== PROJECTS ==========
+let projects = [];
+let selectedProjectId = localStorage.getItem('tigrimos_project_id') || null;
+
+function loadProjects() {
+  api('/api/projects').then(data => {
+    projects = Array.isArray(data) ? data : (data.projects || []);
+    // Drop a stale selection if the project no longer exists.
+    if (selectedProjectId && !projects.some(p => p.id === selectedProjectId)) {
+      setSelectedProject(null);
+    }
+    renderProjects();
+    updateProjectChip();
+  }).catch(() => {});
+}
+
+function renderProjects() {
+  const c = document.getElementById('projects-content');
+  if (!projects.length) {
+    c.innerHTML = '<div style="padding:20px;color:var(--ink-soft)">No projects yet. Tap “New Project” to create one.</div>';
+    return;
+  }
+  c.innerHTML = projects.map(p => {
+    const sel = p.id === selectedProjectId;
+    const folder = p.workingFolder || p.working_folder || '';
+    return `<div class="proj-card ${sel ? 'selected' : ''}">
+      <div class="pc-main" onclick="selectProject('${esc(p.id)}')">
+        <div class="pc-name">${esc(p.name || 'Untitled')}${sel ? '<span class="pc-badge">ACTIVE</span>' : ''}</div>
+        ${p.description ? `<div class="pc-desc">${esc(p.description)}</div>` : ''}
+        ${folder ? `<div class="pc-folder">📁 ${esc(folder)}</div>` : ''}
+      </div>
+      <button class="pill-btn" onclick="openProjectEditor('${esc(p.id)}')">Edit</button>
+    </div>`;
+  }).join('');
+}
+
+function setSelectedProject(id) {
+  selectedProjectId = id;
+  if (id) localStorage.setItem('tigrimos_project_id', id);
+  else localStorage.removeItem('tigrimos_project_id');
+  updateProjectChip();
+}
+
+// Selecting a project activates it and jumps to a fresh chat scoped to it.
+function selectProject(id) {
+  if (selectedProjectId === id) { setSelectedProject(null); renderProjects(); return; }
+  setSelectedProject(id);
+  renderProjects();
+  newSession();
+  switchTab('chat');
+}
+
+function updateProjectChip() {
+  const label = document.getElementById('project-chip-label');
+  if (!label) return;
+  const p = projects.find(x => x.id === selectedProjectId);
+  label.textContent = p ? p.name : 'No Project';
+  const chip = document.getElementById('project-chip');
+  if (chip) chip.classList.toggle('active', !!p);
+}
+
+function openProjectEditor(id) {
+  const p = id ? projects.find(x => x.id === id) : null;
+  document.getElementById('project-modal-title').textContent = p ? 'Edit Project' : 'New Project';
+  document.getElementById('proj-id').value = p ? p.id : '';
+  document.getElementById('proj-name').value = p ? (p.name || '') : '';
+  document.getElementById('proj-desc').value = p ? (p.description || '') : '';
+  document.getElementById('proj-folder').value = p ? (p.workingFolder || p.working_folder || '') : '';
+  document.getElementById('proj-memory').value = p ? (p.memory || '') : '';
+  document.getElementById('proj-sysprompt').value = p ? (p.systemPrompt || p.system_prompt || '') : '';
+  document.getElementById('proj-delete-btn').style.visibility = p ? 'visible' : 'hidden';
+  document.getElementById('project-modal').classList.remove('hidden');
+}
+
+function closeProjectEditor() {
+  document.getElementById('project-modal').classList.add('hidden');
+}
+
+function saveProject() {
+  const id = document.getElementById('proj-id').value;
+  const body = {
+    name: document.getElementById('proj-name').value.trim() || 'Untitled Project',
+    description: document.getElementById('proj-desc').value.trim(),
+    workingFolder: document.getElementById('proj-folder').value.trim(),
+    memory: document.getElementById('proj-memory').value,
+    systemPrompt: document.getElementById('proj-sysprompt').value,
+  };
+  const req = id
+    ? api('/api/projects/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(body) })
+    : api('/api/projects', { method: 'POST', body: JSON.stringify(body) });
+  req.then(() => { closeProjectEditor(); loadProjects(); }).catch(e => alert('Save failed: ' + (e.message || e)));
+}
+
+function deleteProjectFromEditor() {
+  const id = document.getElementById('proj-id').value;
+  if (!id) return;
+  if (!confirm('Delete this project? Chats and files are not removed.')) return;
+  api('/api/projects/' + encodeURIComponent(id), { method: 'DELETE' })
+    .then(() => {
+      if (selectedProjectId === id) setSelectedProject(null);
+      closeProjectEditor(); loadProjects();
+    }).catch(e => alert('Delete failed: ' + (e.message || e)));
+}
 
 // ========== CHAT ==========
 let currentSessionId = null;
@@ -1328,7 +1696,7 @@ function newSession() {
   if (creatingSession) return;
   creatingSession = true;
   api('/api/chat/sessions', {
-    method: 'POST', body: JSON.stringify({ title: 'New Chat' })
+    method: 'POST', body: JSON.stringify({ title: 'New Chat', projectId: selectedProjectId || undefined })
   }).then(data => {
     currentSessionId = data.id; sending = false;
     loadSessions(); renderMessages([]);
@@ -1593,7 +1961,7 @@ function sendMessage() {
     // This ensures the AI task runs to completion even if the browser tab
     // loses focus or the network connection drops temporarily.
     api(`/api/chat/sessions/${sessionId}/messages`, {
-      method: 'POST', body: JSON.stringify({ message: msg, agent_mode: getAgentMode() })
+      method: 'POST', body: JSON.stringify({ message: msg, agent_mode: getAgentMode(), projectId: selectedProjectId || undefined })
     }).then(data => {
       // Server returns { status: "processing" } immediately.
       // If server returned a direct content response (old server), use it.
@@ -1617,7 +1985,7 @@ function sendMessage() {
     doSend(currentSessionId);
   } else {
     api('/api/chat/sessions', {
-      method: 'POST', body: JSON.stringify({ title: displayMsg.slice(0, 60) })
+      method: 'POST', body: JSON.stringify({ title: displayMsg.slice(0, 60), projectId: selectedProjectId || undefined })
     }).then(data => {
       currentSessionId = data.id; loadSessions(); doSend(currentSessionId);
     }).catch(() => { sending = false; });
@@ -1661,26 +2029,94 @@ chatInput.addEventListener('keydown', e => {
 // ========== FILES ==========
 let currentFilePath = '.';
 let viewingFile = false;
+let currentFiles = [];
+let fileSortKey = 'name';   // 'name' | 'date'
+let fileSortDir = 1;        // 1 = ascending, -1 = descending
+
+function fmtFileDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function fmtFileSize(bytes) {
+  if (!bytes || bytes < 0) return '';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, n = bytes;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
+}
+
+function setFileSort(key) {
+  if (fileSortKey === key) {
+    fileSortDir = -fileSortDir;        // same column → flip direction
+  } else {
+    fileSortKey = key;
+    fileSortDir = key === 'date' ? -1 : 1;  // dates default newest-first, names A→Z
+  }
+  renderFiles();
+}
+
+function renderFiles() {
+  // Reflect active sort state on the buttons.
+  ['name', 'date'].forEach(k => {
+    const btn = document.getElementById('sort-' + k);
+    if (!btn) return;
+    const base = k === 'name' ? 'Name' : 'Date';
+    btn.classList.toggle('active', fileSortKey === k);
+    btn.textContent = fileSortKey === k ? base + (fileSortDir === 1 ? ' ↑' : ' ↓') : base;
+  });
+
+  const q = (document.getElementById('file-search')?.value || '').toLowerCase();
+  let list = currentFiles.filter(f => !q || f.name.toLowerCase().includes(q));
+
+  list.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;  // folders first, always
+    let cmp;
+    if (fileSortKey === 'date') {
+      cmp = (a.modifiedMs - b.modifiedMs) || a.name.localeCompare(b.name);
+    } else {
+      cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    }
+    return cmp * fileSortDir;
+  });
+
+  const content = document.getElementById('files-content');
+  if (!list.length) {
+    content.innerHTML = `<div style="padding:20px;color:var(--ink-soft)">${q ? 'No files match your search' : 'Empty directory'}</div>`;
+    return;
+  }
+  content.innerHTML = '<ul class="file-list" id="file-list"></ul>';
+  document.getElementById('file-list').innerHTML = list.map(f => {
+    const icon = f.isDir ? '&#128193;' : '&#128196;';
+    const meta = f.isDir ? fmtFileDate(f.modified)
+                         : [fmtFileSize(f.size), fmtFileDate(f.modified)].filter(Boolean).join(' · ');
+    const fullPath = currentFilePath === '.' ? f.name : currentFilePath + '/' + f.name;
+    const dl = f.isDir ? '' :
+      `<button class="file-dl" title="Download" onclick="event.stopPropagation();downloadFile('${esc(fullPath)}')">&#8681;</button>`;
+    return `<li class="file-item" onclick="openFile('${esc(f.name)}', ${f.isDir})">
+      <span class="file-icon">${icon}</span><span>${esc(f.name)}</span>
+      <span class="file-meta">${esc(meta)}</span>${dl}
+    </li>`;
+  }).join('');
+}
 
 function loadFiles() {
   const path = document.getElementById('file-path-input').value || '.';
   currentFilePath = path;
+  document.getElementById('file-tools').style.display = 'flex';
   api('/api/files?path=' + encodeURIComponent(path)).then(data => {
     viewingFile = false;
     const files = Array.isArray(data) ? data : (data.files || data.entries || []);
-    if (!files.length) {
-      document.getElementById('files-content').innerHTML = '<div style="padding:20px;color:var(--ink-soft)">Empty directory</div>';
-      return;
-    }
-    document.getElementById('files-content').innerHTML = '<ul class="file-list" id="file-list"></ul>';
-    document.getElementById('file-list').innerHTML = files.map(f => {
+    currentFiles = files.map(f => {
       const name = typeof f === 'string' ? f : (f.name || f.path || '');
-      const isDir = typeof f === 'object' ? f.isDirectory || f.is_dir || false : name.endsWith('/');
-      const icon = isDir ? '&#128193;' : '&#128196;';
-      return `<li class="file-item" onclick="openFile('${esc(name)}', ${isDir})">
-        <span class="file-icon">${icon}</span><span>${esc(name)}</span>
-      </li>`;
-    }).join('');
+      const isDir = typeof f === 'object' ? (f.isDirectory || f.is_dir || false) : name.endsWith('/');
+      const modified = typeof f === 'object' ? (f.modified || f.modified_at || '') : '';
+      const size = typeof f === 'object' ? (f.size || 0) : 0;
+      const ms = modified ? Date.parse(modified) || 0 : 0;
+      return { name: name.replace(/\/$/, ''), isDir, modified, modifiedMs: ms, size };
+    });
+    renderFiles();
   }).catch(() => {});
 }
 
@@ -1691,6 +2127,7 @@ function openFile(name, isDir) {
     loadFiles();
   } else {
     const filePath = currentFilePath === '.' ? name : currentFilePath + '/' + name;
+    document.getElementById('file-tools').style.display = 'none';
     api('/api/files/read?path=' + encodeURIComponent(filePath)).then(data => {
       viewingFile = true;
       const content = typeof data === 'string' ? data : (data.content || data.data || JSON.stringify(data, null, 2));
@@ -2643,8 +3080,10 @@ function loadSettings() {
     el.innerHTML = `
       <div class="settings-tabs" id="settings-tabs">
         <button class="settings-tab active" data-pane="ai" onclick="switchSettingsTab('ai')">AI / API</button>
+        <button class="settings-tab" data-pane="appearance" onclick="switchSettingsTab('appearance')">Appearance</button>
         <button class="settings-tab" data-pane="mcp" onclick="switchSettingsTab('mcp')">MCP Tools</button>
         <button class="settings-tab" data-pane="plugins" onclick="switchSettingsTab('plugins')">Plugins</button>
+        <button class="settings-tab" data-pane="skills" onclick="switchSettingsTab('skills')">Skills</button>
         <button class="settings-tab" data-pane="skill" onclick="switchSettingsTab('skill')">Skill Update</button>
         <button class="settings-tab" data-pane="remote" onclick="switchSettingsTab('remote')">Remote</button>
       </div>
@@ -2777,6 +3216,22 @@ function loadSettings() {
         </div>
       </div>
 
+      <div class="settings-pane" id="pane-skills" hidden>
+        <div class="settings-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <h3 style="margin:0">Installed Skills</h3>
+            <div style="display:flex;gap:8px">
+              <button class="pill-btn" onclick="loadSkillsLibrary()" title="Refresh">↻</button>
+              <button class="pill-btn primary" onclick="document.getElementById('s-skill-file').click()">Upload Skill</button>
+            </div>
+          </div>
+          <input type="file" id="s-skill-file" accept=".md,.zip" style="display:none" onchange="uploadSkillFile(this)">
+          <div style="color:var(--ink-soft);font-size:12px;margin:8px 0 14px">Upload a SKILL.md file or a .zip skill bundle. Tap a skill to read its details.</div>
+          <span id="s-skill-up-status" style="font-size:13px"></span>
+          <div id="s-skills-list" style="margin-top:10px"><div style="color:var(--ink-soft)">Loading…</div></div>
+        </div>
+      </div>
+
       <div class="settings-pane" id="pane-skill" hidden>
         <div class="settings-group">
           <h3>Skill Auto-Update</h3>
@@ -2831,12 +3286,22 @@ function loadSettings() {
         </div>
       </div>
 
+      <div class="settings-pane" id="pane-appearance" hidden>
+        <div class="settings-group">
+          <h3>Theme</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:12px">Choose the color of the web remote UI. Applies instantly and is remembered on this device.</div>
+          <div class="theme-grid" id="theme-grid"></div>
+        </div>
+      </div>
+
       <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:16px"><button class="pill-btn primary" onclick="saveSettings()" style="padding:12px 28px;font-size:14px">Save Settings</button>
         <span id="s-save-status" style="font-size:13px;margin-left:10px"></span></div>
     `;
     renderMcpList();
+    renderThemePicker();
     loadSkillStatus();
     loadPlugins();
+    loadSkillsLibrary();
   }).catch(() => {});
 }
 
@@ -2907,7 +3372,140 @@ function installPluginFile(input) {
     .catch(() => { s.textContent = 'Upload failed'; s.style.color = 'var(--red)'; });
 }
 
+// ---- Skills library (list / upload / download / view detail) ----
+let skillsLib = [];
+
+function loadSkillsLibrary() {
+  const el = document.getElementById('s-skills-list');
+  if (!el) return;
+  api('/api/skills').then(list => {
+    skillsLib = Array.isArray(list) ? list : (list.skills || []);
+    if (!skillsLib.length) {
+      el.innerHTML = '<div style="color:var(--ink-soft)">No skills installed</div>';
+      return;
+    }
+    el.innerHTML = skillsLib.map(s => {
+      const on = s.enabled !== false;
+      const review = s.reviewStatus && s.reviewStatus !== 'approved'
+        ? `<span style="color:var(--accent);font-size:11px;margin-left:6px">${esc(s.reviewStatus)}</span>` : '';
+      return `<div class="card" style="margin-bottom:10px">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:${on ? 'var(--green)' : 'var(--red)'};margin-top:6px"></span>
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="viewSkill('${esc(s.id)}')">
+            <div style="font-weight:700">${esc(s.name || s.id)}${review}</div>
+            <div class="detail" style="margin:4px 0">${esc(s.description || '')}</div>
+            <div style="color:var(--ink-soft);font-size:12px">source: ${esc(s.source || 'custom')}</div>
+          </div>
+          <button class="pill-btn" onclick="downloadSkill('${esc(s.id)}','${esc(s.name || s.id)}')" style="flex:none;font-size:11px;padding:5px 10px" title="Download">⭳</button>
+          <button class="pill-btn" onclick="toggleSkill('${esc(s.id)}', ${!on})" style="flex:none;font-size:11px;padding:5px 10px">${on ? 'Disable' : 'Enable'}</button>
+          <button class="pill-btn danger" onclick="deleteSkill('${esc(s.id)}','${esc(s.name || s.id)}')" style="flex:none;font-size:11px;padding:5px 10px">Remove</button>
+        </div>
+      </div>`;
+    }).join('');
+  }).catch(() => {
+    el.innerHTML = '<div style="color:var(--ink-soft)">Skills unavailable</div>';
+  });
+}
+
+function toggleSkill(id, enabled) {
+  api('/api/skills/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify({ enabled }) })
+    .then(loadSkillsLibrary).catch(e => alert('Failed: ' + (e.message || e)));
+}
+
+function deleteSkill(id, name) {
+  if (!confirm('Remove skill "' + name + '"?')) return;
+  api('/api/skills/' + encodeURIComponent(id), { method: 'DELETE' })
+    .then(loadSkillsLibrary).catch(e => alert('Failed: ' + (e.message || e)));
+}
+
+function viewSkill(id) {
+  const s = skillsLib.find(x => x.id === id);
+  document.getElementById('skill-modal-title').textContent = s ? (s.name || id) : 'Skill';
+  document.getElementById('skill-modal-dl').dataset.id = id;
+  const body = document.getElementById('skill-modal-content');
+  body.textContent = 'Loading…';
+  document.getElementById('skill-modal').classList.remove('hidden');
+  api('/api/skills/' + encodeURIComponent(id) + '/content').then(d => {
+    body.textContent = d && d.ok ? (d.content || '(empty)') : ((d && d.error) || 'No content available');
+  }).catch(() => { body.textContent = 'Failed to load skill content'; });
+}
+
+function downloadSkill(id, name) {
+  const headers = {};
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  fetch(BASE + '/api/skills/' + encodeURIComponent(id) + '/download', { headers })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = (name || 'skill').replace(/[^\w.-]+/g, '_') + '.SKILL.md';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    })
+    .catch(e => alert('Download failed: ' + (e.message || e)));
+}
+
+function downloadSkillFromModal() {
+  const id = document.getElementById('skill-modal-dl').dataset.id;
+  const s = skillsLib.find(x => x.id === id);
+  if (id) downloadSkill(id, s ? s.name : id);
+}
+
+function uploadSkillFile(input) {
+  const file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  const s = document.getElementById('s-skill-up-status');
+  s.textContent = 'Uploading ' + file.name + '…'; s.style.color = 'var(--ink-soft)';
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  const headers = {};
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  fetch(BASE + '/api/skills/upload', { method: 'POST', body: fd, headers })
+    .then(r => r.json().then(j => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => {
+      if (ok && !j.error) { s.textContent = 'Uploaded'; s.style.color = 'var(--green)'; loadSkillsLibrary(); }
+      else { s.textContent = 'Failed: ' + (j.error || 'error'); s.style.color = 'var(--red)'; }
+    })
+    .catch(() => { s.textContent = 'Upload failed'; s.style.color = 'var(--red)'; });
+}
+
 // Switch the active settings tab (panes stay in the DOM so edits persist).
+// ========== THEME ==========
+const THEMES = [
+  { id: 'light',       name: 'Light',       sw: ['#F4EEE5', '#FFFFFF', '#129A91'] },
+  { id: 'dark',        name: 'Dark',        sw: ['#15171C', '#23272F', '#2DD4BF'] },
+  { id: 'transparent', name: 'Transparent', sw: ['#0E1116', '#38BDF8', '#A855F7'] },
+  { id: 'vivid',       name: 'Vivid',       sw: ['#0F0A1E', '#C026D3', '#EC4899'] },
+  { id: 'chatgpt',     name: 'ChatGPT',     sw: ['#FFFFFF', '#F7F7F8', '#10A37F'] },
+  { id: 'minimal',     name: 'Minimal',     sw: ['#FFFFFF', '#FAFAFA', '#18181B'] },
+  { id: 'teal',        name: 'Teal',        sw: ['#EAF5F3', '#FFFFFF', '#0D9488'] },
+];
+
+function getTheme() { return localStorage.getItem('tigrimos_theme') || 'light'; }
+
+function applyTheme(id) {
+  if (id === 'light') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', id);
+  localStorage.setItem('tigrimos_theme', id);
+  document.querySelectorAll('#theme-grid .theme-card').forEach(c =>
+    c.classList.toggle('active', c.dataset.theme === id));
+}
+
+function renderThemePicker() {
+  const el = document.getElementById('theme-grid');
+  if (!el) return;
+  const cur = getTheme();
+  el.innerHTML = THEMES.map(t => `
+    <button class="theme-card ${t.id === cur ? 'active' : ''}" data-theme="${t.id}" onclick="applyTheme('${t.id}')">
+      <div class="tc-name">${t.name}<span class="tc-check">✓</span></div>
+      <div class="theme-swatch">${t.sw.map(c => `<span style="background:${c}"></span>`).join('')}</div>
+    </button>`).join('');
+}
+
+// Apply saved theme as early as possible.
+applyTheme(getTheme());
+
 function switchSettingsTab(name) {
   document.querySelectorAll('#settings-tabs .settings-tab').forEach(b =>
     b.classList.toggle('active', b.dataset.pane === name));

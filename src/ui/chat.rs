@@ -1100,18 +1100,18 @@ Always delegate, even for simple tasks. If an orchestrator exists, send tasks ON
                     let tier = sub_agent_config.router_tier.as_str();
                     let pool_count = sub_agent_config.model_pool.len();
                     let tier_line = if tier == "ultra" {
-                        "Tier: ROUTER ULTRA — favor accuracy; build a deeper team with a dedicated checker when the task is hard."
+                        "Tier: ROUTER ULTRA — favor accuracy; build a deeper team with a dedicated checker whenever the task is non-trivial."
                     } else {
-                        "Tier: ROUTER (fast) — favor low latency; keep teams small and only build one when it clearly helps."
+                        "Tier: ROUTER (fast) — favor low latency, but still delegate by default; keep teams lean and build one whenever the task is more than a single tool call."
                     };
                     let prompt = if sub_agent_config.agent_ids.is_empty() {
                         format!(
                             "\n\nROUTER MODE: You are the ORCHESTRATOR. {tier_line} A pool of {pool_count} model(s) is available for specialist agents.\n\
-TRIAGE EVERY REQUEST — decide how much firepower it needs:\n\
+Your DEFAULT is to delegate to a specialist team. TRIAGE EVERY REQUEST and only solo the smallest tasks:\n\
 1) TRIVIAL chat (a greeting, a quick fact, a clarifying question): just answer in text, no tools.\n\
-2) SIMPLE single-step task (plot a graph, a quick calculation, one web lookup, read/write a file, run a short script): DO IT YOURSELF with your own tools (run_python, web_search, fetch_url, run_shell, read_file, write_file, list_files, load_skill). Do NOT build a team for these — spinning up agents for a one-step task is wasted latency.\n\
-3) COMPLEX / multi-step task (research across many sources, build a multi-part deliverable, analyze + cross-check, anything that naturally splits into independent sub-tasks): call create_architecture to design and boot a specialist team — each agent is assigned a best-fit LLM from the pool — then orchestrate it.\n\
-When in doubt and the task plausibly needs only one or two of your own tool calls, do it yourself; reserve teams for work that truly benefits from parallel specialists.\n\
+2) TINY single-step task (one quick lookup, one short calculation, read/write a single file): DO IT YOURSELF with your own tools (run_python, web_search, fetch_url, run_shell, read_file, write_file, list_files, load_skill).\n\
+3) EVERYTHING ELSE — any task that touches multiple sources, produces a real deliverable, needs analysis or cross-checking, or could plausibly split into 2+ sub-tasks: call create_architecture to design and boot a specialist team — each agent is assigned a best-fit LLM from the pool — then orchestrate it. This is the common case.\n\
+WHEN IN DOUBT, BUILD A TEAM. Only solo when the task is unmistakably trivial or a single tool call.\n\
 WHEN YOU DO BUILD A TEAM — DESIGN FOR PARALLELISM: use architectureType 'flat' (you talk to every worker directly), NOT 'pipeline' (sequential and slow). Split the task into independent sub-tasks, one per worker, where no worker depends on another's output.\n\
 DISPATCH IN PARALLEL: fire send_task to ALL relevant agents in the SAME step (multiple send_task calls at once) so they run asynchronously at the same time; THEN call wait_result for each agent to collect their outputs; THEN combine/synthesize into the final answer. Do not wait for one agent before sending the next."
                         )
@@ -1124,7 +1124,7 @@ You may still answer trivial follow-ups directly without delegating.",
                             agents
                         )
                     };
-                    (prompt, "Orchestrate LLMs in parallel: fan out send_task to multiple agents at once, then wait_result on each and merge.")
+                    (prompt, "Default to delegating: solo only trivial chat or a single tool call; otherwise build a team and orchestrate LLMs in parallel — fan out send_task to multiple agents at once, then wait_result on each and merge.")
                 }
                 _ => {
                     // "auto" mode
