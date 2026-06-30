@@ -33,6 +33,18 @@ die() {
     exit 1
 }
 
+# Use sudo only when not already root and sudo is available.
+# Minimal root containers (e.g. fresh cloud images) often lack `sudo`,
+# in which case privileged commands must run directly.
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+elif command -v sudo &>/dev/null; then
+    SUDO="sudo"
+else
+    SUDO=""
+    echo -e "${YELLOW}[WARN] Not root and 'sudo' not found — privileged steps may fail.${NC}"
+fi
+
 echo ""
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}  TigrimOS Installer for Linux${NC}"
@@ -50,20 +62,21 @@ echo -e "${GREEN}[OK]${NC} Prerequisites found (git, rustc, cargo)"
 if ! command -v pkg-config &>/dev/null || ! pkg-config --exists openssl 2>/dev/null; then
     echo -e "${YELLOW}Installing build dependencies (pkg-config, libssl-dev)...${NC}"
     if command -v apt &>/dev/null; then
-        sudo apt update && sudo apt install -y pkg-config libssl-dev build-essential
+        $SUDO apt update && $SUDO apt install -y pkg-config libssl-dev build-essential
     elif command -v dnf &>/dev/null; then
-        sudo dnf install -y pkg-config openssl-devel gcc make
+        $SUDO dnf install -y pkg-config openssl-devel gcc make
     elif command -v pacman &>/dev/null; then
-        sudo pacman -S --noconfirm pkg-config openssl base-devel
+        $SUDO pacman -S --noconfirm pkg-config openssl base-devel
     fi
     echo -e "${GREEN}[OK]${NC} Build dependencies installed"
 fi
 
-# Check for GUI dependencies (only needed for desktop mode)
+# Check for GUI dependencies (only needed for desktop mode).
+# Note: these are the real pkg-config module names (not the dev-package names).
 dev_missing=()
-for lib in libxcb libxkbcommon libgtk-3; do
+for lib in xcb xkbcommon "gtk+-3.0"; do
     if ! pkg-config --exists "$lib" 2>/dev/null; then
-        dev_missing+=("$lib-dev")
+        dev_missing+=("$lib")
     fi
 done
 
@@ -251,7 +264,7 @@ if $HEADLESS; then
         SERVICE_FILE="/etc/systemd/system/tigrimos.service"
         echo -e "${BLUE}Creating systemd service...${NC}"
 
-        sudo tee "$SERVICE_FILE" > /dev/null <<SVCEOF
+        $SUDO tee "$SERVICE_FILE" > /dev/null <<SVCEOF
 [Unit]
 Description=TigrimOS Headless Server
 After=network.target
@@ -271,8 +284,8 @@ RestartSec=5
 WantedBy=multi-user.target
 SVCEOF
 
-        sudo systemctl daemon-reload
-        sudo systemctl enable tigrimos
+        $SUDO systemctl daemon-reload
+        $SUDO systemctl enable tigrimos
         echo -e "${GREEN}[OK]${NC} systemd service created and enabled"
         echo "  Start:   sudo systemctl start tigrimos"
         echo "  Stop:    sudo systemctl stop tigrimos"
@@ -287,11 +300,11 @@ SVCEOF
         if ! command -v nginx &>/dev/null; then
             echo -e "${BLUE}Installing nginx...${NC}"
             if command -v apt &>/dev/null; then
-                sudo apt update && sudo apt install -y nginx
+                $SUDO apt update && $SUDO apt install -y nginx
             elif command -v dnf &>/dev/null; then
-                sudo dnf install -y nginx
+                $SUDO dnf install -y nginx
             elif command -v pacman &>/dev/null; then
-                sudo pacman -S --noconfirm nginx
+                $SUDO pacman -S --noconfirm nginx
             else
                 echo -e "${RED}Could not detect package manager. Install nginx manually.${NC}"
             fi
@@ -304,7 +317,7 @@ SVCEOF
             NGINX_CONF="/etc/nginx/sites-available/tigrimos"
             NGINX_ENABLED="/etc/nginx/sites-enabled/tigrimos"
 
-            sudo tee "$NGINX_CONF" > /dev/null <<NGXEOF
+            $SUDO tee "$NGINX_CONF" > /dev/null <<NGXEOF
 server {
     listen 80;
     server_name $server_domain;
@@ -332,12 +345,12 @@ NGXEOF
 
             # Enable the site
             if [ -d "/etc/nginx/sites-enabled" ]; then
-                sudo ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
+                $SUDO ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
             fi
 
             # Test and reload
-            if sudo nginx -t 2>/dev/null; then
-                sudo systemctl reload nginx 2>/dev/null || sudo systemctl restart nginx
+            if $SUDO nginx -t 2>/dev/null; then
+                $SUDO systemctl reload nginx 2>/dev/null || $SUDO systemctl restart nginx
                 echo -e "${GREEN}[OK]${NC} nginx configured and reloaded"
             else
                 echo -e "${RED}nginx config test failed. Check: sudo nginx -t${NC}"
@@ -348,7 +361,7 @@ NGXEOF
             if [[ "$server_domain" != "_" ]] && command -v certbot &>/dev/null; then
                 prompt setup_ssl "Setup HTTPS with Let's Encrypt? [y/N]: " "n"
                 if [[ "$setup_ssl" == "y" || "$setup_ssl" == "Y" ]]; then
-                    sudo certbot --nginx -d "$server_domain"
+                    $SUDO certbot --nginx -d "$server_domain"
                     echo -e "${GREEN}[OK]${NC} HTTPS configured"
                 fi
             elif [[ "$server_domain" != "_" ]]; then
@@ -364,9 +377,9 @@ NGXEOF
     if command -v ufw &>/dev/null; then
         prompt open_fw "Open firewall port $server_port (ufw)? [Y/n]: " "y"
         if [[ "$open_fw" != "n" && "$open_fw" != "N" ]]; then
-            sudo ufw allow "$server_port/tcp"
-            sudo ufw allow 80/tcp
-            sudo ufw allow 443/tcp
+            $SUDO ufw allow "$server_port/tcp"
+            $SUDO ufw allow 80/tcp
+            $SUDO ufw allow 443/tcp
             echo -e "${GREEN}[OK]${NC} Firewall ports opened"
         fi
     fi
@@ -398,7 +411,7 @@ NGXEOF
     prompt launch_now "Start TigrimOS server now? [Y/n]: " "y"
     if [[ "$launch_now" != "n" && "$launch_now" != "N" ]]; then
         if [ -f "/etc/systemd/system/tigrimos.service" ]; then
-            sudo systemctl start tigrimos
+            $SUDO systemctl start tigrimos
             echo -e "${GREEN}Server started via systemd!${NC}"
             echo "  Check: sudo systemctl status tigrimos"
         else
