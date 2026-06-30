@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 /// every call. 0 bits means "unset" → fall back to the default.
 static CHAT_FONT_SIZE: AtomicU32 = AtomicU32::new(0);
 
-const DEFAULT_CHAT_FONT_SIZE: f32 = 15.0;
+// Matches the web/mobile remote chat bubble text (`font-size: 14.5px`).
+const DEFAULT_CHAT_FONT_SIZE: f32 = 14.5;
 
 /// Current chat message base font size (in points). Read by the chat renderer.
 pub fn chat_font_size() -> f32 {
@@ -236,7 +237,10 @@ macro_rules! asset_font {
 }
 
 // Proportional UI fonts.
-static FONT_JAKARTA: &[u8] = asset_font!("PlusJakartaSans-Regular.ttf");
+// The web/mobile remote UI renders message body text at font-weight 500
+// (Medium) — see `.msg .bubble` in static/index.html. Use the Medium weight as
+// the primary face so the native UI matches the web's apparent weight.
+static FONT_JAKARTA: &[u8] = asset_font!("PlusJakartaSans-Medium.ttf");
 static FONT_JAKARTA_BOLD: &[u8] = asset_font!("PlusJakartaSans-SemiBold.ttf");
 static FONT_INTER: &[u8] = asset_font!("fonts/Inter.ttf");
 static FONT_GEIST: &[u8] = asset_font!("fonts/Geist.ttf");
@@ -246,8 +250,9 @@ static FONT_IBM_PLEX: &[u8] = asset_font!("fonts/IBMPlexSans.ttf");
 static FONT_JETBRAINS_MONO: &[u8] = asset_font!("fonts/JetBrainsMono.ttf");
 static FONT_NOTO_EMOJI: &[u8] = asset_font!("NotoEmoji-Regular.ttf");
 
-/// The default UI font family name.
-pub const DEFAULT_FONT_FAMILY: &str = "Roboto";
+/// The default UI font family name. Matches the web/mobile remote UI, which
+/// renders with "Plus Jakarta Sans" (see `static/index.html`).
+pub const DEFAULT_FONT_FAMILY: &str = "Plus Jakarta Sans";
 
 /// Names of the bundled, selectable proportional UI fonts (modern web fonts).
 /// "Inter" is the font used by Vite / VitePress; "Geist" is Vercel's.

@@ -3902,13 +3902,13 @@ You have access to these tools: {}.{}",
             (
                 super::theme::chat_user_bubble(), // theme accent / user_bubble
                 super::theme::chat_user_text(),   // auto-contrast on the bubble
-                "You",
+                "You".to_string(),
             )
         } else {
             (
                 super::theme::chat_ai_bubble(), // theme card color
                 super::theme::chat_ai_text(),   // theme primary text
-                "AI",
+                assistant_label(),              // AI name from IDENTITY.md (e.g. "Dr. Athena")
             )
         };
 
@@ -3919,7 +3919,10 @@ You have access to these tools: {}.{}",
         };
 
         ui.with_layout(layout, |ui| {
-            let max_bubble_width = (ui.available_width() * 0.75).min(650.0);
+            // Bubble width scales with the window: ~2/3 of the available chat
+            // width, so it widens on large windows instead of capping at a fixed
+            // pixel width.
+            let max_bubble_width = ui.available_width() * 0.66;
             let bubble_stroke = egui::Stroke::NONE;
 
             // Asymmetric corners: AI = 6/20/20/20, User = 20/6/20/20
@@ -3934,7 +3937,11 @@ You have access to these tools: {}.{}",
                 .stroke(bubble_stroke)
                 .inner_margin(egui::Margin::symmetric(18, 14))
                 .show(ui, |ui| {
+                    // Fix the bubble to ~2/3 of the window width (both min and max)
+                    // so AI answers fill the same width as user messages instead
+                    // of shrinking to their content.
                     ui.set_max_width(max_bubble_width);
+                    ui.set_min_width(max_bubble_width);
                     // Force vertical layout inside bubble (parent is left_to_right for alignment)
                     ui.vertical(|ui| {
                     // Role label
@@ -4127,7 +4134,8 @@ You have access to these tools: {}.{}",
         let text_color = super::theme::chat_ai_text();
 
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-            let max_bubble_width = (ui.available_width() * 0.75).min(600.0);
+            // Match render_message: bubble ≈ 2/3 of available chat width.
+            let max_bubble_width = ui.available_width() * 0.66;
 
             egui::Frame::new()
                 .fill(bg_color)
@@ -4135,12 +4143,14 @@ You have access to these tools: {}.{}",
                 .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
                 .inner_margin(egui::Margin::symmetric(18, 14))
                 .show(ui, |ui| {
+                    // Fix streaming bubble to the same ~2/3 width as finished messages.
                     ui.set_max_width(max_bubble_width);
+                    ui.set_min_width(max_bubble_width);
                     ui.vertical(|ui| {
 
                     // Role label with typing indicator
                     ui.label(
-                        egui::RichText::new("AI")
+                        egui::RichText::new(assistant_label())
                             .size(11.0)
                             .strong()
                             .color(egui::Color32::from_rgb(168, 158, 144)),
@@ -5455,6 +5465,36 @@ fn strip_think_tags(content: &str) -> String {
     result.trim().to_string()
 }
 
+/// The assistant's display name shown on AI message bubbles, read from the
+/// `name:` field of IDENTITY.md (e.g. "Dr. Athena"). Falls back to "AI" when no
+/// identity file or name is set. Cached by IDENTITY.md's modified-time so a
+/// persona/identity edit shows up live without restarting.
+fn assistant_label() -> String {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::SystemTime;
+    static CACHE: OnceLock<Mutex<(Option<SystemTime>, String)>> = OnceLock::new();
+    let path = crate::server::data::data_dir().join("IDENTITY.md");
+    let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+    let cache = CACHE.get_or_init(|| Mutex::new((None, "AI".to_string())));
+    let mut guard = cache.lock().unwrap();
+    if guard.0 == mtime {
+        return guard.1.clone();
+    }
+    let name = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|txt| {
+            txt.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("name:")
+                    .map(|rest| rest.trim().trim_matches('"').trim().to_string())
+            })
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "AI".to_string());
+    *guard = (mtime, name.clone());
+    name
+}
+
 fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui::Color32) {
     let clean = strip_think_tags(content);
     if clean.is_empty() {
@@ -5463,6 +5503,9 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
 
     // User-configurable chat font size; headings/code scale relative to it.
     let base = super::theme::chat_font_size();
+    // Match the web/mobile remote bubble text `line-height: 1.5` so wrapped
+    // body lines stack with the same airiness as the web UI.
+    let lh = Some(base * 1.5);
 
     let all_lines: Vec<&str> = clean.lines().collect();
     let mut i = 0;
@@ -5637,6 +5680,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
             ui.add(egui::Label::new(
                 egui::RichText::new(format!("  \u{2022} {}", clean_inline_md(&trimmed[2..])))
                     .size(base)
+                    .line_height(lh)
                     .color(default_color),
             ).wrap());
             continue;
@@ -5649,6 +5693,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
                 ui.add(egui::Label::new(
                     egui::RichText::new(format!("  {}", clean_inline_md(trimmed)))
                         .size(base)
+                        .line_height(lh)
                         .color(default_color),
                 ).wrap());
                 continue;
@@ -5666,14 +5711,14 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
                         super::math_render::render_math_equation(ui, content, false, default_color);
                     } else if !content.is_empty() {
                         ui.add(egui::Label::new(
-                            egui::RichText::new(clean_inline_md(content)).size(base).color(default_color),
+                            egui::RichText::new(clean_inline_md(content)).size(base).line_height(lh).color(default_color),
                         ).wrap());
                     }
                 }
             });
         } else {
             ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(trimmed)).size(base).color(default_color),
+                egui::RichText::new(clean_inline_md(trimmed)).size(base).line_height(lh).color(default_color),
             ).wrap());
         }
     }
