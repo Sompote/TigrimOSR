@@ -403,13 +403,15 @@ async fn send_message(
         .clone()
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
-    let api_url = if raw_url == "claude-code" {
+    let mut api_url = if raw_url == "claude-code" {
         raw_url
     } else if raw_url.ends_with("/chat/completions") {
         raw_url
     } else {
         format!("{}/chat/completions", raw_url.trim_end_matches('/'))
     };
+    let mut api_key = api_key;
+    let mut model = model;
     let mut sandbox_dir = crate::server::data::get_sandbox_dir_sync();
 
     // Project run-context: working folder → sandbox, memory/instructions → prompt,
@@ -422,6 +424,43 @@ async fn send_message(
         if let Some(ref folder) = ctx.sandbox_dir {
             let _ = std::fs::create_dir_all(folder);
             sandbox_dir = folder.clone();
+        }
+    }
+
+    // Agent-loop profile: per-request body > project override > settings.
+    let loop_profile = {
+        use crate::server::services::agent_loop;
+        let request_profile = body
+            .get("agent_loop_profile")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
+        match request_profile {
+            Some(name) => agent_loop::load_profile(name),
+            None => agent_loop::resolve_active_profile(
+                settings.agent_loop_profile.as_deref(),
+                project_ctx.as_ref().and_then(|c| c.agent_loop_profile.as_deref()),
+            ),
+        }
+        .map(Arc::new)
+    };
+    if let Some(m) = loop_profile.as_deref().and_then(|p| p.model.as_ref()) {
+        if !m.model.trim().is_empty() {
+            model = m.model.trim().to_string();
+        }
+        if !m.api_key.trim().is_empty() {
+            api_key = m.api_key.trim().to_string();
+        }
+        if !m.api_url.trim().is_empty() {
+            let raw = m.api_url.trim().to_string();
+            api_url = if raw.starts_with("claude-code")
+                || raw.starts_with("gemini-cli")
+                || raw.starts_with("codex-cli")
+                || raw.ends_with("/chat/completions")
+            {
+                raw
+            } else {
+                format!("{}/chat/completions", raw.trim_end_matches('/'))
+            };
         }
     }
 
@@ -533,6 +572,7 @@ async fn send_message(
         cancel_flag: Arc::new(AtomicBool::new(false)),
         model_pool: router_pool,
         router_tier,
+        loop_profile: loop_profile.clone(),
     };
 
     // Register cancel flag so kill endpoint can abort this session
@@ -805,7 +845,22 @@ An agent team is being created for this task. You are the COORDINATOR.\n\
             "For research tasks, gather info from multiple sources using web_search/fetch_url, then synthesize results"
         };
 
-        let mut base = format!(
+        // Profile system-prompt override: replace_base swaps only the hardcoded
+        // base text (orchestration instructions, project/skills/SOUL blocks
+        // still apply); otherwise the profile text is appended after the base.
+        let profile_prompt = loop_profile
+            .as_deref()
+            .and_then(|p| p.system_prompt.as_ref())
+            .filter(|sp| !sp.text.trim().is_empty());
+        let mut base = if let Some(sp) = profile_prompt.filter(|sp| sp.replace_base) {
+            format!(
+                "{}\n\nYour working directory is the sandbox folder '{}'. All file operations use this directory as the root.{}",
+                sp.text.trim(),
+                sandbox_dir,
+                sub_agent_prompt
+            )
+        } else {
+            format!(
             "You are TigrimOS, an AI assistant with tools for search, code execution, files, and skills.\n\
 Rules:\n\
 - Always use tools to produce real results — never just describe what you would do.\n\
@@ -821,7 +876,11 @@ Rules:\n\
 - When you generate files (charts, images, data), always describe the results in your response. Explain what each figure shows and summarize key findings. Never respond with just a greeting after completing tool work.\n\
 You have access to these tools: {}.{}",
             research_instruction, sandbox_dir, tool_list, sub_agent_prompt
-        );
+            )
+        };
+        if let Some(sp) = profile_prompt.filter(|sp| !sp.replace_base) {
+            base.push_str(&format!("\n\n=== USER INSTRUCTIONS (agent-loop profile) ===\n{}", sp.text.trim()));
+        }
 
         // Inject active project context (name/description/memory/custom instructions).
         if let Some(ref ctx) = project_ctx {
@@ -830,11 +889,28 @@ You have access to these tools: {}.{}",
             }
         }
 
-        // Append installed skills — filtered to the project's assigned skills if any.
+        // Append installed skills — filtered to the project's assigned skills
+        // if any, further narrowed by the agent-loop profile's skill filter.
         let project_skills = project_ctx.as_ref()
             .map(|c| c.skills.as_slice())
             .filter(|s| !s.is_empty());
-        let skills_block = crate::server::services::toolbox::build_enabled_skills_block_pub(project_skills).await;
+        let profile_skill_filter = loop_profile.as_deref().and_then(|p| p.skills.as_ref());
+        let skills_block = match profile_skill_filter.map(|f| f.mode.as_str()) {
+            Some("none") => String::new(),
+            Some("selected") => {
+                let selected = &profile_skill_filter.unwrap().list;
+                let effective: Vec<String> = match project_skills {
+                    Some(ps) => selected.iter().filter(|s| ps.iter().any(|p| p == *s)).cloned().collect(),
+                    None => selected.clone(),
+                };
+                if effective.is_empty() {
+                    String::new()
+                } else {
+                    crate::server::services::toolbox::build_enabled_skills_block_pub(Some(&effective)).await
+                }
+            }
+            _ => crate::server::services::toolbox::build_enabled_skills_block_pub(project_skills).await,
+        };
         if !skills_block.is_empty() {
             base.push_str(&skills_block);
         }

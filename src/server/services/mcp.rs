@@ -742,6 +742,20 @@ pub async fn get_mcp_tools() -> Vec<Value> {
         .collect()
 }
 
+/// Like get_mcp_tools, but restricted to the named servers (connection names,
+/// matching Settings.mcp_tools[].name and the mcp_{server}_{tool} prefix).
+/// None = no restriction. Used by agent-loop profiles; dispatch is unaffected
+/// — filtering only controls which tools the LLM sees.
+pub async fn get_mcp_tools_filtered(servers: Option<&[String]>) -> Vec<Value> {
+    let conns = connections().lock().await;
+    conns
+        .values()
+        .filter(|c| c.connected && !c.name.starts_with(AGENT_BROWSER_PREFIX))
+        .filter(|c| servers.map_or(true, |s| s.iter().any(|n| n == &c.name)))
+        .flat_map(|c| c.tools.clone())
+        .collect()
+}
+
 /// Check if a tool name is an MCP tool (prefixed with mcp_)
 pub fn is_mcp_tool(name: &str) -> bool {
     name.starts_with("mcp_")

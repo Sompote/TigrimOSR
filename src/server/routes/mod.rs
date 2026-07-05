@@ -6,6 +6,7 @@ pub mod skills;
 pub mod settings;
 pub mod projects;
 pub mod agents;
+pub mod agent_loops;
 pub mod terminal;
 pub mod local_files;
 pub mod python;
@@ -29,6 +30,7 @@ pub fn build_api_routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
         .nest("/settings", settings::router())
         .nest("/projects", projects::router())
         .nest("/agents", agents::router())
+        .nest("/agent-loops", agent_loops::router())
         .nest("/terminal", terminal::router())
         .nest("/local-files", local_files::router())
         .nest("/python", python::router())

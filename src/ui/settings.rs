@@ -18,6 +18,7 @@ enum SettingsSection {
     General,
     AI,
     SubAgent,
+    AgentLoop,
     McpTools,
     Plugins,
     Remote,
@@ -34,6 +35,7 @@ impl SettingsSection {
         Self::General,
         Self::AI,
         Self::SubAgent,
+        Self::AgentLoop,
         Self::McpTools,
         Self::Plugins,
         Self::Remote,
@@ -50,6 +52,7 @@ impl SettingsSection {
             Self::General => "General",
             Self::AI => "AI / API",
             Self::SubAgent => "Sub-Agent",
+            Self::AgentLoop => "Agent Loop",
             Self::McpTools => "MCP Tools",
             Self::Plugins => "Plugins",
             Self::Remote => "Remote",
@@ -151,6 +154,48 @@ pub struct SettingsView {
     router_orchestrator_model: String, // "" = use main model
     agent_config_files: Vec<String>,
     selected_agent_config: String,
+
+    // --- Agent Loop Profiles ---
+    loop_profiles: Vec<String>,
+    active_loop_profile: String, // "" = built-in behavior (no profile)
+    loop_selected_file: String,  // file currently open in the editor
+    loop_new_name: String,
+    loop_yaml_mode: bool,
+    loop_yaml_text: String,
+    loop_status_msg: Option<String>,
+    loop_needs_refresh: bool,
+    loop_tool_catalog: Vec<(String, String)>,
+    loop_skill_catalog: Vec<String>,
+    // form model
+    loop_name: String,
+    loop_description: String,
+    loop_model_model: String,
+    loop_model_api_url: String,
+    loop_model_api_key: String,
+    loop_sp_text: String,
+    loop_sp_replace_base: bool,
+    loop_tools_mode: String, // all | allowlist | denylist
+    loop_tools_checked: std::collections::HashSet<String>,
+    loop_mcp_mode: String, // all | selected | none
+    loop_mcp_checked: std::collections::HashSet<String>,
+    loop_skills_mode: String, // all | selected | none
+    loop_skills_checked: std::collections::HashSet<String>,
+    loop_max_rounds: u64,
+    loop_max_tool_calls: u64,
+    loop_temperature: f64,
+    loop_max_tokens: u64,
+    loop_reflection_enabled: bool,
+    loop_reflection_threshold: f64,
+    loop_max_reflection_retries: u64,
+    loop_checkpoint_enabled: bool,
+    loop_max_spawn_depth: u64,
+    loop_step_verification: bool,
+    loop_compact_enabled: bool,
+    loop_compact_interval: u64,
+    loop_compact_window: u64,
+    loop_compact_max_context_tokens: u64,
+    loop_compact_tool_result_max_len: u64,
+    loop_compact_model: String,
 
     // --- MCP Tools ---
     mcp_tools: Vec<McpTool>,
@@ -276,6 +321,46 @@ impl Default for SettingsView {
             router_orchestrator_model: String::new(),
             agent_config_files: Vec::new(),
             selected_agent_config: String::new(),
+
+            loop_profiles: Vec::new(),
+            active_loop_profile: String::new(),
+            loop_selected_file: String::new(),
+            loop_new_name: String::new(),
+            loop_yaml_mode: false,
+            loop_yaml_text: String::new(),
+            loop_status_msg: None,
+            loop_needs_refresh: true,
+            loop_tool_catalog: Vec::new(),
+            loop_skill_catalog: Vec::new(),
+            loop_name: String::new(),
+            loop_description: String::new(),
+            loop_model_model: String::new(),
+            loop_model_api_url: String::new(),
+            loop_model_api_key: String::new(),
+            loop_sp_text: String::new(),
+            loop_sp_replace_base: false,
+            loop_tools_mode: "all".to_string(),
+            loop_tools_checked: std::collections::HashSet::new(),
+            loop_mcp_mode: "all".to_string(),
+            loop_mcp_checked: std::collections::HashSet::new(),
+            loop_skills_mode: "all".to_string(),
+            loop_skills_checked: std::collections::HashSet::new(),
+            loop_max_rounds: 15,
+            loop_max_tool_calls: 25,
+            loop_temperature: 0.7,
+            loop_max_tokens: 81920,
+            loop_reflection_enabled: false,
+            loop_reflection_threshold: 0.7,
+            loop_max_reflection_retries: 2,
+            loop_checkpoint_enabled: true,
+            loop_max_spawn_depth: 3,
+            loop_step_verification: true,
+            loop_compact_enabled: true,
+            loop_compact_interval: 5,
+            loop_compact_window: 10,
+            loop_compact_max_context_tokens: 100_000,
+            loop_compact_tool_result_max_len: 6000,
+            loop_compact_model: String::new(),
 
             mcp_tools: Vec::new(),
             new_mcp_name: String::new(),
@@ -432,6 +517,7 @@ impl SettingsView {
                             SettingsSection::General => self.section_general(ui, vm_manager, runtime),
                             SettingsSection::AI => self.section_ai(ui, ctx, runtime),
                             SettingsSection::SubAgent => self.section_sub_agent(ui, runtime),
+                            SettingsSection::AgentLoop => self.section_agent_loop(ui, runtime),
                             SettingsSection::McpTools => self.section_mcp_tools(ui, runtime),
                             SettingsSection::Plugins => self.section_plugins(ui, ctx, runtime),
                             SettingsSection::Remote => self.section_remote(ui, runtime),
@@ -514,6 +600,10 @@ impl SettingsView {
         } else {
             self.agent_config_files = Self::scan_agent_configs();
         }
+
+        // Agent Loop profile
+        self.active_loop_profile = settings.agent_loop_profile.clone().unwrap_or_default();
+        self.loop_needs_refresh = true;
 
         // MCP Tools
         self.mcp_tools = settings.mcp_tools;
@@ -672,6 +762,9 @@ impl SettingsView {
         } else {
             Some(self.selected_agent_config.clone())
         };
+
+        // Agent Loop profile ("" = explicit built-in behavior)
+        settings.agent_loop_profile = Some(self.active_loop_profile.clone());
 
         // MCP Tools
         settings.mcp_tools = self.mcp_tools.clone();
@@ -4056,5 +4149,754 @@ impl SettingsView {
                 );
             }
         });
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Agent Loop profile editor (Settings > Agent Loop)
+// ---------------------------------------------------------------------------
+
+impl SettingsView {
+    fn scan_loop_profiles() -> Vec<String> {
+        let dir = crate::server::services::agent_loop::agent_loops_dir();
+        let mut files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".yaml") || name.ends_with(".yml") {
+                    files.push(name);
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
+    fn scan_loop_profiles_remote() -> Vec<String> {
+        let Some(rb) = crate::server::data::get_remote_backend() else {
+            return Vec::new();
+        };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        client
+            .get(format!("{}/api/agent-loops", rb.url))
+            .bearer_auth(&rb.token)
+            .send()
+            .ok()
+            .and_then(|r| r.json::<serde_json::Value>().ok())
+            .and_then(|v| v.as_array().cloned())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e["filename"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn read_loop_profile_content(filename: &str) -> Option<String> {
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_default();
+            return client
+                .get(format!("{}/api/agent-loops/{}", rb.url, filename))
+                .bearer_auth(&rb.token)
+                .send()
+                .ok()
+                .and_then(|r| r.json::<serde_json::Value>().ok())
+                .and_then(|v| v["content"].as_str().map(|s| s.to_string()));
+        }
+        std::fs::read_to_string(
+            crate::server::services::agent_loop::agent_loops_dir().join(filename),
+        )
+        .ok()
+    }
+
+    fn write_loop_profile_content(filename: &str, content: &str) -> Result<(), String> {
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            let resp = client
+                .post(format!("{}/api/agent-loops", rb.url))
+                .bearer_auth(&rb.token)
+                .json(&serde_json::json!({"filename": filename, "content": content}))
+                .send()
+                .map_err(|e| e.to_string())?;
+            if resp.status().is_success() {
+                return Ok(());
+            }
+            let err = resp
+                .json::<serde_json::Value>()
+                .ok()
+                .and_then(|v| v["error"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "Save failed".to_string());
+            return Err(err);
+        }
+        let dir = crate::server::services::agent_loop::agent_loops_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join(filename), content).map_err(|e| e.to_string())
+    }
+
+    fn refresh_loop_profiles(&mut self) {
+        if crate::server::data::get_remote_backend().is_some() {
+            self.loop_profiles = Self::scan_loop_profiles_remote();
+        } else {
+            crate::server::services::agent_loop::ensure_default_profile();
+            self.loop_profiles = Self::scan_loop_profiles();
+        }
+        self.loop_tool_catalog = crate::server::services::toolbox::tool_catalog();
+        // Installed skills for the skills filter checkboxes (local registry;
+        // remote backends still allow typing names in YAML mode).
+        self.loop_skill_catalog = std::fs::read_to_string(
+            crate::server::data::data_dir().join("skills.json"),
+        )
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.as_array().cloned())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| e["name"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+        // Open the active profile (or the first available) in the editor.
+        if self.loop_selected_file.is_empty()
+            || !self.loop_profiles.contains(&self.loop_selected_file)
+        {
+            let initial = if !self.active_loop_profile.is_empty()
+                && self.loop_profiles.contains(&self.active_loop_profile)
+            {
+                self.active_loop_profile.clone()
+            } else {
+                self.loop_profiles.first().cloned().unwrap_or_default()
+            };
+            self.loop_selected_file = initial;
+        }
+        if !self.loop_selected_file.is_empty() {
+            let file = self.loop_selected_file.clone();
+            self.open_loop_profile(&file);
+        }
+    }
+
+    fn open_loop_profile(&mut self, filename: &str) {
+        self.loop_selected_file = filename.to_string();
+        let content = Self::read_loop_profile_content(filename).unwrap_or_default();
+        self.loop_yaml_text = content.clone();
+        match serde_yaml::from_str::<crate::server::services::agent_loop::AgentLoopProfile>(&content) {
+            Ok(p) => {
+                self.populate_loop_form(&p);
+                self.loop_status_msg = None;
+            }
+            Err(e) => {
+                self.loop_status_msg = Some(format!("Error parsing {}: {}", filename, e));
+                self.loop_yaml_mode = true; // let the user fix the raw YAML
+            }
+        }
+    }
+
+    fn populate_loop_form(&mut self, p: &crate::server::services::agent_loop::AgentLoopProfile) {
+        self.loop_name = p.name.clone();
+        self.loop_description = p.description.clone();
+        let m = p.model.clone().unwrap_or_default();
+        self.loop_model_model = m.model;
+        self.loop_model_api_url = m.api_url;
+        self.loop_model_api_key = m.api_key;
+        let sp = p.system_prompt.clone().unwrap_or_default();
+        self.loop_sp_text = sp.text;
+        self.loop_sp_replace_base = sp.replace_base;
+        let tf = p.tools.clone().unwrap_or_default();
+        self.loop_tools_mode = if tf.mode.is_empty() { "all".into() } else { tf.mode };
+        self.loop_tools_checked = tf.list.into_iter().collect();
+        let mf = p.mcp.clone().unwrap_or_default();
+        self.loop_mcp_mode = if mf.mode.is_empty() { "all".into() } else { mf.mode };
+        self.loop_mcp_checked = mf.servers.into_iter().collect();
+        let sf = p.skills.clone().unwrap_or_default();
+        self.loop_skills_mode = if sf.mode.is_empty() { "all".into() } else { sf.mode };
+        self.loop_skills_checked = sf.list.into_iter().collect();
+        let k = p.loop_.clone().unwrap_or_default();
+        self.loop_max_rounds = k.max_rounds.unwrap_or(self.agent_max_turns);
+        self.loop_max_tool_calls = k.max_tool_calls.unwrap_or(self.agent_max_tool_calls);
+        self.loop_temperature = k.temperature.unwrap_or(self.agent_temperature);
+        self.loop_max_tokens = k.max_tokens.unwrap_or(self.agent_max_tokens);
+        self.loop_reflection_enabled = k.reflection_enabled.unwrap_or(self.agent_reflection_enabled);
+        self.loop_reflection_threshold = k.reflection_threshold.unwrap_or(self.agent_reflection_threshold);
+        self.loop_max_reflection_retries = k.max_reflection_retries.unwrap_or(self.agent_max_reflection_retries);
+        self.loop_checkpoint_enabled = k.checkpoint_enabled.unwrap_or(true);
+        self.loop_max_spawn_depth = k.max_spawn_depth.unwrap_or(3);
+        self.loop_step_verification = k.step_verification.unwrap_or(self.agent_step_verify_enabled);
+        let c = p.compaction.clone().unwrap_or_default();
+        self.loop_compact_enabled = c.enabled.unwrap_or(true);
+        self.loop_compact_interval = c.interval.unwrap_or(self.agent_compression_interval);
+        self.loop_compact_window = c.window.unwrap_or(10);
+        self.loop_compact_max_context_tokens = c.max_context_tokens.unwrap_or(self.agent_max_context_tokens);
+        self.loop_compact_tool_result_max_len = c.tool_result_max_len.unwrap_or(self.agent_tool_result_max_len);
+        self.loop_compact_model = c.model.unwrap_or_default();
+    }
+
+    fn loop_form_to_profile(&self) -> crate::server::services::agent_loop::AgentLoopProfile {
+        use crate::server::services::agent_loop::*;
+        let mut sorted = |set: &std::collections::HashSet<String>| -> Vec<String> {
+            let mut v: Vec<String> = set.iter().cloned().collect();
+            v.sort();
+            v
+        };
+        AgentLoopProfile {
+            name: self.loop_name.clone(),
+            description: self.loop_description.clone(),
+            model: if self.loop_model_model.trim().is_empty()
+                && self.loop_model_api_url.trim().is_empty()
+                && self.loop_model_api_key.trim().is_empty()
+            {
+                None
+            } else {
+                Some(ModelOverride {
+                    model: self.loop_model_model.trim().to_string(),
+                    api_url: self.loop_model_api_url.trim().to_string(),
+                    api_key: self.loop_model_api_key.trim().to_string(),
+                })
+            },
+            system_prompt: if self.loop_sp_text.trim().is_empty() {
+                None
+            } else {
+                Some(SystemPromptOverride {
+                    text: self.loop_sp_text.clone(),
+                    replace_base: self.loop_sp_replace_base,
+                })
+            },
+            tools: Some(ToolFilter {
+                mode: self.loop_tools_mode.clone(),
+                list: if self.loop_tools_mode == "all" { Vec::new() } else { sorted(&self.loop_tools_checked) },
+            }),
+            mcp: Some(McpFilter {
+                mode: self.loop_mcp_mode.clone(),
+                servers: if self.loop_mcp_mode == "selected" { sorted(&self.loop_mcp_checked) } else { Vec::new() },
+            }),
+            skills: Some(SkillFilter {
+                mode: self.loop_skills_mode.clone(),
+                list: if self.loop_skills_mode == "selected" { sorted(&self.loop_skills_checked) } else { Vec::new() },
+            }),
+            loop_: Some(LoopKnobs {
+                max_rounds: Some(self.loop_max_rounds),
+                max_tool_calls: Some(self.loop_max_tool_calls),
+                temperature: Some(self.loop_temperature),
+                max_tokens: Some(self.loop_max_tokens),
+                reflection_enabled: Some(self.loop_reflection_enabled),
+                reflection_threshold: Some(self.loop_reflection_threshold),
+                max_reflection_retries: Some(self.loop_max_reflection_retries),
+                checkpoint_enabled: Some(self.loop_checkpoint_enabled),
+                max_consecutive_errors: None,
+                max_error_recoveries: None,
+                max_spawn_depth: Some(self.loop_max_spawn_depth),
+                step_verification: Some(self.loop_step_verification),
+            }),
+            compaction: Some(CompactionKnobs {
+                enabled: Some(self.loop_compact_enabled),
+                interval: Some(self.loop_compact_interval),
+                window: Some(self.loop_compact_window),
+                max_context_tokens: Some(self.loop_compact_max_context_tokens),
+                tool_result_max_len: Some(self.loop_compact_tool_result_max_len),
+                model: if self.loop_compact_model.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.loop_compact_model.trim().to_string())
+                },
+            }),
+        }
+    }
+
+    fn save_loop_profile(&mut self) {
+        if self.loop_selected_file.is_empty() {
+            self.loop_status_msg = Some("Error: no profile file selected".to_string());
+            return;
+        }
+        let content = if self.loop_yaml_mode {
+            self.loop_yaml_text.clone()
+        } else {
+            match serde_yaml::to_string(&self.loop_form_to_profile()) {
+                Ok(y) => y,
+                Err(e) => {
+                    self.loop_status_msg = Some(format!("Error serializing profile: {}", e));
+                    return;
+                }
+            }
+        };
+        // Typed validation — same rules as the REST API (validate-on-save).
+        match crate::server::routes::agent_loops::validate_profile_yaml(&content) {
+            Ok((profile, warnings)) => {
+                let file = self.loop_selected_file.clone();
+                match Self::write_loop_profile_content(&file, &content) {
+                    Ok(()) => {
+                        self.loop_yaml_text = content;
+                        self.populate_loop_form(&profile);
+                        self.loop_status_msg = Some(if warnings.is_empty() {
+                            format!("Saved {}", file)
+                        } else {
+                            format!("Saved {} — warnings: {}", file, warnings.join("; "))
+                        });
+                        if !self.loop_profiles.contains(&file) {
+                            self.loop_profiles.push(file);
+                            self.loop_profiles.sort();
+                        }
+                    }
+                    Err(e) => self.loop_status_msg = Some(format!("Error saving: {}", e)),
+                }
+            }
+            Err(e) => self.loop_status_msg = Some(format!("Error: {}", e)),
+        }
+    }
+
+    fn save_active_loop_profile(&mut self, runtime: &tokio::runtime::Handle) {
+        let active = self.active_loop_profile.clone();
+        runtime.block_on(async move {
+            let mut settings = get_settings().await;
+            settings.agent_loop_profile = Some(active);
+            save_settings(&settings).await;
+        });
+    }
+
+    fn section_agent_loop(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        self.load_settings_if_needed(runtime);
+        if self.loop_needs_refresh {
+            self.loop_needs_refresh = false;
+            self.refresh_loop_profiles();
+        }
+
+        ui.add_space(8.0);
+        ui.heading("Agent Loop Profiles");
+        ui.label(
+            egui::RichText::new(
+                "Customize the agent loop as YAML profiles: allowed tools, MCP servers, skills, \
+                 model/system-prompt overrides, loop limits and context compaction. \
+                 Omitted sections inherit the built-in behavior; approval prompts always apply.",
+            )
+            .size(12.0)
+            .color(egui::Color32::from_rgb(124, 115, 104)),
+        );
+        ui.add_space(8.0);
+
+        // --- Active profile selector ---
+        ui.horizontal(|ui| {
+            ui.label("Active profile:");
+            let mut changed = false;
+            egui::ComboBox::from_id_salt("active_loop_profile")
+                .selected_text(if self.active_loop_profile.is_empty() {
+                    "(built-in — no profile)".to_string()
+                } else {
+                    self.active_loop_profile.clone()
+                })
+                .show_ui(ui, |ui| {
+                    changed |= ui
+                        .selectable_value(&mut self.active_loop_profile, String::new(), "(built-in — no profile)")
+                        .changed();
+                    for f in self.loop_profiles.clone() {
+                        changed |= ui
+                            .selectable_value(&mut self.active_loop_profile, f.clone(), f)
+                            .changed();
+                    }
+                });
+            if changed {
+                self.save_active_loop_profile(runtime);
+                self.loop_status_msg = Some(format!(
+                    "Active profile set to {}",
+                    if self.active_loop_profile.is_empty() { "(built-in)" } else { &self.active_loop_profile }
+                ));
+            }
+        });
+        ui.add_space(8.0);
+        ui.separator();
+
+        // --- Profile file picker + New / Delete / Reset default ---
+        ui.horizontal(|ui| {
+            ui.label("Edit profile:");
+            let prev = self.loop_selected_file.clone();
+            let mut pick = self.loop_selected_file.clone();
+            egui::ComboBox::from_id_salt("loop_profile_editor_file")
+                .selected_text(if pick.is_empty() { "(none)".to_string() } else { pick.clone() })
+                .show_ui(ui, |ui| {
+                    for f in self.loop_profiles.clone() {
+                        ui.selectable_value(&mut pick, f.clone(), f);
+                    }
+                });
+            if pick != prev && !pick.is_empty() {
+                self.open_loop_profile(&pick);
+            }
+
+            ui.add_space(8.0);
+            ui.label("New:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.loop_new_name)
+                    .hint_text("profile-name")
+                    .desired_width(140.0),
+            );
+            if ui.button("Create").clicked() && !self.loop_new_name.trim().is_empty() {
+                let file = crate::server::services::agent_loop::normalize_filename(
+                    &self.loop_new_name,
+                );
+                self.loop_name = self.loop_new_name.trim().trim_end_matches(".yaml").to_string();
+                self.loop_new_name.clear();
+                self.loop_selected_file = file;
+                self.loop_yaml_mode = false;
+                self.save_loop_profile();
+            }
+
+            if !self.loop_selected_file.is_empty()
+                && self.loop_selected_file != crate::server::services::agent_loop::DEFAULT_PROFILE_FILE
+                && ui
+                    .add(egui::Button::new(
+                        egui::RichText::new("Delete").color(egui::Color32::from_rgb(239, 68, 68)),
+                    ))
+                    .clicked()
+            {
+                let file = self.loop_selected_file.clone();
+                if let Some(rb) = crate::server::data::get_remote_backend() {
+                    let client = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(5))
+                        .build()
+                        .unwrap_or_default();
+                    let _ = client
+                        .delete(format!("{}/api/agent-loops/{}", rb.url, file))
+                        .bearer_auth(&rb.token)
+                        .send();
+                } else {
+                    let _ = std::fs::remove_file(
+                        crate::server::services::agent_loop::agent_loops_dir().join(&file),
+                    );
+                }
+                if self.active_loop_profile == file {
+                    self.active_loop_profile.clear();
+                    self.save_active_loop_profile(runtime);
+                }
+                self.loop_selected_file.clear();
+                self.loop_status_msg = Some(format!("Deleted {}", file));
+                self.loop_needs_refresh = true;
+            }
+
+            if ui
+                .button("Reset default")
+                .on_hover_text("Regenerate default.yaml from the current settings")
+                .clicked()
+            {
+                if crate::server::data::get_remote_backend().is_some() {
+                    let rb = crate::server::data::get_remote_backend().unwrap();
+                    let client = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(5))
+                        .build()
+                        .unwrap_or_default();
+                    let _ = client
+                        .post(format!("{}/api/agent-loops/reset-default", rb.url))
+                        .bearer_auth(&rb.token)
+                        .send();
+                } else {
+                    let settings_json = std::fs::read_to_string(
+                        crate::server::data::data_dir().join("settings.json"),
+                    )
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                    let profile = crate::server::services::agent_loop::default_profile_from_settings(&settings_json);
+                    if let Ok(yaml) = serde_yaml::to_string(&profile) {
+                        let _ = Self::write_loop_profile_content(
+                            crate::server::services::agent_loop::DEFAULT_PROFILE_FILE,
+                            &yaml,
+                        );
+                    }
+                }
+                self.loop_status_msg = Some("default.yaml regenerated from current settings".to_string());
+                self.loop_needs_refresh = true;
+            }
+        });
+
+        Self::status_label(ui, &self.loop_status_msg);
+        ui.add_space(8.0);
+
+        if self.loop_selected_file.is_empty() {
+            ui.label("No profile selected — create one above.");
+            return;
+        }
+
+        // --- Form / YAML mode toggle ---
+        ui.horizontal(|ui| {
+            let was_yaml = self.loop_yaml_mode;
+            ui.selectable_value(&mut self.loop_yaml_mode, false, "Form");
+            ui.selectable_value(&mut self.loop_yaml_mode, true, "Edit as YAML");
+            if was_yaml != self.loop_yaml_mode {
+                if self.loop_yaml_mode {
+                    // form -> YAML: regenerate text from the current form
+                    if let Ok(y) = serde_yaml::to_string(&self.loop_form_to_profile()) {
+                        self.loop_yaml_text = y;
+                    }
+                } else {
+                    // YAML -> form: re-parse; on error stay in YAML mode
+                    match serde_yaml::from_str::<crate::server::services::agent_loop::AgentLoopProfile>(&self.loop_yaml_text) {
+                        Ok(p) => {
+                            self.populate_loop_form(&p);
+                            self.loop_status_msg = None;
+                        }
+                        Err(e) => {
+                            self.loop_status_msg = Some(format!("Error: fix YAML before switching to Form: {}", e));
+                            self.loop_yaml_mode = true;
+                        }
+                    }
+                }
+            }
+            ui.add_space(12.0);
+            if Self::save_button(ui, &format!("Save {}", self.loop_selected_file)) {
+                self.save_loop_profile();
+            }
+        });
+        ui.add_space(8.0);
+
+        if self.loop_yaml_mode {
+            egui::ScrollArea::vertical()
+                .id_salt("loop_yaml_editor")
+                .max_height(420.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.loop_yaml_text)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(24),
+                    );
+                });
+            return;
+        }
+
+        // ================= Form mode =================
+        ui.horizontal(|ui| {
+            ui.label("Name:");
+            ui.add(egui::TextEdit::singleline(&mut self.loop_name).desired_width(180.0));
+            ui.label("Description:");
+            ui.add(egui::TextEdit::singleline(&mut self.loop_description).desired_width(320.0));
+        });
+        ui.add_space(8.0);
+
+        // --- Tools ---
+        egui::CollapsingHeader::new("Tools")
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Mode:");
+                    ui.selectable_value(&mut self.loop_tools_mode, "all".to_string(), "All tools");
+                    ui.selectable_value(&mut self.loop_tools_mode, "allowlist".to_string(), "Allowlist");
+                    ui.selectable_value(&mut self.loop_tools_mode, "denylist".to_string(), "Denylist");
+                });
+                if self.loop_tools_mode != "all" {
+                    ui.label(
+                        egui::RichText::new(if self.loop_tools_mode == "allowlist" {
+                            "Checked tools are ALLOWED. Coordination tools (send_task, spawn_subagent, …) are always kept while sub-agents are enabled."
+                        } else {
+                            "Checked tools are BLOCKED. Coordination tools are always kept while sub-agents are enabled."
+                        })
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(124, 115, 104)),
+                    );
+                    let catalog = self.loop_tool_catalog.clone();
+                    egui::ScrollArea::vertical()
+                        .id_salt("loop_tools_list")
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            egui::Grid::new("loop_tools_grid").num_columns(3).show(ui, |ui| {
+                                for (i, (name, desc)) in catalog.iter().enumerate() {
+                                    let mut checked = self.loop_tools_checked.contains(name);
+                                    let short = crate::util::truncate_utf8_ellipsis(desc, 60);
+                                    if ui.checkbox(&mut checked, name).on_hover_text(short).changed() {
+                                        if checked {
+                                            self.loop_tools_checked.insert(name.clone());
+                                        } else {
+                                            self.loop_tools_checked.remove(name);
+                                        }
+                                    }
+                                    if i % 3 == 2 {
+                                        ui.end_row();
+                                    }
+                                }
+                            });
+                        });
+                }
+            });
+
+        // --- MCP servers ---
+        egui::CollapsingHeader::new("MCP Servers")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Mode:");
+                    ui.selectable_value(&mut self.loop_mcp_mode, "all".to_string(), "All servers");
+                    ui.selectable_value(&mut self.loop_mcp_mode, "selected".to_string(), "Selected");
+                    ui.selectable_value(&mut self.loop_mcp_mode, "none".to_string(), "None");
+                });
+                if self.loop_mcp_mode == "selected" {
+                    let servers: Vec<String> = self.mcp_tools.iter().map(|s| s.name.clone()).collect();
+                    if servers.is_empty() {
+                        ui.label("No MCP servers configured (Settings > MCP Tools).");
+                    }
+                    for name in servers {
+                        let mut checked = self.loop_mcp_checked.contains(&name);
+                        if ui.checkbox(&mut checked, &name).changed() {
+                            if checked {
+                                self.loop_mcp_checked.insert(name.clone());
+                            } else {
+                                self.loop_mcp_checked.remove(&name);
+                            }
+                        }
+                    }
+                }
+            });
+
+        // --- Skills ---
+        egui::CollapsingHeader::new("Skills")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Mode:");
+                    ui.selectable_value(&mut self.loop_skills_mode, "all".to_string(), "All skills");
+                    ui.selectable_value(&mut self.loop_skills_mode, "selected".to_string(), "Selected");
+                    ui.selectable_value(&mut self.loop_skills_mode, "none".to_string(), "None");
+                });
+                if self.loop_skills_mode == "selected" {
+                    let skills = self.loop_skill_catalog.clone();
+                    if skills.is_empty() {
+                        ui.label("No installed skills found.");
+                    }
+                    egui::ScrollArea::vertical()
+                        .id_salt("loop_skills_list")
+                        .max_height(160.0)
+                        .show(ui, |ui| {
+                            for name in skills {
+                                let mut checked = self.loop_skills_checked.contains(&name);
+                                if ui.checkbox(&mut checked, &name).changed() {
+                                    if checked {
+                                        self.loop_skills_checked.insert(name.clone());
+                                    } else {
+                                        self.loop_skills_checked.remove(&name);
+                                    }
+                                }
+                            }
+                        });
+                }
+            });
+
+        // --- Model override ---
+        egui::CollapsingHeader::new("Model Override")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("Empty fields inherit the main AI settings.")
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(124, 115, 104)),
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Model:");
+                    ui.add(egui::TextEdit::singleline(&mut self.loop_model_model).desired_width(220.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("API URL:");
+                    ui.add(egui::TextEdit::singleline(&mut self.loop_model_api_url).desired_width(320.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("API Key:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.loop_model_api_key)
+                            .password(true)
+                            .desired_width(320.0),
+                    );
+                });
+            });
+
+        // --- System prompt ---
+        egui::CollapsingHeader::new("System Prompt")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.checkbox(
+                    &mut self.loop_sp_replace_base,
+                    "Replace built-in base prompt (skills/persona/project blocks still apply)",
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.loop_sp_text)
+                        .hint_text("Extra instructions appended to the system prompt (or replacing the base when checked)")
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(5),
+                );
+            });
+
+        // --- Loop limits & verification ---
+        egui::CollapsingHeader::new("Loop Limits & Verification")
+            .default_open(false)
+            .show(ui, |ui| {
+                egui::Grid::new("loop_knobs_grid").num_columns(4).spacing([12.0, 6.0]).show(ui, |ui| {
+                    ui.label("Max tool rounds:");
+                    ui.add(egui::DragValue::new(&mut self.loop_max_rounds).range(1..=500));
+                    ui.label("Max tool calls:");
+                    ui.add(egui::DragValue::new(&mut self.loop_max_tool_calls).range(1..=1000));
+                    ui.end_row();
+                    ui.label("Temperature:");
+                    ui.add(egui::DragValue::new(&mut self.loop_temperature).speed(0.05).range(0.0..=2.0));
+                    ui.label("Max tokens:");
+                    ui.add(egui::DragValue::new(&mut self.loop_max_tokens).range(256..=200_000));
+                    ui.end_row();
+                    ui.label("Max spawn depth:");
+                    ui.add(egui::DragValue::new(&mut self.loop_max_spawn_depth).range(1..=5));
+                    ui.label("Checkpoints:");
+                    ui.checkbox(&mut self.loop_checkpoint_enabled, "");
+                    ui.end_row();
+                });
+                ui.label(
+                    egui::RichText::new("Note: Kimi/thinking/MiniMax models always run at temperature 1.0 (provider requirement).")
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(124, 115, 104)),
+                );
+                ui.add_space(6.0);
+                ui.checkbox(
+                    &mut self.loop_reflection_enabled,
+                    "Reflection loop — judge the final answer against the objective and retry gaps",
+                );
+                if self.loop_reflection_enabled {
+                    ui.horizontal(|ui| {
+                        ui.label("Threshold:");
+                        ui.add(egui::Slider::new(&mut self.loop_reflection_threshold, 0.1..=1.0));
+                        ui.label("Max retries:");
+                        ui.add(egui::DragValue::new(&mut self.loop_max_reflection_retries).range(1..=5));
+                    });
+                }
+                ui.checkbox(
+                    &mut self.loop_step_verification,
+                    "Step verification — judge each team agent's finished step and retry failures",
+                );
+            });
+
+        // --- Compaction ---
+        egui::CollapsingHeader::new("Context Compaction")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.checkbox(
+                    &mut self.loop_compact_enabled,
+                    "Periodic compression (over-budget and overflow compaction always stay on)",
+                );
+                egui::Grid::new("loop_compact_grid").num_columns(4).spacing([12.0, 6.0]).show(ui, |ui| {
+                    ui.label("Every N rounds:");
+                    ui.add(egui::DragValue::new(&mut self.loop_compact_interval).range(1..=50));
+                    ui.label("Keep last N messages:");
+                    ui.add(egui::DragValue::new(&mut self.loop_compact_window).range(2..=100));
+                    ui.end_row();
+                    ui.label("Max context tokens:");
+                    ui.add(egui::DragValue::new(&mut self.loop_compact_max_context_tokens).range(4_000..=2_000_000));
+                    ui.label("Tool result max chars:");
+                    ui.add(egui::DragValue::new(&mut self.loop_compact_tool_result_max_len).range(500..=100_000));
+                    ui.end_row();
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Summarization model:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.loop_compact_model)
+                            .hint_text("empty = session model")
+                            .desired_width(220.0),
+                    );
+                });
+            });
     }
 }

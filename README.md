@@ -1,10 +1,11 @@
-# TigrimOSR v0.5.7
+# TigrimOSR v0.6.0
 
 **TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously.
 
 ### Why TigrimOSR?
 
 - **Multi-agent orchestration** — 6 modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator) with real protocols and a shared blackboard.
+- **Your agent loop, your rules** — customize the whole agent loop as **YAML profiles**: which tools it may call, which MCP servers and skills it sees, model & system-prompt overrides, loop limits, self-verification, and context compaction — editable from the desktop app and the web UI.
 - **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, or any OpenAI-compatible API — plus 3 local CLI agents (Claude Code, Gemini CLI, Codex) with no API keys.
 - **Full tool calling** — web search, Python, file I/O, shell, MCP servers, and the ClawHub skill marketplace. Charts, images, and docs render inline with click-to-zoom.
 - **Browser control** — let the agent drive a real **Chrome / Chromium** browser to **search Google** and read the live web directly. It's a real browser, not a paid search-API — **no API keys, free of charge, saves money**. Opt-in toggle, off by default for safety.
@@ -34,6 +35,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 ## Features
 
 - **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
+- **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist, MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification) and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
@@ -935,6 +937,81 @@ connections:
 
 ---
 
+## Agent Loop Profiles (custom agent loop)
+
+Customize the **agent loop itself** — not just the agents — with user-defined YAML
+profiles stored in `data/agent_loops/*.yaml`. A profile controls what the loop is
+allowed to do and how it behaves:
+
+| Section | Controls |
+|---------|----------|
+| `tools` | Which built-in tools the agent may call (`allowlist` / `denylist` / `all`) |
+| `mcp` | Which configured MCP servers' tools are exposed (`all` / `selected` / `none`) |
+| `skills` | Which installed skills are offered in the system prompt (`all` / `selected` / `none`) |
+| `model` | Model / API URL / API key override (empty fields inherit the main AI settings) |
+| `system_prompt` | Extra instructions — appended by default, or `replace_base: true` to swap the built-in base prompt |
+| `loop` | Max tool rounds & tool calls, temperature, max tokens, **reflection loop** (LLM judge scores the final answer and retries gaps), **step verification** (judge each team agent's step), checkpoints, max sub-agent spawn depth |
+| `compaction` | Context compression: every-N-rounds interval, kept-message window, token budget, per-tool-result trim, and an optional cheaper summarization model |
+
+**Editing:**
+- **Desktop app** — **Settings → Agent Loop**: form editor (tool/MCP/skill checkboxes, sliders) plus a raw **Edit as YAML** mode with validate-on-save.
+- **Web / mobile / headless** — **Settings → Agent Loop** tab in the web UI: active-profile picker, YAML editor with server-side validation, and a catalog of all tool/MCP/skill names.
+- **REST** — `GET/POST/DELETE /api/agent-loops`, `GET /api/agent-loops/catalog`, `POST /api/agent-loops/reset-default`.
+
+**Example:**
+
+```yaml
+name: research-lite
+description: Web research only — no shell, only the browser MCP server
+tools:
+  mode: allowlist            # allowlist | denylist | all
+  list: [web_search, fetch_url, read_file, write_file, run_python, list_files]
+mcp:
+  mode: selected             # all | selected | none
+  servers: [browser]
+skills:
+  mode: selected             # all | selected | none
+  list: [web-search]
+model:                       # omit to inherit the main AI settings
+  model: claude-sonnet-4-20250514
+system_prompt:
+  text: |
+    Answer in Thai. Cite every source URL.
+  replace_base: false        # false = appended to the built-in prompt
+loop:
+  max_rounds: 20
+  temperature: 0.4
+  reflection_enabled: true   # judge the final answer, retry gaps
+  reflection_threshold: 0.8
+  step_verification: true    # judge each team agent's finished step
+compaction:
+  enabled: true              # periodic compression (safety compaction always stays on)
+  interval: 5                # compress every N rounds
+  window: 10                 # keep the last N messages uncompressed
+  max_context_tokens: 100000
+  model: deepseek-chat       # optional cheaper summarizer
+```
+
+**How it behaves:**
+
+- **`default.yaml` mirrors your current settings** — seeded automatically on first
+  start and selected as the active profile, so nothing changes until you edit it.
+  **Reset default** regenerates it from live settings at any time.
+- **Omitted sections inherit** the built-in behavior — an empty profile is a no-op.
+- **Per-agent overrides in team YAML** — any agent in `data/agents/*.yaml` can carry
+  its own `tools:`, `mcp_servers:`, `skills:`, `loop:`, `compaction:`, and
+  `system_prompt:` fields; `spawn_subagent` children inherit the parent's profile
+  unless they define their own.
+- **Per-project pinning** — a project's agent override can pin its own profile;
+  the web chat also accepts a per-request `agent_loop_profile`.
+- **Safety is not bypassable** — coordination tools (`send_task`, `wait_result`,
+  `spawn_subagent`, …) are never removed while sub-agents are enabled, tool-approval
+  prompts still apply regardless of the profile, over-budget/overflow context
+  compaction always stays on, and checkpoints refuse to resume under a different
+  profile than the one they were saved with.
+
+---
+
 ## Plugin System
 
 TigrimOS supports a **zip-based plugin system** that bundles skills, MCP servers, agent configs, and service connectors into a single distributable package. Install one zip — get everything registered automatically. From the UI: **Settings → Plugins → Install Plugin**.
@@ -1337,6 +1414,17 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 ---
 
 ## Changelog
+
+### v0.6.0
+
+- **Agent Loop Profiles (custom agent loop)** — Customize the agent loop itself with user-defined **YAML profiles** in `data/agent_loops/`: tool **allowlist/denylist**, **MCP server** and **skill** selection, **model + system-prompt overrides** (append or replace-base), loop knobs (max rounds/tool calls, temperature, max tokens, sub-agent spawn depth, checkpoints) and **context compaction** (interval, window, token budget, optional cheaper summarization model). Omitted sections inherit the built-in behavior. See [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop).
+- **Seeded `default.yaml`** — On first start the server seeds `agent_loops/default.yaml` from your **current settings** (a behavior-identical mirror) and selects it as the active profile, so nothing changes until you edit it. A **Reset default** button regenerates it from live settings.
+- **Native editor** — New **Settings → Agent Loop** section in the desktop app: form editor with tool/MCP/skill checkboxes, model & prompt fields, loop/verification/compaction controls, plus a raw **Edit as YAML** mode with typed validate-on-save (bad YAML is rejected with the error inline; unknown tool names surface as warnings).
+- **Web/mobile editor** — New **Agent Loop** tab in the remote web UI: active-profile picker (saves instantly), YAML editor with server-side validation, create/delete/reset-default, and a catalog listing every tool (protected ones marked), MCP server, and installed skill.
+- **Verification loops exposed** — The **reflection loop** (an LLM judge scores the final answer against the objective and re-enters the loop with the gap list) and **realtime step verification** (judge each team agent's finished step, retry failures) are now user-tunable per profile (`reflection_enabled` / `reflection_threshold` / `max_reflection_retries` / `step_verification`).
+- **Per-agent overrides in team YAML** — Agents in `data/agents/*.yaml` can carry their own `tools:`, `mcp_servers:`, `skills:`, `loop:`, `compaction:`, and `system_prompt:` fields; `spawn_subagent` children inherit the parent's profile unless they define their own. Projects can pin a profile via their agent override, and the web chat accepts a per-request `agent_loop_profile`.
+- **Safety guarantees** — Profiles cannot brick or weaken the system: coordination tools (`send_task`, `wait_result`, `spawn_subagent`, …) are never removed while sub-agents are enabled; **tool-approval prompts still apply** regardless of profile; over-budget and overflow context compaction stay always-on; checkpoints record the profile and **refuse to resume under a different one** (no cross-profile transcript hijacking); reasoning-model temperature pinning still wins over profile temperature.
+- **REST API** — New `/api/agent-loops` endpoints (list/get/save/delete), `/api/agent-loops/catalog` (tools + MCP servers + skills for editors), and `/api/agent-loops/reset-default`.
 
 ### v0.5.7
 

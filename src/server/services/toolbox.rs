@@ -424,6 +424,8 @@ pub struct SubAgentConfig {
     // --- Router mode only (empty/ignored in every other mode) ---
     pub model_pool: Vec<Value>,        // serialized ModelPoolEntry list (id/label/model/api_url/api_key/tier/strengths)
     pub router_tier: String,           // "fast" | "ultra"; "" outside router mode
+    // --- User agent-loop profile (None = built-in behavior) ---
+    pub loop_profile: Option<Arc<crate::server::services::agent_loop::AgentLoopProfile>>,
 }
 
 impl Default for SubAgentConfig {
@@ -443,8 +445,33 @@ impl Default for SubAgentConfig {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             model_pool: Vec::new(),
             router_tier: String::new(),
+            loop_profile: None,
         }
     }
+}
+
+/// Effective max sub-agent recursion depth: profile knob clamped to 1..=5, default 3.
+pub fn effective_max_spawn_depth(sub_agent: &SubAgentConfig) -> usize {
+    sub_agent
+        .loop_profile
+        .as_deref()
+        .and_then(|p| p.loop_.as_ref())
+        .and_then(|l| l.max_spawn_depth)
+        .map(|d| (d as usize).clamp(1, 5))
+        .unwrap_or(3)
+}
+
+/// Tools the profile filter must never remove while orchestration is active,
+/// so a user profile cannot brick swarm/router coordination.
+pub fn is_protected_tool(name: &str, sub_agent: &SubAgentConfig) -> bool {
+    if !sub_agent.enabled {
+        return false;
+    }
+    matches!(
+        name,
+        "send_task" | "wait_result" | "check_agents" | "create_architecture" | "select_swarm" | "spawn_subagent"
+    ) || name.starts_with("proto_")
+        || name.starts_with("bb_")
 }
 
 // ---------------------------------------------------------------------------
@@ -1213,7 +1240,18 @@ async fn realtime_agent_loop(
     let agent_api_key = agent_def.get("api_key").and_then(|v| v.as_str())
         .filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| api_key.clone());
 
+    // Per-agent loop profile from optional YAML fields (tools/mcp_servers/
+    // skills/loop/compaction/system_prompt). Realtime agents get ONLY their own
+    // YAML fields — the main session's profile governs the orchestrator.
+    let agent_profile = crate::server::services::agent_loop::profile_from_agent_def(&agent_def).map(Arc::new);
+
     let mut system_prompt = build_realtime_agent_prompt(&agent_def, &system_config);
+    if let Some(sp) = agent_profile.as_deref().and_then(|p| p.system_prompt.as_ref()) {
+        if !sp.text.trim().is_empty() {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&sp.text);
+        }
+    }
 
     // Advertise enabled skills (incl. auto-generated) — same block the
     // orchestrator sees, so realtime agents can discover newly approved skills.
@@ -1371,6 +1409,7 @@ async fn realtime_agent_loop(
             agent_id: agent_id.clone(),
             agent_role: role.to_string(),
             cancel_flag: cancel_flag.clone(),
+            loop_profile: agent_profile.clone(),
             ..SubAgentConfig::default()
         };
 
@@ -1426,8 +1465,13 @@ async fn realtime_agent_loop(
 
         // Step verification: judge each finished step against its assigned
         // task; on failure, retry the same agent with the judge's gap list.
+        // Per-agent profile knob wins over the global setting.
         let vsettings = load_agent_settings();
-        let step_verify = vsettings["agentStepVerifyEnabled"].as_bool().unwrap_or(true);
+        let step_verify = agent_profile
+            .as_deref()
+            .and_then(|p| p.loop_.as_ref())
+            .and_then(|l| l.step_verification)
+            .unwrap_or_else(|| vsettings["agentStepVerifyEnabled"].as_bool().unwrap_or(true));
         let verify_threshold = vsettings["agentStepVerifyThreshold"].as_f64().unwrap_or(0.7);
         let verify_max_retries = vsettings["agentStepVerifyMaxRetries"].as_u64().unwrap_or(1) as usize;
 
@@ -2382,6 +2426,20 @@ INSTRUCTIONS:
 // Tool definitions (OpenAI function-calling format)
 // ---------------------------------------------------------------------------
 
+/// (name, description) of every base tool — for agent-loop profile editors.
+pub fn tool_catalog() -> Vec<(String, String)> {
+    tool_definitions()
+        .iter()
+        .filter_map(|t| {
+            let f = t.get("function")?;
+            Some((
+                f.get("name")?.as_str()?.to_string(),
+                f.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+            ))
+        })
+        .collect()
+}
+
 pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
@@ -3041,7 +3099,7 @@ fn spawn_subagent_tool(agent_list: &str) -> Value {
 /// Build tool list dynamically based on mode and whether a session has been activated.
 pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, session_activated: bool) -> Vec<Value> {
     let mut tools = tool_definitions();
-    if !sub_agent.enabled || sub_agent.depth >= 3 {
+    if !sub_agent.enabled || sub_agent.depth >= effective_max_spawn_depth(sub_agent) {
         return tools;
     }
     // Remove CLI agent tools from swarm modes — agents should use send_task/spawn_subagent,
@@ -5856,8 +5914,9 @@ fn exec_spawn_subagent(
         return json!({"ok": false, "error": format!("Unknown agent: {}. Available: {:?}", agent_id, sub_agent.agent_ids)});
     }
 
-    if sub_agent.depth >= 3 {
-        return json!({"ok": false, "error": "Max sub-agent recursion depth reached (3)"});
+    let max_spawn_depth = effective_max_spawn_depth(sub_agent);
+    if sub_agent.depth >= max_spawn_depth {
+        return json!({"ok": false, "error": format!("Max sub-agent recursion depth reached ({})", max_spawn_depth)});
     }
 
     info!("[SubAgent] Spawning agent '{}' (depth={}) for task: {}", agent_id, sub_agent.depth, crate::util::truncate_utf8(&task, 80));
@@ -5928,6 +5987,17 @@ fn exec_spawn_subagent(
     // Build system prompt for this agent
     let mut system_prompt = build_agent_system_prompt(&agent_def, &yaml_val, &available_targets);
 
+    // Per-agent loop profile from the YAML definition (tools/mcp_servers/loop/
+    // system_prompt); falls back to inheriting the parent's profile.
+    let agent_profile = crate::server::services::agent_loop::profile_from_agent_def(&agent_def);
+    if let Some(sp) = agent_profile.as_ref().and_then(|p| p.system_prompt.as_ref()) {
+        if !sp.text.trim().is_empty() {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&sp.text);
+        }
+    }
+    let child_profile = agent_profile.map(Arc::new).or_else(|| sub_agent.loop_profile.clone());
+
     // Advertise enabled skills so sub-agents can discover them without calling list_skills.
     match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA), None).await {
         block if !block.is_empty() => system_prompt.push_str(&block),
@@ -5959,6 +6029,7 @@ fn exec_spawn_subagent(
         cancel_flag: sub_agent.cancel_flag.clone(),
         model_pool: sub_agent.model_pool.clone(),
         router_tier: sub_agent.router_tier.clone(),
+        loop_profile: child_profile,
     };
 
     // Recursive call — propagate ToolCall/ToolResult to parent UI (drop TextChunk to avoid mangling main text)
@@ -7896,6 +7967,7 @@ async fn save_checkpoint(
     consecutive_errors: usize,
     early_content: &str,
     conversation_key: &str,
+    profile_key: &str,
 ) {
     if session_id.is_empty() { return; }
     let dir = crate::server::data::data_dir().join("checkpoints");
@@ -7938,6 +8010,7 @@ async fn save_checkpoint(
         "consecutiveErrors": consecutive_errors,
         "earlyContent": if early_content.is_empty() { Value::Null } else { json!(early_content) },
         "conversationKey": conversation_key,
+        "profile": profile_key,
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
@@ -7954,6 +8027,7 @@ struct LocalCheckpoint {
     consecutive_errors: usize,
     early_content: Option<String>,
     conversation_key: String,
+    profile_key: String,
     timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -7975,6 +8049,7 @@ async fn load_checkpoint(session_id: &str) -> Option<LocalCheckpoint> {
         consecutive_errors: v["consecutiveErrors"].as_u64().unwrap_or(0) as usize,
         early_content: v["earlyContent"].as_str().map(|s| s.to_string()),
         conversation_key: v["conversationKey"].as_str().unwrap_or("").to_string(),
+        profile_key: v["profile"].as_str().unwrap_or("").to_string(),
         timestamp: v["timestamp"].as_str()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|t| t.with_timezone(&chrono::Utc)),
@@ -8045,8 +8120,28 @@ async fn call_with_tools_inner(
         tool_definitions()
     };
 
-    // Inject MCP tools from connected servers
-    let mcp_tools = mcp::get_mcp_tools().await;
+    // Profile tool filter: intersect AFTER the mode-based list so swarm/router
+    // invariants hold. Protected coordination tools are never removed.
+    if let Some(tf) = sub_agent.loop_profile.as_deref().and_then(|p| p.tools.as_ref()) {
+        let before = tools.len();
+        tools.retain(|t| {
+            let name = t["function"]["name"].as_str().unwrap_or("");
+            is_protected_tool(name, &sub_agent) || tf.allows(name)
+        });
+        if tools.len() != before {
+            info!("[call_with_tools] profile tool filter ({}): {} -> {} tools: {}",
+                tf.mode, before, tools.len(),
+                tools.iter().filter_map(|td| td["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+        }
+    }
+
+    // Inject MCP tools from connected servers — filtered by the profile's MCP
+    // server selection (all / selected / none).
+    let mcp_tools = match sub_agent.loop_profile.as_deref().and_then(|p| p.mcp.as_ref()) {
+        Some(m) if m.mode == "none" => Vec::new(),
+        Some(m) if m.mode == "selected" => mcp::get_mcp_tools_filtered(Some(&m.servers)).await,
+        _ => mcp::get_mcp_tools().await,
+    };
     if !mcp_tools.is_empty() {
         info!("[call_with_tools] Adding {} MCP tool(s): {}", mcp_tools.len(),
             mcp_tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
@@ -8055,12 +8150,19 @@ async fn call_with_tools_inner(
 
     // Orchestrators have the same tools as workers — they decide when to delegate vs do directly.
 
-    // Load settings — realtime agents get higher limits since orchestrators need many rounds
+    // Load settings — realtime agents get higher limits since orchestrators need many rounds.
+    // Knob precedence: agent-loop profile > settings.json keys > compiled defaults.
     let settings = load_agent_settings();
-    let base_max_rounds = settings["agentMaxToolRounds"].as_u64().unwrap_or(DEFAULT_MAX_ROUNDS as u64) as usize;
-    let base_max_tool_calls = settings["agentMaxToolCalls"].as_u64().unwrap_or(DEFAULT_MAX_TOOL_CALLS as u64) as usize;
+    let knobs = sub_agent.loop_profile.as_deref().and_then(|p| p.loop_.clone()).unwrap_or_default();
+    let compaction = sub_agent.loop_profile.as_deref().and_then(|p| p.compaction.clone()).unwrap_or_default();
+    let base_max_rounds = knobs.max_rounds.map(|v| v as usize)
+        .unwrap_or_else(|| settings["agentMaxToolRounds"].as_u64().unwrap_or(DEFAULT_MAX_ROUNDS as u64) as usize);
+    let base_max_tool_calls = knobs.max_tool_calls.map(|v| v as usize)
+        .unwrap_or_else(|| settings["agentMaxToolCalls"].as_u64().unwrap_or(DEFAULT_MAX_TOOL_CALLS as u64) as usize);
     let is_multi_agent_coordinator = !realtime && sub_agent.enabled && !sub_agent.agent_ids.is_empty();
     let is_realtime_delegator = realtime && sub_agent.enabled && !sub_agent.agent_ids.is_empty();
+    // Coordinator floors stay on top of profile values: a profile can raise
+    // rounds but cannot starve an active orchestrator.
     let max_rounds = if is_realtime_delegator { base_max_rounds.max(50) }
         else if realtime { base_max_rounds.max(30) }
         else if is_multi_agent_coordinator { base_max_rounds.max(40) }
@@ -8069,18 +8171,39 @@ async fn call_with_tools_inner(
         else if realtime { base_max_tool_calls.max(60) }
         else if is_multi_agent_coordinator { base_max_tool_calls.max(80) }
         else { base_max_tool_calls };
-    let max_consecutive_errors = settings["agentMaxConsecutiveErrors"].as_u64().unwrap_or(DEFAULT_MAX_CONSECUTIVE_ERRORS as u64) as usize;
-    let max_error_recoveries = settings["agentMaxErrorRecoveries"].as_u64().unwrap_or(DEFAULT_MAX_ERROR_RECOVERIES as u64) as usize;
-    let compression_interval = settings["agentCompressionInterval"].as_u64().unwrap_or(DEFAULT_COMPRESSION_INTERVAL as u64) as usize;
-    let compression_window = settings["agentCompressionWindow"].as_u64().unwrap_or(DEFAULT_COMPRESSION_WINDOW as u64) as usize;
-    let max_context_tokens = settings["agentMaxContextTokens"].as_u64().unwrap_or(DEFAULT_MAX_CONTEXT_TOKENS as u64) as usize;
-    let temperature = settings["agentTemperature"].as_f64().unwrap_or(0.7);
-    let max_tokens = settings["agentMaxTokens"].as_u64().unwrap_or(81920);
-    let reflection_enabled = settings["agentReflectionEnabled"].as_bool().unwrap_or(false);
-    let eval_threshold = settings["agentReflectionThreshold"].as_f64().unwrap_or(0.7);
-    let max_reflection_retries = settings["agentMaxReflectionRetries"].as_u64().unwrap_or(2) as usize;
-    let tool_result_max_len = settings["agentToolResultMaxLen"].as_u64().unwrap_or(6000).min(100_000) as usize;
-    let checkpoint_enabled = settings["agentCheckpointEnabled"].as_bool().unwrap_or(true);
+    let max_consecutive_errors = knobs.max_consecutive_errors.map(|v| v as usize)
+        .unwrap_or_else(|| settings["agentMaxConsecutiveErrors"].as_u64().unwrap_or(DEFAULT_MAX_CONSECUTIVE_ERRORS as u64) as usize);
+    let max_error_recoveries = knobs.max_error_recoveries.map(|v| v as usize)
+        .unwrap_or_else(|| settings["agentMaxErrorRecoveries"].as_u64().unwrap_or(DEFAULT_MAX_ERROR_RECOVERIES as u64) as usize);
+    let compression_interval = compaction.interval.map(|v| v as usize)
+        .unwrap_or_else(|| settings["agentCompressionInterval"].as_u64().unwrap_or(DEFAULT_COMPRESSION_INTERVAL as u64) as usize)
+        .max(1);
+    let compression_window = compaction.window.map(|v| v as usize)
+        .unwrap_or_else(|| settings["agentCompressionWindow"].as_u64().unwrap_or(DEFAULT_COMPRESSION_WINDOW as u64) as usize);
+    let max_context_tokens = compaction.max_context_tokens.map(|v| v as usize)
+        .unwrap_or_else(|| settings["agentMaxContextTokens"].as_u64().unwrap_or(DEFAULT_MAX_CONTEXT_TOKENS as u64) as usize);
+    // false disables PERIODIC compression only — proactive over-budget and
+    // emergency overflow compaction stay always-on so long sessions recover.
+    let periodic_compaction_enabled = compaction.enabled.unwrap_or(true);
+    let temperature = knobs.temperature
+        .unwrap_or_else(|| settings["agentTemperature"].as_f64().unwrap_or(0.7));
+    let max_tokens = knobs.max_tokens
+        .unwrap_or_else(|| settings["agentMaxTokens"].as_u64().unwrap_or(81920));
+    let reflection_enabled = knobs.reflection_enabled
+        .unwrap_or_else(|| settings["agentReflectionEnabled"].as_bool().unwrap_or(false));
+    let eval_threshold = knobs.reflection_threshold
+        .unwrap_or_else(|| settings["agentReflectionThreshold"].as_f64().unwrap_or(0.7));
+    let max_reflection_retries = knobs.max_reflection_retries.map(|v| v as usize)
+        .unwrap_or_else(|| settings["agentMaxReflectionRetries"].as_u64().unwrap_or(2) as usize);
+    let tool_result_max_len = compaction.tool_result_max_len
+        .unwrap_or_else(|| settings["agentToolResultMaxLen"].as_u64().unwrap_or(6000))
+        .min(100_000) as usize;
+    let checkpoint_enabled = knobs.checkpoint_enabled
+        .unwrap_or_else(|| settings["agentCheckpointEnabled"].as_bool().unwrap_or(true));
+    // Dedicated summarization model: profile > settings > session model.
+    let compression_model: Option<String> = compaction.model.clone().filter(|m| !m.trim().is_empty())
+        .or_else(|| settings["agentCompressionModel"].as_str().filter(|m| !m.trim().is_empty()).map(|m| m.to_string()));
+    let compression_model_ref: &str = compression_model.as_deref().unwrap_or(model);
 
     // --- Checkpoint resume (tiger_cowork: try to resume from checkpoint) ---
     let mut all_messages = Vec::new();
@@ -8110,13 +8233,18 @@ async fn call_with_tools_inner(
         .map(|m| content_to_text(&m["content"]).chars().take(300).collect())
         .unwrap_or_default();
 
+    // A checkpoint saved under a different agent-loop profile carries a
+    // transcript built with different tools/prompt — never resume it.
+    let profile_key: String = sub_agent.loop_profile.as_deref().map(|p| p.name.clone()).unwrap_or_default();
+
     if checkpoint_enabled && !sub_agent.session_id.is_empty() {
         if let Some(checkpoint) = load_checkpoint(&sub_agent.session_id).await {
             let age_ok = checkpoint.timestamp
                 .map(|t| chrono::Utc::now() - t < chrono::Duration::hours(2))
                 .unwrap_or(false);
             let key_ok = !conversation_key.is_empty()
-                && checkpoint.conversation_key == conversation_key;
+                && checkpoint.conversation_key == conversation_key
+                && checkpoint.profile_key == profile_key;
             if age_ok && key_ok {
                 info!("[ToolLoop] Resuming from checkpoint at round {}", checkpoint.round);
                 all_messages = checkpoint.messages;
@@ -8172,7 +8300,7 @@ async fn call_with_tools_inner(
                 save_checkpoint(
                     &sub_agent.session_id, round, &all_messages, &tool_records,
                     total_tool_calls, &collected_files, &tool_call_history,
-                    consecutive_errors, &early_content, &conversation_key,
+                    consecutive_errors, &early_content, &conversation_key, &profile_key,
                 ).await;
             }
             let content = if early_content.is_empty() {
@@ -8191,10 +8319,11 @@ async fn call_with_tools_inner(
         info!("Tool loop round {}/{} — {} messages, ~{} chars (~{} tokens)", round + 1, max_rounds, all_messages.len(), ctx_chars, ctx_chars / 4);
 
         // --- Context compression ---
-        // Periodic compression every N rounds
-        if round > 0 && round % compression_interval == 0 {
+        // Periodic compression every N rounds (profile can disable this — the
+        // proactive and overflow paths below always stay on).
+        if periodic_compaction_enabled && round > 0 && round % compression_interval == 0 {
             let compressed = compact::compress_older_messages(
-                &all_messages, compression_window, api_key, api_url, model, None,
+                &all_messages, compression_window, api_key, api_url, compression_model_ref, None,
             ).await;
             if compressed.len() < all_messages.len() {
                 info!("[ToolLoop] Periodic compression: {} -> {} messages", all_messages.len(), compressed.len());
@@ -8207,7 +8336,7 @@ async fn call_with_tools_inner(
         if estimated_tokens > max_context_tokens {
             info!("[ToolLoop] Context ~{} tokens exceeds limit {} — compacting...", estimated_tokens, max_context_tokens);
             let compressed = compact::compress_older_messages(
-                &all_messages, compression_window.min(6), api_key, api_url, model, None,
+                &all_messages, compression_window.min(6), api_key, api_url, compression_model_ref, None,
             ).await;
             if compressed.len() < all_messages.len() {
                 all_messages = compressed;
@@ -8233,7 +8362,7 @@ async fn call_with_tools_inner(
             save_checkpoint(
                 &sub_agent.session_id, round, &all_messages, &tool_records,
                 total_tool_calls, &collected_files, &tool_call_history,
-                consecutive_errors, &early_content, &conversation_key,
+                consecutive_errors, &early_content, &conversation_key, &profile_key,
             ).await;
         }
 
@@ -8257,7 +8386,7 @@ async fn call_with_tools_inner(
                         info!("[ToolLoop] Context overflow detected — compressing before retry (attempt {}/{})...", llm_retry + 1, LLM_MAX_RETRIES);
                         let force_opts = compact::CompactOptions { force: true };
                         let compressed = compact::compress_older_messages(
-                            &all_messages, compression_window.min(6), api_key, api_url, model, Some(&force_opts),
+                            &all_messages, compression_window.min(6), api_key, api_url, compression_model_ref, Some(&force_opts),
                         ).await;
                         if compressed.len() < all_messages.len() {
                             all_messages = compact::validate_message_structure(&compressed).messages;
@@ -8353,7 +8482,7 @@ async fn call_with_tools_inner(
                 info!("[ToolLoop] Context overflow in response — compressing and retrying...");
                 let force_opts2 = compact::CompactOptions { force: true };
                 let compressed = compact::compress_older_messages(
-                    &all_messages, compression_window.min(6), api_key, api_url, model, Some(&force_opts2),
+                    &all_messages, compression_window.min(6), api_key, api_url, compression_model_ref, Some(&force_opts2),
                 ).await;
                 if compressed.len() < all_messages.len() {
                     all_messages = compact::validate_message_structure(&compressed).messages;

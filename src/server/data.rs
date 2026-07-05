@@ -502,6 +502,10 @@ pub struct Settings {
     pub sub_agent_model: Option<String>,
     #[serde(rename = "subAgentConfigFile", skip_serializing_if = "Option::is_none")]
     pub sub_agent_config_file: Option<String>,
+    /// Active agent-loop profile filename in data_dir()/agent_loops/.
+    /// None/"" = built-in loop behavior.
+    #[serde(rename = "agentLoopProfile", skip_serializing_if = "Option::is_none")]
+    pub agent_loop_profile: Option<String>,
     #[serde(rename = "modelPool", skip_serializing_if = "Option::is_none")]
     pub model_pool: Option<Vec<ModelPoolEntry>>,
     #[serde(rename = "routerTier", skip_serializing_if = "Option::is_none")]
@@ -637,6 +641,11 @@ pub async fn get_settings() -> Settings {
     if settings.browser_engine.is_none() {
         settings.browser_engine = Some("chrome".to_string());
     }
+    // Default to the seeded agent-loop profile (behavior-identical mirror of
+    // the built-in loop). "" stays as an explicit "no profile" user choice.
+    if settings.agent_loop_profile.is_none() {
+        settings.agent_loop_profile = Some("default.yaml".to_string());
+    }
     // browser_headless intentionally left None by default: None = follow the
     // process --headless flag (legacy). Only an explicit Some(false)/Some(true)
     // overrides the browser's headless mode independently of the server UI.
@@ -687,6 +696,8 @@ pub struct AgentOverride {
     pub sub_agent_mode: Option<String>,
     #[serde(rename = "subAgentConfigFile", skip_serializing_if = "Option::is_none")]
     pub sub_agent_config_file: Option<String>,
+    #[serde(rename = "agentLoopProfile", skip_serializing_if = "Option::is_none")]
+    pub agent_loop_profile: Option<String>,
     #[serde(rename = "autoArchitectureType", skip_serializing_if = "Option::is_none")]
     pub auto_architecture_type: Option<String>,
     #[serde(rename = "autoAgentCount", skip_serializing_if = "Option::is_none")]

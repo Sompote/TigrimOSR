@@ -769,6 +769,49 @@ impl ChatView {
             format!("{}/chat/completions", raw_url.trim_end_matches('/'))
         };
 
+        // Agent-loop profile: project override > settings. The model override
+        // applies here, BEFORE router-orchestrator resolution, so an explicit
+        // routerOrchestratorModel setting still wins in router mode.
+        let loop_profile = {
+            let project_profile = self.selected_project_id.as_ref().and_then(|pid| {
+                cached_projects.iter().find(|p| p.id == *pid).and_then(|p| {
+                    p.agent_override.as_ref().and_then(|ov| {
+                        if ov.enabled.unwrap_or(false) {
+                            ov.agent_loop_profile.clone().filter(|s| !s.is_empty())
+                        } else {
+                            None
+                        }
+                    })
+                })
+            });
+            crate::server::services::agent_loop::resolve_active_profile(
+                settings.agent_loop_profile.as_deref(),
+                project_profile.as_deref(),
+            )
+            .map(std::sync::Arc::new)
+        };
+        let (mut api_key, mut model, mut api_url) = (api_key, model, api_url);
+        if let Some(m) = loop_profile.as_deref().and_then(|p| p.model.as_ref()) {
+            if !m.model.trim().is_empty() {
+                model = m.model.trim().to_string();
+            }
+            if !m.api_key.trim().is_empty() {
+                api_key = m.api_key.trim().to_string();
+            }
+            if !m.api_url.trim().is_empty() {
+                let raw = m.api_url.trim().to_string();
+                api_url = if raw.starts_with("claude-code")
+                    || raw.starts_with("gemini-cli")
+                    || raw.starts_with("codex-cli")
+                    || raw.ends_with("/chat/completions")
+                {
+                    raw
+                } else {
+                    format!("{}/chat/completions", raw.trim_end_matches('/'))
+                };
+            }
+        }
+
         // Use project's working folder if available, otherwise global sandbox
         let sandbox_dir = {
             // The project filter dropdown is the primary source of truth.
@@ -989,9 +1032,14 @@ impl ChatView {
                     cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     model_pool: router_pool,
                     router_tier,
+                    loop_profile: loop_profile.clone(),
                 }
             } else {
-                SubAgentConfig::default()
+                // Profile applies to plain single-agent chat too (tool filtering).
+                SubAgentConfig {
+                    loop_profile: loop_profile.clone(),
+                    ..SubAgentConfig::default()
+                }
             }
         };
 
@@ -1150,7 +1198,22 @@ Only use your own tools (web_search, run_python, etc.) for quick lookups or task
             _ => "web_search, fetch_url, run_python, run_shell, read_file, write_file, list_files, list_skills, load_skill, spawn_subagent",
         };
 
-        let base_system = format!(
+        // Profile system-prompt override: replace_base swaps only the hardcoded
+        // base text (orchestration instructions, skills/SOUL/project blocks
+        // still apply); otherwise the profile text is appended after the base.
+        let profile_prompt = loop_profile
+            .as_deref()
+            .and_then(|p| p.system_prompt.as_ref())
+            .filter(|sp| !sp.text.trim().is_empty());
+        let mut base_system = if let Some(sp) = profile_prompt.filter(|sp| sp.replace_base) {
+            format!(
+                "{}\n\nYour working directory is the sandbox folder '{}'. All file operations use this directory as the root.{}",
+                sp.text.trim(),
+                sandbox_dir,
+                sub_agent_prompt
+            )
+        } else {
+            format!(
             "You are TigrimOS, an AI assistant with tools for search, code execution, files, and skills.\n\
 Rules:\n\
 - Always use tools to produce real results — never just describe what you would do.\n\
@@ -1165,7 +1228,12 @@ Rules:\n\
 - Use run_shell for system commands.\n\
 You have access to these tools: {}.{}",
             research_instruction, sandbox_dir, tool_list, sub_agent_prompt
-        );
+            )
+        };
+        if let Some(sp) = profile_prompt.filter(|sp| !sp.replace_base) {
+            base_system.push_str(&format!("\n\n=== USER INSTRUCTIONS (agent-loop profile) ===\n{}", sp.text.trim()));
+        }
+        let base_system = base_system;
         // Resolve project skill filter — if a project is selected and has skills assigned,
         // only those skills will be injected into the prompt.
         let project_skill_ids: Option<Vec<String>> = self.selected_project_id.as_ref().and_then(|pid| {
@@ -1174,11 +1242,30 @@ You have access to these tools: {}.{}",
                 if p.skills.is_empty() { None } else { Some(p.skills.clone()) }
             })
         });
-        let skills_block = runtime.block_on(
-            crate::server::services::toolbox::build_enabled_skills_block_pub(
-                project_skill_ids.as_deref()
-            )
-        );
+        // Profile skill filter narrows the block further (none / selected / all).
+        let profile_skill_filter = loop_profile.as_deref().and_then(|p| p.skills.as_ref());
+        let skills_block = match profile_skill_filter.map(|f| f.mode.as_str()) {
+            Some("none") => String::new(),
+            Some("selected") => {
+                let selected = &profile_skill_filter.unwrap().list;
+                let effective: Vec<String> = match project_skill_ids.as_deref() {
+                    Some(ps) => selected.iter().filter(|s| ps.iter().any(|p| p == *s)).cloned().collect(),
+                    None => selected.clone(),
+                };
+                if effective.is_empty() {
+                    String::new()
+                } else {
+                    runtime.block_on(
+                        crate::server::services::toolbox::build_enabled_skills_block_pub(Some(&effective))
+                    )
+                }
+            }
+            _ => runtime.block_on(
+                crate::server::services::toolbox::build_enabled_skills_block_pub(
+                    project_skill_ids.as_deref()
+                )
+            ),
+        };
         let base_system = if skills_block.is_empty() {
             base_system
         } else {

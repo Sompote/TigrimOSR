@@ -433,6 +433,13 @@ async fn process_remote_task(
     // Retry logic — load max retries from settings (default 2 → up to 3 total attempts)
     let max_retries = settings.remote_task_max_retries.unwrap_or(2) as usize;
 
+    // Active agent-loop profile (tools/MCP/knobs) applies to remote tasks too.
+    let loop_profile = crate::server::services::agent_loop::resolve_active_profile(
+        settings.agent_loop_profile.as_deref(),
+        None,
+    )
+    .map(std::sync::Arc::new);
+
     for attempt in 0..=max_retries {
         // Run the task through the tool loop
         let messages = vec![json!({"role": "user", "content": task.clone()})];
@@ -453,6 +460,7 @@ async fn process_remote_task(
                 agent_role: "orchestrator".to_string(),
                 model_pool: router_pool.clone(),
                 router_tier: router_tier.clone(),
+                loop_profile: loop_profile.clone(),
                 ..SubAgentConfig::default()
             }
         } else if let Some(ref cf) = config_file {
@@ -470,12 +478,14 @@ async fn process_remote_task(
                     mode: if mode == "single" { "auto".to_string() } else { mode.clone() },
                     agent_role: "orchestrator".to_string(),
                     cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    loop_profile: loop_profile.clone(),
                     ..SubAgentConfig::default()
                 }
             } else {
                 SubAgentConfig {
                     session_id: session_id.clone(),
                     agent_id: "main".to_string(),
+                    loop_profile: loop_profile.clone(),
                     ..SubAgentConfig::default()
                 }
             }
@@ -483,6 +493,7 @@ async fn process_remote_task(
             SubAgentConfig {
                 session_id: session_id.clone(),
                 agent_id: "main".to_string(),
+                loop_profile: loop_profile.clone(),
                 ..SubAgentConfig::default()
             }
         };

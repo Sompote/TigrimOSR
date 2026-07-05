@@ -3080,6 +3080,7 @@ function loadSettings() {
     el.innerHTML = `
       <div class="settings-tabs" id="settings-tabs">
         <button class="settings-tab active" data-pane="ai" onclick="switchSettingsTab('ai')">AI / API</button>
+        <button class="settings-tab" data-pane="agentloop" onclick="switchSettingsTab('agentloop')">Agent Loop</button>
         <button class="settings-tab" data-pane="appearance" onclick="switchSettingsTab('appearance')">Appearance</button>
         <button class="settings-tab" data-pane="mcp" onclick="switchSettingsTab('mcp')">MCP Tools</button>
         <button class="settings-tab" data-pane="plugins" onclick="switchSettingsTab('plugins')">Plugins</button>
@@ -3182,6 +3183,37 @@ function loadSettings() {
             <label style="display:flex;align-items:center;gap:8px;font-weight:500">
               <input type="checkbox" id="s-h-agentStepVerifyEnabled" ${ck(data.agentStepVerifyEnabled === undefined ? true : data.agentStepVerifyEnabled)} style="flex:none;width:auto"> Verify each agent step result</label></div>
           ${HARNESS_VERIFY.map(f => numRow(data, f)).join('')}
+        </div>
+      </div>
+
+      <div class="settings-pane" id="pane-agentloop" hidden>
+        <div class="settings-group">
+          <h3>Agent Loop Profiles</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">
+            Customize the agent loop as YAML profiles: allowed tools, MCP servers, skills,
+            model/system-prompt overrides, loop limits and context compaction.
+            Omitted sections inherit the built-in behavior; tool-approval prompts always apply.</div>
+          <div class="settings-row-field"><label>Active profile</label>
+            <select id="s-loop-active" onchange="setActiveLoopProfile()" style="flex:1"></select></div>
+        </div>
+        <div class="settings-group">
+          <h3>Edit Profile</h3>
+          <div class="settings-row-field"><label>Profile</label>
+            <select id="s-loop-file" onchange="openLoopProfile()" style="flex:1"></select>
+            <button class="pill-btn" onclick="deleteLoopProfile()" style="flex:none;margin-left:8px">Delete</button></div>
+          <div class="settings-row-field"><label>New profile</label>
+            <input id="s-loop-new" placeholder="profile-name" style="flex:1">
+            <button class="pill-btn" onclick="createLoopProfile()" style="flex:none;margin-left:8px">+ Create</button>
+            <button class="pill-btn" onclick="resetLoopDefault()" style="flex:none;margin-left:8px" title="Regenerate default.yaml from the current settings">Reset default</button></div>
+          <div class="settings-row-field" style="align-items:flex-start"><label>YAML</label>
+            <textarea id="s-loop-yaml" rows="18" style="flex:1;font-family:monospace;font-size:12px" spellcheck="false"></textarea></div>
+          <div style="margin-top:8px">
+            <button class="pill-btn primary" onclick="saveLoopProfile()">Save Profile</button>
+            <span id="s-loop-status" style="font-size:13px;margin-left:10px"></span></div>
+          <details style="margin-top:10px">
+            <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">Available tools, MCP servers &amp; skills (catalog)</summary>
+            <div id="s-loop-catalog" style="font-size:12px;color:var(--ink-soft);margin-top:8px">Loading…</div>
+          </details>
         </div>
       </div>
 
@@ -3302,7 +3334,124 @@ function loadSettings() {
     loadSkillStatus();
     loadPlugins();
     loadSkillsLibrary();
+    loadAgentLoopPane(data.agentLoopProfile || '');
   }).catch(() => {});
+}
+
+// ---- Agent Loop profiles ----
+let _loopProfiles = [];
+function setLoopStatus(msg, isErr) {
+  const s = document.getElementById('s-loop-status');
+  if (!s) return;
+  s.textContent = msg;
+  s.style.color = isErr ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)';
+}
+function loadAgentLoopPane(active) {
+  api('/api/agent-loops').then(list => {
+    _loopProfiles = Array.isArray(list) ? list : [];
+    const activeSel = document.getElementById('s-loop-active');
+    const fileSel = document.getElementById('s-loop-file');
+    if (!activeSel || !fileSel) return;
+    activeSel.innerHTML = '<option value="">(built-in — no profile)</option>' +
+      _loopProfiles.map(p =>
+        `<option value="${esc(p.filename)}" ${p.filename === active ? 'selected' : ''}>${esc(p.filename)}${p.description ? ' — ' + esc(p.description.slice(0, 60)) : ''}</option>`).join('');
+    fileSel.innerHTML = _loopProfiles.map(p =>
+      `<option value="${esc(p.filename)}">${esc(p.filename)}</option>`).join('');
+    const open = _loopProfiles.some(p => p.filename === active)
+      ? active
+      : (_loopProfiles[0] ? _loopProfiles[0].filename : '');
+    if (open) { fileSel.value = open; openLoopProfile(); }
+  }).catch(() => {});
+  api('/api/agent-loops/catalog').then(cat => {
+    const el = document.getElementById('s-loop-catalog');
+    if (!el) return;
+    const tools = (cat.tools || []).map(t =>
+      `<code title="${esc(t.description || '')}">${esc(t.name)}</code>${t.protected ? '<sup>†</sup>' : ''}`).join(', ');
+    const mcp = (cat.mcpServers || []).map(s => `<code>${esc(s.name)}</code>`).join(', ') || '(none configured)';
+    const skills = (cat.skills || []).map(s => `<code>${esc(s.name)}</code>`).join(', ') || '(none installed)';
+    el.innerHTML = `<div style="margin-bottom:6px"><b>Tools</b> (use in <code>tools.list</code>; † = protected, never removed while sub-agents are enabled):<br>${tools}</div>
+      <div style="margin-bottom:6px"><b>MCP servers</b> (use in <code>mcp.servers</code>): ${mcp}</div>
+      <div><b>Skills</b> (use in <code>skills.list</code>): ${skills}</div>`;
+  }).catch(() => {});
+}
+function setActiveLoopProfile() {
+  const v = document.getElementById('s-loop-active').value;
+  api('/api/settings', { method: 'PUT', body: JSON.stringify({ agentLoopProfile: v }) })
+    .then(() => setLoopStatus('Active profile: ' + (v || '(built-in)'), false))
+    .catch(e => setLoopStatus('Error saving active profile: ' + (e.message || e), true));
+}
+function openLoopProfile() {
+  const f = document.getElementById('s-loop-file').value;
+  if (!f) return;
+  api('/api/agent-loops/' + encodeURIComponent(f)).then(d => {
+    document.getElementById('s-loop-yaml').value = d.content || '';
+    setLoopStatus('', false);
+  }).catch(e => setLoopStatus('Error loading ' + f + ': ' + (e.message || e), true));
+}
+function saveLoopProfile() {
+  const f = document.getElementById('s-loop-file').value;
+  const content = document.getElementById('s-loop-yaml').value;
+  if (!f) { setLoopStatus('No profile selected', true); return; }
+  api('/api/agent-loops', { method: 'POST', body: JSON.stringify({ filename: f, content }) })
+    .then(d => {
+      if (d.error) { setLoopStatus('Error: ' + d.error, true); return; }
+      const warn = (d.warnings || []).length ? ' — warnings: ' + d.warnings.join('; ') : '';
+      setLoopStatus('Saved ' + d.filename + warn, false);
+    })
+    .catch(e => setLoopStatus('Error: ' + (e.message || e), true));
+}
+function createLoopProfile() {
+  const nameEl = document.getElementById('s-loop-new');
+  const name = (nameEl.value || '').trim();
+  if (!name) { setLoopStatus('Enter a profile name first', true); return; }
+  const fn = /\.ya?ml$/.test(name) ? name : name + '.yaml';
+  // Seed the new profile from default.yaml (mirror of current behavior).
+  api('/api/agent-loops/default.yaml')
+    .then(d => (d.content || '').replace(/^name:.*$/m, 'name: ' + name.replace(/\.ya?ml$/, '')))
+    .catch(() => 'name: ' + name + '\ndescription: ""\n')
+    .then(content => api('/api/agent-loops', { method: 'POST', body: JSON.stringify({ filename: fn, content }) }))
+    .then(d => {
+      if (d.error) { setLoopStatus('Error: ' + d.error, true); return; }
+      nameEl.value = '';
+      setLoopStatus('Created ' + d.filename, false);
+      const active = document.getElementById('s-loop-active').value;
+      loadAgentLoopPane(active);
+      setTimeout(() => {
+        const fileSel = document.getElementById('s-loop-file');
+        if (fileSel) { fileSel.value = d.filename; openLoopProfile(); }
+      }, 300);
+    })
+    .catch(e => setLoopStatus('Error: ' + (e.message || e), true));
+}
+function deleteLoopProfile() {
+  const f = document.getElementById('s-loop-file').value;
+  if (!f) return;
+  if (f === 'default.yaml') { setLoopStatus('default.yaml cannot be deleted (use Reset default to regenerate it)', true); return; }
+  if (!confirm('Delete profile ' + f + '?')) return;
+  api('/api/agent-loops/' + encodeURIComponent(f), { method: 'DELETE' })
+    .then(() => {
+      const activeSel = document.getElementById('s-loop-active');
+      if (activeSel.value === f) {
+        activeSel.value = '';
+        setActiveLoopProfile();
+      }
+      setLoopStatus('Deleted ' + f, false);
+      loadAgentLoopPane(activeSel.value);
+    })
+    .catch(e => setLoopStatus('Error: ' + (e.message || e), true));
+}
+function resetLoopDefault() {
+  if (!confirm('Regenerate default.yaml from the current settings?')) return;
+  api('/api/agent-loops/reset-default', { method: 'POST' })
+    .then(d => {
+      if (d.error) { setLoopStatus('Error: ' + d.error, true); return; }
+      setLoopStatus('default.yaml regenerated', false);
+      const fileSel = document.getElementById('s-loop-file');
+      if (fileSel && fileSel.value === 'default.yaml') {
+        document.getElementById('s-loop-yaml').value = d.content || '';
+      }
+    })
+    .catch(e => setLoopStatus('Error: ' + (e.message || e), true));
 }
 
 // ---- Plugins ----

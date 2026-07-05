@@ -282,6 +282,9 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         save_file_tokens(&[default_token]).await;
     }
 
+    // Seed the default agent-loop profile (mirrors current loop behavior)
+    services::agent_loop::ensure_default_profile();
+
     // Initialize MCP server connections from settings
     services::mcp::init_mcp_servers().await;
 
