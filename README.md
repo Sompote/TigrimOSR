@@ -1,6 +1,6 @@
 # TigrimOSR v0.6.0
 
-**TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously.
+**TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary — and for **building your own agentic loop**. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously. Then shape how the loop itself runs: pick the tools, MCP servers, and skills each agent may use, override its model and system prompt, tune self-verification and context compaction — all in simple YAML profiles you can edit from the desktop app or any browser.
 
 ### Why TigrimOSR?
 
