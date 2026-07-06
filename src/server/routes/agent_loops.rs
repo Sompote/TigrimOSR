@@ -168,6 +168,24 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
             return Err(format!("skills.mode must be all|selected|none, got '{}'", s.mode));
         }
     }
+    if let Some(e) = &profile.evaluation {
+        if let Some(t) = e.threshold {
+            if !(0.0..=1.0).contains(&t) {
+                return Err(format!("evaluation.threshold must be within 0.0..=1.0, got {}", t));
+            }
+        }
+        if e.max_retries.map(|v| v > 5).unwrap_or(false) {
+            warnings.push("evaluation.max_retries above 5 will be clamped to 5".to_string());
+        }
+        if e.max_judge_rounds.map(|v| v > 6).unwrap_or(false) {
+            warnings.push("evaluation.max_judge_rounds above 6 will be clamped to 6".to_string());
+        }
+        if e.allow_execute == Some(true) {
+            warnings.push(
+                "evaluation.allow_execute is on — the evaluator judge may execute code (run_python/run_shell) in the sandbox".to_string(),
+            );
+        }
+    }
     Ok((profile, warnings))
 }
 

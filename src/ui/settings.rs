@@ -196,6 +196,15 @@ pub struct SettingsView {
     loop_compact_max_context_tokens: u64,
     loop_compact_tool_result_max_len: u64,
     loop_compact_model: String,
+    // outer evaluation loop (tool-using job-level judge)
+    loop_eval_enabled: bool,
+    loop_eval_threshold: f64,
+    loop_eval_max_retries: u64,
+    loop_eval_max_fix_rounds: u64,
+    loop_eval_max_judge_rounds: u64,
+    loop_eval_model: String,
+    loop_eval_rubric: String,
+    loop_eval_allow_execute: bool,
 
     // --- MCP Tools ---
     mcp_tools: Vec<McpTool>,
@@ -253,6 +262,9 @@ pub struct SettingsView {
     agent_reflection_enabled: bool,
     agent_reflection_threshold: f64,
     agent_max_reflection_retries: u64,
+    agent_evaluation_enabled: bool,
+    agent_evaluation_threshold: f64,
+    agent_evaluation_max_retries: u64,
     agent_step_verify_enabled: bool,
     agent_step_verify_threshold: f64,
     agent_step_verify_max_retries: u64,
@@ -361,6 +373,14 @@ impl Default for SettingsView {
             loop_compact_max_context_tokens: 100_000,
             loop_compact_tool_result_max_len: 6000,
             loop_compact_model: String::new(),
+            loop_eval_enabled: false,
+            loop_eval_threshold: 0.75,
+            loop_eval_max_retries: 2,
+            loop_eval_max_fix_rounds: 5,
+            loop_eval_max_judge_rounds: 3,
+            loop_eval_model: String::new(),
+            loop_eval_rubric: String::new(),
+            loop_eval_allow_execute: false,
 
             mcp_tools: Vec::new(),
             new_mcp_name: String::new(),
@@ -409,6 +429,9 @@ impl Default for SettingsView {
             agent_reflection_enabled: false,
             agent_reflection_threshold: 0.7,
             agent_max_reflection_retries: 2,
+            agent_evaluation_enabled: false,
+            agent_evaluation_threshold: 0.75,
+            agent_evaluation_max_retries: 2,
             agent_step_verify_enabled: true,
             agent_step_verify_threshold: 0.7,
             agent_step_verify_max_retries: 1,
@@ -653,6 +676,12 @@ impl SettingsView {
             .and_then(|v| v.as_f64()).unwrap_or(0.7);
         self.agent_max_reflection_retries = settings.extra.get("agentMaxReflectionRetries")
             .and_then(|v| v.as_u64()).unwrap_or(2);
+        self.agent_evaluation_enabled = settings.extra.get("agentEvaluationEnabled")
+            .and_then(|v| v.as_bool()).unwrap_or(false);
+        self.agent_evaluation_threshold = settings.extra.get("agentEvaluationThreshold")
+            .and_then(|v| v.as_f64()).unwrap_or(0.75);
+        self.agent_evaluation_max_retries = settings.extra.get("agentEvaluationMaxRetries")
+            .and_then(|v| v.as_u64()).unwrap_or(2);
         self.agent_step_verify_enabled = settings.extra.get("agentStepVerifyEnabled")
             .and_then(|v| v.as_bool()).unwrap_or(true);
         self.agent_step_verify_threshold = settings.extra.get("agentStepVerifyThreshold")
@@ -843,6 +872,9 @@ impl SettingsView {
         settings.extra.insert("agentReflectionEnabled".into(), serde_json::json!(self.agent_reflection_enabled));
         settings.extra.insert("agentReflectionThreshold".into(), serde_json::json!(self.agent_reflection_threshold));
         settings.extra.insert("agentMaxReflectionRetries".into(), serde_json::json!(self.agent_max_reflection_retries));
+        settings.extra.insert("agentEvaluationEnabled".into(), serde_json::json!(self.agent_evaluation_enabled));
+        settings.extra.insert("agentEvaluationThreshold".into(), serde_json::json!(self.agent_evaluation_threshold));
+        settings.extra.insert("agentEvaluationMaxRetries".into(), serde_json::json!(self.agent_evaluation_max_retries));
         settings.extra.insert("agentStepVerifyEnabled".into(), serde_json::json!(self.agent_step_verify_enabled));
         settings.extra.insert("agentStepVerifyThreshold".into(), serde_json::json!(self.agent_step_verify_threshold));
         settings.extra.insert("agentStepVerifyMaxRetries".into(), serde_json::json!(self.agent_step_verify_max_retries));
@@ -1636,6 +1668,32 @@ impl SettingsView {
                     ui.add(egui::Slider::new(&mut self.agent_max_reflection_retries, 1..=5)
                         .text("rounds"))
                         .on_hover_text("How many judge-and-fix cycles to run before accepting the answer.");
+                    ui.end_row();
+                });
+        }
+
+        ui.add_space(4.0);
+        ui.checkbox(&mut self.agent_evaluation_enabled, "Enable job evaluation (outer loop, tool-using judge)")
+            .on_hover_text("After the WHOLE job finishes (all agents done), a judge verifies the final \
+                result — it can read output files to check that claimed artifacts exist. Runs once per \
+                job for the main agent only, never for sub-agents. Below the threshold, the gap list is \
+                fed back so the orchestrator can delegate targeted fixes. Judge model and rubric are \
+                configurable per agent-loop profile.");
+        if self.agent_evaluation_enabled {
+            egui::Grid::new("evaluation_grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Evaluation Threshold:");
+                    ui.add(egui::Slider::new(&mut self.agent_evaluation_threshold, 0.1..=1.0)
+                        .text("score"))
+                        .on_hover_text("Job results scoring below this (0-1) trigger a gap-fixing retry. Higher = stricter.");
+                    ui.end_row();
+
+                    ui.label("Max Evaluation Retries:");
+                    ui.add(egui::Slider::new(&mut self.agent_evaluation_max_retries, 1..=5)
+                        .text("rounds"))
+                        .on_hover_text("How many judge-and-fix cycles to run before accepting the job result.");
                     ui.end_row();
                 });
         }
@@ -4336,6 +4394,15 @@ impl SettingsView {
         self.loop_compact_max_context_tokens = c.max_context_tokens.unwrap_or(self.agent_max_context_tokens);
         self.loop_compact_tool_result_max_len = c.tool_result_max_len.unwrap_or(self.agent_tool_result_max_len);
         self.loop_compact_model = c.model.unwrap_or_default();
+        let e = p.evaluation.clone().unwrap_or_default();
+        self.loop_eval_enabled = e.enabled.unwrap_or(self.agent_evaluation_enabled);
+        self.loop_eval_threshold = e.threshold.unwrap_or(self.agent_evaluation_threshold);
+        self.loop_eval_max_retries = e.max_retries.unwrap_or(self.agent_evaluation_max_retries);
+        self.loop_eval_max_fix_rounds = e.max_fix_rounds.unwrap_or(5);
+        self.loop_eval_max_judge_rounds = e.max_judge_rounds.unwrap_or(3);
+        self.loop_eval_model = e.model.unwrap_or_default();
+        self.loop_eval_rubric = e.rubric.unwrap_or_default();
+        self.loop_eval_allow_execute = e.allow_execute.unwrap_or(false);
     }
 
     fn loop_form_to_profile(&self) -> crate::server::services::agent_loop::AgentLoopProfile {
@@ -4405,6 +4472,28 @@ impl SettingsView {
                 } else {
                     Some(self.loop_compact_model.trim().to_string())
                 },
+            }),
+            evaluation: Some(EvaluationKnobs {
+                enabled: Some(self.loop_eval_enabled),
+                threshold: Some(self.loop_eval_threshold),
+                max_retries: Some(self.loop_eval_max_retries),
+                max_fix_rounds: Some(self.loop_eval_max_fix_rounds),
+                max_judge_rounds: Some(self.loop_eval_max_judge_rounds),
+                model: if self.loop_eval_model.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.loop_eval_model.trim().to_string())
+                },
+                // Judge api_url/api_key stay YAML-mode only: keeps secrets
+                // out of the form and off casual screenshots.
+                api_url: None,
+                api_key: None,
+                rubric: if self.loop_eval_rubric.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.loop_eval_rubric.clone())
+                },
+                allow_execute: Some(self.loop_eval_allow_execute),
             }),
         }
     }
@@ -4867,6 +4956,61 @@ impl SettingsView {
                     &mut self.loop_step_verification,
                     "Step verification — judge each team agent's finished step and retry failures",
                 );
+            });
+
+        // --- Outer evaluation loop ---
+        egui::CollapsingHeader::new("Job Evaluation (Outer Loop)")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.checkbox(
+                    &mut self.loop_eval_enabled,
+                    "Evaluate the finished job — tool-using judge verifies the final result",
+                )
+                .on_hover_text("Runs ONCE after the whole job finishes — main agent only, never \
+                    sub-agents. The judge may read output files to verify claimed artifacts. Below \
+                    the threshold, the gap list is fed back so the orchestrator can delegate fixes.");
+                if self.loop_eval_enabled {
+                    egui::Grid::new("loop_eval_grid").num_columns(4).spacing([12.0, 6.0]).show(ui, |ui| {
+                        ui.label("Threshold:");
+                        ui.add(egui::Slider::new(&mut self.loop_eval_threshold, 0.1..=1.0));
+                        ui.label("Max retries:");
+                        ui.add(egui::DragValue::new(&mut self.loop_eval_max_retries).range(1..=5));
+                        ui.end_row();
+                        ui.label("Judge tool rounds:");
+                        ui.add(egui::DragValue::new(&mut self.loop_eval_max_judge_rounds).range(1..=6));
+                        ui.label("Fix rounds per retry:");
+                        ui.add(egui::DragValue::new(&mut self.loop_eval_max_fix_rounds).range(1..=10));
+                        ui.end_row();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Judge model:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.loop_eval_model)
+                                .hint_text("empty = session model")
+                                .desired_width(220.0),
+                        )
+                        .on_hover_text("A different model avoids the agent grading its own work. \
+                            Judge api_url/api_key can be set in the YAML editor.");
+                    });
+                    ui.label("Rubric (success criteria the judge must check):");
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.loop_eval_rubric)
+                            .hint_text("Optional, e.g. \"A PNG chart file must exist and the answer must reference it.\"")
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.checkbox(
+                        &mut self.loop_eval_allow_execute,
+                        "Allow the judge to execute code (run_python/run_shell)",
+                    );
+                    if self.loop_eval_allow_execute {
+                        ui.label(
+                            egui::RichText::new("⚠ The evaluator judge will run code in the sandbox without approval prompts.")
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(200, 120, 40)),
+                        );
+                    }
+                }
             });
 
         // --- Compaction ---

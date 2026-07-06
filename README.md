@@ -1,4 +1,4 @@
-# TigrimOSR v0.6.0
+# TigrimOSR v0.6.1
 
 **TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary — and for **building your own agentic loop**. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously. Then shape how the loop itself runs: pick the tools, MCP servers, and skills each agent may use, override its model and system prompt, tune self-verification and context compaction — all in simple YAML profiles you can edit from the desktop app or any browser.
 
@@ -6,6 +6,7 @@
 
 - **Multi-agent orchestration** — 6 modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator) with real protocols and a shared blackboard.
 - **Your agent loop, your rules** — customize the whole agent loop as **YAML profiles**: which tools it may call, which MCP servers and skills it sees, model & system-prompt overrides, loop limits, self-verification, and context compaction — editable from the desktop app and the web UI.
+- **Job evaluation (outer loop)** — after the whole job finishes, a **tool-using LLM judge** verifies the final result against your objective and an optional **rubric** — it reads the output files to check claimed artifacts actually exist, and feeds any gaps back so the orchestrator can delegate targeted fixes.
 - **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, or any OpenAI-compatible API — plus 3 local CLI agents (Claude Code, Gemini CLI, Codex) with no API keys.
 - **Full tool calling** — web search, Python, file I/O, shell, MCP servers, and the ClawHub skill marketplace. Charts, images, and docs render inline with click-to-zoom.
 - **Browser control** — let the agent drive a real **Chrome / Chromium** browser to **search Google** and read the live web directly. It's a real browser, not a paid search-API — **no API keys, free of charge, saves money**. Opt-in toggle, off by default for safety.
@@ -35,7 +36,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 ## Features
 
 - **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
-- **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist, MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification) and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
+- **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist, MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification), **job evaluation (outer loop, tool-using judge)** and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
@@ -665,7 +666,7 @@ On first launch, go to **Settings** to configure:
 | AI Provider | Select from Claude Code (Local), Gemini CLI (Local), Codex (Local), OpenRouter, Anthropic, DeepSeek, Kimi, etc. |
 | API Key | Your API key (not needed for local CLI providers) |
 | Model | Model name (e.g. `o4-mini`, `claude-sonnet-4-20250514`) |
-| Agent Harness | Max turns, temperature, max tokens, context limit, reflection |
+| Agent Harness | Max turns, temperature, max tokens, context limit, reflection, job evaluation |
 | Sub-agent system | Enable multi-agent mode |
 | Agent config file | Select a YAML file from `data/agents/` |
 | Agent mode | Fully Auto, Auto, Auto Swarm, or Manual |
@@ -952,6 +953,7 @@ allowed to do and how it behaves:
 | `system_prompt` | Extra instructions — appended by default, or `replace_base: true` to swap the built-in base prompt |
 | `loop` | Max tool rounds & tool calls, temperature, max tokens, **reflection loop** (LLM judge scores the final answer and retries gaps), **step verification** (judge each team agent's step), checkpoints, max sub-agent spawn depth |
 | `compaction` | Context compression: every-N-rounds interval, kept-message window, token budget, per-tool-result trim, and an optional cheaper summarization model |
+| `evaluation` | **Job evaluation (outer loop)** — a **tool-using judge** runs once after the whole job finishes (top-level main agent only, never sub-agents): it verifies the final result against the objective and an optional **rubric**, reading output files (`read_file`/`list_files`) to check claimed artifacts exist; below the threshold the gap list is fed back and the orchestrator gets bounded extra rounds to delegate targeted fixes. Supports a dedicated **judge model** (avoid self-grading), `allow_execute` for run-the-tests verification, retries/judge-round caps |
 
 **Editing:**
 - **Desktop app** — **Settings → Agent Loop**: form editor (tool/MCP/skill checkboxes, sliders) plus a raw **Edit as YAML** mode with validate-on-save.
@@ -990,6 +992,15 @@ compaction:
   window: 10                 # keep the last N messages uncompressed
   max_context_tokens: 100000
   model: deepseek-chat       # optional cheaper summarizer
+evaluation:                  # outer loop: tool-using judge, runs once after the WHOLE job
+  enabled: true
+  threshold: 0.8             # scores below this trigger a gap-fixing retry
+  max_retries: 2             # judge→fix cycles before accepting the result
+  max_judge_rounds: 3        # tool rounds the judge may spend verifying
+  model: deepseek-chat       # optional dedicated judge model (empty = session model)
+  rubric: |                  # success criteria the judge must verify
+    A markdown review file must exist with at least 10 papers, each with a DOI.
+  allow_execute: false       # true also lets the judge run_python/run_shell (e.g. run tests)
 ```
 
 **How it behaves:**
@@ -1004,6 +1015,11 @@ compaction:
   unless they define their own.
 - **Per-project pinning** — a project's agent override can pin its own profile;
   the web chat also accepts a per-request `agent_loop_profile`.
+- **Job evaluation runs once per job, at the top level only** — sub-agents keep the
+  cheap per-step text judge (`step_verification`); the tool-using outer judge fires
+  after the whole group finishes, so a big swarm pays for one verification, not one
+  per agent. Its verdict is visible: the activity log shows `evaluator:*` verification
+  calls and the chat shows `[evaluation] ✓ Passed — score …` or the gap-fixing retry.
 - **Safety is not bypassable** — coordination tools (`send_task`, `wait_result`,
   `spawn_subagent`, …) are never removed while sub-agents are enabled, tool-approval
   prompts still apply regardless of the profile, over-budget/overflow context
@@ -1414,6 +1430,16 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 ---
 
 ## Changelog
+
+### v0.6.1
+
+- **Job evaluation — outer loop with a tool-using judge** — New `evaluation:` section in agent-loop profiles: after the **whole job** finishes (top-level main agent only — never sub-agents, so a swarm pays for one verification, not one per agent), an LLM judge scores the final result against the user's objective. Unlike the reflection loop's text-only judge, this judge **calls read-only tools** (`read_file`, `list_files`) to verify that claimed files/artifacts actually exist before scoring. Below the threshold, the judge's gap list is injected back and the orchestrator gets bounded extra rounds to **delegate targeted fix-up tasks** (`max_retries` judge→fix cycles, `max_fix_rounds` per cycle), then re-judges.
+- **Rubric (user success criteria)** — An optional per-profile `rubric` defines binding pass conditions (e.g. *"a markdown review with ≥10 papers, each with a DOI, must exist"*). Criteria are enforced in the judge's system prompt: any unmet criterion fails the evaluation regardless of how good the answer text looks.
+- **Dedicated judge model** — `evaluation.model` / `api_url` / `api_key` run the judge on a different (cheaper or stronger) model so the agent doesn't grade its own work; empty fields inherit the session model.
+- **Optional executing judge** — `allow_execute: true` additionally grants the judge `run_python`/`run_shell` (e.g. actually run the produced script or tests before passing it); off by default and flagged with a warning on save.
+- **Visible verdicts** — The judge's verification calls appear in the activity log as `evaluator:read_file` / `evaluator:list_files`, and the chat shows `[evaluation] ✓ Passed — score 0.95/1.0` on success or `[evaluation] Score 0.5/1.0 — addressing gaps: …` when re-entering the loop.
+- **UI + API** — Global toggle in **Settings → AI/API → Agent Harness** (*Enable job evaluation*); full per-profile controls in **Settings → Agent Loop → Job Evaluation (Outer Loop)** (threshold, retries, judge rounds, judge model, rubric, allow-execute); `/api/agent-loops` validation rejects out-of-range thresholds and warns on clamped values and `allow_execute`.
+- **Backward compatible** — Existing `reflection_*` knobs keep working unchanged (text-only judge, any depth); when both are enabled, the outer evaluation wins at the top level so a job is never judged twice. Existing profiles without an `evaluation:` section are untouched; evaluation is **off by default**.
 
 ### v0.6.0
 

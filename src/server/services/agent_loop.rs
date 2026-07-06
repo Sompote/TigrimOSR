@@ -40,6 +40,10 @@ pub struct AgentLoopProfile {
     pub loop_: Option<LoopKnobs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionKnobs>,
+    /// Outer evaluation loop: tool-using judge that runs ONCE after the whole
+    /// job finishes (top-level main agent only, never sub-agents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation: Option<EvaluationKnobs>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -147,6 +151,45 @@ pub struct CompactionKnobs {
     pub model: Option<String>,
 }
 
+/// Outer evaluation loop knobs. The judge verifies the FINAL job result
+/// against the user objective (and optional rubric), and may call read-only
+/// tools (read_file/list_files) to check that claimed artifacts exist.
+/// Runs only at top level (depth 0, agent "main"); on a failing score the
+/// gap list is injected back so the orchestrator can delegate targeted fixes.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvaluationKnobs {
+    /// Default false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Pass score in 0.0..=1.0 (default 0.75).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+    /// Outer judge→fix cycles, clamped 1..=5 (default 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u64>,
+    /// Worker tool rounds per fix cycle, clamped 1..=10 (default 5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_fix_rounds: Option<u64>,
+    /// Judge mini tool-loop rounds, clamped 1..=6 (default 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_judge_rounds: Option<u64>,
+    /// Dedicated judge model; "" = session model (avoids self-grading bias).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Judge API URL; "" = session api_url.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_url: Option<String>,
+    /// Judge API key; "" = session api_key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// User-defined success criteria appended to the judge prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rubric: Option<String>,
+    /// true also grants run_python/run_shell to the judge (default false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_execute: Option<bool>,
+}
+
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
@@ -223,6 +266,21 @@ pub fn default_profile_from_settings(settings: &Value) -> AgentLoopProfile {
                 .get("agentCompressionModel")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+        }),
+        evaluation: Some(EvaluationKnobs {
+            enabled: Some(b("agentEvaluationEnabled", false)),
+            threshold: Some(f("agentEvaluationThreshold", 0.75)),
+            max_retries: Some(u("agentEvaluationMaxRetries", 2)),
+            max_fix_rounds: Some(5),
+            max_judge_rounds: Some(u("agentEvaluationMaxJudgeRounds", 3)),
+            model: settings
+                .get("agentEvaluationModel")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            api_url: None,
+            api_key: None,
+            rubric: None,
+            allow_execute: Some(false),
         }),
     }
 }
@@ -339,5 +397,8 @@ pub fn profile_from_agent_def(agent_def: &Value) -> Option<AgentLoopProfile> {
         skills,
         loop_,
         compaction,
+        // Per-agent evaluation is meaningless: the outer eval loop only runs
+        // for the top-level main agent, never for team/sub-agents.
+        evaluation: None,
     })
 }

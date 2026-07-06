@@ -8205,6 +8205,57 @@ async fn call_with_tools_inner(
         .or_else(|| settings["agentCompressionModel"].as_str().filter(|m| !m.trim().is_empty()).map(|m| m.to_string()));
     let compression_model_ref: &str = compression_model.as_deref().unwrap_or(model);
 
+    // --- Outer evaluation loop config (tool-using job-level judge) ---
+    // At top level an enabled `evaluation` profile section wins (exactly one
+    // eval per job, tool-using judge). Otherwise the legacy reflection knobs
+    // drive the same engine with the text-only judge, at any depth, unchanged.
+    // The tool-judge NEVER runs for sub-agents: spawn_subagent children run at
+    // depth+1 under their own agent_id, so the gate below excludes them.
+    let eval_knobs = sub_agent.loop_profile.as_deref().and_then(|p| p.evaluation.clone()).unwrap_or_default();
+    let evaluation_enabled = eval_knobs.enabled
+        .unwrap_or_else(|| settings["agentEvaluationEnabled"].as_bool().unwrap_or(false));
+    let is_top_level = sub_agent.depth == 0 && sub_agent.agent_id == "main";
+    let effective_eval_config: Option<EvalConfig> = if is_top_level && evaluation_enabled {
+        Some(EvalConfig {
+            tool_judge: true,
+            threshold: eval_knobs.threshold
+                .unwrap_or_else(|| settings["agentEvaluationThreshold"].as_f64().unwrap_or(0.75))
+                .clamp(0.0, 1.0),
+            max_retries: eval_knobs.max_retries
+                .unwrap_or_else(|| settings["agentEvaluationMaxRetries"].as_u64().unwrap_or(2))
+                .clamp(1, 5) as usize,
+            max_fix_rounds: eval_knobs.max_fix_rounds.unwrap_or(5).clamp(1, 10) as usize,
+            max_judge_rounds: eval_knobs.max_judge_rounds
+                .unwrap_or_else(|| settings["agentEvaluationMaxJudgeRounds"].as_u64().unwrap_or(3))
+                .clamp(1, 6) as usize,
+            judge_model: eval_knobs.model.clone().filter(|m| !m.trim().is_empty())
+                .or_else(|| settings["agentEvaluationModel"].as_str().filter(|m| !m.trim().is_empty()).map(|m| m.to_string()))
+                .unwrap_or_else(|| model.to_string()),
+            judge_api_url: eval_knobs.api_url.clone().filter(|u| !u.trim().is_empty())
+                .unwrap_or_else(|| api_url.to_string()),
+            judge_api_key: eval_knobs.api_key.clone().filter(|k| !k.trim().is_empty())
+                .unwrap_or_else(|| api_key.to_string()),
+            rubric: eval_knobs.rubric.clone().unwrap_or_default(),
+            allow_execute: eval_knobs.allow_execute.unwrap_or(false),
+        })
+    } else if reflection_enabled {
+        // Byte-for-byte legacy reflection: text-only judge on the session model.
+        Some(EvalConfig {
+            tool_judge: false,
+            threshold: eval_threshold,
+            max_retries: max_reflection_retries,
+            max_fix_rounds: 5,
+            max_judge_rounds: 0,
+            judge_model: model.to_string(),
+            judge_api_url: api_url.to_string(),
+            judge_api_key: api_key.to_string(),
+            rubric: String::new(),
+            allow_execute: false,
+        })
+    } else {
+        None
+    };
+
     // --- Checkpoint resume (tiger_cowork: try to resume from checkpoint) ---
     let mut all_messages = Vec::new();
     let mut tool_records: Vec<ToolCallRecord> = Vec::new();
@@ -8617,10 +8668,33 @@ async fn call_with_tools_inner(
         if let Some(calls) = tool_calls {
             if calls.is_empty() {
                 // No tool calls -- treat as final response
-                let content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
+                let mut content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
                 info!("[ToolLoop] LLM returned text-only (no tools) at round {}: {} chars", round, content.len());
-                on_update(ToolUpdate::TextChunk(content.clone()));
+                // Checkpoint is cleared BEFORE evaluation on purpose: a stale
+                // checkpoint surviving a mid-eval crash would resume a
+                // transcript that already contains a final answer.
                 clear_checkpoint(&sub_agent.session_id).await;
+                // Outer evaluation: this is a normal completion too (some
+                // providers return tool_calls: [] instead of omitting the
+                // key). Judge before the final TextChunk so the UI receives
+                // the improved answer. Plain no-tool replies are never judged.
+                if let Some(eval_cfg) = &effective_eval_config {
+                    if total_tool_calls > 0 && !content.is_empty() {
+                        let eval_result = run_evaluation_loop(
+                            &client, api_key, api_url, model, &mut all_messages, &user_objective,
+                            eval_cfg, temperature, max_tokens,
+                            &tools, &sub_agent, sandbox_dir, on_update.clone(), realtime,
+                            &mut tool_records, &mut collected_files, &mut total_tool_calls,
+                        ).await;
+                        if let Some(improved) = eval_result {
+                            let improved = strip_think_blocks(&improved);
+                            if !improved.trim().is_empty() {
+                                content = improved;
+                            }
+                        }
+                    }
+                }
+                on_update(ToolUpdate::TextChunk(content.clone()));
                 return ToolLoopResult {
                     content,
                     tool_results: tool_records,
@@ -9048,14 +9122,15 @@ async fn call_with_tools_inner(
             info!("[ToolLoop] No tool_calls from LLM at round {} — returning text ({} chars)", round, content.len());
             clear_checkpoint(&sub_agent.session_id).await;
 
-            // --- Reflection loop (tiger_cowork: evaluate objective satisfaction) ---
+            // --- Evaluation loop (outer job-level judge; legacy reflection) ---
             // Runs BEFORE the final TextChunk emission so the UI receives the
-            // improved answer, not the pre-reflection draft.
-            if reflection_enabled && total_tool_calls > 0 && !content.is_empty() {
-                let reflection_result = run_reflection_loop(
+            // improved answer, not the pre-evaluation draft. Note checkpoint
+            // was already cleared above — see the comment at completion point A.
+            if effective_eval_config.is_some() && total_tool_calls > 0 && !content.is_empty() {
+                let eval_cfg = effective_eval_config.as_ref().unwrap();
+                let reflection_result = run_evaluation_loop(
                     &client, api_key, api_url, model, &mut all_messages, &user_objective,
-                    eval_threshold, max_reflection_retries,
-                    temperature, max_tokens,
+                    eval_cfg, temperature, max_tokens,
                     &tools, &sub_agent, sandbox_dir, on_update.clone(), realtime,
                     &mut tool_records, &mut collected_files, &mut total_tool_calls,
                 ).await;
@@ -9100,8 +9175,13 @@ async fn call_with_tools_inner(
         }
     }
 
-    // Exhausted max rounds — force a final text response
+    // Exhausted max rounds — force a final text response.
+    // No evaluation here: its remedy is MORE rounds, which would defeat
+    // max_rounds as the hard safety valve exactly when a job is misbehaving.
     warn!("Tool loop exhausted max rounds ({})", max_rounds);
+    if effective_eval_config.is_some() {
+        info!("[Evaluation] Skipped: max rounds exhausted");
+    }
     clear_checkpoint(&sub_agent.session_id).await;
     let content = strip_think_blocks(&force_final_response(
         &client, api_key, api_url, model, &all_messages, &tool_records,
@@ -9237,6 +9317,42 @@ struct JudgeVerdict {
     missing: String,
 }
 
+/// Resolved runtime config for the evaluation loop. Built once per job in
+/// call_with_tools_inner (profile > settings.json > defaults). Two flavors:
+/// tool_judge=true is the outer job-level judge (top level only), false is
+/// the legacy text-only reflection judge (any depth).
+struct EvalConfig {
+    tool_judge: bool,
+    threshold: f64,
+    max_retries: usize,
+    max_fix_rounds: usize,
+    max_judge_rounds: usize,
+    judge_model: String,
+    judge_api_url: String,
+    judge_api_key: String,
+    rubric: String,
+    allow_execute: bool,
+}
+
+/// Extract the verdict JSON from a judge reply. Shared by the text-only and
+/// tool-using judges. Returns None (fail open) when no JSON can be parsed.
+fn parse_judge_verdict(content: &str) -> Option<JudgeVerdict> {
+    let json_str = content.find('{')
+        .and_then(|start| content.rfind('}').map(|end| &content[start..=end]));
+    let parsed: Value = match json_str.and_then(|s| serde_json::from_str(s).ok()) {
+        Some(p) => p,
+        None => {
+            warn!("[Judge] Could not parse verdict — failing open");
+            return None;
+        }
+    };
+    Some(JudgeVerdict {
+        score: parsed["score"].as_f64().unwrap_or(1.0),
+        satisfied: parsed["satisfied"].as_bool().unwrap_or(false),
+        missing: parsed["missing"].as_str().unwrap_or("").to_string(),
+    })
+}
+
 /// Summarize tool-call records for a judge prompt: most recent records first
 /// (newest are the most relevant after a gap-fix pass), capped in total size.
 fn summarize_tool_records(records: &[ToolCallRecord]) -> String {
@@ -9315,34 +9431,179 @@ async fn judge_task_result(
     };
     let eval_content = eval_data["choices"][0]["message"]["content"].as_str().unwrap_or("");
     info!("[Judge] Raw eval: {}", crate::util::truncate_utf8(eval_content, 300));
-
-    let json_str = eval_content.find('{')
-        .and_then(|start| eval_content.rfind('}').map(|end| &eval_content[start..=end]));
-    let parsed: Value = match json_str.and_then(|s| serde_json::from_str(s).ok()) {
-        Some(p) => p,
-        None => {
-            warn!("[Judge] Could not parse verdict — failing open");
-            return None;
-        }
-    };
-
-    Some(JudgeVerdict {
-        score: parsed["score"].as_f64().unwrap_or(1.0),
-        satisfied: parsed["satisfied"].as_bool().unwrap_or(false),
-        missing: parsed["missing"].as_str().unwrap_or("").to_string(),
-    })
+    parse_judge_verdict(eval_content)
 }
 
+/// Tool-using job judge: may call read-only tools (read_file/list_files, plus
+/// run_python/run_shell when allow_execute) through a small bespoke loop to
+/// verify claimed artifacts actually exist before scoring. Deliberately NOT
+/// routed through call_with_tools: no recursion (so it can never re-enter
+/// evaluation) and no approval gates, which is safe because the allowlist is
+/// read-only by default. Returns None (fail open) on judge/parse failure.
 #[allow(clippy::too_many_arguments)]
-async fn run_reflection_loop(
+async fn judge_job_with_tools(
+    client: &Client,
+    cfg: &EvalConfig,
+    objective: &str,
+    evidence: &str,
+    answer: &str,
+    sandbox_dir: &str,
+    sub_agent: &SubAgentConfig,
+    on_update: Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static>,
+) -> Option<JudgeVerdict> {
+    let mut allowed: Vec<&str> = vec!["read_file", "list_files"];
+    if cfg.allow_execute {
+        allowed.extend(["run_python", "run_shell"]);
+    }
+    let judge_tools: Vec<Value> = tool_definitions().into_iter()
+        .filter(|t| t["function"]["name"].as_str().map(|n| allowed.contains(&n)).unwrap_or(false))
+        .collect();
+
+    let rubric_section = if cfg.rubric.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "SUCCESS CRITERIA (mandatory rubric set by the user's configuration):\n{}\n\n",
+            cfg.rubric
+        )
+    };
+    // The rubric must be BINDING: judge models otherwise treat it as advisory
+    // and pass answers that satisfy the chat message but fail the criteria.
+    let rubric_rule = if cfg.rubric.trim().is_empty() {
+        ""
+    } else {
+        "- The SUCCESS CRITERIA are mandatory requirements IN ADDITION to the objective, even if the \
+        objective itself does not mention them. Verify each criterion with tools. If ANY criterion is \
+        not met, set satisfied=false, cap the score at 0.5, and name the unmet criterion in \"missing\".\n"
+    };
+    // Rubric enforcement lives in the SYSTEM prompt: judges anchor on
+    // "satisfies the objective" and ignore extra criteria buried mid-message.
+    let system_content = if cfg.rubric.trim().is_empty() {
+        "You are a strict evaluation judge. Score how well the FINAL ANSWER satisfies the user's objective. \
+        You may call the provided tools to verify that claimed files/artifacts actually exist and match the \
+        claims BEFORE scoring (paths are relative to the working directory). Judge the answer the reader \
+        will receive, not the effort spent. When done verifying, output ONLY the verdict JSON object.".to_string()
+    } else {
+        format!(
+            "You are a strict evaluation judge. Score how well the FINAL ANSWER satisfies BOTH the user's \
+            objective AND every one of these MANDATORY SUCCESS CRITERIA:\n{}\n\
+            The criteria are requirements in addition to the objective, even if the objective does not mention \
+            them. Use the provided tools to verify each criterion and each claimed file/artifact (paths are \
+            relative to the working directory) BEFORE scoring. If ANY criterion is not met, you MUST set \
+            satisfied=false, cap the score at 0.5, and name the unmet criterion in \"missing\" — a perfect \
+            answer to the objective alone still fails. When done verifying, output ONLY the verdict JSON object.",
+            cfg.rubric
+        )
+    };
+    let mut msgs = vec![
+        json!({"role": "system", "content": system_content}),
+        json!({"role": "user", "content": format!(
+            "OBJECTIVE:\n{}\n\n\
+            {}EVIDENCE (tool calls and generated files):\n{}\n\n\
+            FINAL ANSWER:\n{}\n\n\
+            Verify what you need with tools, then respond in EXACTLY this JSON format (no other text):\n\
+            {{\"score\": <0.0-1.0>, \"satisfied\": <true/false>, \"missing\": \"<concrete, actionable list of what is missing or wrong; empty string if satisfied>\"}}\n\n\
+            Checklist before scoring:\n\
+            {}- Break the objective into its distinct parts; every part must be addressed in the FINAL ANSWER itself.\n\
+            - Claimed results must be backed by the evidence above or by your own tool checks (no fabricated data).\n\
+            - If files/charts were requested, verify they exist with list_files/read_file.\n\
+            - An answer that only describes what it WOULD do is NOT satisfied.\n\n\
+            Scoring guide:\n\
+            - 1.0: Fully satisfied, all parts addressed\n\
+            - 0.7-0.9: Mostly satisfied, minor gaps\n\
+            - 0.4-0.6: Partially satisfied, significant gaps\n\
+            - 0.0-0.3: Not satisfied, major parts missing",
+            objective, rubric_section, evidence, answer, rubric_rule
+        )}),
+    ];
+
+    for _judge_round in 0..cfg.max_judge_rounds {
+        if sub_agent.cancel_flag.load(Ordering::Relaxed) {
+            info!("[Judge] Abort signal — skipping tool-judge");
+            return None;
+        }
+        let data = match llm_call(client, &cfg.judge_api_key, &cfg.judge_api_url, &cfg.judge_model, &msgs, Some(&judge_tools), 0.1, 1024).await {
+            Ok(d) => d,
+            Err(e) => {
+                error!("[Judge] Tool-judge call failed: {}", e);
+                return None;
+            }
+        };
+        let message = data["choices"][0]["message"].clone();
+        // Some APIs reject assistant messages with empty content (same patch
+        // as the main loop applies).
+        let mut assistant_msg = message.clone();
+        if assistant_msg["content"].as_str().unwrap_or("").is_empty() {
+            assistant_msg["content"] = json!("(verifying...)");
+        }
+        msgs.push(assistant_msg);
+
+        let calls = message["tool_calls"].as_array().filter(|c| !c.is_empty()).cloned();
+        let Some(calls) = calls else {
+            let content = message["content"].as_str().unwrap_or("");
+            info!("[Judge] Raw eval (tool-judge): {}", crate::util::truncate_utf8(content, 300));
+            let stripped = strip_think_blocks(content);
+            if let Some(v) = parse_judge_verdict(&stripped).or_else(|| parse_judge_verdict(content)) {
+                return Some(v);
+            }
+            // Text reply without a verdict (thinking models often narrate a
+            // round without calling tools) — nudge and spend another judge
+            // round rather than failing open.
+            msgs.push(json!({"role": "user", "content":
+                "Continue verifying with the tools if needed, or output ONLY the verdict JSON now."}));
+            continue;
+        };
+        for call in &calls {
+            let name = call["function"]["name"].as_str().unwrap_or("unknown");
+            let args: Value = serde_json::from_str(call["function"]["arguments"].as_str().unwrap_or("{}")).unwrap_or(json!({}));
+            let id = call["id"].as_str().unwrap_or("");
+            let result = if allowed.contains(&name) {
+                info!("[Judge] Verifying with {}", name);
+                // Surface judge verification in the activity log so users can
+                // see the evaluator working (prefixed to distinguish from the
+                // worker's own tool calls).
+                on_update(ToolUpdate::ToolCall { name: format!("evaluator:{}", name), args: args.clone() });
+                let r = execute_tool_with_context(name, &args, sandbox_dir, &sub_agent.session_id, "evaluator").await;
+                on_update(ToolUpdate::ToolResult { name: format!("evaluator:{}", name), result: r.clone() });
+                r
+            } else {
+                json!({"ok": false, "error": format!("tool '{}' is not allowed for the evaluator", name)})
+            };
+            let result_str = compact::compress_tool_result(name, &result, 4000);
+            msgs.push(json!({"role": "tool", "tool_call_id": id, "content": result_str}));
+        }
+    }
+
+    // Verification budget exhausted — demand the verdict with no tools.
+    msgs.push(json!({"role": "user", "content": "Verification budget exhausted. Output ONLY the verdict JSON now."}));
+    match llm_call(client, &cfg.judge_api_key, &cfg.judge_api_url, &cfg.judge_model, &msgs, None, 0.1, 1024).await {
+        Ok(d) => {
+            let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("");
+            info!("[Judge] Raw eval (tool-judge, forced): {}", crate::util::truncate_utf8(content, 300));
+            parse_judge_verdict(&strip_think_blocks(content)).or_else(|| parse_judge_verdict(content))
+        }
+        Err(e) => {
+            error!("[Judge] Final verdict call failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Outer evaluation / legacy reflection loop: judge the final result against
+/// the user objective; below cfg.threshold, inject the gap list and grant
+/// bounded extra tool rounds (the orchestrator can re-delegate targeted fixes),
+/// then re-judge. cfg.tool_judge selects the tool-using job judge (top level
+/// only) vs the legacy text-only judge. The judge itself is restricted; the
+/// gap-fix rounds keep the worker's full toolset and approval gates.
+#[allow(clippy::too_many_arguments)]
+async fn run_evaluation_loop(
     client: &Client,
     api_key: &str,
     api_url: &str,
     model: &str,
     all_messages: &mut Vec<Value>,
     user_objective: &str,
-    eval_threshold: f64,
-    max_reflection_retries: usize,
+    cfg: &EvalConfig,
     temperature: f64,
     max_tokens: u64,
     tools: &[Value],
@@ -9355,12 +9616,12 @@ async fn run_reflection_loop(
     total_tool_calls: &mut usize,
 ) -> Option<String> {
     // Outer retry loop (tiger_cowork: maxReflectionRetries, default 2)
-    for retry_round in 0..max_reflection_retries {
+    for retry_round in 0..cfg.max_retries {
         if sub_agent.cancel_flag.load(Ordering::Relaxed) {
-            info!("[Reflection] Abort signal — skipping reflection");
+            info!("[Evaluation] Abort signal — skipping evaluation");
             break;
         }
-        info!("[Reflection] Round {}/{} — evaluating objective satisfaction...", retry_round + 1, max_reflection_retries);
+        info!("[Evaluation] Round {}/{} — evaluating objective satisfaction...", retry_round + 1, cfg.max_retries);
 
         let mut evidence = summarize_tool_records(tool_records_mut);
         evidence.push_str(&format!(
@@ -9373,52 +9634,68 @@ async fn run_reflection_loop(
             .and_then(|m| m["content"].as_str())
             .unwrap_or("(none)");
 
-        let verdict = match judge_task_result(
-            client, api_key, api_url, model,
-            user_objective, &evidence, last_assistant,
-            "the user's objective",
-        ).await {
+        let verdict = if cfg.tool_judge {
+            judge_job_with_tools(
+                client, cfg, user_objective, &evidence, last_assistant,
+                sandbox_dir, sub_agent, on_update.clone(),
+            ).await
+        } else {
+            judge_task_result(
+                client, &cfg.judge_api_key, &cfg.judge_api_url, &cfg.judge_model,
+                user_objective, &evidence, last_assistant,
+                "the user's objective",
+            ).await
+        };
+        let verdict = match verdict {
             Some(v) => v,
             None => break, // judge failed → fail open (treat as satisfied)
         };
         let (score, satisfied, missing) = (verdict.score, verdict.satisfied, verdict.missing);
 
-        info!("[Reflection] Score: {:.2}, Satisfied: {}, Missing: {}", score, satisfied, crate::util::truncate_utf8(&missing, 200));
+        info!("[Evaluation] Score: {:.2}, Satisfied: {}, Missing: {}", score, satisfied, crate::util::truncate_utf8(&missing, 200));
 
-        if score >= eval_threshold || satisfied {
-            info!("[Reflection] Score {:.2} >= threshold {:.2}. Objective satisfied.", score, eval_threshold);
+        if score >= cfg.threshold || satisfied {
+            info!("[Evaluation] Score {:.2} >= threshold {:.2}. Objective satisfied.", score, cfg.threshold);
+            // Make a PASSING evaluation visible too — without this, users
+            // can't tell the eval loop ran at all (logs go to stderr, which
+            // Finder-launched apps discard).
+            on_update(ToolUpdate::TextChunk(format!(
+                "[evaluation] ✓ Passed — score {:.2}/1.0 (threshold {:.2})\n\n",
+                score, cfg.threshold
+            )));
             break;
         }
 
         // Score below threshold — re-enter agent loop to address gaps.
         // Role must be "user": several OpenAI-compatible APIs reject system
         // messages mid-conversation (consistent with the other loop nudges).
-        info!("[Reflection] Score {:.2} < threshold {:.2}. Re-entering agent loop...", score, eval_threshold);
+        info!("[Evaluation] Score {:.2} < threshold {:.2}. Re-entering agent loop...", score, cfg.threshold);
         on_update(ToolUpdate::TextChunk(format!(
-            "[reflection] Score {:.1}/1.0 — addressing gaps: {}",
+            "[evaluation] Score {:.1}/1.0 — addressing gaps: {}",
             score, crate::util::truncate_utf8(&missing, 200)
         )));
 
         all_messages.push(json!({
             "role": "user",
             "content": format!(
-                "⚠️ SYSTEM REFLECTION CHECK: Your answer scored {:.1}/1.0 (threshold: {:.1}). The evaluation found these gaps:\n{}\n\n\
-                Address ONLY what is missing — do not redo completed work. Use tools as needed, \
-                then give a COMPLETE final answer that includes both your previous results and the fixes.",
-                score, eval_threshold, missing
+                "⚠️ SYSTEM EVALUATION CHECK: Your answer scored {:.1}/1.0 (threshold: {:.1}). The evaluation found these gaps:\n{}\n\n\
+                Address ONLY what is missing — do not redo completed work. If you are coordinating agents, \
+                delegate the missing pieces as targeted fix-up tasks (send_task/spawn_subagent) and wait for \
+                the results. Then give a COMPLETE final answer that includes both your previous results and the fixes.",
+                score, cfg.threshold, missing
             )
         }));
 
         // Run additional tool rounds to address the gaps (tiger_cowork: up to 5)
-        for _extra_round in 0..5usize {
+        for _extra_round in 0..cfg.max_fix_rounds {
             if sub_agent.cancel_flag.load(Ordering::Relaxed) {
-                info!("[Reflection] Abort signal during gap-fix rounds");
+                info!("[Evaluation] Abort signal during gap-fix rounds");
                 return None;
             }
             let resp = match llm_call(client, api_key, api_url, model, all_messages, Some(tools), temperature, max_tokens).await {
                 Ok(d) => d,
                 Err(e) => {
-                    error!("[Reflection retry] LLM call failed: {}", e);
+                    error!("[Evaluation retry] LLM call failed: {}", e);
                     break;
                 }
             };
