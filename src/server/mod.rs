@@ -291,6 +291,10 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     // Start the cron scheduler for enabled scheduled tasks
     services::scheduler::init_scheduler().await;
 
+    // Messaging bots: loads per-chat state and spawns the Telegram long-poll
+    // supervisor (self-idles until telegramEnabled + token are set).
+    services::messaging::init();
+
     let state = Arc::new(AppState {
         sandbox_dir: sandbox_dir.clone(),
         data_dir,
@@ -311,6 +315,13 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         axum::routing::post(routes::auth::verify_handler),
     );
 
+    // LINE webhook (no bearer auth — LINE can't send our token; the handler
+    // verifies the X-Line-Signature HMAC over the raw body instead).
+    let line_webhook = Router::new().route(
+        "/line/webhook",
+        axum::routing::post(routes::messaging::line_webhook),
+    );
+
     // Web UI (no auth needed — auth happens client-side via API calls)
     let web_ui = routes::web_ui::router();
 
@@ -324,6 +335,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     // Combine: unauthenticated routes + authenticated API
     let app = Router::new()
         .merge(auth_verify)
+        .merge(line_webhook)
         .nest("/web", web_ui.clone())
         .route("/web/", axum::routing::get(|| async {
             axum::response::Redirect::permanent("/web")

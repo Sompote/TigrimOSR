@@ -15,6 +15,7 @@ pub mod clawhub;
 pub mod remote;
 pub mod vpn;
 pub mod plugins;
+pub mod messaging;
 pub mod web_ui;
 
 use std::sync::Arc;
@@ -39,4 +40,5 @@ pub fn build_api_routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
         .nest("/remote", remote::router())
         .nest("/vpn", vpn::router())
         .nest("/plugins", plugins::router())
+        .nest("/messaging", messaging::api_router())
 }

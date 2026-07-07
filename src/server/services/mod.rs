@@ -15,6 +15,7 @@ pub mod mcp;
 #[allow(dead_code)]
 pub mod tunnel;
 pub mod vpn;
+pub mod messaging;
 #[allow(dead_code)]
 pub mod compact;
 pub mod plugin;
