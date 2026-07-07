@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="TigrimOS" Version="0.6.2" Manufacturer="Sompote"
+           UpgradeCode="03380E26-0FEF-47C4-A82C-93DC0A72E7E7" Language="1033">
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine"
+             Description="TigrimOS - native AI agent platform"/>
+    <Media Id="1" Cabinet="product.cab" EmbedCab="yes"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="TigrimOS">
+          <Component Id="MainExecutable" Guid="D79D131C-7B4D-4CE5-A9EB-43881A1E46B2" Win64="yes">
+            <File Id="TigrimOSEXE" Name="TigrimOS.exe" Source="tigrimos.exe" KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="AppMenuDir" Name="TigrimOS">
+          <Component Id="StartMenuShortcut" Guid="89483D2F-F612-45D3-8393-6D4A6FFA5095">
+            <Shortcut Id="AppShortcut" Name="TigrimOS"
+                      Target="[INSTALLDIR]TigrimOS.exe" WorkingDirectory="INSTALLDIR"/>
+            <RemoveFolder Id="AppMenuDir" On="uninstall"/>
+            <RegistryValue Root="HKCU" Key="Software\TigrimOS" Name="installed"
+                           Type="integer" Value="1" KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Complete" Level="1" Title="TigrimOS">
+      <ComponentRef Id="MainExecutable"/>
+      <ComponentRef Id="StartMenuShortcut"/>
+    </Feature>
+  </Product>
+</Wix>
