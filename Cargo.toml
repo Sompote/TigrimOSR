@@ -45,6 +45,8 @@ pdf-extract = "0.10"
 calamine = "0.26"
 zip = "2"
 base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
 
 # Unix process-group signalling so a chat-kill can reap the whole process tree
 [target.'cfg(unix)'.dependencies]

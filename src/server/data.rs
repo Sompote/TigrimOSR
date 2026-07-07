@@ -587,6 +587,24 @@ pub struct Settings {
     /// you must provide a virtual one (e.g. run under `xvfb-run`).
     #[serde(rename = "browserHeadless", skip_serializing_if = "Option::is_none")]
     pub browser_headless: Option<bool>,
+    // Messaging bots (Telegram long-poll, LINE Messaging API webhook)
+    #[serde(rename = "telegramEnabled", skip_serializing_if = "Option::is_none")]
+    pub telegram_enabled: Option<bool>,
+    #[serde(rename = "telegramBotToken", skip_serializing_if = "Option::is_none")]
+    pub telegram_bot_token: Option<String>,
+    /// Telegram numeric user IDs stored as strings; empty/unset = nobody
+    /// allowed (fail closed — the rejection reply tells the sender their id).
+    #[serde(rename = "telegramAllowedUserIds", skip_serializing_if = "Option::is_none")]
+    pub telegram_allowed_user_ids: Option<Vec<String>>,
+    #[serde(rename = "lineEnabled", skip_serializing_if = "Option::is_none")]
+    pub line_enabled: Option<bool>,
+    #[serde(rename = "lineChannelSecret", skip_serializing_if = "Option::is_none")]
+    pub line_channel_secret: Option<String>,
+    #[serde(rename = "lineChannelAccessToken", skip_serializing_if = "Option::is_none")]
+    pub line_channel_access_token: Option<String>,
+    /// LINE user IDs ("U...") allowed to talk to the bot; empty/unset = nobody.
+    #[serde(rename = "lineAllowedUserIds", skip_serializing_if = "Option::is_none")]
+    pub line_allowed_user_ids: Option<Vec<String>>,
     // Catch-all for unknown fields
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,

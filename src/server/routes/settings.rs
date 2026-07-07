@@ -98,7 +98,14 @@ async fn get_settings_handler() -> Json<Value> {
     let mut v = serde_json::to_value(&settings).unwrap_or(json!({}));
 
     // Mask top-level API keys
-    for key in &["tigerBotApiKey", "webSearchApiKey", "openRouterSearchApiKey"] {
+    for key in &[
+        "tigerBotApiKey",
+        "webSearchApiKey",
+        "openRouterSearchApiKey",
+        "telegramBotToken",
+        "lineChannelSecret",
+        "lineChannelAccessToken",
+    ] {
         if let Some(val) = v.get(*key).and_then(|v| v.as_str()) {
             if !val.is_empty() {
                 v[*key] = json!(mask_key(val));
@@ -189,7 +196,14 @@ async fn put_settings_handler(Json(body): Json<Value>) -> Json<Value> {
     }
 
     // Don't overwrite keys with masked values
-    for key in &["tigerBotApiKey", "webSearchApiKey", "openRouterSearchApiKey"] {
+    for key in &[
+        "tigerBotApiKey",
+        "webSearchApiKey",
+        "openRouterSearchApiKey",
+        "telegramBotToken",
+        "lineChannelSecret",
+        "lineChannelAccessToken",
+    ] {
         if let Some(val) = body.get(*key) {
             if is_masked(val) {
                 if let Some(orig) = current_v.get(*key) {
