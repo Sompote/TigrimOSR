@@ -13,7 +13,7 @@
 - **Plugin system** — zip plugins bundling skills, MCP servers, agents, and connectors. Compatible with Claude Desktop/Code plugins and npm MCP packages.
 - **Run it your way** — as a native **Rust desktop UI** on your machine, **headless** on a machine or in **Docker**, and connect from any browser via the built-in **web UI**. Toggle Local/Remote from one interface.
 - **Private remote access (VPN)** — reach a remote host over your own **[Tailscale](https://tailscale.com) VPN** instead of exposing it publicly — devices talk over private `100.x` addresses, nothing is published to the internet. Opt-in toggle, an alternative to the public Cloudflare tunnel.
-- **Built in Rust** — fast, low-memory, single binary, no Node/Python runtime. Rewritten from [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork).
+- **Built in Rust** — fast, low-memory, single binary, no Node/Python runtime. Rewritten from [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork). Because both the app and the [Obscura](https://github.com/h4ckf0r0day/obscura) browser engine are native Rust, the whole thing — desktop UI, embedded server, **and a live embedded browser** — idles at only **~270 MB RAM** (≈210 MB app + ≈60 MB browser), a fraction of what a Chromium/Electron stack needs just to open a tab.
 
 ### Native Rust desktop app
 
@@ -22,6 +22,31 @@ Install it on your machine and run the UI as a **native Rust app** — a single,
 ![TigrimOSR native desktop app](assets/screenshot_inline_chart.png)
 
 *Above: the native desktop app — ask for a plot and the agent runs Python (matplotlib) and embeds the chart inline in its answer.*
+
+### Memory footprint
+
+Because TigrimOS is native Rust end-to-end — the app **and** its [Obscura](https://github.com/h4ckf0r0day/obscura) browser engine — the whole stack stays remarkably light. On an idle desktop session **with browser control on and a live browser attached**, measured resident memory is:
+
+```
+TigrimOS (app + embedded server)   ≈ 210 MB
+obscura (Rust browser engine)      ≈  60 MB
+────────────────────────────────────────────
+Total, with a live browser         ≈ 270 MB
+```
+
+That's roughly where a Chromium browser process *alone* tends to **start**. The reason is structural: most agent stacks pay for **two** heavy layers TigrimOS doesn't — an interpreted runtime (Node.js/Python) **plus** a multi-process Chromium driven by Playwright. TigrimOS replaces both with a single Rust binary and a single-process Rust browser.
+
+For rough context, here's how that compares to two popular open-source browser agents. **Only the TigrimOS figure is our own measurement**; the others are **third-party/community-reported** and vary widely with workload — treat them as ballpark, not benchmarks:
+
+| Stack | Runtime + browser | Agent **with a live browser** |
+|---|---|---|
+| **TigrimOS** | Native Rust + Rust **Obscura** engine | **≈ 270 MB** *(measured)* |
+| [Hermes](https://github.com/nousresearch/hermes-agent) | Node/Python + Chromium (Playwright) | ~1.2–1.8 GB *(reported)* |
+| [OpenClaw](https://openclaw.ai/) | Node.js + Chromium (Playwright) | 2–4 GB typical; 7.5 GB+ multi-agent *(reported)* |
+
+A single Chromium instance commonly uses [800 MB–2.5 GB](https://www.shopclawmart.com/blog/troubleshoot-memory-usage-openclaw) depending on the page, and per-agent-browser setups multiply that. Chromium/Playwright stacks also have to actively manage renderer-process accumulation and orphaned browsers across restarts (e.g. OpenClaw [#29685](https://github.com/openclaw/openclaw/issues/29685)) — failure modes TigrimOS avoids with per-session process groups and per-agent browsers that shut down with the session.
+
+> **Not fixed:** ~270 MB is the **idle** baseline with a browser attached. Real usage grows as Obscura renders heavy pages (its V8 heap climbs per page/tab) and as the app holds conversation, session, and swarm state — expect more under load, but still far below a Chromium-based stack.
 
 ### Mobile Remote Connection
 
