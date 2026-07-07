@@ -564,12 +564,21 @@ pub struct Settings {
     #[serde(rename = "browserControlEnabled", skip_serializing_if = "Option::is_none")]
     pub browser_control_enabled: Option<bool>,
     /// Which engine browser control drives: "chromium" (Playwright's bundled
-    /// build — portable, always available) or "chrome" (the user's installed
-    /// Google Chrome). Defaults to "chrome" — real Chrome trips far fewer bot
-    /// blocks (e.g. Google search) than bundled Chromium. Falls back to nothing
-    /// if Chrome isn't installed, so set this to "chromium" on hosts without it.
+    /// build — portable, always available), "chrome" (the user's installed
+    /// Google Chrome), or "obscura" (the stealthy Rust headless browser at
+    /// github.com/h4ckf0r0day/obscura, launched via its `obscura mcp` mode).
+    /// Defaults to "chrome" — real Chrome trips far fewer bot blocks (e.g.
+    /// Google search) than bundled Chromium. Falls back to nothing if Chrome
+    /// isn't installed, so set this to "chromium" on hosts without it. "obscura"
+    /// requires the `obscura` binary to be installed separately (see
+    /// `browser_obscura_path`) and is always headless.
     #[serde(rename = "browserEngine", skip_serializing_if = "Option::is_none")]
     pub browser_engine: Option<String>,
+    /// Path to the `obscura` binary used when `browser_engine` is "obscura".
+    /// Defaults to "obscura" (resolved from PATH). Set this to an absolute path
+    /// if the binary lives outside PATH. Ignored for the chromium/chrome engines.
+    #[serde(rename = "browserObscuraPath", skip_serializing_if = "Option::is_none")]
+    pub browser_obscura_path: Option<String>,
     /// Whether browser control runs the browser headless (no visible window).
     /// When unset, follows the process `--headless` flag (legacy behaviour: a
     /// UI-less server also ran the browser headless). Set to `false` to force a
@@ -640,6 +649,9 @@ pub async fn get_settings() -> Settings {
     }
     if settings.browser_engine.is_none() {
         settings.browser_engine = Some("chrome".to_string());
+    }
+    if settings.browser_obscura_path.is_none() {
+        settings.browser_obscura_path = Some("obscura".to_string());
     }
     // Default to the seeded agent-loop profile (behavior-identical mirror of
     // the built-in loop). "" stays as an explicit "no profile" user choice.

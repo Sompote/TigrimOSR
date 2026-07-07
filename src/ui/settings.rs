@@ -247,6 +247,8 @@ pub struct SettingsView {
     // --- Browser control ---
     browser_control_enabled: bool,
     browser_engine: String,
+    /// Path to the `obscura` binary (used when browser_engine == "obscura").
+    browser_obscura_path: String,
     /// None = Auto (follow the server's --headless flag); Some(true)/Some(false)
     /// force the browser headless / headful independently of the server UI.
     browser_headless: Option<bool>,
@@ -417,6 +419,7 @@ impl Default for SettingsView {
 
             browser_control_enabled: false,
             browser_engine: "chrome".to_string(),
+            browser_obscura_path: "obscura".to_string(),
             browser_headless: None,
 
             agent_max_turns: 15,
@@ -653,6 +656,10 @@ impl SettingsView {
             .browser_engine
             .clone()
             .unwrap_or_else(|| "chrome".to_string());
+        self.browser_obscura_path = settings
+            .browser_obscura_path
+            .clone()
+            .unwrap_or_else(|| "obscura".to_string());
         self.browser_headless = settings.browser_headless;
 
         // Agent Harness (stored in extra map)
@@ -859,6 +866,7 @@ impl SettingsView {
         // Browser control
         settings.browser_control_enabled = Some(self.browser_control_enabled);
         settings.browser_engine = Some(self.browser_engine.clone());
+        settings.browser_obscura_path = Some(self.browser_obscura_path.clone());
         settings.browser_headless = self.browser_headless;
 
         // Agent Harness (stored in extra map)
@@ -3285,7 +3293,37 @@ impl SettingsView {
                 {
                     browser_changed = true;
                 }
+                if ui
+                    .radio_value(&mut self.browser_engine, "obscura".to_string(), "Obscura")
+                    .on_hover_text(
+                        "Stealthy Rust headless browser (github.com/h4ckf0r0day/obscura), \
+                         driven via its `obscura mcp` mode. Always headless; install the \
+                         `obscura` binary separately.",
+                    )
+                    .changed()
+                {
+                    browser_changed = true;
+                }
             });
+
+            // Obscura: let the user point at the binary if it isn't on PATH.
+            if self.browser_engine == "obscura" {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label("Obscura binary:");
+                    if ui
+                        .text_edit_singleline(&mut self.browser_obscura_path)
+                        .on_hover_text("Path to the `obscura` binary. Default \"obscura\" resolves from PATH.")
+                        .changed()
+                    {
+                        browser_changed = true;
+                    }
+                });
+            }
+
+            // Window (headless) mode only applies to Playwright's Chromium/Chrome.
+            // Obscura is always headless, so hide these controls when it's picked.
+            if self.browser_engine != "obscura" {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label("Window:");
@@ -3315,16 +3353,24 @@ impl SettingsView {
                     browser_changed = true;
                 }
             });
+            } // end "Window" controls (Chromium/Chrome only)
+
             ui.add_space(4.0);
+            let help = if self.browser_engine == "obscura" {
+                "Obscura is a stealthy Rust headless browser. Install the `obscura` binary \
+                 separately (github.com/h4ckf0r0day/obscura — release, `cargo install`, or AUR) \
+                 so it's on PATH, or set its path above. It's always headless and runs with \
+                 --stealth (anti-detection + tracker blocking)."
+            } else {
+                "Uses a dedicated browser profile (kept under the app data dir), so your \
+                 everyday browsing stays separate. First use downloads the browser on demand. \
+                 To beat Google's headless blocking on Ubuntu: pick \"Chrome\" + \"Real browser\" \
+                 and launch the server under `xvfb-run -a ./TigrimOS --headless`."
+            };
             ui.label(
-                egui::RichText::new(
-                    "Uses a dedicated browser profile (kept under the app data dir), so your \
-                     everyday browsing stays separate. First use downloads the browser on demand. \
-                     To beat Google's headless blocking on Ubuntu: pick \"Chrome\" + \"Real browser\" \
-                     and launch the server under `xvfb-run -a ./TigrimOS --headless`.",
-                )
-                .size(11.0)
-                .color(egui::Color32::GRAY),
+                egui::RichText::new(help)
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
             );
         }
 

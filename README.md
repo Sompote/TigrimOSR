@@ -9,7 +9,7 @@
 - **Don't trust — verify (job evaluation)** — LLM agents love to declare success: *"Done!"* with a missing file, a half-finished swarm job, a confident summary backed by nothing. TigrimOSR closes that trust gap: after the **whole job** finishes, an independent **tool-using judge** (optionally a different model, so the agent never grades its own work) checks the result against your objective and **rubric** — opening the output files to confirm the claimed artifacts actually exist — and feeds any gaps back so the orchestrator delegates targeted fixes *before* the answer reaches you. One verification per job, not per agent, so even big swarms stay fast.
 - **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, or any OpenAI-compatible API — plus 3 local CLI agents (Claude Code, Gemini CLI, Codex) with no API keys.
 - **Full tool calling** — web search, Python, file I/O, shell, MCP servers, and the ClawHub skill marketplace. Charts, images, and docs render inline with click-to-zoom.
-- **Browser control** — let the agent drive a real **Chrome / Chromium** browser to **search Google** and read the live web directly. It's a real browser, not a paid search-API — **no API keys, free of charge, saves money**. Opt-in toggle, off by default for safety.
+- **Browser control** — let the agent drive a real browser to **search Google** and read the live web directly. Choose your engine: **Chrome / Chromium** via Playwright, or the stealthy, Node-free **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine (a single Rust binary with built-in anti-detection). It's a real browser, not a paid search-API — **no API keys, free of charge, saves money**. Opt-in toggle, off by default for safety.
 - **Plugin system** — zip plugins bundling skills, MCP servers, agents, and connectors. Compatible with Claude Desktop/Code plugins and npm MCP packages.
 - **Run it your way** — as a native **Rust desktop UI** on your machine, **headless** on a machine or in **Docker**, and connect from any browser via the built-in **web UI**. Toggle Local/Remote from one interface.
 - **Private remote access (VPN)** — reach a remote host over your own **[Tailscale](https://tailscale.com) VPN** instead of exposing it publicly — devices talk over private `100.x` addresses, nothing is published to the internet. Opt-in toggle, an alternative to the public Cloudflare tunnel.
@@ -40,7 +40,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
-- **Browser control** — opt-in toggle that lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP
+- **Browser control** — opt-in toggle that lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP, or the stealthy **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine (single Rust binary, no Node required) — see [Browser Control](#browser-control)
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
 - **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
 - **Private VPN access (Tailscale)** — reach a remote host over your own tailnet instead of a public tunnel — see [Remote access over a private VPN](#remote-access-over-a-private-vpn-tailscale)
@@ -1132,10 +1132,84 @@ It's off by default — tick the box, then choose the engine (Step 4).
 |--------|-----------------|
 | **Chrome** *(default, recommended)* | Your installed Google Chrome channel. **Far fewer bot/CAPTCHA blocks** on big sites (Google search especially), but Google Chrome must be installed. |
 | **Chromium** | Playwright's managed Chromium build. Portable — works on any machine after Step 2. Pick this on hosts without Google Chrome. |
+| **Obscura** | A stealthy headless browser engine ([github.com/h4ckf0r0day/obscura](https://github.com/h4ckf0r0day/obscura)). **No Node/npx needed** — one self-contained Rust binary you install separately. Always headless, runs with `--stealth` (anti-detection + tracker blocking). Great for search/scraping on servers. Full setup: [Using the Obscura engine](#using-the-obscura-engine). |
 
 > ⚠️ **ARM64 Linux (e.g. AWS Graviton, Hetzner ARM, Raspberry Pi): there is NO Google Chrome.** Google has never shipped a `google-chrome-stable` package for desktop Linux on ARM — the `.deb` is amd64-only and `apt` will reject it with "unmet dependencies / not installable". On these hosts you **must** use **Chromium** (which has a native ARM64 build). Set `browserEngine: "chromium"`, install it with `npx playwright install chromium` + `npx playwright install-deps chromium`, then restart. Many cloud instances are ARM — check with `uname -m` (`aarch64`/`arm64` → Chromium only).
 
 Saving the setting **reconnects MCP immediately** — no restart needed. The agent now has tools like `mcp_browser_browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, and `browser_take_screenshot`, and screenshots render inline in chat.
+
+<details id="using-the-obscura-engine">
+<summary><b>Using the Obscura engine</b> — install, setup & how it differs (no Node required)</summary>
+
+### Using the Obscura engine
+
+[Obscura](https://github.com/h4ckf0r0day/obscura) is an open-source, **stealthy headless browser written in Rust**. TigrimOS drives it through its `obscura mcp` mode, which exposes the **exact same `browser_*` MCP tools** Playwright does (`browser_navigate`, `browser_evaluate`, `browser_click`, …) — so it's a **drop-in engine**: `web_search`, Google-driven browsing, and every browser tool keep working unchanged, just backed by Obscura.
+
+**Why pick it**
+
+- **No Node.js / npx / ~280 MB Playwright download** — one self-contained binary.
+- **Stealth by default** — TigrimOS launches it with `--stealth` (consistent fingerprint, TLS impersonation, tracker blocking), which trips fewer bot walls when scraping.
+- **Small & fast** — a native Rust engine, ideal for headless cloud/servers.
+
+**Trade-offs vs. Chrome/Chromium**
+
+- **Always headless** — there's no headful window, so the *Window* control (Auto / Real browser / Headless) is hidden and `browserHeadless` is ignored for this engine.
+- **No persistent Chromium profile** — it doesn't use `--user-data-dir`; manage logged-in state via the `browser_get_cookies` / `browser_storage_state` tools instead.
+- **No screenshot-to-file dir** — `obscura mcp` has no `--output-dir`, so file-saved screenshots aren't wired; use `browser_snapshot` / `browser_markdown` / `browser_evaluate` to read page content (search needs only navigate + evaluate).
+- **Private network blocked by default** (an SSRF guard) — Obscura refuses `localhost` / RFC1918 targets. To browse a local dev server you'd need `--allow-private-network`, which the built-in launcher doesn't pass; use a [bring-your-own `browser` server](#advanced-bring-your-own-browser-server) for that.
+
+#### Step A — Install the `obscura` binary
+
+Obscura isn't installed via `npx` — grab the prebuilt binary for your OS/arch from the [releases page](https://github.com/h4ckf0r0day/obscura/releases) (assets: `obscura-x86_64-macos`, `obscura-aarch64-macos`, `obscura-x86_64-linux`, `obscura-aarch64-linux`, `obscura-x86_64-windows`). Put it — **plus the `obscura-worker` binary shipped alongside it** — somewhere on your `PATH`:
+
+```bash
+# Example: macOS Intel (x86_64). Swap the asset name for your platform.
+curl -L -o obscura.tar.gz \
+  https://github.com/h4ckf0r0day/obscura/releases/latest/download/obscura-x86_64-macos.tar.gz
+tar xzf obscura.tar.gz
+sudo mv obscura obscura-worker /usr/local/bin/
+obscura --version          # e.g. obscura 0.1.9
+```
+
+> **macOS Gatekeeper:** if the binary is quarantined ("cannot be opened…"), clear it once:
+> ```bash
+> xattr -dr com.apple.quarantine /usr/local/bin/obscura /usr/local/bin/obscura-worker
+> ```
+
+*(Alternative: build from source — `git clone https://github.com/h4ckf0r0day/obscura && cd obscura && cargo build --release`, then copy `target/release/obscura` onto your PATH.)*
+
+Check `uname -m` to know your arch (`arm64`/`aarch64` → the `aarch64` asset; `x86_64` → the `x86_64` asset).
+
+#### Step B — Select it in TigrimOS
+
+- **Settings → Security → Browser Control** (web/mobile: **Settings → AI / API**): tick **Enable browser control**, then set **Engine: Obscura**.
+- If the binary **isn't on your `PATH`**, a **"Obscura binary"** box appears — put the absolute path there (e.g. `/usr/local/bin/obscura`). Left as the default `obscura`, it's resolved from `PATH`.
+
+Or set it in `<data-dir>/settings.json` directly:
+
+```json
+{
+  "browserControlEnabled": true,
+  "browserEngine": "obscura",
+  "browserObscuraPath": "obscura"
+}
+```
+
+`browserObscuraPath` defaults to `"obscura"` (found on `PATH`); use an absolute path if it lives elsewhere. Saving reconnects MCP immediately.
+
+#### Step C — Verify
+
+The boot log should show:
+
+```
+[MCP] Browser control enabled (obscura) — 35 tool(s)
+```
+
+Then in chat: *"Open a browser to example.com and tell me the page title."* — the agent calls `browser_navigate` → `browser_evaluate`. If it fails, the log reads `Browser control failed to start (is the \`obscura\` binary installed and on PATH?)` — fix Step A (binary missing or wrong path).
+
+**How it works:** enabling the toggle with this engine auto-registers a built-in stdio MCP server running `obscura mcp --stealth` (via `browserObscuraPath`). TigrimOS keeps the process alive across calls, so the browser session is stateful — same as the Playwright path, just a different engine binary.
+
+</details>
 
 #### Step 5 — Test it
 
@@ -1159,12 +1233,18 @@ Expect the agent to call `browser_navigate` → `browser_snapshot` → `browser_
 
 ### How it works
 
-Enabling the toggle auto-registers a built-in stdio MCP server:
+Enabling the toggle auto-registers a built-in stdio MCP server. For the **Chromium/Chrome** engines:
 
 ```
 npx @playwright/mcp@latest --browser <chromium|chrome> \
   --user-data-dir <data-dir>/browser-profile-<engine> \
   --output-dir <data-dir>/browser-output
+```
+
+For the **Obscura** engine it instead runs the native binary (no Node needed), which exposes the same `browser_*` tools:
+
+```
+<browserObscuraPath> mcp --stealth
 ```
 
 TigrimOS keeps the MCP server process **alive across tool calls**, so the browser session is stateful — a page opened by `browser_navigate` is still there for the next `browser_snapshot`/`browser_click`. (Each call is serialized per server and the process auto-restarts if it dies.)
@@ -1203,11 +1283,12 @@ If you define your own MCP server named `browser` under **Settings → MCP Tools
 {
   "browserControlEnabled": true,
   "browserEngine": "chrome",
-  "browserHeadless": false
+  "browserHeadless": false,
+  "browserObscuraPath": "obscura"
 }
 ```
 
-`browserEngine` is `"chrome"` (default) or `"chromium"`. `browserHeadless` is `true`/`false` to force the browser headless/headful, or omit it to follow the server's `--headless` flag.
+`browserEngine` is `"chrome"` (default), `"chromium"`, or `"obscura"` (see [Using the Obscura engine](#using-the-obscura-engine)). `browserHeadless` is `true`/`false` to force the browser headless/headful, or omit it to follow the server's `--headless` flag (ignored for Obscura, which is always headless). `browserObscuraPath` is the path to the `obscura` binary — `"obscura"` (default, from `PATH`) or an absolute path — used only by the Obscura engine.
 
 ### Safety
 

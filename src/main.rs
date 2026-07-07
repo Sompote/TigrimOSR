@@ -35,6 +35,7 @@ fn maybe_prompt_browser_install(runtime: &tokio::runtime::Runtime) {
     }
     if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
         println!("Skipped. Enable later in Settings → Security → Browser Control.");
+        println!("(Prefer Obscura? Install the `obscura` binary and pick it there — no npx needed.)");
         println!();
         return;
     }

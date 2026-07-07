@@ -287,27 +287,40 @@ pub async fn init_mcp_servers() {
     }
 }
 
-/// Register the built-in browser-control server (Playwright MCP) with portable,
-/// per-install paths. Engine is "chromium" (bundled) or "chrome" (system).
-async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
+/// Build the `(command, args)` to launch the browser-control MCP server for the
+/// configured engine.
+///
+/// - "chromium"/"chrome": Playwright MCP via `npx @playwright/mcp@latest`, with
+///   the Chromium user-data-dir profile, headless flag, and (for per-agent
+///   browsers) `--isolated`.
+/// - "obscura": the native `obscura mcp` stdio server. It's a drop-in — it
+///   exposes the SAME `browser_*` tool names as Playwright MCP, so no routing
+///   or search-code changes are needed. Obscura is always headless and doesn't
+///   use a Chromium profile/singleton-lock, so `profile`, `headless`, and
+///   `isolated` don't apply; `--stealth` enables its anti-detection + tracker
+///   blocking (well-suited to search scraping).
+///
+/// `profile` is the Chromium user-data-dir (None for per-agent isolated
+/// browsers). `output` is the screenshot/snapshot dir. `isolated` gives
+/// Playwright an ephemeral profile so multiple windows run side by side.
+fn build_browser_launch(
+    settings: &crate::server::data::Settings,
+    profile: Option<&str>,
+    output: &str,
+    isolated: bool,
+) -> (String, Vec<String>) {
     let engine = settings
         .browser_engine
         .clone()
         .unwrap_or_else(|| "chromium".to_string());
 
-    // Profile lives under the data dir (internal browser state, not served).
-    let data_dir = crate::server::data::data_dir().to_string_lossy().to_string();
-    let profile = format!("{}/browser-profile-{}", data_dir, engine);
-
-    // A crashed/killed browser (e.g. a Docker container that died without a clean
-    // shutdown) leaves stale Chromium singleton locks in the profile. Playwright
-    // MCP then sees the profile as "already in use" and refuses to launch
-    // ("use --isolated to run multiple instances"). The profile is dedicated to
-    // this built-in browser, so clearing stale locks before launch is safe.
-    clear_stale_browser_locks(&profile);
-    // Screenshots/snapshots go in the sandbox so the agent (read_file) and the
-    // web UI (file-server) can read/display them.
-    let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
+    if engine == "obscura" {
+        let cmd = settings
+            .browser_obscura_path
+            .clone()
+            .unwrap_or_else(|| "obscura".to_string());
+        return (cmd, vec!["mcp".to_string(), "--stealth".to_string()]);
+    }
 
     // Browser headless mode is decoupled from the server's UI-headless mode:
     // an explicit `browserHeadless` setting wins, so a UI-less server can still
@@ -324,29 +337,67 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
         args.push("--headless".to_string());
     }
     args.push("--browser".to_string());
-    args.push(engine.clone());
-    args.push("--user-data-dir".to_string());
-    args.push(profile);
+    args.push(engine);
+    if let Some(p) = profile {
+        args.push("--user-data-dir".to_string());
+        args.push(p.to_string());
+    }
+    if isolated {
+        args.push("--isolated".to_string());
+    }
     args.push("--output-dir".to_string());
-    args.push(output);
+    args.push(output.to_string());
+    ("npx".to_string(), args)
+}
+
+/// Register the built-in browser-control server. Engine is "chromium" (bundled),
+/// "chrome" (system), or "obscura" (native `obscura mcp` stdio server).
+async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
+    let engine = settings
+        .browser_engine
+        .clone()
+        .unwrap_or_else(|| "chromium".to_string());
+
+    // Profile lives under the data dir (internal browser state, not served).
+    let data_dir = crate::server::data::data_dir().to_string_lossy().to_string();
+    let profile = format!("{}/browser-profile-{}", data_dir, engine);
+
+    // A crashed/killed browser (e.g. a Docker container that died without a clean
+    // shutdown) leaves stale Chromium singleton locks in the profile. Playwright
+    // MCP then sees the profile as "already in use" and refuses to launch
+    // ("use --isolated to run multiple instances"). The profile is dedicated to
+    // this built-in browser, so clearing stale locks before launch is safe.
+    // Obscura doesn't use a Chromium profile, so there are no locks to clear.
+    if engine != "obscura" {
+        clear_stale_browser_locks(&profile);
+    }
+    // Screenshots/snapshots go in the sandbox so the agent (read_file) and the
+    // web UI (file-server) can read/display them.
+    let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
+
+    let (command, args) = build_browser_launch(settings, Some(&profile), &output, false);
 
     let config = json!({
         "name": "browser",
-        "command": "npx",
+        "command": command,
         "args": args,
     });
 
     let result = connect_server_impl("browser", "stdio", &config).await;
     if result["ok"].as_bool().unwrap_or(false) {
         info!(
-            "[MCP] Browser control enabled ({}{}) — {} tool(s)",
-            engine,
-            if headless { ", headless" } else { "" },
-            result["tools"]
+            "[MCP] Browser control enabled ({}) — {} tool(s)",
+            engine, result["tools"]
         );
     } else {
+        let need = if engine == "obscura" {
+            "is the `obscura` binary installed and on PATH?"
+        } else {
+            "is Node/npx installed?"
+        };
         warn!(
-            "[MCP] Browser control failed to start (is Node/npx installed?): {}",
+            "[MCP] Browser control failed to start ({}): {}",
+            need,
             result["error"].as_str().unwrap_or("unknown")
         );
     }
@@ -396,23 +447,12 @@ pub async fn ensure_agent_browser(session_id: &str, agent_id: &str) -> bool {
     let settings = crate::server::data::get_settings().await;
     let engine = settings.browser_engine.clone().unwrap_or_else(|| "chromium".to_string());
     let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
-    let headless = settings
-        .browser_headless
-        .unwrap_or_else(|| std::env::args().any(|a| a == "--headless"));
 
-    let mut args: Vec<String> = vec!["@playwright/mcp@latest".to_string()];
-    if headless {
-        args.push("--headless".to_string());
-    }
-    args.push("--browser".to_string());
-    args.push(engine.clone());
-    // --isolated gives each instance its own ephemeral profile so multiple
-    // Chromium windows run side by side without a shared-profile lock.
-    args.push("--isolated".to_string());
-    args.push("--output-dir".to_string());
-    args.push(output);
+    // Per-agent browser: no shared profile (Playwright uses --isolated for an
+    // ephemeral one; each `obscura mcp` is already its own process).
+    let (command, args) = build_browser_launch(&settings, None, &output, true);
 
-    let config = json!({ "name": key, "command": "npx", "args": args });
+    let config = json!({ "name": key, "command": command, "args": args });
     let result = connect_server_impl(&key, "stdio", &config).await;
     let ok = result["ok"].as_bool().unwrap_or(false);
     if ok {
