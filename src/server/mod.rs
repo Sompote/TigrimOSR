@@ -129,6 +129,8 @@ const REMOTE_BLOCKED_PREFIXES: &[&str] = &[
     "/api/vpn",
     // Tunnel control exposes the server publicly — owner only.
     "/api/messaging/tunnel",
+    // Returns the host's raw Claude Code OAuth token — owner only.
+    "/api/settings/claude-code-oauth",
 ];
 
 async fn auth_middleware(

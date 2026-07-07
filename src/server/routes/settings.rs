@@ -19,7 +19,7 @@ use crate::server::AppState;
 
 /// Mask a sensitive string: show first 8 chars + "..." + last 4 chars.
 /// Returns the original if shorter than 12 chars.
-fn mask_key(s: &str) -> String {
+pub(crate) fn mask_key(s: &str) -> String {
     if s.len() <= 12 {
         return s.to_string();
     }
@@ -131,6 +131,17 @@ async fn get_settings_handler() -> Json<Value> {
         }
     }
 
+    // Mask router model-pool API keys (each pool entry carries its own key)
+    if let Some(pool) = v.get_mut("modelPool").and_then(|p| p.as_array_mut()) {
+        for entry in pool.iter_mut() {
+            if let Some(k) = entry.get("api_key").and_then(|k| k.as_str()) {
+                if !k.is_empty() {
+                    entry["api_key"] = json!(mask_key(k));
+                }
+            }
+        }
+    }
+
     // Mask MCP tool header values that look sensitive
     if let Some(tools) = v.get_mut("mcpTools").and_then(|t| t.as_array_mut()) {
         for tool in tools.iter_mut() {
@@ -222,6 +233,38 @@ async fn put_settings_handler(Json(body): Json<Value>) -> Json<Value> {
                 }
             }
         }
+    }
+
+    // Don't overwrite router model-pool API keys with masked values. Entry ids
+    // are re-derived from label/model by the web UI, so match the masked
+    // placeholder back to whichever current key produces that mask, falling
+    // back to an id match.
+    if let (Some(body_pool), Some(current_pool)) = (
+        body.get("modelPool").and_then(|p| p.as_array()),
+        current_v.get("modelPool").and_then(|p| p.as_array()),
+    ) {
+        let mut restored_pool = body_pool.clone();
+        for entry in restored_pool.iter_mut() {
+            let masked = match entry.get("api_key") {
+                Some(v) if is_masked(v) => v.as_str().unwrap_or("").to_string(),
+                _ => continue,
+            };
+            let entry_id = entry.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+            let orig = current_pool
+                .iter()
+                .filter_map(|o| o.get("api_key").and_then(|k| k.as_str()))
+                .find(|k| mask_key(k) == masked)
+                .or_else(|| {
+                    current_pool
+                        .iter()
+                        .find(|o| o.get("id").and_then(|i| i.as_str()).unwrap_or("") == entry_id)
+                        .and_then(|o| o.get("api_key").and_then(|k| k.as_str()))
+                });
+            if let Some(orig) = orig {
+                entry["api_key"] = json!(orig);
+            }
+        }
+        updated["modelPool"] = json!(restored_pool);
     }
 
     // Don't overwrite MCP header values with masked values

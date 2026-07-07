@@ -31,6 +31,75 @@ struct SaveProfileBody {
     content: Option<String>,
 }
 
+/// Matches `api_key: <value>` lines in profile YAML (model / evaluation
+/// overrides). Group 1 = prefix up to and including any opening quote,
+/// group 2 = the value itself (quotes and trailing comments excluded).
+fn api_key_line_re() -> regex::Regex {
+    regex::Regex::new(r#"(?m)^(\s*api_key\s*:\s*["']?)([^"'\s#][^"'\n#]*)"#).unwrap()
+}
+
+/// Mask api_key values in raw profile YAML before returning it to clients.
+fn mask_yaml_api_keys(content: &str) -> String {
+    let re = api_key_line_re();
+    re.replace_all(content, |caps: &regex::Captures| {
+        format!(
+            "{}{}",
+            &caps[1],
+            crate::server::routes::settings::mask_key(caps[2].trim())
+        )
+    })
+    .to_string()
+}
+
+/// Mask api_key string values anywhere in the parsed profile JSON.
+fn mask_json_api_keys(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                if k == "api_key" {
+                    if let Some(s) = val.as_str() {
+                        if !s.is_empty() {
+                            *val = json!(crate::server::routes::settings::mask_key(s));
+                        }
+                    }
+                } else {
+                    mask_json_api_keys(val);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                mask_json_api_keys(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Replace masked api_key placeholders in an incoming profile with the
+/// original values from the existing file on disk, so a masked round-trip
+/// through the editor doesn't corrupt stored keys.
+fn restore_masked_api_keys(incoming: &str, existing: &str) -> String {
+    let re = api_key_line_re();
+    let mut originals: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for caps in re.captures_iter(existing) {
+        let orig = caps[2].trim().to_string();
+        if !orig.is_empty() {
+            originals.insert(crate::server::routes::settings::mask_key(&orig), orig);
+        }
+    }
+    re.replace_all(incoming, |caps: &regex::Captures| {
+        let val = caps[2].trim();
+        if val.contains("...") {
+            if let Some(orig) = originals.get(val) {
+                return format!("{}{}", &caps[1], orig);
+            }
+        }
+        format!("{}{}", &caps[1], &caps[2])
+    })
+    .to_string()
+}
+
 /// GET / — list all profile files with parsed metadata.
 async fn list_profiles() -> impl IntoResponse {
     ensure_default_profile();
@@ -124,10 +193,12 @@ async fn get_profile(Path(filename): Path<String>) -> impl IntoResponse {
     let fp = agent_loops_dir().join(&filename);
     match fs::read_to_string(&fp).await {
         Ok(content) => {
-            let parsed: Value = serde_yaml::from_str(&content).unwrap_or(Value::Null);
+            let masked = mask_yaml_api_keys(&content);
+            let mut parsed: Value = serde_yaml::from_str(&content).unwrap_or(Value::Null);
+            mask_json_api_keys(&mut parsed);
             (
                 StatusCode::OK,
-                Json(json!({"filename": filename, "content": content, "parsed": parsed})),
+                Json(json!({"filename": filename, "content": masked, "parsed": parsed})),
             )
         }
         Err(_) => (
@@ -220,12 +291,19 @@ async fn save_profile(Json(body): Json<SaveProfileBody>) -> impl IntoResponse {
         format!("{}.yaml", safe_name)
     };
 
+    // A round-trip through the editor carries masked api_key placeholders —
+    // swap the originals from the existing file back in before validating.
+    let dir = agent_loops_dir();
+    let content = match fs::read_to_string(dir.join(&final_name)).await {
+        Ok(existing) => restore_masked_api_keys(&content, &existing),
+        Err(_) => content,
+    };
+
     let warnings = match validate_profile_yaml(&content) {
         Ok((_, w)) => w,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
     };
 
-    let dir = agent_loops_dir();
     let _ = fs::create_dir_all(&dir).await;
     match fs::write(dir.join(&final_name), &content).await {
         Ok(_) => (
