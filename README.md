@@ -67,6 +67,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
 - **Browser control** — opt-in toggle that lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP, or the stealthy **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine (single Rust binary, no Node required) — see [Browser Control](#browser-control)
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
+- **Telegram & LINE bots** — chat with the agent from Telegram or LINE and control it with slash commands (`/agents`, `/model`, `/mode`, `/loop`, `/new`, `/stop`, `/status`), with live progress and approve/deny buttons for tool approvals — see [Telegram & LINE Bots](#telegram--line-bots)
 - **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
 - **Private VPN access (Tailscale)** — reach a remote host over your own tailnet instead of a public tunnel — see [Remote access over a private VPN](#remote-access-over-a-private-vpn-tailscale)
 - **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
@@ -1323,6 +1324,87 @@ The agent drives a real browser with your logged-in sessions, so treat browser a
 
 ---
 
+## Telegram & LINE Bots
+
+Chat with your TigrimOS agent from **Telegram** or **LINE** — and control it with slash
+commands — from anywhere. Telegram needs no public URL at all (outbound long-polling);
+LINE uses the built-in Cloudflare tunnel for its webhook. Bot conversations run through
+the **same pipeline as web chat**, so they appear in the web UI history, stream progress
+while the agent works, and honor the same tool-approval settings.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `/agents` | List agent team configs (`data/agents/*.yaml`) |
+| `/model [id]` | Show the current model + router pool, or switch the model (**global** — applies to all sessions) |
+| `/mode [single\|auto\|manual\|fully_auto\|router]` | Sub-agent mode — **per chat** |
+| `/loop [profile\|off]` | Agent-loop profile — **per chat** |
+| `/new` | Start a fresh conversation (the old session stays in the web UI history) |
+| `/stop` | Cancel the running task and kill every process it spawned |
+| `/status` | Current model, mode, loop profile, session id and run state |
+| `/help` | Command list (also `/start`) |
+
+Anything else you type is sent to the agent as a chat message. While it works you get
+throttled progress updates (the tools being called), then the final answer — long
+answers are split safely on UTF-8 boundaries (Thai and emoji included). One task runs
+at a time per chat; if you send another message mid-run the bot asks you to `/stop`
+first. When a tool needs approval (e.g. `run_shell` with approval enabled), the bot
+shows **Approve / Deny buttons** — a Telegram inline keyboard or a LINE confirm
+template. No answer = automatically denied after 120 seconds, so nothing ever hangs.
+
+### Telegram setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. Open **Settings → Messaging** (desktop app or web UI), enable **Telegram bot** and
+   paste the token.
+3. Message your bot once — the "Unauthorized" reply shows your numeric user ID.
+4. Add that ID to **Allowed user IDs** and save. Applies within ~30 seconds — no
+   restart needed (the poller re-reads settings every cycle).
+
+Telegram uses long-polling (`getUpdates`), which is outbound-only: it works behind NAT
+and firewalls with no tunnel, no open port, and no webhook.
+
+### LINE setup
+
+1. Create a **Messaging API** channel in the
+   [LINE Developers console](https://developers.line.biz/console/).
+2. In **Settings → Messaging**, enable **LINE bot** and paste the **Channel secret**
+   and **Channel access token** from the console.
+3. Click **Start tunnel**, then copy the shown **Webhook URL**
+   (`https://<tunnel-host>/line/webhook`) into the LINE console under
+   **Messaging API → Webhook settings** — press **Verify** and enable **Use webhook**.
+4. Message the bot once — the reply shows your `U…` user ID; add it to
+   **Allowed user IDs** and save (LINE settings apply immediately).
+
+> **Notes:** quick tunnels get a **new URL every time they start** — re-paste the
+> webhook URL into the LINE console after a tunnel restart (the current URL is always
+> shown in Settings → Messaging and at `GET /api/messaging/status`). Progress updates
+> on LINE are limited to one push per run to conserve the free plan's monthly
+> push-message quota; the final answer is always delivered.
+
+### Security
+
+- **Fail-closed allow-lists** — an empty allow-list rejects **everyone**; the rejection
+  reply includes the sender's ID so setup is copy-paste.
+- **Signature-verified LINE webhook** — every delivery is authenticated by an
+  HMAC-SHA256 over the raw body (`X-Line-Signature`, constant-time compared) with your
+  channel secret; the endpoint sits outside bearer auth (LINE can't send your token)
+  and retried deliveries are deduplicated by event id.
+- **Tunnel control is owner-only** — `POST /api/messaging/tunnel/{start,stop}` is
+  blocked for remote access tokens, since starting a tunnel exposes the host publicly.
+- **Masked secrets** — the bot token, channel secret and access token are masked in
+  `GET /api/settings` like every other API key.
+
+### Settings keys
+
+`telegramEnabled` · `telegramBotToken` · `telegramAllowedUserIds` ·
+`lineEnabled` · `lineChannelSecret` · `lineChannelAccessToken` · `lineAllowedUserIds`
+— all editable in **Settings → Messaging** (desktop and web/mobile UI). Connection
+state, errors and the LINE webhook URL are reported by `GET /api/messaging/status`.
+
+---
+
 ## Remote / Headless Setup
 
 TigrimOS can run on any cloud server (AWS, DigitalOcean, Hetzner, etc.) as a headless AI agent backend. You control it from your Mac desktop app, a mobile browser, or any web browser.
@@ -1536,6 +1618,14 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 ---
 
 ## Changelog
+
+### v0.6.2
+
+- **Telegram & LINE bots** — Chat with the agent from Telegram or LINE and control it with slash commands: `/agents`, `/model` (global switch), `/mode` and `/loop` (per chat), `/new`, `/stop` (cancels the run and kills its process tree), `/status`, `/help`. Non-command text runs through the **same pipeline as web chat**, so bot conversations appear in the web UI history. See [Telegram & LINE Bots](#telegram--line-bots).
+- **Live progress + approvals in chat apps** — While the agent works you get throttled progress updates (a single edited status message on Telegram; one quota-friendly push on LINE), then the final answer split safely on UTF-8 boundaries. Tool approvals arrive as **Approve/Deny buttons** (Telegram inline keyboard / LINE confirm template) with a 120 s default-deny so nothing hangs.
+- **No-restart Telegram, tunnel-backed LINE** — Telegram uses outbound long-polling (works behind NAT, token/enable changes apply within ~30 s without a restart). LINE's webhook (`/line/webhook`) is verified by an HMAC-SHA256 `X-Line-Signature` over the raw body (constant-time compare, retry dedupe) and gets its public URL from the Cloudflare tunnel — new owner-only `POST /api/messaging/tunnel/{start,stop}` endpoints control it, and `GET /api/messaging/status` reports bot state + the webhook URL to paste into the LINE console.
+- **Fail-closed access control** — Per-platform user allow-lists reject everyone when empty; the rejection reply includes the sender's ID for copy-paste setup. Bot secrets are masked in `GET /api/settings` like other keys.
+- **Settings UI on desktop + web** — New **Settings → Messaging** tab in both the native app and the web/mobile UI: enable toggles, tokens, allow-lists, live Telegram connection status, and tunnel Start/Stop with a copyable LINE webhook URL.
 
 ### v0.6.1
 
