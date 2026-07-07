@@ -22,6 +22,7 @@ enum SettingsSection {
     McpTools,
     Plugins,
     Remote,
+    Messaging,
     FileTokens,
     FileMounts,
     SkillUpdate,
@@ -39,6 +40,7 @@ impl SettingsSection {
         Self::McpTools,
         Self::Plugins,
         Self::Remote,
+        Self::Messaging,
         Self::FileTokens,
         Self::FileMounts,
         Self::SkillUpdate,
@@ -56,6 +58,7 @@ impl SettingsSection {
             Self::McpTools => "MCP Tools",
             Self::Plugins => "Plugins",
             Self::Remote => "Remote",
+            Self::Messaging => "Messaging",
             Self::FileTokens => "File Tokens",
             Self::FileMounts => "File Mounts",
             Self::SkillUpdate => "Skill Update",
@@ -224,6 +227,17 @@ pub struct SettingsView {
     new_remote_name: String,
     new_remote_url: String,
     new_remote_token: String,
+
+    // --- Messaging Bots (Telegram / LINE) ---
+    telegram_enabled: bool,
+    telegram_bot_token: String,
+    /// Comma-separated numeric Telegram user IDs (parsed to a list on save).
+    telegram_allowed_ids: String,
+    line_enabled: bool,
+    line_channel_secret: String,
+    line_channel_access_token: String,
+    /// Comma-separated LINE user IDs ("U...").
+    line_allowed_ids: String,
 
     // --- File Access Tokens ---
     file_tokens: Vec<FileToken>,
@@ -401,6 +415,14 @@ impl Default for SettingsView {
             new_remote_url: String::new(),
             new_remote_token: String::new(),
 
+            telegram_enabled: false,
+            telegram_bot_token: String::new(),
+            telegram_allowed_ids: String::new(),
+            line_enabled: false,
+            line_channel_secret: String::new(),
+            line_channel_access_token: String::new(),
+            line_allowed_ids: String::new(),
+
             file_tokens: Vec::new(),
             file_tokens_loaded: false,
             new_token_label: String::new(),
@@ -547,6 +569,7 @@ impl SettingsView {
                             SettingsSection::McpTools => self.section_mcp_tools(ui, runtime),
                             SettingsSection::Plugins => self.section_plugins(ui, ctx, runtime),
                             SettingsSection::Remote => self.section_remote(ui, runtime),
+                            SettingsSection::Messaging => self.section_messaging(ui, runtime),
                             SettingsSection::FileTokens => {
                                 self.section_file_tokens(ui, ctx, runtime)
                             }
@@ -642,6 +665,24 @@ impl SettingsView {
 
         // File Mounts
         self.local_file_mounts = settings.local_file_mounts.unwrap_or_default();
+
+        // Messaging bots
+        self.telegram_enabled = settings.telegram_enabled.unwrap_or(false);
+        self.telegram_bot_token = settings.telegram_bot_token.clone().unwrap_or_default();
+        self.telegram_allowed_ids = settings
+            .telegram_allowed_user_ids
+            .clone()
+            .unwrap_or_default()
+            .join(", ");
+        self.line_enabled = settings.line_enabled.unwrap_or(false);
+        self.line_channel_secret = settings.line_channel_secret.clone().unwrap_or_default();
+        self.line_channel_access_token =
+            settings.line_channel_access_token.clone().unwrap_or_default();
+        self.line_allowed_ids = settings
+            .line_allowed_user_ids
+            .clone()
+            .unwrap_or_default()
+            .join(", ");
 
         // Security / Tool Approval
         self.approval_shell = settings.approval_required_for_shell.unwrap_or(true);
@@ -855,6 +896,35 @@ impl SettingsView {
         } else {
             Some(self.local_file_mounts.clone())
         };
+
+        // Messaging bots
+        let parse_ids = |s: &str| -> Option<Vec<String>> {
+            let ids: Vec<String> = s
+                .split([',', '\n', ';', ' '])
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+            if ids.is_empty() { None } else { Some(ids) }
+        };
+        settings.telegram_enabled = Some(self.telegram_enabled);
+        settings.telegram_bot_token = if self.telegram_bot_token.trim().is_empty() {
+            None
+        } else {
+            Some(self.telegram_bot_token.trim().to_string())
+        };
+        settings.telegram_allowed_user_ids = parse_ids(&self.telegram_allowed_ids);
+        settings.line_enabled = Some(self.line_enabled);
+        settings.line_channel_secret = if self.line_channel_secret.trim().is_empty() {
+            None
+        } else {
+            Some(self.line_channel_secret.trim().to_string())
+        };
+        settings.line_channel_access_token = if self.line_channel_access_token.trim().is_empty() {
+            None
+        } else {
+            Some(self.line_channel_access_token.trim().to_string())
+        };
+        settings.line_allowed_user_ids = parse_ids(&self.line_allowed_ids);
 
         // Security / Tool Approval
         settings.approval_required_for_shell = Some(self.approval_shell);
@@ -2595,6 +2665,228 @@ impl SettingsView {
             if Self::save_button(ui, "Save Remote Settings") {
                 self.save_all_settings(runtime);
                 self.api_status_msg = Some("Remote settings saved!".to_string());
+            }
+            Self::status_label(ui, &self.api_status_msg);
+        });
+    }
+
+    // ==================================================================
+    //  Messaging Bots (Telegram / LINE)
+    // ==================================================================
+
+    fn section_messaging(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        self.load_settings_if_needed(runtime);
+
+        // ---------------- Telegram ----------------
+        ui.add_space(8.0);
+        ui.heading("Telegram Bot");
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Chat with the agent from Telegram and control it with /agents, /model, /mode, \
+                 /loop, /new, /stop, /status. Create a bot with @BotFather to get a token. \
+                 Uses long-polling — no public URL needed.",
+            )
+            .size(12.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(8.0);
+
+        ui.checkbox(&mut self.telegram_enabled, "Enable Telegram bot");
+        ui.add_space(6.0);
+
+        egui::Grid::new("telegram_grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Bot token:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.telegram_bot_token)
+                        .desired_width(320.0)
+                        .password(true)
+                        .hint_text("123456789:AA...")
+                        .font(egui::TextStyle::Monospace),
+                );
+                ui.end_row();
+
+                ui.label("Allowed user IDs:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.telegram_allowed_ids)
+                        .desired_width(320.0)
+                        .hint_text("12345678, 87654321")
+                        .font(egui::TextStyle::Monospace),
+                )
+                .on_hover_text(
+                    "Comma-separated numeric Telegram user IDs. Empty = nobody can use the \
+                     bot (fail closed). Message the bot once — the rejection reply shows \
+                     your ID to copy here.",
+                );
+                ui.end_row();
+            });
+
+        // Live connection status (from the local Telegram supervisor).
+        let tg = runtime.block_on(
+            crate::server::services::messaging::telegram::get_status(),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label("Status:");
+            if tg.connected {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "● connected as {}",
+                        tg.bot_username.as_deref().unwrap_or("?")
+                    ))
+                    .color(egui::Color32::from_rgb(74, 222, 128)),
+                );
+            } else if let Some(err) = &tg.error {
+                ui.label(
+                    egui::RichText::new(format!("● {}", err))
+                        .color(egui::Color32::from_rgb(239, 68, 68)),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(if self.telegram_enabled {
+                        "● connecting… (applies within ~30s of saving)"
+                    } else {
+                        "● disabled"
+                    })
+                    .color(egui::Color32::GRAY),
+                );
+            }
+        });
+
+        // ---------------- LINE ----------------
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.heading("LINE Bot");
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Chat with the agent from LINE (same commands as Telegram). Create a \
+                 Messaging API channel in the LINE Developers console, then paste the \
+                 webhook URL below into the console. Requires the Cloudflare tunnel for \
+                 a public URL.",
+            )
+            .size(12.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(8.0);
+
+        ui.checkbox(&mut self.line_enabled, "Enable LINE bot");
+        ui.add_space(6.0);
+
+        egui::Grid::new("line_grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Channel secret:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.line_channel_secret)
+                        .desired_width(320.0)
+                        .password(true)
+                        .font(egui::TextStyle::Monospace),
+                )
+                .on_hover_text("LINE Developers Console > channel > Basic settings > Channel secret. Used to verify webhook signatures.");
+                ui.end_row();
+
+                ui.label("Channel access token:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.line_channel_access_token)
+                        .desired_width(320.0)
+                        .password(true)
+                        .font(egui::TextStyle::Monospace),
+                )
+                .on_hover_text("LINE Developers Console > channel > Messaging API > Channel access token (long-lived).");
+                ui.end_row();
+
+                ui.label("Allowed user IDs:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.line_allowed_ids)
+                        .desired_width(320.0)
+                        .hint_text("U4af4980629..., U1234...")
+                        .font(egui::TextStyle::Monospace),
+                )
+                .on_hover_text(
+                    "Comma-separated LINE user IDs (start with 'U'). Empty = nobody can \
+                     use the bot (fail closed). Message the bot once — the rejection \
+                     reply shows your ID to copy here.",
+                );
+                ui.end_row();
+            });
+
+        // Webhook URL via the Cloudflare tunnel.
+        ui.add_space(8.0);
+        let tunnel = runtime.block_on(crate::server::services::tunnel::get_tunnel_state());
+        let tunnel_running = tunnel["running"].as_bool().unwrap_or(false);
+        let webhook_url = tunnel["url"]
+            .as_str()
+            .filter(|u| !u.is_empty())
+            .map(|u| format!("{}/line/webhook", u.trim_end_matches('/')));
+        ui.horizontal(|ui| {
+            ui.label("Webhook URL:");
+            match &webhook_url {
+                Some(url) => {
+                    ui.label(
+                        egui::RichText::new(url.as_str())
+                            .monospace()
+                            .color(egui::Color32::GRAY),
+                    );
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(url.clone());
+                    }
+                }
+                None => {
+                    ui.label(
+                        egui::RichText::new("(start the tunnel to get a public URL)")
+                            .color(egui::Color32::GRAY),
+                    );
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.button("Start tunnel").clicked() {
+                let port = std::env::var("PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(3001u16);
+                runtime.block_on(crate::server::services::tunnel::start_tunnel(port));
+            }
+            if ui.button("Stop tunnel").clicked() {
+                runtime.block_on(crate::server::services::tunnel::stop_tunnel());
+            }
+            if tunnel_running {
+                ui.label(
+                    egui::RichText::new("● tunnel running")
+                        .color(egui::Color32::from_rgb(74, 222, 128)),
+                );
+            } else if let Some(err) = tunnel["error"].as_str().filter(|e| !e.is_empty()) {
+                ui.label(
+                    egui::RichText::new(format!("● {}", err))
+                        .color(egui::Color32::from_rgb(239, 68, 68)),
+                );
+            }
+        });
+        ui.label(
+            egui::RichText::new(
+                "Quick tunnels get a NEW URL each time they start — re-paste the webhook \
+                 URL into the LINE console after restarting the tunnel, then use the \
+                 console's Verify button.",
+            )
+            .size(11.0)
+            .color(egui::Color32::GRAY),
+        );
+
+        // ---------------- Save ----------------
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            if Self::save_button(ui, "Save Messaging Settings") {
+                self.save_all_settings(runtime);
+                self.api_status_msg = Some(
+                    "Messaging settings saved! Telegram applies within ~30s; LINE applies immediately."
+                        .to_string(),
+                );
             }
             Self::status_label(ui, &self.api_status_msg);
         });
