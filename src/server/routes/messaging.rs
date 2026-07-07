@@ -12,7 +12,7 @@ use axum::{
     body::Bytes,
     http::{HeaderMap, StatusCode},
     response::Json,
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use base64::Engine;
@@ -24,7 +24,25 @@ use crate::server::data::get_settings;
 use crate::server::AppState;
 
 pub fn api_router() -> Router<Arc<AppState>> {
-    Router::new().route("/status", get(status_handler))
+    Router::new()
+        .route("/status", get(status_handler))
+        // Tunnel control lives here (no dedicated tunnel router exists); the
+        // web UI uses it to get a public URL for the LINE webhook. Blocked
+        // for remote tokens via REMOTE_BLOCKED_PREFIXES.
+        .route("/tunnel/start", post(tunnel_start_handler))
+        .route("/tunnel/stop", post(tunnel_stop_handler))
+}
+
+async fn tunnel_start_handler() -> Json<Value> {
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3001);
+    Json(crate::server::services::tunnel::start_tunnel(port).await)
+}
+
+async fn tunnel_stop_handler() -> Json<Value> {
+    Json(crate::server::services::tunnel::stop_tunnel().await)
 }
 
 // ---------------------------------------------------------------------------

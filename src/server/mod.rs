@@ -122,7 +122,14 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
 /// execution on the bare host or reconfigure security. The OWNER token
 /// (ACCESS_TOKEN env / headless setup token) retains full access, and the
 /// user can opt remote sessions back in with settings `remoteFullAccess: true`.
-const REMOTE_BLOCKED_PREFIXES: &[&str] = &["/api/terminal", "/api/local-files", "/api/plugins", "/api/vpn"];
+const REMOTE_BLOCKED_PREFIXES: &[&str] = &[
+    "/api/terminal",
+    "/api/local-files",
+    "/api/plugins",
+    "/api/vpn",
+    // Tunnel control exposes the server publicly — owner only.
+    "/api/messaging/tunnel",
+];
 
 async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,

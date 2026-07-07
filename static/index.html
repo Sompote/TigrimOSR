@@ -3087,6 +3087,7 @@ function loadSettings() {
         <button class="settings-tab" data-pane="skills" onclick="switchSettingsTab('skills')">Skills</button>
         <button class="settings-tab" data-pane="skill" onclick="switchSettingsTab('skill')">Skill Update</button>
         <button class="settings-tab" data-pane="remote" onclick="switchSettingsTab('remote')">Remote</button>
+        <button class="settings-tab" data-pane="messaging" onclick="switchSettingsTab('messaging')">Messaging</button>
       </div>
 
       <div class="settings-pane" id="pane-ai">
@@ -3318,6 +3319,60 @@ function loadSettings() {
         </div>
       </div>
 
+      <div class="settings-pane" id="pane-messaging" hidden>
+        <div class="settings-group">
+          <h3>Telegram Bot</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">
+            Chat with the agent from Telegram and control it with /agents, /model, /mode, /loop,
+            /new, /stop, /status. Create a bot with @BotFather to get a token. Uses long-polling —
+            no public URL needed. Saved changes apply within ~30 seconds.</div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-tg-enabled" ${ck(data.telegramEnabled)} style="flex:none;width:auto"> Enable Telegram bot</label></div>
+          <div class="settings-row-field"><label>Bot token</label>
+            <input id="s-tg-token" type="password" value="${esc(data.telegramBotToken || '')}" placeholder="123456789:AA..."></div>
+          <div class="settings-row-field"><label>Allowed user IDs</label>
+            <input id="s-tg-allowed" value="${esc((data.telegramAllowedUserIds || []).join(', '))}" placeholder="12345678, 87654321"></div>
+          <div style="color:var(--ink-soft);font-size:11px;margin:2px 0 8px">
+            Comma-separated numeric Telegram user IDs. Empty = nobody can use the bot (fail closed).
+            Message the bot once — the rejection reply shows your ID to copy here.</div>
+          <div class="settings-row-field"><label>Status</label>
+            <span id="s-tg-status" style="font-size:13px;color:var(--ink-soft)">Loading…</span></div>
+        </div>
+        <div class="settings-group">
+          <h3>LINE Bot</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">
+            Same commands as Telegram. Create a Messaging API channel in the LINE Developers
+            console, then paste the webhook URL below into the console (Messaging API &gt;
+            Webhook settings) and press Verify. Needs the Cloudflare tunnel for a public URL.
+            Saved changes apply immediately.</div>
+          <div class="settings-row-field"><label></label>
+            <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+              <input type="checkbox" id="s-line-enabled" ${ck(data.lineEnabled)} style="flex:none;width:auto"> Enable LINE bot</label></div>
+          <div class="settings-row-field"><label>Channel secret</label>
+            <input id="s-line-secret" type="password" value="${esc(data.lineChannelSecret || '')}"></div>
+          <div class="settings-row-field"><label>Channel access token</label>
+            <input id="s-line-token" type="password" value="${esc(data.lineChannelAccessToken || '')}"></div>
+          <div class="settings-row-field"><label>Allowed user IDs</label>
+            <input id="s-line-allowed" value="${esc((data.lineAllowedUserIds || []).join(', '))}" placeholder="U4af49806..., U1234..."></div>
+          <div style="color:var(--ink-soft);font-size:11px;margin:2px 0 8px">
+            Comma-separated LINE user IDs (start with "U"). Empty = nobody can use the bot (fail
+            closed). Message the bot once — the rejection reply shows your ID to copy here.</div>
+          <div class="settings-row-field"><label>Webhook URL</label>
+            <span id="s-line-webhook" style="font-size:13px;color:var(--ink-soft);font-family:monospace;word-break:break-all">Loading…</span>
+            <button class="pill-btn" onclick="copyLineWebhook()" style="flex:none;margin-left:8px">Copy</button></div>
+          <div style="margin-top:8px">
+            <button class="pill-btn" onclick="tunnelAction('start')">Start tunnel</button>
+            <button class="pill-btn" onclick="tunnelAction('stop')">Stop tunnel</button>
+            <button class="pill-btn" onclick="loadMessagingStatus()">Refresh status</button>
+            <span id="s-tunnel-status" style="font-size:13px;margin-left:10px;color:var(--ink-soft)"></span>
+          </div>
+          <div style="color:var(--ink-soft);font-size:11px;margin-top:6px">
+            Quick tunnels get a NEW URL each time they start — re-paste the webhook URL into the
+            LINE console and press Verify after restarting the tunnel.</div>
+        </div>
+      </div>
+
       <div class="settings-pane" id="pane-appearance" hidden>
         <div class="settings-group">
           <h3>Theme</h3>
@@ -3335,6 +3390,7 @@ function loadSettings() {
     loadPlugins();
     loadSkillsLibrary();
     loadAgentLoopPane(data.agentLoopProfile || '');
+    loadMessagingStatus();
   }).catch(() => {});
 }
 
@@ -3780,6 +3836,43 @@ function copyVpnUrl() {
   if (v && v !== '(not detected)' && navigator.clipboard) navigator.clipboard.writeText(v);
 }
 
+// ---- Messaging bots (Telegram / LINE) ----
+let _lineWebhookUrl = '';
+function loadMessagingStatus() {
+  api('/api/messaging/status').then(d => {
+    const tg = document.getElementById('s-tg-status');
+    if (tg) {
+      const t = d.telegram || {};
+      if (t.connected) {
+        tg.textContent = '● connected as ' + (t.botUsername || '?');
+        tg.style.color = 'var(--green)';
+      } else if (t.error) {
+        tg.textContent = '● ' + t.error;
+        tg.style.color = 'var(--red)';
+      } else {
+        tg.textContent = t.enabled ? '● connecting… (applies within ~30s of saving)' : '● disabled';
+        tg.style.color = 'var(--ink-soft)';
+      }
+    }
+    const l = d.line || {};
+    _lineWebhookUrl = l.webhookUrl || '';
+    const wh = document.getElementById('s-line-webhook');
+    if (wh) wh.textContent = _lineWebhookUrl || '(start the tunnel to get a public URL)';
+    const ts = document.getElementById('s-tunnel-status');
+    if (ts) ts.textContent = l.tunnelRunning ? '● tunnel running' : '';
+  }).catch(() => {});
+}
+function copyLineWebhook() {
+  if (_lineWebhookUrl && navigator.clipboard) navigator.clipboard.writeText(_lineWebhookUrl);
+}
+function tunnelAction(action) {
+  const ts = document.getElementById('s-tunnel-status');
+  if (ts) { ts.textContent = action === 'start' ? 'Starting tunnel…' : 'Stopping…'; ts.style.color = 'var(--ink-soft)'; }
+  api('/api/messaging/tunnel/' + action, { method: 'POST', body: '{}' })
+    .then(() => setTimeout(loadMessagingStatus, 1500))
+    .catch(e => { if (ts) ts.textContent = 'Failed: ' + (e.message || e) + ' (owner token required)'; });
+}
+
 function testConnection() {
   const s = document.getElementById('s-test-status');
   s.textContent = 'Testing…'; s.style.color = 'var(--ink-soft)';
@@ -3849,6 +3942,23 @@ function saveSettings() {
   };
   // VPN (Tailscale) toggle for remote connect
   { const vpnEl = document.getElementById('s-vpn-enabled'); if (vpnEl) body.vpnEnabled = vpnEl.checked; }
+  // Messaging bots (Telegram / LINE)
+  {
+    const ids = v => {
+      const a = (v || '').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+      return a.length ? a : null;
+    };
+    const tgEn = document.getElementById('s-tg-enabled');
+    if (tgEn) {
+      body.telegramEnabled = tgEn.checked;
+      body.telegramBotToken = document.getElementById('s-tg-token').value || null;
+      body.telegramAllowedUserIds = ids(document.getElementById('s-tg-allowed').value);
+      body.lineEnabled = document.getElementById('s-line-enabled').checked;
+      body.lineChannelSecret = document.getElementById('s-line-secret').value || null;
+      body.lineChannelAccessToken = document.getElementById('s-line-token').value || null;
+      body.lineAllowedUserIds = ids(document.getElementById('s-line-allowed').value);
+    }
+  }
   // Router Model Pool (used by Router mode)
   {
     const tierEl = document.getElementById('s-router-tier');
