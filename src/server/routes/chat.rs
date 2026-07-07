@@ -335,6 +335,71 @@ async fn send_message(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
+    let req = AgentRunRequest {
+        session_id: id.clone(),
+        message: body
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        session_title: None,
+        agent_mode: body
+            .get("agent_mode")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        agent_loop_profile: body
+            .get("agent_loop_profile")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        config_file: body
+            .get("config_file")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        project_id: body
+            .get("projectId")
+            .or_else(|| body.get("project_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    };
+    match start_agent_run(req, None, None).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({ "status": "processing", "session_id": id })),
+        )
+            .into_response(),
+        Err(err) => (StatusCode::OK, Json(json!({ "content": err }))).into_response(),
+    }
+}
+
+/// Per-run parameters for a headless agent run — mirrors the fields the web
+/// chat endpoint accepts in its JSON body so other channels (Telegram/LINE
+/// bots) can drive the identical pipeline.
+pub struct AgentRunRequest {
+    pub session_id: String,
+    pub message: String,
+    /// Title used when the session is auto-created.
+    pub session_title: Option<String>,
+    pub agent_mode: Option<String>,
+    pub agent_loop_profile: Option<String>,
+    pub config_file: Option<String>,
+    pub project_id: Option<String>,
+}
+
+/// Run one agent turn against a chat session, headless. Extracted from the
+/// send_message handler: session persistence, cancel-flag registration,
+/// pre-flight, system prompt, and activity/chat logs all behave exactly as
+/// they do for web chat.
+///
+/// `extra_on_update` is invoked with every ToolUpdate in addition to the
+/// built-in log writer. `done_tx` fires with the final assistant text after
+/// it has been persisted. Err(text) means the run could not start; the text
+/// has already been persisted as an assistant message.
+pub async fn start_agent_run(
+    req: AgentRunRequest,
+    extra_on_update: Option<Arc<dyn Fn(ToolUpdate) + Send + Sync>>,
+    done_tx: Option<tokio::sync::oneshot::Sender<String>>,
+) -> Result<(), String> {
+    let id = req.session_id.clone();
     let mut sessions = get_chat_history().await;
 
     // Auto-create session if it doesn't exist (e.g. desktop remote mode sends with local ID)
@@ -342,7 +407,10 @@ async fn send_message(
         let now = chrono::Utc::now().to_rfc3339();
         sessions.push(ChatSession {
             id: id.clone(),
-            title: "Remote Chat".to_string(),
+            title: req
+                .session_title
+                .clone()
+                .unwrap_or_else(|| "Remote Chat".to_string()),
             messages: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
@@ -355,18 +423,13 @@ async fn send_message(
 
     let session = sessions.iter_mut().find(|s| s.id == id).unwrap();
 
-    let message = body
-        .get("message")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let message = req.message.clone();
 
-    // Active project: request body wins, else fall back to the session's stored
+    // Active project: request wins, else fall back to the session's stored
     // project. Persist it so later messages in this session stay project-scoped.
-    let project_id = body.get("projectId")
-        .or_else(|| body.get("project_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+    let project_id = req
+        .project_id
+        .clone()
         .filter(|s| !s.is_empty())
         .or_else(|| session.project_id.clone());
     session.project_id = project_id.clone();
@@ -430,9 +493,9 @@ async fn send_message(
     // Agent-loop profile: per-request body > project override > settings.
     let loop_profile = {
         use crate::server::services::agent_loop;
-        let request_profile = body
-            .get("agent_loop_profile")
-            .and_then(|v| v.as_str())
+        let request_profile = req
+            .agent_loop_profile
+            .as_deref()
             .filter(|s| !s.trim().is_empty());
         match request_profile {
             Some(name) => agent_loop::load_profile(name),
@@ -479,7 +542,7 @@ async fn send_message(
             s.updated_at = chrono::Utc::now().to_rfc3339();
             save_chat_history(&sessions2).await;
         }
-        return (StatusCode::OK, Json(json!({ "content": err }))).into_response();
+        return Err(err);
     }
 
     // Build message history for LLM
@@ -493,17 +556,17 @@ async fn send_message(
         })
         .unwrap_or_default();
 
-    // config_file: prefer request body, fall back to server settings
-    let config_file = body.get("config_file")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+    // config_file: prefer request, fall back to server settings
+    let config_file = req
+        .config_file
+        .clone()
         .filter(|s| !s.is_empty())
         .or_else(|| project_ctx.as_ref().and_then(|c| c.agent_config_file.clone()))
         .or_else(|| settings.sub_agent_config_file.clone())
         .unwrap_or_default();
     // Per-request agent_mode overrides settings: "single" disables sub-agents,
     // "auto"/"manual"/"fully_auto" enable them (requires config file).
-    let request_mode = body.get("agent_mode").and_then(|v| v.as_str()).unwrap_or("single");
+    let request_mode = req.agent_mode.as_deref().unwrap_or("single");
     let sub_agent_enabled = match request_mode {
         "single" => false,
         "fully_auto" | "auto_swarm" | "router" => true, // these create their own config (router triages)
@@ -987,6 +1050,8 @@ You have access to these tools: {}.{}",
     };
 
     tokio::spawn(async move {
+        let extra_cb = extra_on_update;
+        let mut done_tx = done_tx;
         let result = call_with_tools(
             &api_key,
             &api_url,
@@ -996,6 +1061,9 @@ You have access to these tools: {}.{}",
             &sandbox_dir,
             move |update: ToolUpdate| {
                 use crate::server::services::toolbox::append_session_progress;
+                if let Some(cb) = &extra_cb {
+                    cb(update.clone());
+                }
                 let line = match &update {
                     ToolUpdate::ToolCall { name, args } => {
                         let preview: String = args.to_string().chars().take(120).collect();
@@ -1091,14 +1159,14 @@ You have access to these tools: {}.{}",
         }
 
         tracing::info!("[chat] Session {} completed ({} chars)", session_id_bg, assistant_content.len());
+
+        if let Some(tx) = done_tx.take() {
+            let _ = tx.send(assistant_content);
+        }
     });
 
-    // Return immediately — client will poll for the result
-    (
-        StatusCode::OK,
-        Json(json!({ "status": "processing", "session_id": id })),
-    )
-        .into_response()
+    // Return immediately — callers poll the session (or await done_tx)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,9 +1285,17 @@ async fn get_chat_log(Path(id): Path<String>) -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 async fn kill_session(Path(id): Path<String>) -> impl IntoResponse {
+    let killed = kill_session_by_id(&id).await;
+    Json(json!({ "ok": killed, "session_id": id }))
+}
+
+/// Cancel a running chat session: sets the cancel flag, shuts down any
+/// realtime sub-agent session, and SIGKILLs the session's process trees.
+/// Extracted from the kill handler so bot channels can /stop a run.
+pub async fn kill_session_by_id(id: &str) -> bool {
     let killed = {
         let flags = cancel_flags().lock().unwrap();
-        if let Some(flag) = flags.get(&id) {
+        if let Some(flag) = flags.get(id) {
             flag.store(true, Ordering::Relaxed);
             true
         } else {
@@ -1228,20 +1304,20 @@ async fn kill_session(Path(id): Path<String>) -> impl IntoResponse {
     };
 
     // Also abort any realtime sub-agent session
-    crate::server::services::toolbox::shutdown_realtime_session(&id).await;
+    crate::server::services::toolbox::shutdown_realtime_session(id).await;
 
     // SIGKILL every OS process tree this session spawned (python/shell/CLI
     // agents and their descendants). Setting the cancel flag alone only stops
     // the loop at round boundaries — already-running children would otherwise
     // keep executing with full filesystem/network access after the kill.
-    let reaped = crate::server::services::proc_registry::kill_session(&id);
+    let reaped = crate::server::services::proc_registry::kill_session(id);
 
     // Also push to native UI's killed list
     if killed {
         let killed_ids = crate::ui::tasks_view::killed_chat_ids();
         let mut ids = killed_ids.lock().unwrap();
-        if !ids.contains(&id) {
-            ids.push(id.clone());
+        if !ids.iter().any(|k| k == id) {
+            ids.push(id.to_string());
         }
     }
 
@@ -1253,7 +1329,7 @@ async fn kill_session(Path(id): Path<String>) -> impl IntoResponse {
 
     tracing::info!("[kill] Session {} killed={} reaped_processes={}", id, killed, reaped);
 
-    Json(json!({ "ok": killed, "session_id": id }))
+    killed
 }
 
 // ---------------------------------------------------------------------------
