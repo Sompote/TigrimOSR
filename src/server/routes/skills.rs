@@ -55,7 +55,7 @@ struct FeedbackBody {
 // ---------------------------------------------------------------------------
 
 /// Parse YAML frontmatter from a SKILL.md file and return (name, description).
-fn parse_frontmatter(content: &str) -> (String, String) {
+pub(crate) fn parse_frontmatter(content: &str) -> (String, String) {
     // Look for --- delimited frontmatter block
     if !content.starts_with("---") {
         return (String::new(), String::new());
@@ -102,7 +102,7 @@ fn parse_frontmatter(content: &str) -> (String, String) {
 }
 
 /// Sanitize a name to a filesystem-safe slug.
-fn slugify(name: &str) -> String {
+pub(crate) fn slugify(name: &str) -> String {
     name.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '_' || c == '-' {

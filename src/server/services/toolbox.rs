@@ -225,8 +225,47 @@ fn ensure_full_path() {
                 }
             }
         }
-        if !extra.is_empty() {
-            let full = format!("{};{}", extra.join(";"), current);
+
+        // Repair PATHs missing the Windows system directories. Broken installers
+        // and unexpanded %SystemRoot% registry entries do strip them, and without
+        // System32 even `where`, `find`, `tasklist` and a nested `cmd` fail with
+        // "'x' is not recognized" (seen in the field: powershell resolved via its
+        // own PATH entry while System32 itself was gone). Compare whole PATH
+        // entries, NOT substrings — the WindowsPowerShell entry contains
+        // "System32" as a substring and would mask a missing System32 entry.
+        let sysroot = std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("windir"))
+            .unwrap_or_else(|_| "C:\\Windows".to_string());
+        let entries: Vec<String> = current
+            .split(';')
+            .map(|e| e.trim().trim_end_matches('\\').to_lowercase())
+            .collect();
+        let mut missing_system = Vec::new();
+        for dir in [
+            format!("{sysroot}\\System32"),
+            sysroot.clone(),
+            format!("{sysroot}\\System32\\Wbem"),
+            format!("{sysroot}\\System32\\WindowsPowerShell\\v1.0"),
+        ] {
+            if !entries.contains(&dir.trim_end_matches('\\').to_lowercase()) {
+                missing_system.push(dir);
+            }
+        }
+
+        if !extra.is_empty() || !missing_system.is_empty() {
+            // Python dirs prepended (they should win over Store aliases);
+            // system dirs appended (repair only — never shadow user entries).
+            let mut full = current.clone();
+            if !extra.is_empty() {
+                full = format!("{};{}", extra.join(";"), full);
+            }
+            if !missing_system.is_empty() {
+                warn!(
+                    "[env] PATH is missing Windows system dir(s), appending: {}",
+                    missing_system.join(";")
+                );
+                full = format!("{};{}", full, missing_system.join(";"));
+            }
             std::env::set_var("PATH", full);
         }
     }
@@ -279,13 +318,12 @@ fn python_command() -> Command {
     Command::new(&python)
 }
 
-/// Build a shell Command.
+/// Build a shell Command. Windows builds construct cmd.exe inline in
+/// exec_run_shell instead (raw_arg quoting — see the comment there).
+#[cfg(not(target_os = "windows"))]
 fn shell_command() -> Command {
     ensure_full_path();
-    #[cfg(target_os = "windows")]
-    { Command::new("cmd.exe") }
-    #[cfg(not(target_os = "windows"))]
-    { Command::new("/bin/sh") }
+    Command::new("/bin/sh")
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +375,10 @@ async fn tool_requires_approval(tool_name: &str) -> bool {
         }
         "run_python" | "run_react" => settings.approval_required_for_python.unwrap_or(true),
         "write_file" => settings.approval_required_for_file_write.unwrap_or(false),
+        // save_skill writes OUTSIDE the sandbox (data_dir()/skills) and the
+        // saved skill shapes future agent behavior — always gate it under the
+        // file-write toggle at minimum, defaulting to ask.
+        "save_skill" => settings.approval_required_for_file_write.unwrap_or(true),
         "delete_file" => settings.approval_required_for_file_delete.unwrap_or(true),
         "claude_code_agent" => settings.approval_required_for_agent_spawn.unwrap_or(false),
         "gemini_cli_agent" => settings.approval_required_for_agent_spawn.unwrap_or(false),
@@ -2473,6 +2515,13 @@ pub fn tool_catalog() -> Vec<(String, String)> {
         .collect()
 }
 
+/// run_shell description matching the actual shell per platform, so the model
+/// doesn't burn rounds on bash-isms under cmd.exe (head, ls, $VAR, 2>/dev/null).
+#[cfg(target_os = "windows")]
+const SHELL_TOOL_DESC: &str = "Execute a shell command via Windows cmd.exe. Use Windows commands and syntax: dir, type, copy, del, where, findstr, %VAR%. Unix tools (ls, head, wc, grep, find -type) and /dev/null are NOT available; use PowerShell explicitly for anything advanced (powershell -Command \"...\").";
+#[cfg(not(target_os = "windows"))]
+const SHELL_TOOL_DESC: &str = "Execute a shell command via /bin/sh.";
+
 pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
@@ -2522,12 +2571,12 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "run_shell",
-                "description": "Execute a shell command.",
+                "description": SHELL_TOOL_DESC,
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": { "type": "string", "description": "Shell command to execute" },
-                        "cwd": { "type": "string", "description": "Working directory (optional)" }
+                        "cwd": { "type": "string", "description": "Working directory (optional, sandbox-relative; paths outside the sandbox are rejected)" }
                     },
                     "required": ["command"]
                 }
@@ -2597,6 +2646,33 @@ pub fn tool_definitions() -> Vec<Value> {
                         "skill": { "type": "string", "description": "Skill name/slug" }
                     },
                     "required": ["skill"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "save_skill",
+                "description": "Create or update an installed skill: writes SKILL.md (plus optional supporting files) into the app's skills directory and registers it, so list_skills/load_skill can use it immediately. ALWAYS use this — not write_file — when asked to generate or install a skill; write_file is jailed to the sandbox and skills written there are never loaded.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skill_md": { "type": "string", "description": "Full SKILL.md content, starting with '---' YAML frontmatter that has 'name:' and 'description:'." },
+                        "name": { "type": "string", "description": "Skill name override (optional; default = frontmatter name)" },
+                        "files": {
+                            "type": "array",
+                            "description": "Optional supporting files, e.g. scripts the skill references.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "path": { "type": "string", "description": "Relative path inside the skill folder, e.g. scripts/tool.py" },
+                                    "content": { "type": "string" }
+                                },
+                                "required": ["path", "content"]
+                            }
+                        }
+                    },
+                    "required": ["skill_md"]
                 }
             }
         }),
@@ -3321,8 +3397,27 @@ fn resolve_path(sandbox_dir: &str, path: &str) -> PathBuf {
         sandbox.join(path)
     };
 
-    // Resolve symlinks and ../ to get the real path, then check it's inside sandbox
-    let resolved = candidate.canonicalize().unwrap_or(candidate.clone());
+    // Resolve symlinks and ../ to get the real path, then check it's inside
+    // sandbox. canonicalize() fails for NOT-YET-EXISTING targets (every new
+    // file write); falling back to the raw path would let "../.." components
+    // slip past the component-wise starts_with check and escape the sandbox —
+    // normalize them lexically instead.
+    fn normalize_lexically(p: &std::path::Path) -> PathBuf {
+        let mut out = PathBuf::new();
+        for c in p.components() {
+            match c {
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => out.push(other),
+            }
+        }
+        out
+    }
+    let resolved = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_lexically(&candidate));
     if resolved.starts_with(&sandbox) {
         resolved
     } else {
@@ -3335,6 +3430,25 @@ fn resolve_path(sandbox_dir: &str, path: &str) -> PathBuf {
         // Return a non-existent sentinel path so callers fail with "file not found"
         sandbox.join(".blocked_path_traversal")
     }
+}
+
+/// True when resolve_path rejected the path (sandbox-escape sentinel). Callers
+/// should return an explicit "outside the sandbox" error — the raw OS errors
+/// the sentinel otherwise produces ("cannot find the path", "directory name is
+/// invalid") send the model chasing phantom filesystem problems for rounds.
+fn is_blocked_path(p: &std::path::Path) -> bool {
+    p.file_name().map(|f| f == ".blocked_path_traversal").unwrap_or(false)
+}
+
+/// Standard error result for a sandbox-escape attempt.
+fn blocked_path_error(tool_hint: &str, path: &str, sandbox_dir: &str) -> Value {
+    json!({
+        "ok": false,
+        "error": format!(
+            "Security: path '{}' is outside the sandbox ('{}'). {} Use paths relative to the sandbox root.",
+            path, sandbox_dir, tool_hint
+        )
+    })
 }
 
 /// Run a web search by driving the live browser to Google and reading the
@@ -4136,6 +4250,18 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
             .map(|s| s.to_string())
             .unwrap_or_else(|| sandbox_dir.to_string());
         let resolved_cwd = resolve_path(sandbox_dir, &raw_cwd);
+        // The escape sentinel is INSIDE the sandbox, so it passes the
+        // starts_with check below and then fails at spawn with the baffling
+        // "The directory name is invalid (os error 267)" — reject it here.
+        if is_blocked_path(&resolved_cwd) {
+            return json!({
+                "ok": false,
+                "error": format!(
+                    "Security: cwd '{}' is outside the sandbox ('{}'). Omit cwd or use a sandbox-relative path.",
+                    raw_cwd, sandbox_dir
+                )
+            });
+        }
         let abs_sandbox_check = std::path::Path::new(sandbox_dir)
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(sandbox_dir));
@@ -4238,11 +4364,27 @@ async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
 
     #[cfg(not(target_os = "macos"))]
     let result = {
-        let mut cmd = shell_command();
+        // On Windows, cmd.exe does NOT follow the MSVC argument-quoting rules
+        // Rust's .arg() applies: embedded quotes become \" which cmd parses as
+        // literal backslash+quote, so any command containing a quoted path
+        // fails with "The filename, directory name, or volume label syntax is
+        // incorrect". Pass the command line verbatim via raw_arg using
+        // `/S /C "..."` — with /S, cmd strips the first and last quote and
+        // runs everything between them literally.
         #[cfg(target_os = "windows")]
-        cmd.arg("/c").arg(command);
+        let mut cmd = {
+            use std::os::windows::process::CommandExt as _;
+            ensure_full_path();
+            let mut c = std::process::Command::new("cmd.exe");
+            c.raw_arg(format!("/S /C \"{}\"", command));
+            Command::from(c)
+        };
         #[cfg(not(target_os = "windows"))]
-        cmd.arg("-c").arg(command);
+        let mut cmd = {
+            let mut c = shell_command();
+            c.arg("-c").arg(command);
+            c
+        };
         run_guarded(cmd.current_dir(&cwd), 30).await
     };
 
@@ -4281,6 +4423,9 @@ fn pdf_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, St
 async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
     let path = args["path"].as_str().unwrap_or("");
     let resolved = resolve_path(sandbox_dir, path);
+    if is_blocked_path(&resolved) {
+        return blocked_path_error("", path, sandbox_dir);
+    }
 
     // Handle PDF files — extract text, return in large chunks (cached)
     if resolved.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("pdf")).unwrap_or(false) {
@@ -4366,6 +4511,13 @@ async fn exec_write_file(args: &Value, sandbox_dir: &str) -> Value {
     let content = args["content"].as_str().unwrap_or("");
     let append = args["append"].as_bool().unwrap_or(false);
     let resolved = resolve_path(sandbox_dir, path);
+    if is_blocked_path(&resolved) {
+        return blocked_path_error(
+            "To create or update a SKILL, use the save_skill tool instead — it writes to the app's skills directory.",
+            path,
+            sandbox_dir,
+        );
+    }
 
     // Ensure parent directory exists
     if let Some(parent) = resolved.parent() {
@@ -4414,6 +4566,9 @@ async fn exec_list_files(args: &Value, sandbox_dir: &str) -> Value {
         .unwrap_or_else(|| sandbox_dir.to_string());
     let recursive = args["recursive"].as_bool().unwrap_or(false);
     let resolved = resolve_path(sandbox_dir, &path);
+    if is_blocked_path(&resolved) {
+        return blocked_path_error("", &path, sandbox_dir);
+    }
 
     let mut entries: Vec<String> = Vec::new();
 
@@ -4598,7 +4753,116 @@ async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
         "skills": skill_names,
         "dir_skills": dir_skills,
         "registered_skills": registered_skills,
-        "hint": "Use load_skill with a skill name to see its SKILL.md and supporting files. Skills where hasFiles=false are registered but have no SKILL.md on disk and cannot be loaded."
+        "hint": "Use load_skill with a skill name to see its SKILL.md and supporting files. Skills where hasFiles=false are registered but have no SKILL.md on disk and cannot be loaded. Use save_skill to create or update a skill."
+    })
+}
+
+/// save_skill — write a new/updated skill into the app's skills directory and
+/// register it, so it is immediately visible to list_skills / load_skill.
+/// This is the ONLY tool-level write path outside the sandbox jail: write_file
+/// cannot reach the skills dir (a generated skill saved into the sandbox is
+/// never loaded — seen in the field on Windows).
+async fn exec_save_skill(args: &Value) -> Value {
+    let skill_md = match args.get("skill_md").and_then(|v| v.as_str()) {
+        Some(c) if c.trim_start().starts_with("---") => c,
+        Some(_) => {
+            return json!({
+                "ok": false,
+                "error": "skill_md must start with '---' YAML frontmatter containing 'name:' and 'description:'."
+            })
+        }
+        None => return json!({ "ok": false, "error": "Parameter 'skill_md' (full SKILL.md content) is required." }),
+    };
+
+    let (fm_name, fm_description) = crate::server::routes::skills::parse_frontmatter(skill_md);
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(fm_name);
+    if name.is_empty() {
+        return json!({
+            "ok": false,
+            "error": "No skill name: set 'name:' in the SKILL.md frontmatter or pass the 'name' parameter."
+        });
+    }
+
+    let slug = crate::server::routes::skills::slugify(&name);
+    let skill_dir = crate::server::data::data_dir().join("skills").join(&slug);
+    if let Err(e) = tokio::fs::create_dir_all(&skill_dir).await {
+        return json!({ "ok": false, "error": format!("Failed to create skill directory: {e}") });
+    }
+    if let Err(e) = tokio::fs::write(skill_dir.join("SKILL.md"), skill_md).await {
+        return json!({ "ok": false, "error": format!("Failed to write SKILL.md: {e}") });
+    }
+
+    // Optional supporting files — relative paths only, jailed to the skill dir.
+    let mut written = vec!["SKILL.md".to_string()];
+    if let Some(files) = args.get("files").and_then(|v| v.as_array()) {
+        for f in files {
+            let rel = f.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let content = f.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let rel_path = std::path::Path::new(rel);
+            let escapes = rel.is_empty()
+                || rel_path.is_absolute()
+                || rel_path.components().any(|c| {
+                    matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_))
+                });
+            if escapes {
+                return json!({
+                    "ok": false,
+                    "error": format!("files[].path must be a relative path inside the skill folder, got '{rel}'")
+                });
+            }
+            let dest = skill_dir.join(rel_path);
+            if let Some(parent) = dest.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            if let Err(e) = tokio::fs::write(&dest, content).await {
+                return json!({ "ok": false, "error": format!("Failed to write '{rel}': {e}") });
+            }
+            written.push(rel.to_string());
+        }
+    }
+
+    // Register (or update) in skills.json so it shows up as a registered skill.
+    let mut skills = crate::server::data::get_skills().await;
+    let description = if fm_description.is_empty() {
+        format!("Custom skill '{name}'")
+    } else {
+        fm_description
+    };
+    if let Some(existing) = skills
+        .iter_mut()
+        .find(|s| s.name == name || crate::server::routes::skills::slugify(&s.name) == slug)
+    {
+        existing.description = description;
+        existing.script = slug.clone();
+        existing.enabled = true;
+    } else {
+        skills.push(crate::server::data::Skill {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.clone(),
+            description,
+            source: "custom".to_string(),
+            script: slug.clone(),
+            enabled: true,
+            installed_at: chrono::Utc::now().to_rfc3339(),
+            review_status: None,
+            auto_meta: None,
+        });
+    }
+    crate::server::data::save_skills(&skills).await;
+
+    info!("[save_skill] Saved skill '{}' to {:?} ({} file(s))", name, skill_dir, written.len());
+    json!({
+        "ok": true,
+        "name": name,
+        "slug": slug,
+        "dir": skill_dir.display().to_string(),
+        "files": written,
+        "hint": "The skill is registered and loadable now — verify with load_skill."
     })
 }
 
@@ -4738,6 +5002,9 @@ async fn exec_delete_file(args: &Value, sandbox_dir: &str) -> Value {
         return json!({ "ok": false, "error": "No path provided" });
     }
     let target = resolve_path(sandbox_dir, file_path);
+    if is_blocked_path(&target) {
+        return blocked_path_error("", file_path, sandbox_dir);
+    }
     if !target.exists() {
         return json!({ "ok": false, "error": format!("File not found: {}", target.display()) });
     }
@@ -6303,6 +6570,7 @@ async fn execute_tool_with_context(
         "run_react" => exec_run_react(args, sandbox_dir).await,
         "list_skills" => exec_list_skills(args, sandbox_dir).await,
         "load_skill" => exec_load_skill(args, sandbox_dir).await,
+        "save_skill" => exec_save_skill(args).await,
         "remote_task" => exec_remote_task(args).await,
         "claude_code_agent" => exec_claude_code_agent(args, sandbox_dir).await,
         "gemini_cli_agent" => exec_gemini_cli_agent(args, sandbox_dir).await,
@@ -10180,5 +10448,35 @@ mod vision_tests {
         assert!(imgs[0]["image_url"]["url"].as_str().unwrap().starts_with("data:image/png;base64,"));
 
         let _ = std::fs::remove_dir_all(std::env::temp_dir().join("tigrimos App Support"));
+    }
+}
+
+#[cfg(test)]
+mod sandbox_path_tests {
+    use super::*;
+
+    #[test]
+    fn escape_paths_hit_the_sentinel_and_clear_error() {
+        let tmp = std::env::temp_dir().join("tigrimos_sandbox_test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let sandbox = tmp.to_string_lossy().to_string();
+
+        // Absolute path outside the sandbox -> sentinel.
+        let outside = if cfg!(windows) { "C:\\Windows\\system32" } else { "/etc" };
+        let resolved = resolve_path(&sandbox, outside);
+        assert!(is_blocked_path(&resolved), "expected sentinel for {outside}, got {resolved:?}");
+
+        // ../ traversal -> sentinel.
+        let resolved = resolve_path(&sandbox, "../../outside.txt");
+        assert!(is_blocked_path(&resolved));
+
+        // Inside path passes through untouched.
+        let resolved = resolve_path(&sandbox, "sub/file.txt");
+        assert!(!is_blocked_path(&resolved));
+
+        // The error result names the path and the sandbox.
+        let err = blocked_path_error("Hint.", outside, &sandbox);
+        let msg = err["error"].as_str().unwrap();
+        assert!(msg.contains("outside the sandbox") && msg.contains(outside), "{msg}");
     }
 }
