@@ -3192,8 +3192,9 @@ function loadSettings() {
           <h3>Agent Loop Profiles</h3>
           <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">
             Customize the agent loop as YAML profiles: allowed tools, MCP servers, skills,
-            model/system-prompt overrides, loop limits and context compaction.
-            Omitted sections inherit the built-in behavior; tool-approval prompts always apply.</div>
+            model/system-prompt overrides, loop limits, context compaction and per-tool rules
+            (approval override, parameter pins, limits). Omitted sections inherit the built-in
+            behavior; coordination tools are never removed while sub-agents are enabled.</div>
           <div class="settings-row-field"><label>Active profile</label>
             <select id="s-loop-active" onchange="setActiveLoopProfile()" style="flex:1"></select></div>
         </div>
@@ -3206,6 +3207,23 @@ function loadSettings() {
             <input id="s-loop-new" placeholder="profile-name" style="flex:1">
             <button class="pill-btn" onclick="createLoopProfile()" style="flex:none;margin-left:8px">+ Create</button>
             <button class="pill-btn" onclick="resetLoopDefault()" style="flex:none;margin-left:8px" title="Regenerate default.yaml from the current settings">Reset default</button></div>
+          <details style="margin:10px 0">
+            <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">⚙ Loop settings (form)</summary>
+            <div id="s-loop-form" style="margin-top:8px;font-size:13px">Select a profile…</div>
+            <div style="margin-top:8px"><button class="pill-btn primary" onclick="saveLoopForm()">Save form settings</button></div>
+          </details>
+          <details style="margin:10px 0">
+            <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">🔧 Per-tool settings (approval, params, limits)</summary>
+            <div style="color:var(--ink-soft);font-size:12px;margin-top:6px">
+              Per-tool rules for built-in and MCP tools: hide a tool, require or waive approval,
+              pin/default parameters, cap runtime and output size. Inherit = follow the global settings.</div>
+            <div id="s-loop-tools" style="margin-top:8px;font-size:13px"></div>
+            <div class="settings-row-field" style="margin-top:8px"><label>Add tool</label>
+              <select id="s-loop-tool-sel" style="flex:1"></select>
+              <input id="s-loop-tool-txt" placeholder="or type an MCP tool name" style="flex:1;margin-left:8px">
+              <button class="pill-btn" onclick="loopToolAdd()" style="flex:none;margin-left:8px">Add</button></div>
+            <div style="margin-top:8px"><button class="pill-btn primary" onclick="saveLoopForm()">Save form settings</button></div>
+          </details>
           <div class="settings-row-field" style="align-items:flex-start"><label>YAML</label>
             <textarea id="s-loop-yaml" rows="18" style="flex:1;font-family:monospace;font-size:12px" spellcheck="false"></textarea></div>
           <div style="margin-top:8px">
@@ -3219,6 +3237,32 @@ function loadSettings() {
       </div>
 
       <div class="settings-pane" id="pane-mcp" hidden>
+        <div class="settings-group">
+          <h3>🇬 Google — Gmail · Calendar · Drive</h3>
+          <div id="s-g-summary" style="color:var(--ink-soft);font-size:12px;margin-bottom:8px">Checking…</div>
+          <details id="s-g-details">
+            <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">Quick connect setup</summary>
+            <div style="color:var(--ink-soft);font-size:12px;margin:8px 0">
+              1. Create an OAuth client (type <b>Desktop app</b>) in the
+              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>
+              — enable the Gmail, Calendar and Drive APIs and add yourself under <b>Test users</b> on the consent screen —
+              then paste the Client ID below.</div>
+            <div class="settings-row-field"><label>Client ID</label>
+              <input id="s-g-client-id" placeholder="xxxx.apps.googleusercontent.com" style="flex:1"></div>
+            <div class="settings-row-field"><label>Client secret</label>
+              <input id="s-g-client-secret" type="password" placeholder="leave empty to keep the stored one" style="flex:1"></div>
+            <div class="settings-row-field"><label>Google email</label>
+              <input id="s-g-email" placeholder="you@gmail.com (optional)" style="flex:1"></div>
+            <div class="settings-row-field"><label>Services</label>
+              <label style="display:flex;align-items:center;gap:6px;font-weight:500"><input type="checkbox" id="s-g-gmail" checked style="flex:none;width:auto">Gmail</label>
+              <label style="display:flex;align-items:center;gap:6px;font-weight:500"><input type="checkbox" id="s-g-cal" checked style="flex:none;width:auto">Calendar</label>
+              <label style="display:flex;align-items:center;gap:6px;font-weight:500"><input type="checkbox" id="s-g-drive" checked style="flex:none;width:auto">Drive</label></div>
+            <div style="margin-top:8px">
+              <button class="pill-btn" id="s-g-install" onclick="googleInstallUv()" hidden>Install uv runtime</button>
+              <button class="pill-btn primary" onclick="googleConnect()">Connect &amp; Login with Google</button>
+              <div id="s-g-status" style="font-size:13px;margin-top:8px"></div></div>
+          </details>
+        </div>
         <div class="settings-group">
           <h3>MCP Tools</h3>
           <div id="s-mcp-list"></div>
@@ -3391,7 +3435,78 @@ function loadSettings() {
     loadSkillsLibrary();
     loadAgentLoopPane(data.agentLoopProfile || '');
     loadMessagingStatus();
+    loadGoogleCard();
   }).catch(() => {});
+}
+
+// ---- Google quick-connect (Gmail / Calendar / Drive) ----
+let _googleUvx = null;
+function setGoogleStatus(html, isErr) {
+  const el = document.getElementById('s-g-status');
+  if (!el) return;
+  el.innerHTML = html;
+  el.style.color = isErr ? 'var(--red, #ef4444)' : 'var(--ink-soft)';
+}
+function loadGoogleCard() {
+  api('/api/google').then(d => {
+    _googleUvx = d.uvx || null;
+    const sum = document.getElementById('s-g-summary');
+    const det = document.getElementById('s-g-details');
+    if (sum) {
+      sum.innerHTML = d.connected
+        ? '✅ Connected — the agent can use ' + (d.services || []).join(', ') + '. Try “what\'s on my calendar tomorrow?”'
+        : d.configured
+          ? '⚠ Configured but not connected — open Quick connect setup and press Connect again.'
+          : 'Let the agent read/send Gmail, manage Calendar and browse Drive. One-time setup below.';
+    }
+    if (det && !d.connected && !d.configured) det.open = true;
+    const idEl = document.getElementById('s-g-client-id');
+    if (idEl && !idEl.value) idEl.value = d.clientId || '';
+    const emEl = document.getElementById('s-g-email');
+    if (emEl && !emEl.value) emEl.value = d.email || '';
+    if (d.configured && (d.services || []).length) {
+      const has = s => d.services.includes(s);
+      document.getElementById('s-g-gmail').checked = has('gmail');
+      document.getElementById('s-g-cal').checked = has('calendar');
+      document.getElementById('s-g-drive').checked = has('drive');
+    }
+    const inst = document.getElementById('s-g-install');
+    if (inst) inst.hidden = !!d.uvx;
+    if (!d.uvx) setGoogleStatus('The uv runtime is not installed on the host — press “Install uv runtime” first (owner token required).', false);
+  }).catch(() => {});
+}
+function googleInstallUv() {
+  setGoogleStatus('Installing uv on the host…', false);
+  api('/api/google/install-uv', { method: 'POST' })
+    .then(d => {
+      if (d.ok) { _googleUvx = d.uvx; document.getElementById('s-g-install').hidden = true; setGoogleStatus('✅ uv installed (' + esc(d.uvx) + '). Now press Connect.', false); }
+      else setGoogleStatus('❌ ' + esc(d.error || 'install failed'), true);
+    })
+    .catch(e => setGoogleStatus('❌ ' + esc(e.message || e), true));
+}
+function googleConnect() {
+  const clientId = document.getElementById('s-g-client-id').value.trim();
+  if (!clientId) { setGoogleStatus('Paste a Client ID first.', true); return; }
+  setGoogleStatus('Connecting to the Google MCP server… (first launch downloads packages, ~30 s)', false);
+  api('/api/google/connect', { method: 'POST', body: JSON.stringify({
+    clientId,
+    clientSecret: document.getElementById('s-g-client-secret').value.trim(),
+    email: document.getElementById('s-g-email').value.trim(),
+    gmail: document.getElementById('s-g-gmail').checked,
+    calendar: document.getElementById('s-g-cal').checked,
+    drive: document.getElementById('s-g-drive').checked
+  }) }).then(d => {
+    if (!d.ok) { setGoogleStatus('❌ ' + esc(d.error || d.message || 'failed'), true); return; }
+    if (d.url) {
+      setGoogleStatus('🔑 <a href="' + esc(d.url) + '" target="_blank" rel="noopener"><b>Open the Google login</b></a> — ' +
+        'note: the OAuth callback lands on <code>localhost:8000</code> of the <b>host</b> machine. ' +
+        'If TigrimOS runs on another box, open this link in a browser on that machine ' +
+        '(or port-forward: <code>ssh -L 8000:localhost:8000 host</code>).', false);
+    } else {
+      setGoogleStatus('✅ ' + esc(d.message || 'Login started') + ' If TigrimOS runs on this machine, a Google sign-in window has opened.', false);
+    }
+    setTimeout(loadGoogleCard, 4000);
+  }).catch(e => setGoogleStatus('❌ ' + esc(e.message || e), true));
 }
 
 // ---- Agent Loop profiles ----
@@ -3419,6 +3534,8 @@ function loadAgentLoopPane(active) {
     if (open) { fileSel.value = open; openLoopProfile(); }
   }).catch(() => {});
   api('/api/agent-loops/catalog').then(cat => {
+    _loopCatalog = cat.tools || [];
+    fillLoopToolSel();
     const el = document.getElementById('s-loop-catalog');
     if (!el) return;
     const tools = (cat.tools || []).map(t =>
@@ -3436,13 +3553,192 @@ function setActiveLoopProfile() {
     .then(() => setLoopStatus('Active profile: ' + (v || '(built-in)'), false))
     .catch(e => setLoopStatus('Error saving active profile: ' + (e.message || e), true));
 }
-function openLoopProfile() {
+function openLoopProfile(keepStatus) {
   const f = document.getElementById('s-loop-file').value;
   if (!f) return;
   api('/api/agent-loops/' + encodeURIComponent(f)).then(d => {
     document.getElementById('s-loop-yaml').value = d.content || '';
-    setLoopStatus('', false);
+    _loopParsed = (d.parsed && typeof d.parsed === 'object') ? d.parsed : null;
+    _loopToolsCfg = {};
+    _loopToolsJson = {};
+    if (_loopParsed && _loopParsed.tools && _loopParsed.tools.config) {
+      _loopToolsCfg = JSON.parse(JSON.stringify(_loopParsed.tools.config));
+      for (const [name, cfg] of Object.entries(_loopToolsCfg)) {
+        _loopToolsJson[name] = {
+          params: cfg.params ? JSON.stringify(cfg.params) : '',
+          pinned_params: cfg.pinned_params ? JSON.stringify(cfg.pinned_params) : ''
+        };
+      }
+    }
+    renderLoopForm();
+    renderLoopTools();
+    fillLoopToolSel();
+    if (!keepStatus) setLoopStatus('', false);
   }).catch(e => setLoopStatus('Error loading ' + f + ': ' + (e.message || e), true));
+}
+
+// ---- Loop settings + per-tool settings form editors ----
+let _loopParsed = null;      // parsed profile JSON from the server (masked keys round-trip safely)
+let _loopToolsCfg = {};      // tools.config working copy
+let _loopToolsJson = {};     // raw JSON text buffers for params / pinned_params
+let _loopCatalog = [];       // tool catalog for the add-tool dropdown
+
+function lfNum(id, label, val, step) {
+  return `<div class="settings-row-field"><label>${label}</label>
+    <input type="number" id="${id}" value="${val === undefined || val === null ? '' : val}" ${step ? 'step="' + step + '"' : ''} style="flex:1"></div>`;
+}
+function lfChk(id, label, val) {
+  return `<div class="settings-row-field"><label></label>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+    <input type="checkbox" id="${id}" ${val ? 'checked' : ''} style="flex:none;width:auto"> ${label}</label></div>`;
+}
+function renderLoopForm() {
+  const el = document.getElementById('s-loop-form');
+  if (!el) return;
+  if (!_loopParsed) { el.innerHTML = '<span style="color:var(--ink-soft)">Profile YAML failed to parse — fix it in the YAML editor first.</span>'; return; }
+  const l = _loopParsed.loop || {};
+  const c = _loopParsed.compaction || {};
+  el.innerHTML =
+    lfNum('s-lf-rounds', 'Max tool rounds', l.max_rounds) +
+    lfNum('s-lf-calls', 'Max tool calls', l.max_tool_calls) +
+    lfNum('s-lf-temp', 'Temperature', l.temperature, '0.1') +
+    lfNum('s-lf-tokens', 'Max tokens', l.max_tokens) +
+    lfNum('s-lf-depth', 'Max sub-agent spawn depth', l.max_spawn_depth) +
+    lfChk('s-lf-reflect', 'Reflection loop (judge the final answer, retry gaps)', l.reflection_enabled) +
+    lfNum('s-lf-reflect-th', 'Reflection threshold (0–1)', l.reflection_threshold, '0.05') +
+    lfChk('s-lf-stepverify', 'Step verification (judge each team agent step)', l.step_verification) +
+    lfChk('s-lf-checkpoint', 'Checkpoints (resume interrupted runs)', l.checkpoint_enabled) +
+    '<div style="margin:8px 0 4px;font-weight:600;color:var(--accent)">Context compaction</div>' +
+    lfChk('s-lf-c-on', 'Periodic compression enabled', c.enabled !== false) +
+    lfNum('s-lf-c-interval', 'Compress every N rounds', c.interval) +
+    lfNum('s-lf-c-window', 'Keep last N messages', c.window) +
+    lfNum('s-lf-c-ctx', 'Max context tokens', c.max_context_tokens) +
+    lfNum('s-lf-c-trim', 'Per-tool-result trim (chars)', c.tool_result_max_len) +
+    `<div class="settings-row-field"><label>Summarizer model</label>
+      <input id="s-lf-c-model" value="${esc(c.model || '')}" placeholder="(empty = session model)" style="flex:1"></div>`;
+}
+function collectLoopForm() {
+  const num = id => { const v = document.getElementById(id).value; return v === '' ? undefined : Number(v); };
+  const chk = id => document.getElementById(id).checked;
+  _loopParsed.loop = Object.assign({}, _loopParsed.loop, {
+    max_rounds: num('s-lf-rounds'), max_tool_calls: num('s-lf-calls'),
+    temperature: num('s-lf-temp'), max_tokens: num('s-lf-tokens'),
+    max_spawn_depth: num('s-lf-depth'), reflection_enabled: chk('s-lf-reflect'),
+    reflection_threshold: num('s-lf-reflect-th'), step_verification: chk('s-lf-stepverify'),
+    checkpoint_enabled: chk('s-lf-checkpoint')
+  });
+  _loopParsed.compaction = Object.assign({}, _loopParsed.compaction, {
+    enabled: chk('s-lf-c-on'), interval: num('s-lf-c-interval'), window: num('s-lf-c-window'),
+    max_context_tokens: num('s-lf-c-ctx'), tool_result_max_len: num('s-lf-c-trim'),
+    model: document.getElementById('s-lf-c-model').value.trim() || undefined
+  });
+}
+function triSel(name, field, val) {
+  const opts = [['', 'Inherit'], ['true', field === 'enabled' ? 'Enabled' : 'Always ask'], ['false', field === 'enabled' ? 'Hidden' : 'Never ask']];
+  const cur = val === true ? 'true' : val === false ? 'false' : '';
+  return `<select onchange="loopToolSet('${esc(name)}','${field}',this.value,'tri')" style="flex:1">` +
+    opts.map(([v, t]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${t}</option>`).join('') + '</select>';
+}
+function renderLoopTools() {
+  const el = document.getElementById('s-loop-tools');
+  if (!el) return;
+  const names = Object.keys(_loopToolsCfg).sort();
+  if (!names.length) { el.innerHTML = '<span style="color:var(--ink-soft)">No per-tool settings yet — add a tool below.</span>'; return; }
+  el.innerHTML = names.map(name => {
+    const c = _loopToolsCfg[name];
+    const j = _loopToolsJson[name] || { params: '', pinned_params: '' };
+    return `<div class="card" style="padding:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <b>🔧 ${esc(name)}</b>
+        <button class="pill-btn danger" style="padding:4px 10px;font-size:12px" onclick="loopToolRemove('${esc(name)}')">Remove</button></div>
+      <div class="settings-row-field"><label>Tool</label>${triSel(name, 'enabled', c.enabled)}</div>
+      <div class="settings-row-field"><label>Approval</label>${triSel(name, 'require_approval', c.require_approval)}</div>
+      <div class="settings-row-field"><label>Timeout (s)</label>
+        <input type="number" value="${c.timeout_secs ?? ''}" placeholder="(none)" onchange="loopToolSet('${esc(name)}','timeout_secs',this.value,'num')" style="flex:1"></div>
+      <div class="settings-row-field"><label>Max result bytes</label>
+        <input type="number" value="${c.max_result_len ?? ''}" placeholder="(none)" onchange="loopToolSet('${esc(name)}','max_result_len',this.value,'num')" style="flex:1"></div>
+      <div class="settings-row-field"><label>Description</label>
+        <input value="${esc(c.description || '')}" placeholder="(built-in description)" onchange="loopToolSet('${esc(name)}','description',this.value,'str')" style="flex:1"></div>
+      <div class="settings-row-field"><label>Default params</label>
+        <input value="${esc(j.params)}" placeholder='{"key":"value"} — used when the model omits it' onchange="loopToolSet('${esc(name)}','params',this.value,'json')" style="flex:1;font-family:monospace"></div>
+      <div class="settings-row-field"><label>Pinned params</label>
+        <input value="${esc(j.pinned_params)}" placeholder='{"key":"value"} — always overwrites the model' onchange="loopToolSet('${esc(name)}','pinned_params',this.value,'json')" style="flex:1;font-family:monospace"></div>
+    </div>`;
+  }).join('');
+}
+function loopToolSet(name, field, value, kind) {
+  const c = _loopToolsCfg[name];
+  if (!c) return;
+  if (kind === 'tri') {
+    if (value === '') delete c[field]; else c[field] = (value === 'true');
+  } else if (kind === 'num') {
+    if (value === '') delete c[field]; else c[field] = Number(value);
+  } else if (kind === 'str') {
+    if (!value.trim()) delete c[field]; else c[field] = value;
+  } else if (kind === 'json') {
+    _loopToolsJson[name] = _loopToolsJson[name] || { params: '', pinned_params: '' };
+    _loopToolsJson[name][field] = value;
+    if (!value.trim()) { delete c[field]; return; }
+    try { c[field] = JSON.parse(value); setLoopStatus('', false); }
+    catch (e) { setLoopStatus(name + '.' + field + ': invalid JSON — not applied until fixed', true); }
+  }
+}
+function fillLoopToolSel() {
+  const sel = document.getElementById('s-loop-tool-sel');
+  if (!sel) return;
+  const used = new Set(Object.keys(_loopToolsCfg));
+  sel.innerHTML = '<option value="">pick a tool…</option>' +
+    _loopCatalog.filter(t => !used.has(t.name))
+      .map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+}
+function loopToolAdd() {
+  const sel = document.getElementById('s-loop-tool-sel');
+  const txt = document.getElementById('s-loop-tool-txt');
+  const name = (txt.value || sel.value || '').trim();
+  if (!name) return;
+  if (!_loopToolsCfg[name]) _loopToolsCfg[name] = {};
+  txt.value = ''; sel.value = '';
+  renderLoopTools();
+  fillLoopToolSel();
+}
+function loopToolRemove(name) {
+  delete _loopToolsCfg[name];
+  delete _loopToolsJson[name];
+  renderLoopTools();
+  fillLoopToolSel();
+}
+function saveLoopForm() {
+  const f = document.getElementById('s-loop-file').value;
+  if (!f) { setLoopStatus('No profile selected', true); return; }
+  if (!_loopParsed) { setLoopStatus('Profile YAML failed to parse — fix and save it in the YAML editor first', true); return; }
+  // Refuse to save while a params JSON buffer is invalid.
+  for (const [name, j] of Object.entries(_loopToolsJson)) {
+    for (const field of ['params', 'pinned_params']) {
+      const v = (j[field] || '').trim();
+      if (!v) continue;
+      try { JSON.parse(v); } catch (e) { setLoopStatus(name + '.' + field + ' is invalid JSON — fix it before saving', true); return; }
+    }
+  }
+  collectLoopForm();
+  const profile = JSON.parse(JSON.stringify(_loopParsed));
+  profile.tools = profile.tools || { mode: 'all', list: [] };
+  const cfg = {};
+  for (const [name, c] of Object.entries(_loopToolsCfg)) {
+    const cleaned = {};
+    for (const [k, v] of Object.entries(c)) {
+      if (v !== undefined && v !== null && v !== '') cleaned[k] = v;
+    }
+    if (Object.keys(cleaned).length) cfg[name] = cleaned;
+  }
+  profile.tools.config = cfg;
+  api('/api/agent-loops', { method: 'POST', body: JSON.stringify({ filename: f, profile }) })
+    .then(d => {
+      if (d.error) { setLoopStatus('Error: ' + d.error, true); return; }
+      const warn = (d.warnings || []).length ? ' — warnings: ' + d.warnings.join('; ') : '';
+      setLoopStatus('Saved ' + d.filename + warn, false);
+      openLoopProfile(true); // refresh the YAML editor + forms from disk
+    })
+    .catch(e => setLoopStatus('Error: ' + (e.message || e), true));
 }
 function saveLoopProfile() {
   const f = document.getElementById('s-loop-file').value;
@@ -3453,6 +3749,7 @@ function saveLoopProfile() {
       if (d.error) { setLoopStatus('Error: ' + d.error, true); return; }
       const warn = (d.warnings || []).length ? ' — warnings: ' + d.warnings.join('; ') : '';
       setLoopStatus('Saved ' + d.filename + warn, false);
+      openLoopProfile(true); // re-sync the form editors with the saved YAML
     })
     .catch(e => setLoopStatus('Error: ' + (e.message || e), true));
 }

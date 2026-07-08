@@ -544,8 +544,7 @@ fn clear_stale_browser_locks(profile: &str) {
     }
 }
 
-/// Connect to a single MCP server
-#[allow(dead_code)] // public API kept for external callers / future routes
+/// Connect to a single MCP server (used by the Google quick-connect route).
 pub async fn connect_server(config: &Value) -> Value {
     let name = config["name"].as_str().unwrap_or("unknown").to_string();
     let transport = config["transport"].as_str().unwrap_or("stdio").to_string();

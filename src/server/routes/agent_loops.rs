@@ -29,6 +29,11 @@ use crate::server::services::agent_loop::{
 struct SaveProfileBody {
     filename: Option<String>,
     content: Option<String>,
+    /// Alternative to `content`: the profile as a JSON object (from the web
+    /// UI's form editors) — serialized to YAML server-side. Masked api_key
+    /// placeholders inside it are restored from the existing file exactly
+    /// like the YAML path.
+    profile: Option<Value>,
 }
 
 /// Matches `api_key: <value>` lines in profile YAML (model / evaluation
@@ -359,12 +364,29 @@ async fn save_profile(Json(body): Json<SaveProfileBody>) -> impl IntoResponse {
             )
         }
     };
-    let content = match &body.content {
-        Some(c) if !c.is_empty() => c.clone(),
+    let content = match (&body.content, &body.profile) {
+        (Some(c), _) if !c.is_empty() => c.clone(),
+        (_, Some(p)) => {
+            // Form-editor path: serialize the JSON profile to YAML. Parse
+            // through the typed struct first so unknown junk is dropped and
+            // field order matches the YAML editor's output.
+            match serde_json::from_value::<AgentLoopProfile>(p.clone())
+                .map_err(|e| e.to_string())
+                .and_then(|prof| serde_yaml::to_string(&prof).map_err(|e| e.to_string()))
+            {
+                Ok(y) => y,
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": format!("Invalid profile object: {e}")})),
+                    )
+                }
+            }
+        }
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error": "filename and content required"})),
+                Json(json!({"error": "filename and content (or profile) required"})),
             )
         }
     };

@@ -131,6 +131,8 @@ const REMOTE_BLOCKED_PREFIXES: &[&str] = &[
     "/api/messaging/tunnel",
     // Returns the host's raw Claude Code OAuth token — owner only.
     "/api/settings/claude-code-oauth",
+    // Installs software (the uv runtime) on the bare host — owner only.
+    "/api/google/install-uv",
 ];
 
 async fn auth_middleware(
