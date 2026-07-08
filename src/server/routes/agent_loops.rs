@@ -161,7 +161,18 @@ async fn get_catalog() -> impl IntoResponse {
         .into_iter()
         .map(|(name, description)| {
             let protected = crate::server::services::toolbox::is_protected_tool(&name, &dummy);
-            json!({"name": name, "description": description, "protected": protected})
+            // Tools gated by a global approval setting whose default is ON —
+            // lets editors show which tools require_approval actually changes.
+            let approval_gated_by_default = matches!(
+                name.as_str(),
+                "run_shell" | "cron_create" | "cron_run_now" | "run_python" | "run_react" | "delete_file"
+            );
+            json!({
+                "name": name,
+                "description": description,
+                "protected": protected,
+                "approvalGatedByDefault": approval_gated_by_default,
+            })
         })
         .collect();
 
@@ -226,6 +237,83 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
         for t in &tf.list {
             if !known.iter().any(|k| k == t) {
                 warnings.push(format!("Unknown tool name '{}' (not in the base tool catalog)", t));
+            }
+        }
+        let is_protected = |name: &str| {
+            matches!(
+                name,
+                "send_task" | "wait_result" | "check_agents" | "create_architecture"
+                    | "select_swarm" | "spawn_subagent"
+            ) || name.starts_with("proto_")
+                || name.starts_with("bb_")
+        };
+        for (name, cfg) in &tf.config {
+            // MCP tool names are dynamic; only checked at runtime.
+            if !known.iter().any(|k| k == name) && !is_protected(name) {
+                warnings.push(format!(
+                    "tools.config: '{}' is not in the base tool catalog (fine if it is an MCP tool name)",
+                    name
+                ));
+            }
+            if cfg.timeout_secs == Some(0) {
+                return Err(format!("tools.config.{}.timeout_secs must be > 0", name));
+            }
+            if cfg.max_result_len.map(|m| m > 0 && m < 200).unwrap_or(false) {
+                warnings.push(format!(
+                    "tools.config.{}.max_result_len below 200 bytes will destroy most tool output",
+                    name
+                ));
+            }
+            if let (Some(p), Some(pins)) = (&cfg.params, &cfg.pinned_params) {
+                for k in p.keys().filter(|k| pins.contains_key(*k)) {
+                    warnings.push(format!(
+                        "tools.config.{}: '{}' appears in both params and pinned_params — pinned_params wins",
+                        name, k
+                    ));
+                }
+            }
+            if is_protected(name)
+                && (cfg.require_approval == Some(true)
+                    || cfg.enabled == Some(false)
+                    || cfg.timeout_secs.is_some())
+            {
+                warnings.push(format!(
+                    "tools.config.{}: require_approval/enabled/timeout_secs are ignored for protected coordination tools while orchestration is active",
+                    name
+                ));
+            }
+            if cfg.enabled == Some(false) && tf.mode == "allowlist" && tf.list.iter().any(|t| t == name) {
+                warnings.push(format!(
+                    "tools.config.{}: enabled:false contradicts its allowlist entry — disabled wins",
+                    name
+                ));
+            }
+        }
+        // Typo guard: ToolConfig doesn't use deny_unknown_fields, so surface
+        // unrecognized keys as warnings instead of silently dropping them.
+        if let Ok(raw) = serde_yaml::from_str::<serde_yaml::Value>(content) {
+            const KNOWN_KEYS: [&str; 7] = [
+                "enabled", "require_approval", "description",
+                "params", "pinned_params", "max_result_len", "timeout_secs",
+            ];
+            if let Some(cfg_map) = raw
+                .get("tools")
+                .and_then(|t| t.get("config"))
+                .and_then(|c| c.as_mapping())
+            {
+                for (tool, entry) in cfg_map {
+                    let tool = tool.as_str().unwrap_or("?");
+                    if let Some(fields) = entry.as_mapping() {
+                        for key in fields.keys().filter_map(|k| k.as_str()) {
+                            if !KNOWN_KEYS.contains(&key) {
+                                warnings.push(format!(
+                                    "tools.config.{}: unknown key '{}' (expected one of {})",
+                                    tool, key, KNOWN_KEYS.join(", ")
+                                ));
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -325,7 +413,7 @@ async fn reset_default() -> impl IntoResponse {
         .unwrap_or(Value::Null);
     let profile = default_profile_from_settings(&settings);
     let yaml = match serde_yaml::to_string(&profile) {
-        Ok(y) => y,
+        Ok(y) => format!("{y}\n{}", crate::server::services::agent_loop::TOOL_CONFIG_EXAMPLE),
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -369,4 +457,66 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/catalog", get(get_catalog))
         .route("/reset-default", post(reset_default))
         .route("/{filename}", get(get_profile).delete(delete_profile))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_profile_yaml;
+
+    #[test]
+    fn tool_config_validation_warnings_and_errors() {
+        // timeout_secs: 0 is a hard error.
+        let err = validate_profile_yaml(
+            "name: x\ntools:\n  config:\n    run_shell: { timeout_secs: 0 }\n",
+        );
+        assert!(err.is_err());
+
+        let yaml = r#"
+name: x
+tools:
+  mode: allowlist
+  list: [run_shell, web_search]
+  config:
+    run_shell:
+      enabled: false
+      require_approval: true
+      max_result_len: 100
+      params: { cwd: "/a" }
+      pinned_params: { cwd: "/b" }
+      timout_secs: 5
+    send_task:
+      require_approval: true
+    not_a_real_tool:
+      enabled: false
+"#;
+        let (_, warnings) = validate_profile_yaml(yaml).unwrap();
+        let joined = warnings.join("\n");
+        assert!(joined.contains("max_result_len below 200"), "{joined}");
+        assert!(joined.contains("both params and pinned_params"), "{joined}");
+        assert!(joined.contains("unknown key 'timout_secs'"), "{joined}");
+        assert!(joined.contains("contradicts its allowlist entry"), "{joined}");
+        assert!(joined.contains("protected coordination tools"), "{joined}");
+        assert!(joined.contains("not_a_real_tool"), "{joined}");
+    }
+
+    #[test]
+    fn clean_tool_config_passes_without_warnings() {
+        let yaml = r#"
+name: tooltest
+tools:
+  mode: all
+  list: []
+  config:
+    run_shell: { require_approval: false, timeout_secs: 5, pinned_params: { cwd: "." } }
+    write_file: { require_approval: true }
+    read_file: { max_result_len: 300 }
+    web_search: { enabled: false }
+"#;
+        let (profile, warnings) = validate_profile_yaml(yaml).unwrap();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_eq!(
+            profile.tool_config("run_shell").unwrap().require_approval,
+            Some(false)
+        );
+    }
 }

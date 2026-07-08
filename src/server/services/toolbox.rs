@@ -474,6 +474,39 @@ pub fn is_protected_tool(name: &str, sub_agent: &SubAgentConfig) -> bool {
         || name.starts_with("bb_")
 }
 
+/// Apply per-tool profile config (tools.config in the agent-loop YAML) to an
+/// assembled tool-spec list:
+/// - remove tools with enabled:false (protected coordination tools exempt)
+/// - override function.description
+/// Runs after MCP tools are appended, so it covers built-in and MCP specs
+/// uniformly (both are OpenAI-format {"type":"function","function":{...}}).
+pub fn apply_profile_tool_overrides(tools: &mut Vec<Value>, sub_agent: &SubAgentConfig) {
+    let Some(tf) = sub_agent.loop_profile.as_deref().and_then(|p| p.tools.as_ref()) else {
+        return;
+    };
+    if tf.config.is_empty() {
+        return;
+    }
+    let before = tools.len();
+    tools.retain(|t| {
+        let name = t["function"]["name"].as_str().unwrap_or("");
+        is_protected_tool(name, sub_agent)
+            || tf.config.get(name).and_then(|c| c.enabled) != Some(false)
+    });
+    if tools.len() != before {
+        info!(
+            "[call_with_tools] profile tools.config disabled {} tool(s)",
+            before - tools.len()
+        );
+    }
+    for t in tools.iter_mut() {
+        let name = t["function"]["name"].as_str().unwrap_or("").to_string();
+        if let Some(desc) = tf.config.get(&name).and_then(|c| c.description.as_deref()) {
+            t["function"]["description"] = json!(desc);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Realtime multi-agent session (tiger_cowork realtime mode clone)
 // ---------------------------------------------------------------------------
@@ -3251,6 +3284,28 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         format!("{}...[truncated]", crate::util::truncate_utf8(s, max))
+    }
+}
+
+/// Shallow truncation of a tool result for the per-tool profile max_result_len
+/// knob: caps a bare string result, or every top-level string field of an
+/// object result, at max_len bytes (UTF-8 safe — never byte-slice). Non-string
+/// fields (arrays like output_files, numbers, nested objects) are untouched so
+/// file collection and structured data keep working.
+fn truncate_result_value(result: &mut Value, max_len: usize) {
+    let cap = |s: &str| format!("{}...[truncated by profile]", crate::util::truncate_utf8(s, max_len));
+    match result {
+        Value::String(s) if s.len() > max_len => *s = cap(s),
+        Value::Object(map) => {
+            for (_k, v) in map.iter_mut() {
+                if let Value::String(s) = v {
+                    if s.len() > max_len {
+                        *s = cap(s);
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -8148,6 +8203,10 @@ async fn call_with_tools_inner(
         tools.extend(mcp_tools);
     }
 
+    // Per-tool profile config: enabled:false removal + description overrides.
+    // After the MCP extend so it covers built-in AND MCP tool specs.
+    apply_profile_tool_overrides(&mut tools, &sub_agent);
+
     // Orchestrators have the same tools as workers — they decide when to delegate vs do directly.
 
     // Load settings — realtime agents get higher limits since orchestrators need many rounds.
@@ -8887,6 +8946,7 @@ async fn call_with_tools_inner(
 
                     // Refresh tool set to include send_task/wait_result
                     tools = tool_definitions_for_mode(&sub_agent, true, true);
+                    apply_profile_tool_overrides(&mut tools, &sub_agent);
                     info!("[ToolLoop] Tools refreshed: {}", tools.iter().filter_map(|td| td["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
                 }
 
@@ -9249,19 +9309,67 @@ async fn execute_tool_dispatch_inner(
     on_update: Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static>,
     _realtime: bool,
 ) -> Value {
-    // Gate: require user approval for dangerous tools.
+    // Per-tool profile config (tools.config.<name> in the agent-loop YAML)
+    // and protected-tool status, resolved once for the whole dispatch.
+    let tcfg = sub_agent
+        .loop_profile
+        .as_deref()
+        .and_then(|p| p.tool_config(tool_name));
+    let protected = is_protected_tool(tool_name, sub_agent);
+
+    // Hard-deny disabled tools. The spec-level filter already hides them from
+    // the model, but models sometimes call tools that were never offered.
+    if !protected && tcfg.and_then(|c| c.enabled) == Some(false) {
+        return json!({
+            "ok": false,
+            "error": format!("Tool '{}' is disabled by the active agent-loop profile", tool_name)
+        });
+    }
+
+    // Merge profile params (defaults + pins) BEFORE the approval gate so the
+    // approval modal shows exactly the arguments that will run.
+    let merged_args: Value = match tcfg {
+        Some(c) if c.params.is_some() || c.pinned_params.is_some() => {
+            if let Some(pins) = &c.pinned_params {
+                let sent = tool_args.as_object();
+                for (k, v) in pins {
+                    if sent.and_then(|o| o.get(k)).map(|old| old != v).unwrap_or(false) {
+                        info!("[profile] pinned_params override on '{}': key '{}'", tool_name, k);
+                    }
+                }
+            }
+            crate::server::services::agent_loop::merge_tool_args(tool_args, c)
+        }
+        _ => tool_args.clone(),
+    };
+    let tool_args = &merged_args;
+
+    // Gate: require user approval for dangerous tools. The profile can fully
+    // override WHETHER a tool is gated (require_approval: true/false; absent =
+    // global tool_requires_approval logic). Protected coordination tools are
+    // never gated: blocking send_task/wait_result mid-swarm deadlocks agents.
     //
-    // Interactive approval is only meaningful for the foreground "main" agent: it relies
-    // on a single global oneshot channel (APPROVAL_TX/APPROVAL_RX) plus a UI prompt the
-    // user actually sees. Background swarm sub-agents (agent_id != "main") have no UI to
-    // approve them, and routing several concurrent sub-agents through that one global slot
-    // makes each request overwrite the previous receiver — the earlier agent's oneshot
-    // never fires, it blocks for the full 120s timeout, its result never returns, and every
-    // agent waiting on it via wait_result deadlocks. That is the swarm hang.
+    // WHO approves is unchanged. Interactive approval is only meaningful for
+    // the foreground "main" agent: it relies on a single global oneshot channel
+    // (APPROVAL_TX/APPROVAL_RX) plus a UI prompt the user actually sees.
+    // Background swarm sub-agents (agent_id != "main") have no UI to approve
+    // them, and routing several concurrent sub-agents through that one global
+    // slot makes each request overwrite the previous receiver — the earlier
+    // agent's oneshot never fires, it blocks for the full 120s timeout, its
+    // result never returns, and every agent waiting on it via wait_result
+    // deadlocks. That is the swarm hang.
     //
     // So only the main agent uses the interactive channel. Background sub-agents are
     // governed by the `auto_approve_subagent_tools` setting (default true) instead.
-    if tool_requires_approval(tool_name).await {
+    let needs_approval = if protected {
+        false
+    } else {
+        match tcfg.and_then(|c| c.require_approval) {
+            Some(v) => v,
+            None => tool_requires_approval(tool_name).await,
+        }
+    };
+    if needs_approval {
         let is_main_agent = sub_agent.agent_id.is_empty() || sub_agent.agent_id == "main";
         let approved = if is_main_agent {
             request_tool_approval(tool_name, tool_args, &on_update).await
@@ -9286,7 +9394,7 @@ async fn execute_tool_dispatch_inner(
         }
     }
 
-    if tool_name == "spawn_subagent" {
+    let mut result = if tool_name == "spawn_subagent" {
         exec_spawn_subagent(tool_args, sub_agent, sandbox_dir, on_update).await
     } else if tool_name == "send_task" {
         exec_send_task_from(tool_args, &sub_agent.session_id, &sub_agent.agent_id).await
@@ -9299,11 +9407,36 @@ async fn execute_tool_dispatch_inner(
     } else if tool_name == "select_swarm" {
         exec_select_swarm(tool_args, sub_agent, sandbox_dir).await
     } else {
-        execute_tool_with_context(
+        let fut = execute_tool_with_context(
             tool_name, tool_args, sandbox_dir,
             &sub_agent.session_id, &sub_agent.agent_id,
-        ).await
+        );
+        // Profile wall-clock cap. Dropping the future kills the direct child
+        // process (kill_on_drop in run_guarded), but grandchildren in the
+        // process group may linger until the session's kill_session sweep —
+        // do NOT call kill_session here, it would kill unrelated concurrent
+        // tools of the same session.
+        match tcfg.and_then(|c| c.timeout_secs).filter(|s| *s > 0) {
+            Some(secs) => {
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), fut).await {
+                    Ok(v) => v,
+                    Err(_) => json!({
+                        "ok": false,
+                        "error": format!(
+                            "Tool '{}' timed out after {}s (agent-loop profile limit)",
+                            tool_name, secs
+                        )
+                    }),
+                }
+            }
+            None => fut.await,
+        }
+    };
+
+    if let Some(max) = tcfg.and_then(|c| c.max_result_len).filter(|m| *m > 0) {
+        truncate_result_value(&mut result, max as usize);
     }
+    result
 }
 
 // ---------------------------------------------------------------------------

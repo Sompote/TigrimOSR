@@ -12,7 +12,9 @@
 // - The profile tool filter is intersected AFTER tool_definitions_for_mode,
 //   and coordination tools are protected (is_protected_tool in toolbox.rs)
 //   so a profile can never brick swarm/router orchestration.
-// - Approval gates (tool_requires_approval) are NOT bypassed by a profile.
+// - Approval gates follow tool_requires_approval unless
+//   tools.config.<name>.require_approval overrides them; protected
+//   coordination tools are never approval-gated while orchestration is active.
 // - compaction.enabled=false disables only PERIODIC compression; proactive
 //   over-budget and emergency overflow compaction stay always-on.
 // ---------------------------------------------------------------------------
@@ -46,6 +48,13 @@ pub struct AgentLoopProfile {
     pub evaluation: Option<EvaluationKnobs>,
 }
 
+impl AgentLoopProfile {
+    /// Per-tool config entry for `name`, if the profile carries one.
+    pub fn tool_config(&self, name: &str) -> Option<&ToolConfig> {
+        self.tools.as_ref().and_then(|t| t.config.get(name))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelOverride {
     #[serde(default)]
@@ -73,10 +82,20 @@ pub struct ToolFilter {
     pub mode: String,
     #[serde(default)]
     pub list: Vec<String>,
+    /// Per-tool overrides keyed by tool name (built-in or MCP).
+    /// BTreeMap so serialized YAML has a stable key order.
+    #[serde(
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub config: std::collections::BTreeMap<String, ToolConfig>,
 }
 
 impl ToolFilter {
     pub fn allows(&self, name: &str) -> bool {
+        if self.config.get(name).and_then(|c| c.enabled) == Some(false) {
+            return false;
+        }
         match self.mode.as_str() {
             "allowlist" => self.list.iter().any(|t| t == name),
             "denylist" => !self.list.iter().any(|t| t == name),
@@ -84,6 +103,82 @@ impl ToolFilter {
         }
     }
 }
+
+/// Per-tool overrides. Every field is optional; absent = inherit current
+/// behavior. Map keys are tool names — built-in (see toolbox::tool_catalog)
+/// or MCP tool names — so one mechanism covers both uniformly.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolConfig {
+    /// false = tool removed from the model's tool list and hard-denied at
+    /// dispatch (sugar for denylisting). Protected coordination tools exempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Some(true) = always approval-gate this tool; Some(false) = never gate;
+    /// None = inherit the global tool_requires_approval logic. Who approves is
+    /// unchanged: main agent gets the UI modal, background sub-agents follow
+    /// auto_approve_subagent_tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_approval: Option<bool>,
+    /// Replaces the tool description the model sees in the tool spec.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Default argument values, injected only when the model omits the key
+    /// (shallow, top-level keys of the args object).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Map<String, Value>>,
+    /// Hard overrides that ALWAYS overwrite what the model sends
+    /// (shallow, top-level keys of the args object).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_params: Option<serde_json::Map<String, Value>>,
+    /// Truncate the tool result (bare string, or every top-level string field
+    /// of an object result) to this many bytes, UTF-8 safe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_result_len: Option<u64>,
+    /// Wall-clock cap in seconds on tool execution. Ignored for protected
+    /// coordination tools, which keep their own timeout machinery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Merge a tool-call's arguments with a ToolConfig: `params` fill in keys the
+/// model omitted, `pinned_params` always overwrite. Shallow — top-level keys
+/// only. Non-object args are replaced by an object when the config has any
+/// params to apply (tool args are always JSON objects in practice).
+pub fn merge_tool_args(args: &Value, cfg: &ToolConfig) -> Value {
+    if cfg.params.is_none() && cfg.pinned_params.is_none() {
+        return args.clone();
+    }
+    let mut obj = args.as_object().cloned().unwrap_or_default();
+    if let Some(defaults) = &cfg.params {
+        for (k, v) in defaults {
+            obj.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+    }
+    if let Some(pins) = &cfg.pinned_params {
+        for (k, v) in pins {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    Value::Object(obj)
+}
+
+/// Commented example appended to seeded/reset default.yaml files. serde_yaml
+/// cannot emit comments, so this rides along as a trailing block (ignored on
+/// parse; lost only if the user re-saves from the form editor).
+pub const TOOL_CONFIG_EXAMPLE: &str = "\
+# Per-tool overrides — uncomment and nest under tools:
+#   config:
+#     run_shell:
+#       require_approval: false   # true=always ask, false=never ask, absent=global default
+#       timeout_secs: 120         # wall-clock cap on execution
+#       max_result_len: 4000      # truncate result strings (UTF-8 safe)
+#       pinned_params: { cwd: \".\" }   # always overwrite model-sent values
+#       params: { }                     # defaults used when the model omits them
+#     web_search:
+#       description: \"Override the description the model sees.\"
+#     some_tool:
+#       enabled: false            # remove the tool from the model entirely
+";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpFilter {
@@ -239,7 +334,11 @@ pub fn default_profile_from_settings(settings: &Value) -> AgentLoopProfile {
         description: "Seeded from current settings — mirrors the built-in agent loop. Edit freely or clone via New.".to_string(),
         model: None,
         system_prompt: None,
-        tools: Some(ToolFilter { mode: "all".to_string(), list: Vec::new() }),
+        tools: Some(ToolFilter {
+            mode: "all".to_string(),
+            list: Vec::new(),
+            config: Default::default(),
+        }),
         mcp: Some(McpFilter { mode: "all".to_string(), servers: Vec::new() }),
         skills: Some(SkillFilter { mode: "all".to_string(), list: Vec::new() }),
         loop_: Some(LoopKnobs {
@@ -303,7 +402,7 @@ pub fn ensure_default_profile() -> bool {
         .unwrap_or(Value::Null);
     let profile = default_profile_from_settings(&settings);
     match serde_yaml::to_string(&profile) {
-        Ok(yaml) => match std::fs::write(&path, yaml) {
+        Ok(yaml) => match std::fs::write(&path, format!("{yaml}\n{TOOL_CONFIG_EXAMPLE}")) {
             Ok(()) => {
                 tracing::info!("[agent_loop] Seeded default profile at {:?}", path);
                 true
@@ -401,4 +500,92 @@ pub fn profile_from_agent_def(agent_def: &Value) -> Option<AgentLoopProfile> {
         // for the top-level main agent, never for team/sub-agents.
         evaluation: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn config_less_profile_still_parses() {
+        let yaml = "name: legacy\ntools:\n  mode: allowlist\n  list: [run_shell]\n";
+        let p: AgentLoopProfile = serde_yaml::from_str(yaml).unwrap();
+        let tf = p.tools.unwrap();
+        assert!(tf.config.is_empty());
+        assert!(tf.allows("run_shell"));
+        assert!(!tf.allows("web_search"));
+    }
+
+    #[test]
+    fn tool_config_yaml_round_trip() {
+        let yaml = r#"
+name: tooltest
+tools:
+  mode: all
+  list: []
+  config:
+    run_shell:
+      require_approval: false
+      timeout_secs: 5
+      pinned_params: { cwd: "." }
+    read_file:
+      max_result_len: 300
+    web_search:
+      enabled: false
+      description: "custom"
+      params: { region: "th-th" }
+"#;
+        let p: AgentLoopProfile = serde_yaml::from_str(yaml).unwrap();
+        let sh = p.tool_config("run_shell").unwrap();
+        assert_eq!(sh.require_approval, Some(false));
+        assert_eq!(sh.timeout_secs, Some(5));
+        assert_eq!(sh.pinned_params.as_ref().unwrap()["cwd"], json!("."));
+        assert_eq!(p.tool_config("read_file").unwrap().max_result_len, Some(300));
+        let ws = p.tool_config("web_search").unwrap();
+        assert_eq!(ws.enabled, Some(false));
+        assert_eq!(ws.description.as_deref(), Some("custom"));
+
+        let out = serde_yaml::to_string(&p).unwrap();
+        let p2: AgentLoopProfile = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(p2.tool_config("run_shell").unwrap().timeout_secs, Some(5));
+        assert_eq!(p2.tool_config("web_search").unwrap().enabled, Some(false));
+    }
+
+    #[test]
+    fn enabled_false_denies_in_every_mode() {
+        for (mode, list) in [
+            ("all", vec![]),
+            ("allowlist", vec!["web_search".to_string()]),
+            ("denylist", vec![]),
+        ] {
+            let mut config = std::collections::BTreeMap::new();
+            config.insert(
+                "web_search".to_string(),
+                ToolConfig { enabled: Some(false), ..Default::default() },
+            );
+            let tf = ToolFilter { mode: mode.to_string(), list, config };
+            assert!(!tf.allows("web_search"), "mode {mode} should deny disabled tool");
+        }
+    }
+
+    #[test]
+    fn merge_tool_args_defaults_and_pins() {
+        let cfg = ToolConfig {
+            params: serde_json::from_value(json!({"region": "th-th", "limit": 10})).unwrap(),
+            pinned_params: serde_json::from_value(json!({"cwd": "."})).unwrap(),
+            ..Default::default()
+        };
+        // Model-sent value survives a default but not a pin.
+        let merged = merge_tool_args(&json!({"limit": 3, "cwd": "/tmp"}), &cfg);
+        assert_eq!(merged["limit"], json!(3));
+        assert_eq!(merged["region"], json!("th-th"));
+        assert_eq!(merged["cwd"], json!("."));
+        // Non-object args become an object carrying the config values.
+        let merged = merge_tool_args(&Value::Null, &cfg);
+        assert_eq!(merged["cwd"], json!("."));
+        // No params configured -> args pass through untouched.
+        let noop = ToolConfig { max_result_len: Some(100), ..Default::default() };
+        assert_eq!(merge_tool_args(&json!({"a": 1}), &noop), json!({"a": 1}));
+    }
 }

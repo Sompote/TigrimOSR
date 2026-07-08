@@ -179,6 +179,16 @@ pub struct SettingsView {
     loop_sp_replace_base: bool,
     loop_tools_mode: String, // all | allowlist | denylist
     loop_tools_checked: std::collections::HashSet<String>,
+    /// Per-tool config (tools.config in the profile YAML), editable in the
+    /// form editor and carried through Save.
+    loop_tools_config:
+        std::collections::BTreeMap<String, crate::server::services::agent_loop::ToolConfig>,
+    /// Tool name being typed/picked for a new per-tool config entry.
+    loop_tools_config_new: String,
+    /// Raw JSON text buffers for params / pinned_params — kept separate from
+    /// the parsed config so half-typed JSON doesn't get wiped every frame.
+    loop_tools_config_params_text: std::collections::BTreeMap<String, String>,
+    loop_tools_config_pins_text: std::collections::BTreeMap<String, String>,
     loop_mcp_mode: String, // all | selected | none
     loop_mcp_checked: std::collections::HashSet<String>,
     loop_skills_mode: String, // all | selected | none
@@ -369,6 +379,10 @@ impl Default for SettingsView {
             loop_sp_replace_base: false,
             loop_tools_mode: "all".to_string(),
             loop_tools_checked: std::collections::HashSet::new(),
+            loop_tools_config: std::collections::BTreeMap::new(),
+            loop_tools_config_new: String::new(),
+            loop_tools_config_params_text: std::collections::BTreeMap::new(),
+            loop_tools_config_pins_text: std::collections::BTreeMap::new(),
             loop_mcp_mode: "all".to_string(),
             loop_mcp_checked: std::collections::HashSet::new(),
             loop_skills_mode: "all".to_string(),
@@ -4708,6 +4722,23 @@ impl SettingsView {
         let tf = p.tools.clone().unwrap_or_default();
         self.loop_tools_mode = if tf.mode.is_empty() { "all".into() } else { tf.mode };
         self.loop_tools_checked = tf.list.into_iter().collect();
+        self.loop_tools_config = tf.config;
+        self.loop_tools_config_new.clear();
+        let json_text = |m: &Option<serde_json::Map<String, serde_json::Value>>| {
+            m.as_ref()
+                .map(|m| serde_json::Value::Object(m.clone()).to_string())
+                .unwrap_or_default()
+        };
+        self.loop_tools_config_params_text = self
+            .loop_tools_config
+            .iter()
+            .map(|(n, c)| (n.clone(), json_text(&c.params)))
+            .collect();
+        self.loop_tools_config_pins_text = self
+            .loop_tools_config
+            .iter()
+            .map(|(n, c)| (n.clone(), json_text(&c.pinned_params)))
+            .collect();
         let mf = p.mcp.clone().unwrap_or_default();
         self.loop_mcp_mode = if mf.mode.is_empty() { "all".into() } else { mf.mode };
         self.loop_mcp_checked = mf.servers.into_iter().collect();
@@ -4776,6 +4807,7 @@ impl SettingsView {
             tools: Some(ToolFilter {
                 mode: self.loop_tools_mode.clone(),
                 list: if self.loop_tools_mode == "all" { Vec::new() } else { sorted(&self.loop_tools_checked) },
+                config: self.loop_tools_config.clone(),
             }),
             mcp: Some(McpFilter {
                 mode: self.loop_mcp_mode.clone(),
@@ -4833,6 +4865,200 @@ impl SettingsView {
                 },
                 allow_execute: Some(self.loop_eval_allow_execute),
             }),
+        }
+    }
+
+    /// Per-tool config editor (tools.config in the profile YAML): approval
+    /// override, enable/disable, description, param defaults/pins, limits.
+    fn per_tool_config_editor(&mut self, ui: &mut egui::Ui) {
+        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let red = egui::Color32::from_rgb(200, 80, 70);
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label(egui::RichText::new("Per-tool config").strong());
+        ui.label(
+            egui::RichText::new(
+                "Approval, parameter defaults/pins and limits per tool. Works for built-in and MCP tools; leave a field on Inherit/empty to keep the default behavior.",
+            )
+            .size(11.0)
+            .color(dim),
+        );
+
+        // Add row: pick from the catalog or type a name (MCP tools).
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("loop_tcfg_pick")
+                .selected_text(if self.loop_tools_config_new.is_empty() {
+                    "pick a tool…"
+                } else {
+                    self.loop_tools_config_new.as_str()
+                })
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    for (name, _) in &self.loop_tool_catalog {
+                        if !self.loop_tools_config.contains_key(name) {
+                            ui.selectable_value(&mut self.loop_tools_config_new, name.clone(), name);
+                        }
+                    }
+                });
+            ui.add(
+                egui::TextEdit::singleline(&mut self.loop_tools_config_new)
+                    .desired_width(180.0)
+                    .hint_text("or type an MCP tool name"),
+            );
+            if ui.button("➕ Add").clicked() {
+                let name = self.loop_tools_config_new.trim().to_string();
+                if !name.is_empty() {
+                    self.loop_tools_config.entry(name.clone()).or_default();
+                    self.loop_tools_config_params_text.entry(name.clone()).or_default();
+                    self.loop_tools_config_pins_text.entry(name).or_default();
+                    self.loop_tools_config_new.clear();
+                }
+            }
+        });
+
+        let params_text = &mut self.loop_tools_config_params_text;
+        let pins_text = &mut self.loop_tools_config_pins_text;
+        let mut remove: Option<String> = None;
+
+        for (name, cfg) in self.loop_tools_config.iter_mut() {
+            let summary = {
+                let mut parts: Vec<&str> = Vec::new();
+                if cfg.enabled == Some(false) {
+                    parts.push("disabled");
+                }
+                match cfg.require_approval {
+                    Some(true) => parts.push("always ask"),
+                    Some(false) => parts.push("never ask"),
+                    None => {}
+                }
+                if cfg.timeout_secs.is_some() {
+                    parts.push("timeout");
+                }
+                if cfg.max_result_len.is_some() {
+                    parts.push("result cap");
+                }
+                if cfg.params.is_some() || cfg.pinned_params.is_some() {
+                    parts.push("params");
+                }
+                if cfg.description.is_some() {
+                    parts.push("description");
+                }
+                if parts.is_empty() { String::new() } else { format!("  ({})", parts.join(", ")) }
+            };
+            egui::CollapsingHeader::new(format!("🔧 {}{}", name, summary))
+                .id_salt(format!("loop_tcfg_{name}"))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Tool:");
+                        let mut v = cfg.enabled;
+                        if ui.selectable_label(v.is_none(), "Inherit").on_hover_text("Follow the allow/deny filter above").clicked() {
+                            v = None;
+                        }
+                        if ui.selectable_label(v == Some(true), "Enabled").clicked() {
+                            v = Some(true);
+                        }
+                        if ui.selectable_label(v == Some(false), "Disabled").on_hover_text("Removed from the model's tool list").clicked() {
+                            v = Some(false);
+                        }
+                        cfg.enabled = v;
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Approval:");
+                        let mut v = cfg.require_approval;
+                        if ui.selectable_label(v.is_none(), "Inherit").on_hover_text("Follow the global Tool Approval settings").clicked() {
+                            v = None;
+                        }
+                        if ui.selectable_label(v == Some(true), "Always ask").clicked() {
+                            v = Some(true);
+                        }
+                        if ui.selectable_label(v == Some(false), "Never ask").clicked() {
+                            v = Some(false);
+                        }
+                        cfg.require_approval = v;
+                    });
+                    ui.horizontal(|ui| {
+                        let mut on = cfg.timeout_secs.is_some();
+                        if ui.checkbox(&mut on, "Timeout (s):").changed() {
+                            cfg.timeout_secs = if on { Some(60) } else { None };
+                        }
+                        if let Some(t) = cfg.timeout_secs.as_mut() {
+                            ui.add(egui::DragValue::new(t).range(1..=3600));
+                        }
+                        ui.add_space(12.0);
+                        let mut on = cfg.max_result_len.is_some();
+                        if ui.checkbox(&mut on, "Max result bytes:").changed() {
+                            cfg.max_result_len = if on { Some(4000) } else { None };
+                        }
+                        if let Some(m) = cfg.max_result_len.as_mut() {
+                            ui.add(egui::DragValue::new(m).range(200..=1_000_000).speed(200));
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Description override:");
+                        let mut s = cfg.description.clone().unwrap_or_default();
+                        if ui
+                            .add(egui::TextEdit::singleline(&mut s).desired_width(360.0).hint_text("what the model sees; empty = built-in"))
+                            .changed()
+                        {
+                            cfg.description = if s.trim().is_empty() { None } else { Some(s) };
+                        }
+                    });
+                    // params / pinned_params: JSON object text with parse-on-change.
+                    let json_field =
+                        |ui: &mut egui::Ui,
+                         label: &str,
+                         hover: &str,
+                         buf: &mut String,
+                         target: &mut Option<serde_json::Map<String, serde_json::Value>>| {
+                            ui.horizontal(|ui| {
+                                ui.label(label).on_hover_text(hover);
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(buf)
+                                        .desired_width(360.0)
+                                        .hint_text(r#"{"key": "value"}"#),
+                                );
+                                if resp.changed() {
+                                    if buf.trim().is_empty() {
+                                        *target = None;
+                                    } else if let Ok(m) = serde_json::from_str::<
+                                        serde_json::Map<String, serde_json::Value>,
+                                    >(buf)
+                                    {
+                                        *target = Some(m);
+                                    }
+                                }
+                                if !buf.trim().is_empty()
+                                    && serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(buf).is_err()
+                                {
+                                    ui.label(egui::RichText::new("invalid JSON — not applied").size(11.0).color(red));
+                                }
+                            });
+                        };
+                    json_field(
+                        ui,
+                        "Default params:",
+                        "JSON object — used only when the model omits the key",
+                        params_text.entry(name.clone()).or_default(),
+                        &mut cfg.params,
+                    );
+                    json_field(
+                        ui,
+                        "Pinned params:",
+                        "JSON object — always overwrites what the model sends",
+                        pins_text.entry(name.clone()).or_default(),
+                        &mut cfg.pinned_params,
+                    );
+                    if ui.button("🗑 Remove config").clicked() {
+                        remove = Some(name.clone());
+                    }
+                });
+        }
+
+        if let Some(name) = remove {
+            self.loop_tools_config.remove(&name);
+            self.loop_tools_config_params_text.remove(&name);
+            self.loop_tools_config_pins_text.remove(&name);
         }
     }
 
@@ -5145,6 +5371,7 @@ impl SettingsView {
                             });
                         });
                 }
+                self.per_tool_config_editor(ui);
             });
 
         // --- MCP servers ---

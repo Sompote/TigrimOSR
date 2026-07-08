@@ -1,11 +1,11 @@
 # TigrimOSR v0.6.2
 
-**TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary — and for **building your own agentic loop**. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously. Then shape how the loop itself runs: pick the tools, MCP servers, and skills each agent may use, override its model and system prompt, tune self-verification and context compaction — all in simple YAML profiles you can edit from the desktop app or any browser. When the job is done, TigrimOSR doesn't take the agent's word for it: an independent **tool-using judge** verifies the deliverables actually exist before the answer reaches you. And you don't have to be at your desk for any of it — chat with your agent and drive it with slash commands straight from **Telegram or LINE**.
+**TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary — and for **building your own agentic loop**. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously. Then shape how the loop itself runs: pick the tools, MCP servers, and skills each agent may use, override its model and system prompt, tune self-verification and context compaction — all in simple YAML profiles you can edit from the desktop app or any browser. Control goes all the way down to the **individual tool**: hide any tool from the model, rewrite its description, pin or default its parameters, cap its runtime and output size, and decide *per tool* whether it must ask for your approval first. When the job is done, TigrimOSR doesn't take the agent's word for it: an independent **tool-using judge** verifies the deliverables actually exist before the answer reaches you. And you don't have to be at your desk for any of it — chat with your agent and drive it with slash commands straight from **Telegram or LINE**.
 
 ### Why TigrimOSR?
 
 - **Multi-agent orchestration** — 6 modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator) with real protocols and a shared blackboard.
-- **Your agent loop, your rules** — customize the whole agent loop as **YAML profiles**: which tools it may call, which MCP servers and skills it sees, model & system-prompt overrides, loop limits, self-verification, and context compaction — editable from the desktop app and the web UI.
+- **Your agent loop, your rules** — customize the whole agent loop as **YAML profiles**: which tools it may call, which MCP servers and skills it sees, model & system-prompt overrides, loop limits, self-verification, and context compaction — editable from the desktop app and the web UI. Includes **per-tool config**: hide a tool entirely, require (or waive) user approval for it, pin its parameters to values the model can't override, and cap its execution time and output — for built-in *and* MCP tools alike.
 - **Don't trust — verify (job evaluation)** — LLM agents love to declare success: *"Done!"* with a missing file, a half-finished swarm job, a confident summary backed by nothing. TigrimOSR closes that trust gap: after the **whole job** finishes, an independent **tool-using judge** (optionally a different model, so the agent never grades its own work) checks the result against your objective and **rubric** — opening the output files to confirm the claimed artifacts actually exist — and feeds any gaps back so the orchestrator delegates targeted fixes *before* the answer reaches you. One verification per job, not per agent, so even big swarms stay fast.
 - **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, or any OpenAI-compatible API — plus 3 local CLI agents (Claude Code, Gemini CLI, Codex) with no API keys.
 - **Full tool calling** — web search, Python, file I/O, shell, MCP servers, and the ClawHub skill marketplace. Charts, images, and docs render inline with click-to-zoom.
@@ -62,7 +62,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 ## Features
 
 - **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
-- **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist, MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification), **job evaluation (outer loop, tool-using judge)** and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
+- **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist plus **per-tool config** (hide a tool, per-tool approval override, parameter defaults & pins, description override, timeout / result caps — built-in and MCP tools alike), MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification), **job evaluation (outer loop, tool-using judge)** and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
@@ -973,7 +973,7 @@ allowed to do and how it behaves:
 
 | Section | Controls |
 |---------|----------|
-| `tools` | Which built-in tools the agent may call (`allowlist` / `denylist` / `all`) |
+| `tools` | Which built-in tools the agent may call (`allowlist` / `denylist` / `all`), plus **per-tool config** (`tools.config`): hide a tool, per-tool approval override, parameter defaults & pins, description override, timeout and result-size caps — see [Per-tool config](#per-tool-config-toolsconfig) |
 | `mcp` | Which configured MCP servers' tools are exposed (`all` / `selected` / `none`) |
 | `skills` | Which installed skills are offered in the system prompt (`all` / `selected` / `none`) |
 | `model` | Model / API URL / API key override (empty fields inherit the main AI settings) |
@@ -983,7 +983,7 @@ allowed to do and how it behaves:
 | `evaluation` | **Job evaluation (outer loop)** — a **tool-using judge** runs once after the whole job finishes (top-level main agent only, never sub-agents): it verifies the final result against the objective and an optional **rubric**, reading output files (`read_file`/`list_files`) to check claimed artifacts exist; below the threshold the gap list is fed back and the orchestrator gets bounded extra rounds to delegate targeted fixes. Supports a dedicated **judge model** (avoid self-grading), `allow_execute` for run-the-tests verification, retries/judge-round caps |
 
 **Editing:**
-- **Desktop app** — **Settings → Agent Loop**: form editor (tool/MCP/skill checkboxes, sliders) plus a raw **Edit as YAML** mode with validate-on-save.
+- **Desktop app** — **Settings → Agent Loop**: form editor (tool/MCP/skill checkboxes, sliders, and a **Per-tool config** panel under Tools — pick a tool, set approval/enable/timeout/params without touching YAML) plus a raw **Edit as YAML** mode with validate-on-save.
 - **Web / mobile / headless** — **Settings → Agent Loop** tab in the web UI: active-profile picker, YAML editor with server-side validation, and a catalog of all tool/MCP/skill names.
 - **REST** — `GET/POST/DELETE /api/agent-loops`, `GET /api/agent-loops/catalog`, `POST /api/agent-loops/reset-default`.
 
@@ -1030,6 +1030,55 @@ evaluation:                  # outer loop: tool-using judge, runs once after the
   allow_execute: false       # true also lets the judge run_python/run_shell (e.g. run tests)
 ```
 
+### Per-tool config (`tools.config`)
+
+Beyond allow/deny filtering, every tool — **built-in or MCP** — can carry its own
+configuration under `tools.config.<tool_name>`. Every field is optional; anything
+you omit inherits the normal behavior:
+
+```yaml
+tools:
+  mode: all
+  list: []
+  config:
+    run_shell:
+      require_approval: false      # global setting asks first — this profile doesn't
+      timeout_secs: 120            # kill the call after 2 minutes
+      max_result_len: 4000         # truncate output beyond 4 KB (UTF-8 safe)
+      pinned_params: { cwd: "." }  # the model can NEVER change the working directory
+    write_file:
+      require_approval: true       # globally auto-allowed — but THIS profile asks you first
+    web_search:
+      description: "Search the web. Prefer Thai-language sources when relevant."
+      params: { region: "th-th" }  # default, used only when the model omits it
+    playwright_navigate:           # MCP tool names work exactly the same way
+      enabled: false               # hidden — removed from the model's tool list entirely
+```
+
+| Field | What it does |
+|-------|--------------|
+| `enabled: false` | **Hides the tool** — it is stripped from the tool list the model sees *and* hard-denied if the model tries to call it anyway. Shorthand for denylisting a single tool without switching modes. |
+| `require_approval` | **Per-tool approval override.** `true` = always show the Approve/Deny prompt for this tool; `false` = never ask; omitted = follow the global **Settings → Security** approval toggles. Works in the desktop modal, web UI, and Telegram/LINE approval buttons. For background swarm sub-agents (which have no UI to ask), the existing `auto_approve_subagent_tools` setting decides, same as before. |
+| `description` | Replaces the tool description the model sees — steer *when* and *how* the model reaches for a tool without touching code. |
+| `params` | **Default parameter values**, injected only when the model omits that key. |
+| `pinned_params` | **Forced parameter values** — always overwrite whatever the model sends (top-level keys). Use for hard limits the model must not escape (working directory, result counts, target hosts). The approval prompt shows the final merged arguments, so what you approve is exactly what runs. |
+| `max_result_len` | Truncates the tool's result strings beyond N bytes (UTF-8 safe) before they enter the context — keeps one chatty tool from flooding the window. |
+| `timeout_secs` | Wall-clock cap on the tool call; on timeout the agent gets a clean error result instead of hanging. |
+
+Notes:
+
+- **default.yaml carries a hidden example** — the seeded profile ends with a
+  commented-out `tools.config` block showing every field, so you can uncomment
+  and adapt it in place (comments are ignored by the parser; a form-editor save
+  rewrites the file without them).
+- **Validation on save** warns about unknown tool names, contradictory settings
+  (e.g. `enabled: false` on an allowlisted tool), values in both `params` and
+  `pinned_params`, and misspelled field names — and rejects `timeout_secs: 0`.
+- **Protected coordination tools** (`send_task`, `wait_result`, `spawn_subagent`, …)
+  ignore `enabled: false`, `require_approval: true`, and `timeout_secs` while
+  sub-agents are enabled — blocking them mid-swarm would deadlock the team.
+  `params` / `pinned_params` / `description` / `max_result_len` still apply.
+
 **How it behaves:**
 
 - **`default.yaml` mirrors your current settings** — seeded automatically on first
@@ -1047,11 +1096,14 @@ evaluation:                  # outer loop: tool-using judge, runs once after the
   after the whole group finishes, so a big swarm pays for one verification, not one
   per agent. Its verdict is visible: the activity log shows `evaluator:*` verification
   calls and the chat shows `[evaluation] ✓ Passed — score …` or the gap-fixing retry.
-- **Safety is not bypassable** — coordination tools (`send_task`, `wait_result`,
-  `spawn_subagent`, …) are never removed while sub-agents are enabled, tool-approval
-  prompts still apply regardless of the profile, over-budget/overflow context
-  compaction always stays on, and checkpoints refuse to resume under a different
-  profile than the one they were saved with.
+- **Safety guarantees** — coordination tools (`send_task`, `wait_result`,
+  `spawn_subagent`, …) are never removed while sub-agents are enabled,
+  over-budget/overflow context compaction always stays on, and checkpoints refuse
+  to resume under a different profile than the one they were saved with.
+  Tool-approval prompts follow the global **Settings → Security** toggles unless a
+  profile's `tools.config.<name>.require_approval` explicitly overrides them for
+  that tool — profiles are your own local files, so loosening approval there is a
+  deliberate act, and coordination tools can never be approval-gated at all.
 
 ---
 
@@ -1622,6 +1674,7 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ### v0.6.2
 
+- **Per-tool config in agent-loop profiles** — New `tools.config.<tool_name>` section in `data/agent_loops/*.yaml` gives every tool — built-in **and** MCP — its own rules: `enabled: false` **hides the tool** from the model (and hard-denies stray calls), `require_approval: true/false` overrides the global approval toggles per tool (works in the desktop modal, web UI, and Telegram/LINE approve buttons), `description` rewrites what the model sees, `params` supplies defaults for omitted arguments, `pinned_params` forces values the model can't override (the approval prompt shows the final merged arguments), `max_result_len` truncates oversized results (UTF-8 safe), and `timeout_secs` caps execution time. Protected coordination tools can't be hidden, gated, or timed out mid-swarm. Editable in a new **Per-tool config** panel in **Settings → Agent Loop** (tool picker, tri-state approval, live-validated JSON param fields) or as YAML; validate-on-save flags unknown tools, misspelled keys, and contradictory settings; the seeded `default.yaml` ends with a commented example block. See [Per-tool config](#per-tool-config-toolsconfig).
 - **Security: API keys no longer exposed to connected users** — `GET /api/settings` now masks the per-model API keys in the **Router Model Pool** (MiniMax etc.) the same way as other keys; saving settings with the masked placeholders restores the stored originals, so a web-UI round-trip can't corrupt them. `GET /api/agent-loops/{file}` likewise masks `api_key:` values in profile YAML (with restore-on-save), and `GET /api/settings/claude-code-oauth` (returns the host's raw Claude Code OAuth token) now requires the owner `ACCESS_TOKEN` — remote access tokens get 403.
 - **Telegram & LINE bots** — Chat with the agent from Telegram or LINE and control it with slash commands: `/agents`, `/model` (global switch), `/mode` and `/loop` (per chat), `/new`, `/stop` (cancels the run and kills its process tree), `/status`, `/help`. Non-command text runs through the **same pipeline as web chat**, so bot conversations appear in the web UI history. See [Telegram & LINE Bots](#telegram--line-bots).
 - **Live progress + approvals in chat apps** — While the agent works you get throttled progress updates (a single edited status message on Telegram; one quota-friendly push on LINE), then the final answer split safely on UTF-8 boundaries. Tool approvals arrive as **Approve/Deny buttons** (Telegram inline keyboard / LINE confirm template) with a 120 s default-deny so nothing hangs.
