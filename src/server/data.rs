@@ -438,6 +438,10 @@ pub struct McpTool {
     pub args: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<std::collections::HashMap<String, String>>,
+    /// Environment variables for stdio servers (e.g. OAuth client credentials
+    /// for the Google Workspace server). Claude Desktop config compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

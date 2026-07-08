@@ -878,6 +878,11 @@ fn value_to_mcp_tool(name: &str, config: &Value) -> data::McpTool {
         args: config.get("args").and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()),
         headers: None,
+        env: config.get("env").and_then(|v| v.as_object()).map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        }),
     }
 }
 

@@ -14,6 +14,7 @@ struct McpConnection {
     transport: String,       // "stdio", "sse", "http"
     command: Option<String>,
     args: Vec<String>,
+    env: HashMap<String, String>, // extra env vars for stdio servers
     url: Option<String>,
     headers: HashMap<String, String>, // custom headers for HTTP/SSE
     tools: Vec<Value>,       // tool definitions in OpenAI format
@@ -129,13 +130,18 @@ fn processes() -> &'static TokioMutex<HashMap<String, Arc<TokioMutex<StdioProc>>
 /// Spawn a stdio MCP server and perform the `initialize` handshake, leaving the
 /// process alive and ready for `tools/list` / `tools/call`. stderr is drained
 /// on a background task so a chatty server can't fill the pipe and stall.
-async fn spawn_and_init(command: &str, args: &[String]) -> Result<StdioProc, String> {
+async fn spawn_and_init(
+    command: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> Result<StdioProc, String> {
     // Run the server from the sandbox dir so relative output paths it returns
     // (e.g. a browser screenshot saved as `./shot.png`) land inside the sandbox,
     // where the agent's read_file and the web file-server can reach them.
     let sandbox = crate::server::data::get_sandbox_dir_sync();
     let mut cmd = Command::new(command);
     cmd.args(args)
+        .envs(env)
         .current_dir(&sandbox)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -190,6 +196,7 @@ async fn get_or_spawn_proc(
     name: &str,
     command: &str,
     args: &[String],
+    env: &HashMap<String, String>,
 ) -> Result<Arc<TokioMutex<StdioProc>>, String> {
     {
         let procs = processes().lock().await;
@@ -197,7 +204,7 @@ async fn get_or_spawn_proc(
             return Ok(p.clone());
         }
     }
-    let proc = spawn_and_init(command, args).await?;
+    let proc = spawn_and_init(command, args, env).await?;
     let arc = Arc::new(TokioMutex::new(proc));
     processes().lock().await.insert(name.to_string(), arc.clone());
     Ok(arc)
@@ -238,6 +245,9 @@ pub async fn init_mcp_servers() {
             || (!tool.url.starts_with("http") && transport == "auto");
 
         if is_stdio {
+            if let Some(env) = &tool.env {
+                config["env"] = json!(env);
+            }
             // Use explicit command/args if provided (Claude Desktop format)
             if let Some(cmd) = &tool.command {
                 config["command"] = json!(cmd);
@@ -535,6 +545,7 @@ fn clear_stale_browser_locks(profile: &str) {
 }
 
 /// Connect to a single MCP server
+#[allow(dead_code)] // public API kept for external callers / future routes
 pub async fn connect_server(config: &Value) -> Value {
     let name = config["name"].as_str().unwrap_or("unknown").to_string();
     let transport = config["transport"].as_str().unwrap_or("stdio").to_string();
@@ -560,6 +571,14 @@ async fn connect_stdio(name: &str, config: &Value) -> Value {
                 .collect()
         })
         .unwrap_or_default();
+    let env: HashMap<String, String> = config["env"]
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
 
     if command.is_empty() {
         return json!({ "ok": false, "error": "No command specified for stdio transport" });
@@ -567,7 +586,7 @@ async fn connect_stdio(name: &str, config: &Value) -> Value {
 
     // Spawn the server and keep it ALIVE — stateful servers (e.g. a Playwright
     // browser) need the same process across calls so the open page survives.
-    let mut proc = match spawn_and_init(&command, &args).await {
+    let mut proc = match spawn_and_init(&command, &args, &env).await {
         Ok(p) => p,
         Err(e) => return json!({ "ok": false, "error": e }),
     };
@@ -606,6 +625,7 @@ async fn connect_stdio(name: &str, config: &Value) -> Value {
         transport: "stdio".to_string(),
         command: Some(command),
         args,
+        env,
         url: None,
         headers: HashMap::new(),
         tools: openai_tools,
@@ -729,6 +749,7 @@ async fn connect_http(name: &str, transport: &str, config: &Value) -> Value {
                     transport: transport.to_string(),
                     command: None,
                     args: vec![],
+                    env: HashMap::new(),
                     url: Some(url),
                     headers: stored_headers,
                     tools: openai_tools,
@@ -796,6 +817,23 @@ pub async fn get_mcp_tools_filtered(servers: Option<&[String]>) -> Vec<Value> {
         .collect()
 }
 
+/// Bare tool names (without the mcp_{server}_ prefix) exposed by one connected
+/// server. Used e.g. by the Google connector to find the auth-trigger tool.
+pub async fn server_tool_names(server: &str) -> Vec<String> {
+    let prefix = format!("mcp_{}_", server);
+    let conns = connections().lock().await;
+    conns
+        .get(server)
+        .map(|c| {
+            c.tools
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str())
+                .filter_map(|n| n.strip_prefix(&prefix).map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Check if a tool name is an MCP tool (prefixed with mcp_)
 pub fn is_mcp_tool(name: &str) -> bool {
     name.starts_with("mcp_")
@@ -861,7 +899,7 @@ async fn call_stdio_tool(conn: &McpConnection, tool_name: &str, args: &Value) ->
     let call_params = json!({ "name": tool_name, "arguments": args });
 
     // Reuse the live process so prior state (open browser page, etc.) persists.
-    let proc_arc = match get_or_spawn_proc(&conn.name, &command, &conn.args).await {
+    let proc_arc = match get_or_spawn_proc(&conn.name, &command, &conn.args, &conn.env).await {
         Ok(a) => a,
         Err(e) => return json!({ "ok": false, "error": format!("MCP spawn failed: {e}") }),
     };
@@ -880,7 +918,7 @@ async fn call_stdio_tool(conn: &McpConnection, tool_name: &str, args: &Value) ->
         conn.name, first_err
     );
     processes().lock().await.remove(&conn.name);
-    let proc_arc = match get_or_spawn_proc(&conn.name, &command, &conn.args).await {
+    let proc_arc = match get_or_spawn_proc(&conn.name, &command, &conn.args, &conn.env).await {
         Ok(a) => a,
         Err(e) => return json!({ "ok": false, "error": format!("MCP respawn failed: {e}") }),
     };
@@ -970,6 +1008,7 @@ async fn call_http_tool(conn: &McpConnection, tool_name: &str, args: &Value) -> 
 }
 
 /// Get status of all MCP connections
+#[allow(dead_code)] // public API kept for external callers / future routes
 pub async fn get_mcp_status() -> Value {
     let conns = connections().lock().await;
     let servers: Vec<Value> = conns

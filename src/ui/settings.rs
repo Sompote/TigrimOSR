@@ -222,6 +222,15 @@ pub struct SettingsView {
     // --- MCP Tools ---
     mcp_tools: Vec<McpTool>,
     new_mcp_name: String,
+    // Google quick-connect (Gmail / Calendar / Drive via workspace-mcp)
+    google_client_id: String,
+    google_client_secret: String,
+    google_email: String,
+    google_svc_gmail: bool,
+    google_svc_calendar: bool,
+    google_svc_drive: bool,
+    google_form_loaded: bool,
+    google_status: Arc<Mutex<Option<String>>>,
     new_mcp_url: String,
     new_mcp_headers: String,
     mcp_json_mode: bool,
@@ -414,6 +423,14 @@ impl Default for SettingsView {
 
             mcp_tools: Vec::new(),
             new_mcp_name: String::new(),
+            google_client_id: String::new(),
+            google_client_secret: String::new(),
+            google_email: String::new(),
+            google_svc_gmail: true,
+            google_svc_calendar: true,
+            google_svc_drive: true,
+            google_form_loaded: false,
+            google_status: Arc::new(Mutex::new(None)),
             new_mcp_url: String::new(),
             new_mcp_headers: String::new(),
             mcp_json_mode: false,
@@ -2125,6 +2142,15 @@ impl SettingsView {
                     entry.insert("headers".into(), serde_json::Value::Object(h));
                 }
             }
+            if let Some(env) = &tool.env {
+                if !env.is_empty() {
+                    let e: serde_json::Map<String, serde_json::Value> = env
+                        .iter()
+                        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                        .collect();
+                    entry.insert("env".into(), serde_json::Value::Object(e));
+                }
+            }
             servers.insert(tool.name.clone(), serde_json::Value::Object(entry));
         }
         let root = serde_json::json!({ "mcpServers": servers });
@@ -2161,6 +2187,11 @@ impl SettingsView {
                     .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                     .collect::<HashMap<String, String>>()
             });
+            let env = obj.get("env").and_then(|v| v.as_object()).map(|h| {
+                h.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect::<HashMap<String, String>>()
+            });
             tools.push(McpTool {
                 name: name.clone(),
                 url,
@@ -2169,6 +2200,7 @@ impl SettingsView {
                 command,
                 args,
                 headers,
+                env,
             });
         }
         Ok(tools)
@@ -2186,6 +2218,9 @@ impl SettingsView {
                 .size(12.0)
                 .color(egui::Color32::GRAY),
         );
+        ui.add_space(8.0);
+
+        self.google_quick_connect_card(ui, runtime);
         ui.add_space(8.0);
 
         // Toggle between form mode and JSON mode
@@ -2327,6 +2362,202 @@ impl SettingsView {
         });
     }
 
+    /// One-click Google connect: Gmail / Calendar / Drive through the
+    /// workspace-mcp server. Installs uvx if needed, writes the MCP entry
+    /// (with OAuth client env vars), connects, and opens the browser for the
+    /// Google login.
+    fn google_quick_connect_card(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        use crate::server::services::google;
+
+        // Prefill from an existing "google" entry once.
+        if !self.google_form_loaded {
+            self.google_form_loaded = true;
+            if let Some(entry) = self.mcp_tools.iter().find(|t| t.name == google::GOOGLE_MCP_NAME) {
+                if let Some(env) = &entry.env {
+                    self.google_client_id = env.get("GOOGLE_OAUTH_CLIENT_ID").cloned().unwrap_or_default();
+                    self.google_client_secret = env.get("GOOGLE_OAUTH_CLIENT_SECRET").cloned().unwrap_or_default();
+                    self.google_email = env.get("USER_GOOGLE_EMAIL").cloned().unwrap_or_default();
+                }
+                if let Some(args) = &entry.args {
+                    self.google_svc_gmail = args.iter().any(|a| a == "gmail");
+                    self.google_svc_calendar = args.iter().any(|a| a == "calendar");
+                    self.google_svc_drive = args.iter().any(|a| a == "drive");
+                }
+            }
+        }
+
+        let connected = self
+            .mcp_connection_status
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(name, ok, _, _)| name == google::GOOGLE_MCP_NAME && *ok);
+
+        egui::CollapsingHeader::new(if connected {
+            "🇬 Google — Gmail · Calendar · Drive  ✅ connected"
+        } else {
+            "🇬 Google — Gmail · Calendar · Drive (quick connect)"
+        })
+        .default_open(!connected && self.mcp_tools.iter().all(|t| t.name != google::GOOGLE_MCP_NAME))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(
+                    "Let the agent read/send Gmail, manage Calendar and browse Drive. \
+                     One-time setup: paste a Google OAuth Client ID, then log in with Google in your browser.",
+                )
+                .size(12.0)
+                .color(egui::Color32::GRAY),
+            );
+            ui.add_space(6.0);
+
+            // Step 1 — credentials
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("1.").strong());
+                if ui.button("Get credentials (opens Google Cloud Console)").clicked() {
+                    let _ = open::that(google::GOOGLE_CONSOLE_URL);
+                }
+            });
+            ui.label(
+                egui::RichText::new(
+                    "   In the console: enable the Gmail, Calendar and Drive APIs → Create Credentials → \
+                     OAuth client ID → Application type “Desktop app” → copy the Client ID (and Secret).",
+                )
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+            );
+            ui.add_space(4.0);
+
+            egui::Grid::new("google_qc_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                ui.label("Client ID:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.google_client_id)
+                        .desired_width(360.0)
+                        .hint_text("xxxxx.apps.googleusercontent.com"),
+                );
+                ui.end_row();
+                ui.label("Client secret:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.google_client_secret)
+                        .desired_width(360.0)
+                        .password(true)
+                        .hint_text("optional for Desktop-app clients"),
+                );
+                ui.end_row();
+                ui.label("Google email:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.google_email)
+                        .desired_width(360.0)
+                        .hint_text("you@gmail.com (optional, recommended)"),
+                );
+                ui.end_row();
+                ui.label("Services:");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.google_svc_gmail, "Gmail");
+                    ui.checkbox(&mut self.google_svc_calendar, "Calendar");
+                    ui.checkbox(&mut self.google_svc_drive, "Drive");
+                });
+                ui.end_row();
+            });
+            ui.add_space(6.0);
+
+            // Step 2 — runtime (uvx)
+            let uvx = google::find_uvx();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("2.").strong());
+                if let Some(path) = &uvx {
+                    ui.label(
+                        egui::RichText::new(format!("Runtime ready: {}", path))
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(34, 197, 94)),
+                    );
+                } else if ui.button("Install uv runtime (automatic)").clicked() {
+                    let status = self.google_status.clone();
+                    *status.lock().unwrap() = Some("Installing uv…".to_string());
+                    runtime.spawn(async move {
+                        let msg = match google::install_uv().await {
+                            Ok(path) => format!("✅ uv installed ({path}). Now press Connect."),
+                            Err(e) => format!("❌ {e}"),
+                        };
+                        *status.lock().unwrap() = Some(msg);
+                    });
+                }
+            });
+            ui.add_space(6.0);
+
+            // Step 3 — connect + login
+            let ready = !self.google_client_id.trim().is_empty()
+                && (self.google_svc_gmail || self.google_svc_calendar || self.google_svc_drive)
+                && uvx.is_some();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("3.").strong());
+                if ui
+                    .add_enabled(
+                        ready,
+                        egui::Button::new(
+                            egui::RichText::new("Connect & Login with Google (opens browser)").strong(),
+                        ),
+                    )
+                    .clicked()
+                {
+                    let entry = google::build_google_mcp_entry(
+                        &self.google_client_id,
+                        &self.google_client_secret,
+                        &self.google_email,
+                        self.google_svc_gmail,
+                        self.google_svc_calendar,
+                        self.google_svc_drive,
+                    );
+                    if let Some(existing) =
+                        self.mcp_tools.iter_mut().find(|t| t.name == google::GOOGLE_MCP_NAME)
+                    {
+                        *existing = entry;
+                    } else {
+                        self.mcp_tools.push(entry);
+                    }
+                    // Persist + reconnect all MCP servers (save_all_settings does both).
+                    self.save_all_settings(runtime);
+
+                    let status = self.google_status.clone();
+                    let email = self.google_email.clone();
+                    *status.lock().unwrap() =
+                        Some("Connecting to Google MCP server…".to_string());
+                    runtime.spawn(async move {
+                        let result = crate::server::services::google::start_login(&email).await;
+                        if let Some(url) = result["url"].as_str() {
+                            let _ = open::that(url);
+                        }
+                        let msg = result["message"].as_str().unwrap_or("done").to_string();
+                        let ok = result["ok"].as_bool().unwrap_or(false);
+                        *status.lock().unwrap() =
+                            Some(format!("{} {}", if ok { "✅" } else { "❌" }, msg));
+                    });
+                }
+                if !ready && uvx.is_some() && self.google_client_id.trim().is_empty() {
+                    ui.label(
+                        egui::RichText::new("paste a Client ID first")
+                            .size(11.0)
+                            .color(egui::Color32::GRAY),
+                    );
+                }
+            });
+
+            if let Some(msg) = self.google_status.lock().unwrap().clone() {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(msg).size(12.0));
+            }
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(
+                    "Login opens accounts.google.com in your browser; tokens are stored locally \
+                     (~/.google_workspace_mcp/credentials) and refresh automatically. \
+                     Ask the agent things like “what's on my calendar tomorrow?” or “find the PDF in my Drive”.",
+                )
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+            );
+        });
+    }
+
     fn section_mcp_tools_form(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         // List existing tools
         let mut to_delete: Option<usize> = None;
@@ -2445,6 +2676,7 @@ impl SettingsView {
                     command: None,
                     args: None,
                     headers,
+                    env: None,
                 });
                 self.new_mcp_name.clear();
                 self.new_mcp_url.clear();

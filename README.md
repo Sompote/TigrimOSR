@@ -67,6 +67,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
 - **Browser control** — opt-in toggle that lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP, or the stealthy **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine (single Rust binary, no Node required) — see [Browser Control](#browser-control)
+- **Google quick-connect** — three-click Gmail / Calendar / Drive access: paste an OAuth Client ID, auto-install the runtime, and log in with Google in your browser — see [Connect Google](#connect-google-gmail--calendar--drive)
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
 - **Telegram & LINE bots** — chat with the agent from Telegram or LINE and control it with slash commands (`/agents`, `/model`, `/mode`, `/loop`, `/new`, `/stop`, `/status`), with live progress and approve/deny buttons for tool approvals — see [Telegram & LINE Bots](#telegram--line-bots)
 - **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
@@ -1377,6 +1378,52 @@ The agent drives a real browser with your logged-in sessions, so treat browser a
 
 ---
 
+## Connect Google (Gmail · Calendar · Drive)
+
+Give the agent your Google account in three clicks — read and send **Gmail**, manage
+**Calendar** events, and search/browse **Drive** — via a built-in MCP quick-connect.
+Under the hood it runs the [Google Workspace MCP server](https://github.com/taylorwilsdon/google_workspace_mcp)
+(`uvx workspace-mcp`), a single stdio server for all three services with a browser-based
+Google login.
+
+**Setup — Settings → MCP Tools → "Google — Gmail · Calendar · Drive (quick connect)":**
+
+1. **Get credentials** — the button opens the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+   Enable the Gmail, Calendar and Drive APIs, then *Create Credentials → OAuth client ID →*
+   *Application type "Desktop app"*, and paste the **Client ID** (and Secret) into TigrimOS.
+   One-time, ~2 minutes.
+2. **Install uv runtime (automatic)** — if `uvx` isn't found, this button runs the official
+   [uv](https://docs.astral.sh/uv/) installer for you (macOS/Linux shell script, Windows PowerShell).
+3. **Connect & Login with Google** — TigrimOS writes the MCP server entry (with your OAuth
+   client in its `env`), connects it, and triggers the login: **your browser opens
+   accounts.google.com**, you approve, done. Tokens are stored locally
+   (`~/.google_workspace_mcp/credentials`) and refresh automatically — you won't be asked again.
+
+Pick which services to expose with the **Gmail / Calendar / Drive** checkboxes, then just ask:
+
+- *"What's on my calendar tomorrow? Move anything that conflicts with the 2pm review."*
+- *"Summarize unread emails from this week and draft replies to the urgent ones."*
+- *"Find the latest proposal PDF in my Drive and pull out the budget table."*
+
+Notes:
+
+- **MCP `env` support** — MCP server entries now accept an `env` map (Claude Desktop config
+  compatible), so any stdio server needing API keys or OAuth credentials works, not just Google:
+  ```json
+  { "mcpServers": { "google": {
+      "command": "uvx",
+      "args": ["workspace-mcp", "--single-user", "--tools", "gmail", "calendar", "drive"],
+      "env": { "GOOGLE_OAUTH_CLIENT_ID": "xxx.apps.googleusercontent.com",
+               "OAUTHLIB_INSECURE_TRANSPORT": "1" } } } }
+  ```
+- Secret-looking `env` values (`*SECRET*`, `*TOKEN*`, `*KEY*`, …) are **masked** in
+  `GET /api/settings` like every other credential, with restore-on-save.
+- The OAuth login needs a browser on the machine running TigrimOS, so the quick-connect
+  lives in the **desktop app**; a headless server can reuse credentials authorized on a
+  desktop first (copy `~/.google_workspace_mcp/credentials`).
+
+---
+
 ## Telegram & LINE Bots
 
 Chat with your TigrimOS agent from **Telegram** or **LINE** — and control it with slash
@@ -1674,6 +1721,7 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ### v0.6.2
 
+- **Google quick-connect (Gmail · Calendar · Drive)** — New card in **Settings → MCP Tools**: paste a Google OAuth Client ID (button opens the Google Cloud Console), optionally auto-install the `uv` runtime with one click, then **Connect & Login with Google** — the browser opens the Google sign-in, tokens cache locally, and the agent can read/send Gmail, manage Calendar and search Drive via the bundled `workspace-mcp` server integration. MCP entries also gained an **`env` map** (Claude Desktop-compatible) passed to stdio servers — masked in `GET /api/settings` when values look secret, with restore-on-save — so any credential-bearing MCP server works, including ones installed from plugins and the JSON editor. See [Connect Google](#connect-google-gmail--calendar--drive).
 - **Windows shell fixed + skill install tool** — `run_shell` on Windows now passes the command line to cmd.exe **verbatim** (`/S /C` via `raw_arg`): previously Rust's MSVC-style `\"` escaping broke any command containing a quoted path (`"The filename, directory name, or volume label syntax is incorrect"`) and PowerShell one-liners echoed themselves instead of running. The app also **self-repairs a broken PATH** (appends missing `System32`, `Wbem`, `WindowsPowerShell` entries — fixes `'where' / 'cmd' is not recognized`), and the run_shell tool description is OS-aware so the model uses `dir`/`type`/`findstr` instead of `ls`/`head` under cmd.exe. New **`save_skill` tool** lets the agent actually install a generated skill into the skills directory and register it (write_file is sandbox-jailed, so skills written there were never loaded) — approval-gated, on by default. Sandbox-blocked paths now return a clear *"outside the sandbox"* error instead of baffling OS errors, and a **path-traversal hole was closed**: `../..` paths to not-yet-existing files could escape the sandbox containment check.
 - **Per-tool config in agent-loop profiles** — New `tools.config.<tool_name>` section in `data/agent_loops/*.yaml` gives every tool — built-in **and** MCP — its own rules: `enabled: false` **hides the tool** from the model (and hard-denies stray calls), `require_approval: true/false` overrides the global approval toggles per tool (works in the desktop modal, web UI, and Telegram/LINE approve buttons), `description` rewrites what the model sees, `params` supplies defaults for omitted arguments, `pinned_params` forces values the model can't override (the approval prompt shows the final merged arguments), `max_result_len` truncates oversized results (UTF-8 safe), and `timeout_secs` caps execution time. Protected coordination tools can't be hidden, gated, or timed out mid-swarm. Editable in a new **Per-tool config** panel in **Settings → Agent Loop** (tool picker, tri-state approval, live-validated JSON param fields) or as YAML; validate-on-save flags unknown tools, misspelled keys, and contradictory settings; the seeded `default.yaml` ends with a commented example block. See [Per-tool config](#per-tool-config-toolsconfig).
 - **Security: API keys no longer exposed to connected users** — `GET /api/settings` now masks the per-model API keys in the **Router Model Pool** (MiniMax etc.) the same way as other keys; saving settings with the masked placeholders restores the stored originals, so a web-UI round-trip can't corrupt them. `GET /api/agent-loops/{file}` likewise masks `api_key:` values in profile YAML (with restore-on-save), and `GET /api/settings/claude-code-oauth` (returns the host's raw Claude Code OAuth token) now requires the owner `ACCESS_TOKEN` — remote access tokens get 403.

@@ -11,6 +11,7 @@ pub mod protocols;
 #[allow(dead_code)]
 pub mod clawhub;
 #[allow(dead_code)]
+pub mod google;
 pub mod mcp;
 #[allow(dead_code)]
 pub mod tunnel;

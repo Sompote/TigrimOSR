@@ -142,26 +142,36 @@ async fn get_settings_handler() -> Json<Value> {
         }
     }
 
-    // Mask MCP tool header values that look sensitive
+    // Mask MCP tool header AND env values that look sensitive (env carries
+    // e.g. GOOGLE_OAUTH_CLIENT_SECRET for the Google quick-connect).
     if let Some(tools) = v.get_mut("mcpTools").and_then(|t| t.as_array_mut()) {
         for tool in tools.iter_mut() {
-            if let Some(headers) = tool.get_mut("headers").and_then(|h| h.as_object_mut()) {
-                let sensitive_keys: Vec<String> = headers
-                    .keys()
-                    .filter(|k| {
-                        let lower = k.to_lowercase();
-                        lower.contains("auth")
-                            || lower.contains("key")
-                            || lower.contains("secret")
-                            || lower.contains("token")
-                            || lower.contains("bearer")
-                    })
-                    .cloned()
-                    .collect();
-                for hk in sensitive_keys {
-                    if let Some(hv) = headers.get(&hk).and_then(|v| v.as_str()) {
-                        if hv.len() > 12 {
-                            headers.insert(hk, json!(mask_key(hv)));
+            for section in ["headers", "env"] {
+                if let Some(map) = tool.get_mut(section).and_then(|h| h.as_object_mut()) {
+                    let sensitive_keys: Vec<String> = map
+                        .keys()
+                        .filter(|k| {
+                            let lower = k.to_lowercase();
+                            // OAuth client IDs are public identifiers — leave
+                            // them readable (GOOGLE_OAUTH_CLIENT_ID contains
+                            // "auth" but is not a secret).
+                            if lower.ends_with("_id") || lower.contains("client_id") {
+                                return false;
+                            }
+                            lower.contains("auth")
+                                || lower.contains("key")
+                                || lower.contains("secret")
+                                || lower.contains("token")
+                                || lower.contains("bearer")
+                                || lower.contains("password")
+                        })
+                        .cloned()
+                        .collect();
+                    for hk in sensitive_keys {
+                        if let Some(hv) = map.get(&hk).and_then(|v| v.as_str()) {
+                            if hv.len() > 12 {
+                                map.insert(hk, json!(mask_key(hv)));
+                            }
                         }
                     }
                 }
@@ -267,7 +277,7 @@ async fn put_settings_handler(Json(body): Json<Value>) -> Json<Value> {
         updated["modelPool"] = json!(restored_pool);
     }
 
-    // Don't overwrite MCP header values with masked values
+    // Don't overwrite MCP header/env values with masked values
     if let (Some(body_tools), Some(current_tools)) = (
         body.get("mcpTools").and_then(|t| t.as_array()),
         current_v.get("mcpTools").and_then(|t| t.as_array()),
@@ -275,20 +285,25 @@ async fn put_settings_handler(Json(body): Json<Value>) -> Json<Value> {
         let mut restored_tools = body_tools.clone();
         for tool in restored_tools.iter_mut() {
             let tool_name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-            if let Some(headers) = tool.get_mut("headers").and_then(|h| h.as_object_mut()) {
-                let current_tool = current_tools
-                    .iter()
-                    .find(|t| t.get("name").and_then(|n| n.as_str()).unwrap_or("") == tool_name);
-                if let Some(ct) = current_tool {
-                    if let Some(ct_headers) = ct.get("headers").and_then(|h| h.as_object()) {
-                        let masked_keys: Vec<String> = headers
+            let current_tool = current_tools
+                .iter()
+                .find(|t| t.get("name").and_then(|n| n.as_str()).unwrap_or("") == tool_name)
+                .cloned();
+            for section in ["headers", "env"] {
+                if let Some(map) = tool.get_mut(section).and_then(|h| h.as_object_mut()) {
+                    if let Some(ct_map) = current_tool
+                        .as_ref()
+                        .and_then(|ct| ct.get(section))
+                        .and_then(|h| h.as_object())
+                    {
+                        let masked_keys: Vec<String> = map
                             .iter()
                             .filter(|(_, v)| is_masked(v))
                             .map(|(k, _)| k.clone())
                             .collect();
                         for hk in masked_keys {
-                            if let Some(orig) = ct_headers.get(&hk) {
-                                headers.insert(hk, orig.clone());
+                            if let Some(orig) = ct_map.get(&hk) {
+                                map.insert(hk, orig.clone());
                             }
                         }
                     }
