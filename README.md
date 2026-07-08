@@ -1422,6 +1422,97 @@ Notes:
   lives in the **desktop app**; a headless server can reuse credentials authorized on a
   desktop first (copy `~/.google_workspace_mcp/credentials`).
 
+### The hidden part — Google Cloud setup, what's written where, and troubleshooting
+
+<details>
+<summary>Show the full walkthrough (consent screen, hidden files, manual setup, troubleshooting)</summary>
+
+#### A. Google Cloud Console — the steps the button can't do for you
+
+The "Get credentials" button opens the console, but Google requires a few one-time
+clicks on their side. Do them in this order (all inside the same Google Cloud project):
+
+1. **Create/select a project** — [console.cloud.google.com](https://console.cloud.google.com),
+   top-left project picker → *New Project* (any name, e.g. `tigrimos`).
+2. **Enable the APIs** — *APIs & Services → Library*, search and **Enable** each one you
+   plan to use: **Gmail API**, **Google Calendar API**, **Google Drive API**.
+   (An API you skip will fail later with `accessNotConfigured`.)
+3. **Configure the OAuth consent screen** — *APIs & Services → OAuth consent screen*:
+   - User type: **External** (unless you have a Workspace org) → Create.
+   - App name + your email in the two required fields; everything else can stay empty.
+   - Scopes page: skip (workspace-mcp requests its scopes at login time).
+   - **⚠ Test users — the step everyone misses:** while the app is in *Testing*
+     publishing status, **only emails listed under "Test users" can log in**. Add your
+     own Gmail address here, or the Google login will end with **`Error 403: access_denied`**.
+4. **Create the OAuth client** — *APIs & Services → Credentials → Create Credentials →
+   OAuth client ID* → Application type **Desktop app** → Create. Copy the **Client ID**
+   (`xxxx.apps.googleusercontent.com`) and **Client secret** into the TigrimOS card.
+   Desktop-app clients need **no redirect URI registration** — the localhost callback
+   is allowed automatically.
+
+> **7-day token expiry:** while the consent screen is in *Testing* status, Google expires
+> refresh tokens after 7 days — you'll be asked to log in again weekly. To make the login
+> permanent, open *OAuth consent screen → Publish app* (verification is NOT required for
+> personal use; "unverified app" warnings during login are normal — click *Advanced →
+> Continue*).
+
+#### B. What TigrimOS writes, and where things hide on disk
+
+Pressing **Connect & Login** creates this entry in `data/settings.json` (`mcpTools`) —
+you can write it by hand on any machine, no UI needed:
+
+```json
+{
+  "name": "google",
+  "enabled": true,
+  "type": "stdio",
+  "command": "uvx",
+  "args": ["workspace-mcp", "--single-user", "--tools", "gmail", "calendar", "drive"],
+  "env": {
+    "GOOGLE_OAUTH_CLIENT_ID": "xxxx.apps.googleusercontent.com",
+    "GOOGLE_OAUTH_CLIENT_SECRET": "GOCSPX-...",
+    "OAUTHLIB_INSECURE_TRANSPORT": "1",
+    "USER_GOOGLE_EMAIL": "you@gmail.com"
+  }
+}
+```
+
+Hidden files involved (all in your home directory):
+
+| Path | What it is |
+|---|---|
+| `~/.google_workspace_mcp/credentials/` | **Your Google tokens** (per-account JSON, auto-refreshed). Delete this folder to log out / switch accounts; copy it to a headless server to reuse a desktop login. |
+| `~/.local/bin/uvx` (or `~/.cargo/bin/uvx`) | The uv runtime the one-click installer puts in place. |
+| `~/.cache/uv/` | uv's package cache (the downloaded workspace-mcp lives here). |
+| `data/settings.json → mcpTools[]` | The server entry above. The client **secret is masked** when read over the HTTP API; the raw value stays only on disk. |
+
+During login the server runs a local callback at `http://localhost:8000/oauth2callback`
+(that's why `OAUTHLIB_INSECURE_TRANSPORT=1` is set — the callback is plain http on
+localhost). If port 8000 is taken, add `"WORKSPACE_MCP_PORT": "8100"` to the `env`.
+
+#### C. Headless / server setup (no browser on the box)
+
+1. Do the full quick-connect on any **desktop** machine first.
+2. Copy `~/.google_workspace_mcp/credentials/` to the same path on the server.
+3. Add the same `mcpTools` entry to the server's `data/settings.json` (or via the web
+   UI's MCP JSON editor) and restart / *Reconnect All* — the cached tokens are picked up
+   without a browser.
+
+#### D. Troubleshooting
+
+| Symptom | Cause → fix |
+|---|---|
+| `Error 403: access_denied` at Google login | Your email isn't in **Test users** on the consent screen (step A3). |
+| `redirect_uri_mismatch` | OAuth client was created as *Web application* — recreate as **Desktop app** (or register `http://localhost:8000/oauth2callback` on the web client). |
+| Login works, dies again after ~7 days | Consent screen still in *Testing* → **Publish app** (see box above). |
+| `accessNotConfigured` / `SERVICE_DISABLED` when using a tool | That API wasn't enabled in the console (step A2) — enable it and retry. |
+| `❌ google — Failed to spawn MCP server` | `uvx` not found: press **Install uv runtime**, or install manually (`brew install uv`) and reconnect. First launch also downloads packages — give it ~30 s. |
+| Browser never opens | Check the status line for a login URL and open it manually; on a headless box use section C instead. |
+| Want a different Google account | Delete `~/.google_workspace_mcp/credentials/`, update `USER_GOOGLE_EMAIL`, press **Connect & Login** again. |
+| Read-only safety | Hand-edit the entry's `args` to add `--read-only`, or use `--permissions gmail:readonly drive:readonly calendar:readonly` instead of `--tools`. |
+
+</details>
+
 ---
 
 ## Telegram & LINE Bots
