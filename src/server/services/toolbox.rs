@@ -7125,6 +7125,48 @@ fn resolve_script(symlink: &str) -> Option<String> {
     Some(symlink.to_string())
 }
 
+/// Check leading bytes against known native-executable magic numbers.
+/// ELF (Linux/BSD), PE/MS-DOS (Windows .exe), and Mach-O (macOS, thin or fat,
+/// either endianness) are recognized. Anything else (e.g. a `#!` shebang JS
+/// script) is treated as non-native.
+fn is_native_magic(bytes: &[u8]) -> bool {
+    // ELF (Linux/BSD): 0x7F 'E' 'L' 'F'
+    if bytes.len() >= 4 && bytes[..4] == [0x7F, b'E', b'L', b'F'] {
+        return true;
+    }
+    // PE / MS-DOS (Windows .exe): 'M' 'Z'
+    if bytes.len() >= 2 && bytes[..2] == [b'M', b'Z'] {
+        return true;
+    }
+    // Mach-O (macOS), thin or fat/universal, either endianness.
+    if bytes.len() >= 4 {
+        return matches!(
+            [bytes[0], bytes[1], bytes[2], bytes[3]],
+            [0xFE, 0xED, 0xFA, 0xCE] | [0xCE, 0xFA, 0xED, 0xFE] | // Mach-O 32-bit
+            [0xFE, 0xED, 0xFA, 0xCF] | [0xCF, 0xFA, 0xED, 0xFE] | // Mach-O 64-bit
+            [0xCA, 0xFE, 0xBA, 0xBE] | [0xBE, 0xBA, 0xFE, 0xCA]   // universal/fat
+        );
+    }
+    false
+}
+
+/// Detect whether a file is a native executable (as opposed to a JS/text
+/// script) by inspecting its leading magic bytes. Claude Code 2.1+ ships as a
+/// native binary; older installs are a Node.js script that must be run via
+/// `node <script>`.
+fn is_native_executable(path: &str) -> bool {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut magic = [0u8; 4];
+    match file.read(&mut magic) {
+        Ok(n) => is_native_magic(&magic[..n]),
+        Err(_) => false,
+    }
+}
+
 /// Find codex CLI. Returns (node_path, script_path) for direct node invocation.
 /// Falls back to ("codex", "") if not found (uses shebang).
 pub fn find_codex_cli() -> (String, String) {
@@ -7145,7 +7187,13 @@ pub fn find_codex_cli() -> (String, String) {
     ("codex".to_string(), String::new())
 }
 
-/// Find claude CLI. Returns (node_path, script_path) for direct node invocation.
+/// Find claude CLI. Returns (program, script_path).
+///
+/// Claude Code 2.1+ ships as a native binary (ELF on Linux, Mach-O on macOS,
+/// PE on Windows): in that case `program` is the binary itself and
+/// `script_path` is empty, so the caller executes it directly. Older installs
+/// are a JS bundle run via node: `program` is the node binary and `script_path`
+/// is the script. When `script_path` is empty the caller runs `program` alone.
 pub fn find_claude_cli() -> (String, String) {
     let home = resolve_home();
     let candidates = [
@@ -7159,6 +7207,10 @@ pub fn find_claude_cli() -> (String, String) {
     let node = find_node();
     for c in &candidates {
         if let Some(script) = resolve_script(c) {
+            // Native binary → execute directly (no node). JS bundle → run via node.
+            if is_native_executable(&script) {
+                return (script, String::new());
+            }
             return (node.clone(), script);
         }
     }
@@ -7226,7 +7278,13 @@ async fn llm_call_claude_code(
     };
 
     let (node_bin, script_path) = find_claude_cli();
-    info!("[ClaudeCode] LLM call via CLI (node: {}, script: {}, model: {}, prompt: {}chars)", node_bin, script_path, model, full_prompt.len());
+    // Empty script_path means node_bin is the CLI itself (native binary run directly).
+    let invocation = if script_path.is_empty() {
+        format!("native binary: {}", node_bin)
+    } else {
+        format!("node: {}, script: {}", node_bin, script_path)
+    };
+    info!("[ClaudeCode] LLM call via CLI ({}, model: {}, prompt: {}chars)", invocation, model, full_prompt.len());
 
     // Build args: if we have a script path, run `node script.js <args>`, else run `claude <args>`
     let mut cli_args: Vec<String> = Vec::new();
@@ -10478,5 +10536,53 @@ mod sandbox_path_tests {
         let err = blocked_path_error("Hint.", outside, &sandbox);
         let msg = err["error"].as_str().unwrap();
         assert!(msg.contains("outside the sandbox") && msg.contains(outside), "{msg}");
+    }
+}
+
+#[cfg(test)]
+mod claude_cli_tests {
+    use super::*;
+
+    #[test]
+    fn detects_native_magic_numbers() {
+        // ELF (Linux): 0x7F 'E' 'L' 'F', with and without trailing bytes.
+        assert!(is_native_magic(&[0x7F, b'E', b'L', b'F']));
+        assert!(is_native_magic(&[0x7F, b'E', b'L', b'F', 0x02, 0x01]));
+        // PE / MS-DOS (Windows .exe): 'M' 'Z'.
+        assert!(is_native_magic(b"MZ\x90\x00"));
+        // Mach-O 64-bit (macOS), both endiannesses.
+        assert!(is_native_magic(&[0xFE, 0xED, 0xFA, 0xCF]));
+        assert!(is_native_magic(&[0xCF, 0xFA, 0xED, 0xFE]));
+    }
+
+    #[test]
+    fn rejects_js_script_bytes() {
+        // A node shebang / JS source must NOT be treated as a native binary.
+        assert!(!is_native_magic(b"#!/u"));
+        assert!(!is_native_magic(b"cons"));
+        // Too-short / empty reads are not native.
+        assert!(!is_native_magic(&[0x7F]));
+        assert!(!is_native_magic(&[]));
+    }
+
+    #[test]
+    fn is_native_executable_inspects_dummy_files() {
+        let dir = std::env::temp_dir().join("tigrimos_claude_cli_test");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Dummy ELF binary (magic bytes only, no real code needed).
+        let elf = dir.join("fake_claude_elf");
+        std::fs::write(&elf, [0x7F, b'E', b'L', b'F', 0x02, 0x01, 0x01, 0x00]).unwrap();
+        assert!(is_native_executable(&elf.to_string_lossy()));
+
+        // Dummy JS bundle with a node shebang → not native.
+        let js = dir.join("fake_claude.js");
+        std::fs::write(&js, b"#!/usr/bin/env node\nconsole.log('hi')\n").unwrap();
+        assert!(!is_native_executable(&js.to_string_lossy()));
+
+        // Nonexistent path is not native.
+        assert!(!is_native_executable(&dir.join("does_not_exist").to_string_lossy()));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
