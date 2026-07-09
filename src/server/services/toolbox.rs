@@ -115,6 +115,24 @@ fn interrupted_reason(timeout_secs: u64) -> String {
 // ---------------------------------------------------------------------------
 
 /// Find python binary — checks PATH first, then common platform-specific locations.
+/// True when a python candidate actually runs. On Windows, `where python`
+/// happily returns the Microsoft Store ALIAS STUB in \Microsoft\WindowsApps\ —
+/// a fake exe that exits 9009 with "install from the Microsoft Store". Never
+/// accept a candidate without a successful --version probe.
+#[cfg(target_os = "windows")]
+fn python_candidate_works(path: &str) -> bool {
+    if path.to_lowercase().contains("\\microsoft\\windowsapps\\") {
+        return false;
+    }
+    std::process::Command::new(path)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 pub(crate) fn find_python() -> String {
     // On Windows, try "python" first (standard), then "python3"
     // On Unix, try "python3" first, then "python"
@@ -132,10 +150,24 @@ pub(crate) fn find_python() -> String {
     for name in &[primary, secondary] {
         if let Ok(output) = std::process::Command::new(which_cmd).arg(name).output() {
             if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout)
-                    .lines().next().unwrap_or("").trim().to_string();
-                if !path.is_empty() {
-                    return path;
+                #[cfg(target_os = "windows")]
+                {
+                    // `where` can return several matches — take the first one
+                    // that is not the Store alias stub and actually runs.
+                    for line in String::from_utf8_lossy(&output.stdout).lines() {
+                        let path = line.trim();
+                        if !path.is_empty() && python_candidate_works(path) {
+                            return path.to_string();
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let path = String::from_utf8_lossy(&output.stdout)
+                        .lines().next().unwrap_or("").trim().to_string();
+                    if !path.is_empty() {
+                        return path;
+                    }
                 }
             }
         }
@@ -167,14 +199,47 @@ pub(crate) fn find_python() -> String {
 
     #[cfg(target_os = "windows")]
     {
-        // Check common Windows Python install locations
+        // Check common Windows Python install locations (winget user scope)
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             let programs = std::path::PathBuf::from(&local).join("Programs").join("Python");
             if let Ok(entries) = std::fs::read_dir(&programs) {
                 for entry in entries.flatten() {
                     let py = entry.path().join("python.exe");
-                    if py.exists() {
+                    if py.exists() && python_candidate_works(&py.to_string_lossy()) {
                         return py.to_string_lossy().to_string();
+                    }
+                }
+            }
+        }
+        // Conda-family distributions (Miniforge3 via winget, Miniconda,
+        // Anaconda): python.exe sits at the distribution ROOT and is NOT on
+        // PATH by default — seen in the field: winget listed Miniforge3 as
+        // installed while `where python` only found the Store alias stub.
+        let mut bases: Vec<String> = Vec::new();
+        for var in ["USERPROFILE", "LOCALAPPDATA"] {
+            if let Ok(p) = std::env::var(var) {
+                bases.push(p);
+            }
+        }
+        bases.push(r"C:\".to_string());
+        for base in &bases {
+            for distro in ["miniforge3", "Miniforge3", "miniconda3", "Miniconda3", "anaconda3", "Anaconda3", "mambaforge"] {
+                let py = std::path::Path::new(base).join(distro).join("python.exe");
+                if py.exists() && python_candidate_works(&py.to_string_lossy()) {
+                    return py.to_string_lossy().to_string();
+                }
+            }
+        }
+        // Machine-wide installer default: C:\Program Files\Python3xx\
+        for pf in [r"C:\Program Files", r"C:\Program Files (x86)"] {
+            if let Ok(entries) = std::fs::read_dir(pf) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_lowercase();
+                    if name.starts_with("python") {
+                        let py = entry.path().join("python.exe");
+                        if py.exists() && python_candidate_works(&py.to_string_lossy()) {
+                            return py.to_string_lossy().to_string();
+                        }
                     }
                 }
             }
@@ -4192,6 +4257,22 @@ def save_output(filename, content=None, mode='w'):
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+            // Windows: exit 9009 + the Store-alias message means the ONLY
+            // "python" on the machine is the fake WindowsApps stub. Return an
+            // actionable error instead of the stub text — and steer the model
+            // to tools that work without Python.
+            let all = format!("{stdout}{stderr}");
+            if output.status.code() == Some(9009) || all.contains("Microsoft Store") {
+                return json!({
+                    "ok": false,
+                    "error": "Python is not installed on this machine (only the Microsoft Store alias stub exists). \
+                              run_python will not work until the user installs Python — e.g. \
+                              `winget install -e --id Python.Python.3.12` or from python.org — and restarts TigrimOS. \
+                              Do NOT retry run_python or hunt for Python. For reading documents, use read_file \
+                              (it has built-in PDF text extraction with chunked paging via the 'offset' parameter)."
+                });
+            }
 
             let output_files = scan_output_files(sandbox_dir).await;
 
