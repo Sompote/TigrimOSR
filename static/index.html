@@ -3065,7 +3065,11 @@ function loadSettings() {
     api('/api/settings'),
     api('/api/settings/soul-identity').catch(() => ({ soul: '', identity: '' })),
   ]).then(([data, soul]) => {
+    // Keep ALL fields (command/args/env/headers) — projecting to a fixed shape
+    // here used to strip stdio server config on every web-UI settings save.
+    // Masked env/header values round-trip via the server's restore-on-save.
     _mcpTools = (data.mcpTools || []).map(t => ({
+      ...t,
       name: t.name || '', url: t.url || '', type: t.type || 'auto',
       enabled: t.enabled !== false,
     }));
@@ -3113,14 +3117,23 @@ function loadSettings() {
         </div>
         <div class="settings-group">
           <h3>Browser Control</h3>
-          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">Let the agent drive a real web browser — search Google, click, type, screenshot. Off by default for safety. Requires Node.js on the host (and a one-time browser install).</div>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">Let the agent drive a real web browser — search Google, click, type, screenshot. Off by default for safety. Chromium/Chrome need Node.js on the host (and a one-time browser install); <b>Obscura</b> is a single native binary — no Node required, stealth built in, ideal for headless/Docker hosts.</div>
           <div class="settings-row-field"><label></label>
             <label style="display:flex;align-items:center;gap:8px;font-weight:500">
               <input type="checkbox" id="s-browser-control" ${ck(data.browserControlEnabled)} style="flex:none;width:auto"> Enable browser control</label></div>
           <div class="settings-row-field"><label>Engine</label>
-            <select id="s-browser-engine" style="flex:1">
-              <option value="chromium" ${data.browserEngine !== 'chrome' ? 'selected' : ''}>Chromium (managed, recommended)</option>
+            <select id="s-browser-engine" style="flex:1" onchange="document.getElementById('s-browser-obscura-row').hidden = this.value !== 'obscura'">
+              <option value="chromium" ${!data.browserEngine || data.browserEngine === 'chromium' ? 'selected' : ''}>Chromium (managed, needs Node.js)</option>
               <option value="chrome" ${data.browserEngine === 'chrome' ? 'selected' : ''}>Chrome (your installed Google Chrome)</option>
+              <option value="obscura" ${data.browserEngine === 'obscura' ? 'selected' : ''}>Obscura (native Rust binary, stealth, no Node)</option>
+            </select></div>
+          <div class="settings-row-field" id="s-browser-obscura-row" ${data.browserEngine === 'obscura' ? '' : 'hidden'}><label>Obscura binary</label>
+            <input id="s-browser-obscura-path" value="${esc(data.browserObscuraPath || '')}" placeholder="obscura (from PATH) or /full/path/to/obscura" style="flex:1"></div>
+          <div class="settings-row-field"><label>Browser window</label>
+            <select id="s-browser-headless" style="flex:1">
+              <option value="" ${data.browserHeadless === undefined || data.browserHeadless === null ? 'selected' : ''}>Auto (follow server mode)</option>
+              <option value="true" ${data.browserHeadless === true ? 'selected' : ''}>Headless (no window — servers/Docker)</option>
+              <option value="false" ${data.browserHeadless === false ? 'selected' : ''}>Headful (visible window — beats bot detection)</option>
             </select></div>
         </div>
         <div class="settings-group">
@@ -4074,7 +4087,7 @@ function renderMcpList() {
       <span class="dot ${t.enabled ? 'on' : ''}" style="width:8px;height:8px;border-radius:50%;display:inline-block;background:${t.enabled ? 'var(--green)' : 'var(--red)'}"></span>
       <div style="flex:1;min-width:0">
         <div style="font-weight:600">${esc(t.name)}</div>
-        <div class="detail" style="word-break:break-all">${esc(t.url)} · ${esc(t.type || 'auto')}</div>
+        <div class="detail" style="word-break:break-all">${esc(t.command ? t.command + ' ' + (t.args || []).join(' ') : t.url)} · ${esc(t.type || 'auto')}</div>
       </div>
       <button class="pill-btn" onclick="toggleMcpTool(${i})" style="flex:none;font-size:11px;padding:5px 10px">${t.enabled ? 'Disable' : 'Enable'}</button>
       <button class="pill-btn danger" onclick="removeMcpTool(${i})" style="flex:none;font-size:11px;padding:5px 10px">Remove</button>
@@ -4221,13 +4234,17 @@ function saveSettings() {
     webSearchApiKey: document.getElementById('s-web-search-key').value,
     browserControlEnabled: document.getElementById('s-browser-control').checked,
     browserEngine: document.getElementById('s-browser-engine').value,
+    browserObscuraPath: document.getElementById('s-browser-obscura-path').value.trim() || null,
+    browserHeadless: (v => v === '' ? null : v === 'true')(document.getElementById('s-browser-headless').value),
     approvalRequiredForShell: document.getElementById('s-approval-shell').checked,
     approvalRequiredForPython: document.getElementById('s-approval-python').checked,
     approvalRequiredForFileWrite: document.getElementById('s-approval-file-write').checked,
     approvalRequiredForFileDelete: document.getElementById('s-approval-file-delete').checked,
     approvalRequiredForAgentSpawn: document.getElementById('s-approval-agent-spawn').checked,
     autoApproveSubagentTools: document.getElementById('s-auto-approve-subagent').checked,
-    mcpTools: _mcpTools.map(t => ({ name: t.name, url: t.url, type: t.type, enabled: t.enabled })),
+    // Pass MCP entries through whole — projecting to {name,url,type,enabled}
+    // used to silently strip command/args/env (e.g. the Google server config).
+    mcpTools: _mcpTools,
     agentAllowUnsandboxedExec: document.getElementById('s-h-agentAllowUnsandboxedExec').checked,
     agentReflectionEnabled: document.getElementById('s-h-agentReflectionEnabled').checked,
     agentStepVerifyEnabled: document.getElementById('s-h-agentStepVerifyEnabled').checked,
