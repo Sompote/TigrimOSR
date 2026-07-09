@@ -249,6 +249,10 @@ static FONT_IBM_PLEX: &[u8] = asset_font!("fonts/IBMPlexSans.ttf");
 // Monospace (code) font + emoji fallback.
 static FONT_JETBRAINS_MONO: &[u8] = asset_font!("fonts/JetBrainsMono.ttf");
 static FONT_NOTO_EMOJI: &[u8] = asset_font!("NotoEmoji-Regular.ttf");
+// Bundled Thai coverage (Noto Sans Thai, OFL). Guarantees Thai glyphs on every
+// platform instead of relying on OS-installed fonts (which are absent on most
+// Linux/Windows installs, rendering Thai as tofu boxes).
+static FONT_NOTO_THAI: &[u8] = asset_font!("fonts/NotoSansThai-Regular.ttf");
 
 /// The default UI font family name. Matches the web/mobile remote UI, which
 /// renders with "Plus Jakarta Sans" (see `static/index.html`).
@@ -486,7 +490,10 @@ impl Theme {
         add(&mut fonts, "JetBrainsMono", egui::FontData::from_static(FONT_JETBRAINS_MONO),
             &[(mono.clone(), true)]);
 
-        // 4a. Thai fallback (system fonts) — appended to both families.
+        // 4a. Thai fallback — appended to both families.
+        // Prefer an OS-installed Thai face (nicer native look on macOS), then
+        // always append the bundled Noto Sans Thai so Thai renders on every
+        // platform even when no system Thai font exists (Linux/Windows).
         let thai_paths = [
             "/System/Library/Fonts/Supplemental/Ayuthaya.ttf",
             "/System/Library/Fonts/Supplemental/Silom.ttf",
@@ -503,6 +510,9 @@ impl Theme {
                 break;
             }
         }
+        // Bundled Thai coverage (always present, lowest Thai priority).
+        add(&mut fonts, "NotoSansThai", egui::FontData::from_static(FONT_NOTO_THAI),
+            &[(prop.clone(), false), (mono.clone(), false)]);
 
         // 4b. Emoji fallback (bundled monochrome Noto Emoji).
         add(&mut fonts, "NotoEmoji", egui::FontData::from_static(FONT_NOTO_EMOJI),
