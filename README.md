@@ -4,6 +4,11 @@
 
 Connect **Gmail / Calendar / Drive** in three clicks, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
 
+**⬇️ Install in under a minute — no build needed:**
+[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/TigrimOS-0.6.2.dmg) ·
+[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/TigrimOS-0.6.2-x64.msi) ·
+[all releases](https://github.com/Sompote/TigrimOSR/releases/latest) — or [run in Docker](#install-in-docker).
+
 **What's new (July 2026):**
 
 - 🇬 **[Connect Google](#connect-google-gmail--calendar--drive)** — three-click Gmail / Calendar / Drive access with browser login, on desktop *and* the remote web UI.
@@ -29,7 +34,7 @@ Connect **Gmail / Calendar / Drive** in three clicks, chat with your agents from
 
 ### Native Rust desktop app
 
-Install it on your machine and run the UI as a **native Rust app** — a single, fast binary with quick startup and low memory.
+Install it on your machine and run the UI as a **native Rust app** — a single, fast binary with quick startup and low memory. [Download it prebuilt](#easy-install--download-the-app-easiest) for macOS and Windows — no toolchain needed.
 
 ![TigrimOSR native desktop app](assets/screenshot_inline_chart.png)
 
@@ -111,21 +116,79 @@ Everything TigrimOSR can do — orchestration, tools, remote access, theming —
 
 ## Installation
 
-Two ways to install TigrimOS — pick one:
+Three ways to install TigrimOS — pick one:
 
-| | **[Install in Docker](#install-in-docker-recommended)** | **[Install & run on your machine](#install--run-on-your-machine)** |
-|---|---|---|
-| **What you get** | Headless web server you use from a **browser** | Native **desktop app** (and optional headless server) |
-| **You install** | Just Docker Desktop | Rust toolchain + Python (build from source) |
-| **Best for** | Quickest, safest start; servers; Windows | Mac/Linux desktop UI, VM/QEMU terminal, hacking on the code |
-| **Setup time** | One command | ~5–15 min first build |
+| | **[Download the app](#easy-install--download-the-app-easiest)** | **[Install in Docker](#install-in-docker)** | **[Build from source](#install--run-on-your-machine)** |
+|---|---|---|---|
+| **What you get** | Native **desktop app**, prebuilt | Headless web server you use from a **browser** | Native **desktop app** (and optional headless server) |
+| **You install** | Nothing — download & run | Just Docker Desktop | Rust toolchain + Python |
+| **Best for** | Fastest start on **macOS / Windows** | Servers; safest sandboxing; Linux headless | Linux desktop UI, VM/QEMU terminal, hacking on the code |
+| **Setup time** | **Under a minute** | One command | ~5–15 min first build |
 
-> **Not sure?** Use **Docker** — it's the fastest and safest, and the agent's code
-> execution stays isolated inside the container.
+> **Not sure?** On **macOS or Windows**, just [download the app](#easy-install--download-the-app-easiest).
+> On a **server** (or if you want the agent's code execution isolated in a container), use **Docker**.
 
 ---
 
-## Install in Docker (recommended)
+## Easy install — download the app (easiest)
+
+No Rust, no Docker, no build step — grab a prebuilt binary from the
+[**latest release**](https://github.com/Sompote/TigrimOSR/releases/latest) and you're
+running in under a minute.
+
+### macOS
+
+**Desktop app (DMG):** download
+[`TigrimOS-0.6.2.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/TigrimOS-0.6.2.dmg),
+open it, and drag **TigrimOS** into **Applications**.
+
+> **First launch:** the app isn't notarized with Apple yet, so macOS may block it.
+> Right-click **TigrimOS.app** → **Open** → **Open** (needed once), or clear the
+> quarantine flag from Terminal:
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/TigrimOS.app
+> ```
+
+**Plain binary (Terminal / headless):** one command downloads, unpacks, and runs it:
+
+```bash
+# Apple Silicon (M1–M4)
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/tigrimos-0.6.2-macos-arm64.tar.gz | tar xz
+./tigrimos
+
+# Intel Macs
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/tigrimos-0.6.2-macos-x86_64.tar.gz | tar xz
+./tigrimos
+```
+
+### Windows
+
+Download and run
+[`TigrimOS-0.6.2-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/TigrimOS-0.6.2-x64.msi)
+— it installs TigrimOS to Program Files and adds a **Start Menu** shortcut.
+
+> If **SmartScreen** shows "Windows protected your PC", click **More info** →
+> **Run anyway** (the installer isn't code-signed yet).
+
+### Linux
+
+No prebuilt binary yet — use [Docker](#install-in-docker) (one command, recommended
+for servers) or [build from source](#install--run-on-your-machine) for the desktop app.
+
+### Optional: Python for data tools
+
+The binary is fully self-contained, but the agent's charting and data-analysis tools
+run Python code. To use them, install Python 3 plus the common libraries:
+
+```bash
+pip3 install duckduckgo-search matplotlib numpy pandas requests
+```
+
+Then launch the app, open **Settings**, and add your AI provider + API key — that's it.
+
+---
+
+## Install in Docker
 
 One command gets you a headless web server in a container — no Rust or Python on your machine, and all agent code execution stays sandboxed inside the container.
 
@@ -379,6 +442,8 @@ above apply on Windows verbatim — run them in PowerShell.
 ## Install & run on your machine
 
 Build the native desktop app from source with the Rust toolchain — for the Mac/Linux desktop UI, the VM terminal, or hacking on the code.
+
+> **Just want the app on macOS or Windows?** Skip the build — [download the prebuilt binary](#easy-install--download-the-app-easiest) instead.
 
 <details>
 <summary>🛠 Build-from-source guide (macOS · Linux · Windows)</summary>
