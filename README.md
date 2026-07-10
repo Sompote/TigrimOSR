@@ -37,6 +37,9 @@ Install it on your machine and run the UI as a **native Rust app** — a single,
 
 ### Memory footprint
 
+<details>
+<summary>📉 Measured numbers & comparison</summary>
+
 Because TigrimOS is native Rust end-to-end — the app **and** its [Obscura](https://github.com/h4ckf0r0day/obscura) browser engine — the whole stack stays remarkably light. On an idle desktop session **with browser control on and a live browser attached**, measured resident memory is:
 
 ```
@@ -60,6 +63,8 @@ A single Chromium instance commonly uses [800 MB–2.5 GB](https://www.shopclawm
 
 > **Not fixed:** ~270 MB is the **idle** baseline with a browser attached. Real usage grows as Obscura renders heavy pages (its V8 heap climbs per page/tab) and as the app holds conversation, session, and swarm state — expect more under load, but still far below a Chromium-based stack.
 
+</details>
+
 ### Mobile Remote Connection
 
 Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or in Docker — then connect from any browser or your phone. The screenshots below show a cloud server controlled entirely from a mobile browser: full chat with inline charts, tool execution, and file browsing.
@@ -71,6 +76,9 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 </p>
 
 ## Features
+
+<details>
+<summary>📋 Full feature list</summary>
 
 - **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
 - **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist plus **per-tool config** (hide a tool, per-tool approval override, parameter defaults & pins, description override, timeout / result caps — built-in and MCP tools alike), MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification), **job evaluation (outer loop, tool-using judge)** and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
@@ -95,6 +103,8 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 
 ---
 
+</details>
+
 ## Installation
 
 Two ways to install TigrimOS — pick one:
@@ -112,6 +122,9 @@ Two ways to install TigrimOS — pick one:
 ---
 
 ## Install in Docker (recommended)
+
+<details>
+<summary>🐳 Step-by-step Docker guide (macOS · Linux · Windows)</summary>
 
 Run TigrimOS as a self-contained web server in a container — **no Rust toolchain,
 Python, or system libraries to install on your machine.** You use it from your
@@ -355,7 +368,12 @@ above apply on Windows verbatim — run them in PowerShell.
 
 ---
 
+</details>
+
 ## Install & run on your machine
+
+<details>
+<summary>🛠 Build-from-source guide (macOS · Linux · Windows)</summary>
 
 Build TigrimOS natively from source for the **desktop app** (and features the
 container can't provide, like the VM/QEMU terminal). The one-command installer below
@@ -639,7 +657,12 @@ multi-GB `target\` folder; the built `.exe` you already copied out is unaffected
 
 ---
 
+</details>
+
 ## Screenshots
+
+<details>
+<summary>🖼 More screenshots (architecture, settings, swarm editor)</summary>
 
 ### Architecture
 
@@ -675,7 +698,12 @@ Design multi-agent systems visually — create architectures manually or generat
 
 ---
 
+</details>
+
 ## Requirements
+
+<details>
+<summary>✅ Requirements</summary>
 
 - Rust 1.75+ (`rustup` recommended)
 - Python 3.8+ with pip (for tool execution)
@@ -696,7 +724,12 @@ pip install duckduckgo-search matplotlib numpy pandas requests
 
 ---
 
+</details>
+
 ## Configuration
+
+<details>
+<summary>⚙️ Configuration reference</summary>
 
 On first launch, go to **Settings** to configure:
 
@@ -717,7 +750,12 @@ On first launch, go to **Settings** to configure:
 
 ---
 
+</details>
+
 ## Remote access over a private VPN (Tailscale)
+
+<details>
+<summary>🔒 Tailscale VPN setup</summary>
 
 Connect your desktop/phone to a remote TigrimOS host **privately**, over a
 [Tailscale](https://tailscale.com) VPN, instead of exposing the host to the public
@@ -867,7 +905,12 @@ reachable — that's normal; use the host IP.
 
 ---
 
+</details>
+
 ## Multi-Agent System
+
+<details>
+<summary>🤖 Swarm modes, protocols & YAML format</summary>
 
 Enable sub-agents in Settings and select an agent config file. Included configs in `data/agents/`:
 
@@ -977,7 +1020,12 @@ connections:
 
 ---
 
+</details>
+
 ## Agent Loop Profiles (custom agent loop)
+
+<details>
+<summary>🔁 Profile YAML reference & per-tool config</summary>
 
 Customize the **agent loop itself** — not just the agents — with user-defined YAML
 profiles stored in `data/agent_loops/*.yaml`. A profile controls what the loop is
@@ -1119,7 +1167,12 @@ Notes:
 
 ---
 
+</details>
+
 ## Plugin System
+
+<details>
+<summary>🧩 Installing plugins & supported formats</summary>
 
 TigrimOS supports a **zip-based plugin system** that bundles skills, MCP servers, agent configs, and service connectors into a single distributable package. Install one zip — get everything registered automatically. From the UI: **Settings → Plugins → Install Plugin**.
 
@@ -1168,7 +1221,12 @@ See **[PLUGINS.md](PLUGINS.md)** for the full developer guide — manifest forma
 
 ---
 
+</details>
+
 ## Browser Control
+
+<details>
+<summary>🌐 Setup — Chrome/Chromium & Obscura</summary>
 
 Let the agent drive a **real web browser** — navigate to pages, read content, click, fill forms, take screenshots, manage tabs, and run JavaScript. It's powered by [Playwright MCP](https://github.com/microsoft/playwright-mcp) running through TigrimOS's built-in MCP client, and is **off by default for safety** (once on, the agent can act in the browser — submit forms, click buttons, use logged-in sessions — as you).
 
@@ -1389,7 +1447,12 @@ The agent drives a real browser with your logged-in sessions, so treat browser a
 
 ---
 
+</details>
+
 ## Connect Google (Gmail · Calendar · Drive)
+
+<details>
+<summary>🇬 Three-click setup & troubleshooting</summary>
 
 Give the agent your Google account in three clicks — read and send **Gmail**, manage
 **Calendar** events, and search/browse **Drive** — via a built-in MCP quick-connect.
@@ -1533,7 +1596,12 @@ localhost). If port 8000 is taken, add `"WORKSPACE_MCP_PORT": "8100"` to the `en
 
 ---
 
+</details>
+
 ## Telegram & LINE Bots
+
+<details>
+<summary>💬 Bot setup, commands & security</summary>
 
 Chat with your TigrimOS agent from **Telegram** or **LINE** — and control it with slash
 commands — from anywhere. Telegram needs no public URL at all (outbound long-polling);
@@ -1614,7 +1682,12 @@ state, errors and the LINE webhook URL are reported by `GET /api/messaging/statu
 
 ---
 
+</details>
+
 ## Remote / Headless Setup
+
+<details>
+<summary>📡 Deploy, systemd, nginx, security</summary>
 
 TigrimOS can run on any cloud server (AWS, DigitalOcean, Hetzner, etc.) as a headless AI agent backend. You control it from your Mac desktop app, a mobile browser, or any web browser.
 
@@ -1826,7 +1899,12 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ---
 
+</details>
+
 ## Changelog
+
+<details>
+<summary>🗒 Version history</summary>
 
 ### v0.6.2
 
@@ -2054,10 +2132,12 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 ---
 
+</details>
+
 ## Project Structure
 
 <details>
-<summary>Show the source tree</summary>
+<summary>🌲 Source tree</summary>
 
 ```
 TigrimOSR/
