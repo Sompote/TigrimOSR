@@ -37,6 +37,8 @@ Install it on your machine and run the UI as a **native Rust app** — a single,
 
 ### Memory footprint
 
+App + embedded server + **a live embedded browser** idle at **~270 MB RAM** — a fraction of a Chromium/Electron stack. Numbers and comparison below.
+
 <details>
 <summary>📉 Measured numbers & comparison</summary>
 
@@ -76,6 +78,8 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 </p>
 
 ## Features
+
+Everything TigrimOSR can do — orchestration, tools, remote access, theming — in one list.
 
 <details>
 <summary>📋 Full feature list</summary>
@@ -122,6 +126,8 @@ Two ways to install TigrimOS — pick one:
 ---
 
 ## Install in Docker (recommended)
+
+One command gets you a headless web server in a container — no Rust or Python on your machine, and all agent code execution stays sandboxed inside the container.
 
 <details>
 <summary>🐳 Step-by-step Docker guide (macOS · Linux · Windows)</summary>
@@ -371,6 +377,8 @@ above apply on Windows verbatim — run them in PowerShell.
 </details>
 
 ## Install & run on your machine
+
+Build the native desktop app from source with the Rust toolchain — for the Mac/Linux desktop UI, the VM terminal, or hacking on the code.
 
 <details>
 <summary>🛠 Build-from-source guide (macOS · Linux · Windows)</summary>
@@ -661,6 +669,8 @@ multi-GB `target\` folder; the built `.exe` you already copied out is unaffected
 
 ## Screenshots
 
+Architecture diagram, the main desktop app, AI provider settings, and the agent swarm editor.
+
 <details>
 <summary>🖼 More screenshots (architecture, settings, swarm editor)</summary>
 
@@ -702,6 +712,8 @@ Design multi-agent systems visually — create architectures manually or generat
 
 ## Requirements
 
+An LLM API key (or a local CLI agent like Claude Code) is all you strictly need — Python is optional for charts and data work.
+
 <details>
 <summary>✅ Requirements</summary>
 
@@ -728,6 +740,8 @@ pip install duckduckgo-search matplotlib numpy pandas requests
 
 ## Configuration
 
+All settings live in `data/settings.json` — API keys, remote access, browser control, bots, and more.
+
 <details>
 <summary>⚙️ Configuration reference</summary>
 
@@ -753,6 +767,8 @@ On first launch, go to **Settings** to configure:
 </details>
 
 ## Remote access over a private VPN (Tailscale)
+
+Reach a remote TigrimOS over your own tailnet — devices talk over private `100.x` addresses and nothing is exposed to the public internet.
 
 <details>
 <summary>🔒 Tailscale VPN setup</summary>
@@ -909,6 +925,8 @@ reachable — that's normal; use the host IP.
 
 ## Multi-Agent System
 
+Define agent swarms in YAML: 6 modes, real inter-agent protocols (TCP, Bus, Queue, Blackboard), and a Router mode that picks the right model per agent.
+
 <details>
 <summary>🤖 Swarm modes, protocols & YAML format</summary>
 
@@ -1023,6 +1041,8 @@ connections:
 </details>
 
 ## Agent Loop Profiles (custom agent loop)
+
+Shape the agent loop itself in YAML: which tools, MCP servers and skills each agent sees, model & prompt overrides, self-verification, job evaluation — down to per-tool parameter pins and approval rules.
 
 <details>
 <summary>🔁 Profile YAML reference & per-tool config</summary>
@@ -1171,6 +1191,8 @@ Notes:
 
 ## Plugin System
 
+Drop in zip plugins bundling skills, MCP servers, agents and connectors — Claude Desktop/Code plugins and npm MCP packages work too.
+
 <details>
 <summary>🧩 Installing plugins & supported formats</summary>
 
@@ -1224,6 +1246,8 @@ See **[PLUGINS.md](PLUGINS.md)** for the full developer guide — manifest forma
 </details>
 
 ## Browser Control
+
+Let the agent drive a real browser — search Google, click, type, screenshot — via Chrome/Chromium (Playwright) or the Node-free Rust **Obscura** engine. Opt-in, off by default.
 
 <details>
 <summary>🌐 Setup — Chrome/Chromium & Obscura</summary>
@@ -1451,6 +1475,8 @@ The agent drives a real browser with your logged-in sessions, so treat browser a
 
 ## Connect Google (Gmail · Calendar · Drive)
 
+Three clicks give the agent **Gmail, Calendar and Drive**: paste an OAuth Client ID, auto-install the runtime, and log in with Google in your browser. Tokens stay on your machine.
+
 <details>
 <summary>🇬 Three-click setup & troubleshooting</summary>
 
@@ -1600,6 +1626,8 @@ localhost). If port 8000 is taken, add `"WORKSPACE_MCP_PORT": "8100"` to the `en
 
 ## Telegram & LINE Bots
 
+Chat with your agent from Telegram or LINE — slash commands, live progress while it works, and approve/deny buttons for tool approvals.
+
 <details>
 <summary>💬 Bot setup, commands & security</summary>
 
@@ -1685,6 +1713,8 @@ state, errors and the LINE webhook URL are reported by `GET /api/messaging/statu
 </details>
 
 ## Remote / Headless Setup
+
+Run TigrimOS headless on a server and connect from the desktop app, any browser, or your phone — with systemd, nginx/HTTPS, and security guidance.
 
 <details>
 <summary>📡 Deploy, systemd, nginx, security</summary>
@@ -1902,6 +1932,8 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 </details>
 
 ## Changelog
+
+What changed in each release, latest first.
 
 <details>
 <summary>🗒 Version history</summary>
@@ -2135,6 +2167,8 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 </details>
 
 ## Project Structure
+
+Where everything lives in the codebase.
 
 <details>
 <summary>🌲 Source tree</summary>
