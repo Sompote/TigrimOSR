@@ -1,6 +1,8 @@
 # TigrimOSR v0.6.2
 
-**TigrimOSR** is a native desktop AI agent platform for orchestrating teams of specialist AI agents from a single self-contained binary — and for **building your own agentic loop**. Define swarms in YAML, wire them with inter-agent protocols (TCP, Bus, Queue, Blackboard), and let them collaborate autonomously. Then shape how the loop itself runs: pick the tools, MCP servers, and skills each agent may use, override its model and system prompt, tune self-verification and context compaction — all in simple YAML profiles you can edit from the desktop app or any browser. Control goes all the way down to the **individual tool**: hide any tool from the model, rewrite its description, pin or default its parameters, cap its runtime and output size, and decide *per tool* whether it must ask for your approval first. When the job is done, TigrimOSR doesn't take the agent's word for it: an independent **tool-using judge** verifies the deliverables actually exist before the answer reaches you. Connect your **Google account** in three clicks and the agent reads and sends your **Gmail**, manages your **Calendar**, and searches your **Drive**. And you don't have to be at your desk for any of it — chat with your agent and drive it with slash commands straight from **Telegram or LINE**, or run everything from your phone in the mobile web UI.
+**TigrimOSR** is a native Rust AI agent platform in a single self-contained binary. Orchestrate swarms of specialist agents, and **build your own agent loop** — which tools, models, skills and MCP servers each agent uses — in simple YAML, editable from the desktop app, any browser, or your phone.
+
+Connect **Gmail / Calendar / Drive** in three clicks, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
 
 **What's new (July 2026):**
 
@@ -12,18 +14,18 @@
 
 ### Why TigrimOSR?
 
-- **Multi-agent orchestration** — 6 modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator) with real protocols and a shared blackboard.
-- **Your agent loop, your rules** — customize the whole agent loop as **YAML profiles**: which tools it may call, which MCP servers and skills it sees, model & system-prompt overrides, loop limits, self-verification, and context compaction — editable from the desktop app and the web UI. Includes **per-tool config**: hide a tool entirely, require (or waive) user approval for it, pin its parameters to values the model can't override, and cap its execution time and output — for built-in *and* MCP tools alike.
-- **Don't trust — verify (job evaluation)** — LLM agents love to declare success: *"Done!"* with a missing file, a half-finished swarm job, a confident summary backed by nothing. TigrimOSR closes that trust gap: after the **whole job** finishes, an independent **tool-using judge** (optionally a different model, so the agent never grades its own work) checks the result against your objective and **rubric** — opening the output files to confirm the claimed artifacts actually exist — and feeds any gaps back so the orchestrator delegates targeted fixes *before* the answer reaches you. One verification per job, not per agent, so even big swarms stay fast.
-- **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, or any OpenAI-compatible API — plus 3 local CLI agents (Claude Code, Gemini CLI, Codex) with no API keys.
-- **Full tool calling** — web search, Python, file I/O, shell, MCP servers, and the ClawHub skill marketplace. Charts, images, and docs render inline with click-to-zoom.
-- **Your Google, connected** — a three-click quick-connect gives the agent **Gmail, Calendar and Drive**: paste an OAuth Client ID, auto-install the runtime, log in with Google in your browser — then ask *"what's on my calendar tomorrow?"* or *"summarize this week's unread email"*. Tokens stay on your machine and refresh automatically — see [Connect Google](#connect-google-gmail--calendar--drive).
-- **Browser control** — let the agent drive a real browser to **search Google** and read the live web directly. Choose your engine: **Chrome / Chromium** via Playwright, or the stealthy, Node-free **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine (a single Rust binary with built-in anti-detection). It's a real browser, not a paid search-API — **no API keys, free of charge, saves money**. Opt-in toggle, off by default for safety.
-- **Plugin system** — zip plugins bundling skills, MCP servers, agents, and connectors. Compatible with Claude Desktop/Code plugins and npm MCP packages.
-- **Run it your way** — as a native **Rust desktop UI** on your machine, **headless** on a machine or in **Docker**, and connect from any browser via the built-in **web UI**. Toggle Local/Remote from one interface.
-- **Telegram & LINE bots** — chat with your agent from the messaging apps you already use, and control it with slash commands (`/agents`, `/model`, `/mode`, `/loop`, `/new`, `/stop`, `/status`): live progress while it works, approve/deny buttons for tool approvals, and fail-closed user allow-lists. Telegram needs no public URL at all — see [Telegram & LINE Bots](#telegram--line-bots).
-- **Private remote access (VPN)** — reach a remote host over your own **[Tailscale](https://tailscale.com) VPN** instead of exposing it publicly — devices talk over private `100.x` addresses, nothing is published to the internet. Opt-in toggle, an alternative to the public Cloudflare tunnel.
-- **Built in Rust** — fast, low-memory, single binary, no Node/Python runtime. Rewritten from [TigrimOS (TypeScript/Python)](https://github.com/Sompote/TigerCowork). Because both the app and the [Obscura](https://github.com/h4ckf0r0day/obscura) browser engine are native Rust, the whole thing — desktop UI, embedded server, **and a live embedded browser** — idles at only **~270 MB RAM** (≈210 MB app + ≈60 MB browser), a fraction of what a Chromium/Electron stack needs just to open a tab.
+- **Multi-agent orchestration** — 6 swarm modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator) with real inter-agent protocols and a shared blackboard.
+- **Your agent loop, your rules** — YAML profiles control tools, MCP servers, skills, model & prompt, self-verification and compaction — down to [per-tool config](#per-tool-config-toolsconfig) (hide, pin params, approval, caps).
+- **Don't trust — verify** — after the job, an independent **tool-using judge** checks the result against your rubric and opens the output files before the answer reaches you.
+- **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, any OpenAI-compatible API — plus Claude Code / Gemini CLI / Codex with no API keys.
+- **Full tool calling** — web search, Python, file I/O, shell, MCP servers, ClawHub skills. Charts, images and docs render inline.
+- **Your Google, connected** — three-click **Gmail / Calendar / Drive** access; tokens stay on your machine — see [Connect Google](#connect-google-gmail--calendar--drive).
+- **Browser control** — the agent drives a real browser (Chrome/Chromium, or the Node-free Rust **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine) — no paid search API. Opt-in, off by default.
+- **Plugin system** — zip plugins bundling skills, MCP servers, agents and connectors. Claude Desktop/Code and npm MCP compatible.
+- **Run it your way** — native desktop app, headless, or Docker — then connect from any browser or phone via the built-in web UI.
+- **Telegram & LINE bots** — chat and drive the agent with slash commands, live progress, and approve/deny buttons — see [Telegram & LINE Bots](#telegram--line-bots).
+- **Private remote access (VPN)** — reach a remote host over your own [Tailscale](https://tailscale.com) tailnet instead of a public tunnel.
+- **Built in Rust** — single binary, no Node/Python. App + embedded server + **a live embedded browser** idle at **~270 MB RAM** — see [Memory footprint](#memory-footprint).
 
 ### Native Rust desktop app
 
