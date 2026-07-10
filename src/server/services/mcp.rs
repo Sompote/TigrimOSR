@@ -142,6 +142,12 @@ async fn spawn_and_init(
     let mut cmd = Command::new(command);
     cmd.args(args)
         .envs(env)
+        // TigrimOS's own web port must not leak into MCP children: servers
+        // that read a generic PORT (e.g. workspace-mcp's OAuth callback
+        // listener) would bind next to OUR port instead of their documented
+        // default — seen in the field as a Google login redirecting to
+        // localhost:3002 instead of localhost:8000.
+        .env_remove("PORT")
         .current_dir(&sandbox)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

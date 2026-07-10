@@ -1429,11 +1429,13 @@ Notes:
   `GET /api/settings` like every other credential, with restore-on-save.
 - **Web / mobile UI too** — the same quick-connect card lives at the top of
   **Settings → MCP Tools** in the remote web UI (`/api/google` endpoints: status,
-  owner-only `install-uv`, `connect`). One caveat on a remote host: the Google OAuth
-  callback lands on `localhost:8000` of the **machine running TigrimOS**, so open the
-  returned login link in a browser on that machine (or port-forward:
-  `ssh -L 8000:localhost:8000 host`), or reuse credentials authorized on a desktop
-  first (copy `~/.google_workspace_mcp/credentials`). On the same machine it just works.
+  owner-only `install-uv`, `connect`). **Remote login just needs one URL edit:** the
+  Google redirect targets `localhost:8000` of the machine running TigrimOS, so a remote
+  browser ends on a *"can't connect to localhost"* page — replace `localhost:8000` in
+  that address bar with your TigrimOS host:port (e.g. `myhost:3001`) and press Enter;
+  TigrimOS **relays** the callback (`/oauth2callback`) to the Google server and the
+  login completes. Works for Docker too (only port 3001 needs publishing). On the same
+  machine it just works with no edit.
 
 ### The hidden part — Google Cloud setup, what's written where, and troubleshooting
 
@@ -1521,6 +1523,7 @@ localhost). If port 8000 is taken, add `"WORKSPACE_MCP_PORT": "8100"` to the `en
 | `accessNotConfigured` / `SERVICE_DISABLED` when using a tool | That API wasn't enabled in the console (step A2) — enable it and retry. |
 | `❌ google — Failed to spawn MCP server` | `uvx` not found: press **Install uv runtime**, or install manually (`brew install uv`) and reconnect. First launch also downloads packages — give it ~30 s. |
 | Browser never opens | Check the status line for a login URL and open it manually; on a headless box use section C instead. |
+| Login ends on *"Safari/Chrome can't connect to localhost:8000"* | You logged in from a **remote** browser — the callback targets the host. In that page's address bar, replace `localhost:8000` with your TigrimOS `host:port` (e.g. `myhost:3001`) and press Enter; the `/oauth2callback` relay completes the login. Then press Connect again if needed. |
 | Want a different Google account | Delete `~/.google_workspace_mcp/credentials/`, update `USER_GOOGLE_EMAIL`, press **Connect & Login** again. |
 | Read-only safety | Hand-edit the entry's `args` to add `--read-only`, or use `--permissions gmail:readonly drive:readonly calendar:readonly` instead of `--tools`. |
 

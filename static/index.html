@@ -3510,15 +3510,16 @@ function googleConnect() {
     drive: document.getElementById('s-g-drive').checked
   }) }).then(d => {
     if (!d.ok) { setGoogleStatus('❌ ' + esc(d.error || d.message || 'failed'), true); return; }
+    const rescue = '<br>💡 If the login ends on a <b>“can’t connect to localhost”</b> page: in that page’s address bar, ' +
+      'replace <code>localhost:8000</code> with <code>' + esc(location.host) + '</code> and press Enter — ' +
+      'TigrimOS relays the callback to the Google server and the login completes.';
     if (d.url) {
       setGoogleStatus('🔑 <a href="' + esc(d.url) + '" target="_blank" rel="noopener"><b>Open the Google login</b></a> — ' +
-        'note: the OAuth callback lands on <code>localhost:8000</code> of the <b>host</b> machine. ' +
-        'If TigrimOS runs on another box, open this link in a browser on that machine ' +
-        '(or port-forward: <code>ssh -L 8000:localhost:8000 host</code>).', false);
+        'sign in and approve access.' + rescue, false);
     } else {
-      setGoogleStatus('✅ ' + esc(d.message || 'Login started') + ' If TigrimOS runs on this machine, a Google sign-in window has opened.', false);
+      setGoogleStatus('✅ ' + esc(d.message || 'Login started') + ' If TigrimOS runs on this machine, a Google sign-in window has opened.' + rescue, false);
     }
-    setTimeout(loadGoogleCard, 4000);
+    setTimeout(loadGoogleCard, 6000);
   }).catch(e => setGoogleStatus('❌ ' + esc(e.message || e), true));
 }
 

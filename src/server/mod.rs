@@ -333,6 +333,14 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         axum::routing::post(routes::messaging::line_webhook),
     );
 
+    // Google OAuth callback relay (no bearer auth — Google redirects the
+    // user's browser here without our token). Forwards to the workspace-mcp
+    // callback listener on localhost so remote-browser logins can complete.
+    let google_oauth = Router::new().route(
+        "/oauth2callback",
+        axum::routing::get(routes::google::oauth_callback_relay),
+    );
+
     // Web UI (no auth needed — auth happens client-side via API calls)
     let web_ui = routes::web_ui::router();
 
@@ -347,6 +355,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     let app = Router::new()
         .merge(auth_verify)
         .merge(line_webhook)
+        .merge(google_oauth)
         .nest("/web", web_ui.clone())
         .route("/web/", axum::routing::get(|| async {
             axum::response::Redirect::permanent("/web")

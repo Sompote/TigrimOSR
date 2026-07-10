@@ -177,6 +177,57 @@ async fn connect(Json(body): Json<ConnectBody>) -> impl IntoResponse {
     (StatusCode::OK, Json(login))
 }
 
+/// Public (no-auth) relay for the Google OAuth callback.
+///
+/// The workspace-mcp callback listener binds localhost on the machine RUNNING
+/// TigrimOS — a remote browser's redirect to http://localhost:8000/... lands
+/// on the USER's machine and dies ("Safari can't connect to the server").
+/// Mounting /oauth2callback on the TigrimOS server itself (which the remote
+/// browser CAN reach) lets the user rescue the login by replacing
+/// `localhost:8000` in the failed redirect URL with the TigrimOS host:port —
+/// we forward the query string to the local listener and return its response.
+///
+/// No bearer auth: Google redirects the user's browser here without our
+/// token (same pattern as the LINE webhook). SSRF surface is minimal — the
+/// target host and path are fixed; only the query string passes through.
+pub async fn oauth_callback_relay(uri: axum::http::Uri) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let query = uri.query().unwrap_or("");
+    let target = format!(
+        "http://127.0.0.1:{}/oauth2callback?{}",
+        google::GOOGLE_CALLBACK_PORT,
+        query
+    );
+    match reqwest::Client::new()
+        .get(&target)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status =
+                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
+            let body = resp.text().await.unwrap_or_default();
+            (
+                status,
+                [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                body,
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "OAuth relay: could not reach the Google MCP callback listener on \
+                 localhost:{} ({e}). Start the login again from Settings → MCP Tools — \
+                 the listener only runs while a login is in progress.",
+                google::GOOGLE_CALLBACK_PORT
+            ),
+        )
+            .into_response(),
+    }
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(status))

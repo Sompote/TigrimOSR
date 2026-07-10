@@ -22,6 +22,11 @@ pub const GOOGLE_MCP_NAME: &str = "google";
 /// button) — the user creates an OAuth Client ID (Desktop app) there.
 pub const GOOGLE_CONSOLE_URL: &str = "https://console.cloud.google.com/apis/credentials";
 
+/// Fixed port for the workspace-mcp OAuth callback listener
+/// (http://localhost:{PORT}/oauth2callback). Pinned via WORKSPACE_MCP_PORT so
+/// the TigrimOS /oauth2callback relay always knows where to forward.
+pub const GOOGLE_CALLBACK_PORT: u16 = 8000;
+
 /// Locate `uvx` (the uv tool runner workspace-mcp is launched with). Checks
 /// PATH first, then the standard install locations uv's installer uses.
 pub fn find_uvx() -> Option<String> {
@@ -116,6 +121,9 @@ pub fn build_google_mcp_entry(
     // The local OAuth callback (http://localhost:8000/oauth2callback) is plain
     // http — allow it.
     env.insert("OAUTHLIB_INSECURE_TRANSPORT".to_string(), "1".to_string());
+    // Pin the callback port so the login URL and the TigrimOS relay
+    // (/oauth2callback) are deterministic.
+    env.insert("WORKSPACE_MCP_PORT".to_string(), GOOGLE_CALLBACK_PORT.to_string());
     if !email.trim().is_empty() {
         env.insert("USER_GOOGLE_EMAIL".to_string(), email.trim().to_string());
     }
