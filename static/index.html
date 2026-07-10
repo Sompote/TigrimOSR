@@ -3497,6 +3497,19 @@ function googleInstallUv() {
     })
     .catch(e => setGoogleStatus('❌ ' + esc(e.message || e), true));
 }
+function syncGoogleMcpEntry() {
+  // /api/google/connect writes the "google" MCP entry into settings on the
+  // SERVER — pull it into the client-side working copy, otherwise a later
+  // "Save Settings" PUTs the stale mcpTools list and silently wipes the
+  // entry. Masked env secrets round-trip via the server's restore-on-save.
+  api('/api/settings').then(s => {
+    const entry = (s.mcpTools || []).find(t => t.name === 'google');
+    if (!entry) return;
+    const i = _mcpTools.findIndex(t => t.name === 'google');
+    if (i >= 0) _mcpTools[i] = entry; else _mcpTools.push(entry);
+    renderMcpList();
+  }).catch(() => {});
+}
 function googleConnect() {
   const clientId = document.getElementById('s-g-client-id').value.trim();
   if (!clientId) { setGoogleStatus('Paste a Client ID first.', true); return; }
@@ -3509,6 +3522,9 @@ function googleConnect() {
     calendar: document.getElementById('s-g-cal').checked,
     drive: document.getElementById('s-g-drive').checked
   }) }).then(d => {
+    // The entry is saved server-side even when the connect/login step fails
+    // (a 200 with ok:false) — sync it in either case.
+    syncGoogleMcpEntry();
     if (!d.ok) { setGoogleStatus('❌ ' + esc(d.error || d.message || 'failed'), true); return; }
     const rescue = '<br>💡 If the login ends on a <b>“can’t connect to localhost”</b> page: in that page’s address bar, ' +
       'replace <code>localhost:8000</code> with <code>' + esc(location.host) + '</code> and press Enter — ' +
