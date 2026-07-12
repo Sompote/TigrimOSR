@@ -447,7 +447,17 @@ async fn tool_requires_approval(tool_name: &str) -> bool {
         "delete_file" => settings.approval_required_for_file_delete.unwrap_or(true),
         "claude_code_agent" => settings.approval_required_for_agent_spawn.unwrap_or(false),
         "gemini_cli_agent" => settings.approval_required_for_agent_spawn.unwrap_or(false),
-        _ => false,
+        // User-defined YAML tools: honor an explicit `require_approval`, else
+        // default shell-kind tools to the shell-approval toggle (HTTP tools
+        // default to no approval, like web_search/fetch_url).
+        other => match crate::server::services::custom_tools::approval_kind(other) {
+            Some(crate::server::services::custom_tools::CustomApproval::Force(v)) => v,
+            Some(crate::server::services::custom_tools::CustomApproval::ShellDefault) => {
+                settings.approval_required_for_shell.unwrap_or(true)
+            }
+            Some(crate::server::services::custom_tools::CustomApproval::HttpDefault) => false,
+            None => false,
+        },
     }
 }
 
@@ -2568,7 +2578,7 @@ INSTRUCTIONS:
 
 /// (name, description) of every base tool — for agent-loop profile editors.
 pub fn tool_catalog() -> Vec<(String, String)> {
-    tool_definitions()
+    let mut cat: Vec<(String, String)> = tool_definitions()
         .iter()
         .filter_map(|t| {
             let f = t.get("function")?;
@@ -2577,7 +2587,13 @@ pub fn tool_catalog() -> Vec<(String, String)> {
                 f.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
             ))
         })
-        .collect()
+        .collect();
+    // User-defined YAML tools so the agent-loop profile editor / validator
+    // recognizes their names (no "unknown tool" warning when configured).
+    for t in crate::server::services::custom_tools::load_all() {
+        cat.push((t.name.clone(), t.description.clone()));
+    }
+    cat
 }
 
 /// run_shell description matching the actual shell per platform, so the model
@@ -4433,7 +4449,7 @@ def save_output(filename, content=None, mode='w'):
     }
 }
 
-async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
+pub(crate) async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
     // Strict: a non-string `command` would silently run an empty command and
     // return ok=true (exit 0), wasting tool rounds and misleading the model.
     let command = match args.get("command").and_then(|v| v.as_str()) {
@@ -6821,6 +6837,12 @@ async fn execute_tool_with_context(
         "cron_toggle" => exec_cron_toggle(args).await,
         "cron_delete" => exec_cron_delete(args).await,
         "cron_run_now" => exec_cron_run_now(args).await,
+        // User-defined YAML tools (data/tools/*.yaml). Checked before the MCP
+        // catch-all. Per-tool profile config, approval, timeout, and result
+        // truncation are applied by the surrounding dispatch, same as built-ins.
+        _ if crate::server::services::custom_tools::is_custom_tool(name) => {
+            crate::server::services::custom_tools::execute(name, args, sandbox_dir).await
+        }
         _ if mcp::is_mcp_tool(name) => {
             // In a parallel swarm each sub-agent drives its OWN isolated browser
             // window so concurrent agents don't clobber a shared Chrome page.
@@ -8753,6 +8775,15 @@ async fn call_with_tools_inner(
         info!("[call_with_tools] Adding {} MCP tool(s): {}", mcp_tools.len(),
             mcp_tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
         tools.extend(mcp_tools);
+    }
+
+    // Inject user-defined YAML tools (data/tools/*.yaml). Added before the
+    // per-tool override pass so tools.config.<custom_name> applies to them too.
+    let custom_tools = crate::server::services::custom_tools::definitions();
+    if !custom_tools.is_empty() {
+        info!("[call_with_tools] Adding {} custom YAML tool(s): {}", custom_tools.len(),
+            custom_tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+        tools.extend(custom_tools);
     }
 
     // Per-tool profile config: enabled:false removal + description overrides.

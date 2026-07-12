@@ -296,6 +296,9 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     // Seed the default agent-loop profile (mirrors current loop behavior)
     services::agent_loop::ensure_default_profile();
 
+    // Seed the example custom-tool definition (data/tools/*.yaml)
+    services::custom_tools::ensure_examples();
+
     // Initialize MCP server connections from settings
     services::mcp::init_mcp_servers().await;
 

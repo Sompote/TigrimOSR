@@ -544,6 +544,10 @@ select {
 .pill-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .pill-btn.primary:active { background: var(--accent-deep); }
 .pill-btn.danger { background: var(--red); color: #fff; border-color: var(--red); }
+.pill-btn.active { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); }
+.ct-chip { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; background: var(--rail); color: var(--ink-soft); border: 1px solid var(--line); }
+.ct-chip.ct-green { background: var(--accent-soft); color: var(--green); border-color: var(--green); }
+.ct-chip.ct-amber { background: var(--rail); color: #d69e2e; border-color: #d69e2e; }
 
 .file-list { list-style: none; }
 .file-item {
@@ -3087,6 +3091,7 @@ function loadSettings() {
         <button class="settings-tab" data-pane="agentloop" onclick="switchSettingsTab('agentloop')">Agent Loop</button>
         <button class="settings-tab" data-pane="appearance" onclick="switchSettingsTab('appearance')">Appearance</button>
         <button class="settings-tab" data-pane="mcp" onclick="switchSettingsTab('mcp')">MCP Tools</button>
+        <button class="settings-tab" data-pane="tools" onclick="switchSettingsTab('tools')">Tools</button>
         <button class="settings-tab" data-pane="plugins" onclick="switchSettingsTab('plugins')">Plugins</button>
         <button class="settings-tab" data-pane="skills" onclick="switchSettingsTab('skills')">Skills</button>
         <button class="settings-tab" data-pane="skill" onclick="switchSettingsTab('skill')">Skill Update</button>
@@ -3246,6 +3251,50 @@ function loadSettings() {
             <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">Available tools, MCP servers &amp; skills (catalog)</summary>
             <div id="s-loop-catalog" style="font-size:12px;color:var(--ink-soft);margin-top:8px">Loading…</div>
           </details>
+        </div>
+      </div>
+
+      <div class="settings-pane" id="pane-tools" hidden>
+        <div class="settings-group">
+          <h3>Tools</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">
+            Every tool the agent can call. <b>Catalog</b> shows built-in and custom tools with their
+            per-tool config (from the active Agent Loop profile); <b>Custom Tools</b> lets you add your
+            own — an HTTP/REST call or a sandboxed shell command — in YAML, no rebuild needed.</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <button class="pill-btn active" id="ct-subtab-catalog" onclick="ctSubtab('catalog')">Catalog</button>
+            <button class="pill-btn" id="ct-subtab-custom" onclick="ctSubtab('custom')">Custom Tools</button>
+            <button class="pill-btn" onclick="loadCustomToolsPane()" style="margin-left:auto">🔄 Refresh</button>
+          </div>
+
+          <div id="ct-view-catalog">
+            <div class="settings-row-field"><label>Filter</label>
+              <input id="ct-filter" placeholder="tool name…" oninput="renderToolCatalog()" style="flex:1">
+              <label style="flex:none;margin-left:10px;font-size:12px"><input type="checkbox" id="ct-show-disabled" checked onchange="renderToolCatalog()"> show disabled</label></div>
+            <div id="ct-catalog" style="font-size:13px;margin-top:8px">Loading…</div>
+          </div>
+
+          <div id="ct-view-custom" hidden>
+            <div class="settings-row-field"><label>New tool</label>
+              <input id="ct-new-name" placeholder="tool_name" style="flex:1">
+              <button class="pill-btn" onclick="ctNew('http')" style="flex:none;margin-left:8px">+ HTTP</button>
+              <button class="pill-btn" onclick="ctNew('shell')" style="flex:none;margin-left:8px">+ Shell</button></div>
+            <div class="settings-row-field"><label>Edit</label>
+              <select id="ct-file" onchange="ctOpen()" style="flex:1"></select>
+              <button class="pill-btn" onclick="ctDelete()" style="flex:none;margin-left:8px">Delete</button></div>
+            <div class="settings-row-field" style="align-items:flex-start"><label>YAML</label>
+              <textarea id="ct-yaml" rows="16" style="flex:1;font-family:monospace;font-size:12px" spellcheck="false"></textarea></div>
+            <div style="margin-top:8px">
+              <button class="pill-btn primary" onclick="ctSave()">Save Tool</button>
+              <span id="ct-status" style="font-size:13px;margin-left:10px"></span></div>
+            <div class="settings-group" style="margin-top:12px">
+              <h3 style="font-size:14px">Test run (no LLM)</h3>
+              <div class="settings-row-field"><label>args (JSON)</label>
+                <input id="ct-test-args" value="{}" placeholder='{"query":"..."}' style="flex:1">
+                <button class="pill-btn" onclick="ctTest()" style="flex:none;margin-left:8px">▶ Run</button></div>
+              <pre id="ct-test-result" style="background:var(--rail);padding:8px;border-radius:6px;font-size:12px;max-height:200px;overflow:auto;white-space:pre-wrap"></pre>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -3447,6 +3496,7 @@ function loadSettings() {
     loadPlugins();
     loadSkillsLibrary();
     loadAgentLoopPane(data.agentLoopProfile || '');
+    loadCustomToolsPane(data.agentLoopProfile || '');
     loadMessagingStatus();
     loadGoogleCard();
   }).catch(() => {});
@@ -4043,6 +4093,175 @@ function switchSettingsTab(name) {
     b.classList.toggle('active', b.dataset.pane === name));
   document.querySelectorAll('#settings-content .settings-pane').forEach(p =>
     p.hidden = (p.id !== 'pane-' + name));
+}
+
+// ========== TOOLS (catalog + custom YAML tools) ==========
+let _ctCatalog = [];      // [{name, description}] built-in + custom
+let _ctCustom = [];       // [{filename, name, kind, enabled, valid, error}]
+let _ctActiveConfig = {}; // toolName -> per-tool config from active profile
+let _ctActiveProfile = '';
+
+function loadCustomToolsPane(active) {
+  if (active !== undefined) _ctActiveProfile = active || '';
+  const catP = api('/api/agent-loops/catalog').then(c => { _ctCatalog = c.tools || []; }).catch(() => { _ctCatalog = []; });
+  const cusP = api('/api/custom-tools').then(l => { _ctCustom = Array.isArray(l) ? l : []; }).catch(() => { _ctCustom = []; });
+  const cfgP = _ctActiveProfile
+    ? api('/api/agent-loops/' + encodeURIComponent(_ctActiveProfile))
+        .then(p => { _ctActiveConfig = ((p.parsed || {}).tools || {}).config || {}; })
+        .catch(() => { _ctActiveConfig = {}; })
+    : Promise.resolve().then(() => { _ctActiveConfig = {}; });
+  Promise.all([catP, cusP, cfgP]).then(() => { renderToolCatalog(); ctFillFileSelect(); });
+}
+
+function ctSubtab(which) {
+  document.getElementById('ct-view-catalog').hidden = (which !== 'catalog');
+  document.getElementById('ct-view-custom').hidden = (which !== 'custom');
+  document.getElementById('ct-subtab-catalog').classList.toggle('active', which === 'catalog');
+  document.getElementById('ct-subtab-custom').classList.toggle('active', which === 'custom');
+}
+
+function renderToolCatalog() {
+  const el = document.getElementById('ct-catalog');
+  if (!el) return;
+  const filter = (document.getElementById('ct-filter').value || '').toLowerCase();
+  const showDisabled = document.getElementById('ct-show-disabled').checked;
+  const customByName = {};
+  _ctCustom.forEach(t => { customByName[t.name] = t; });
+  const protectedRe = /^(proto_|bb_)|^(send_task|wait_result|check_agents|spawn_subagent|create_architecture|select_swarm)$/;
+
+  let rows = '';
+  let shown = 0;
+  _ctCatalog.forEach(t => {
+    const name = t.name;
+    if (filter && !name.toLowerCase().includes(filter)) return;
+    const cfg = _ctActiveConfig[name] || null;
+    const disabled = cfg && cfg.enabled === false;
+    if (disabled && !showDisabled) return;
+    shown++;
+    const isCustom = !!customByName[name];
+    const source = isCustom ? ('custom · ' + (customByName[name].kind || '')) : 'built-in';
+    const chips = [];
+    if (disabled) chips.push('<span class="ct-chip ct-amber">disabled</span>');
+    if (cfg) {
+      if (cfg.require_approval === true) chips.push('<span class="ct-chip ct-amber">always-ask</span>');
+      if (cfg.require_approval === false) chips.push('<span class="ct-chip ct-green">never-ask</span>');
+      if (cfg.pinned_params) chips.push('<span class="ct-chip">pinned</span>');
+      if (cfg.params) chips.push('<span class="ct-chip">defaults</span>');
+      if (cfg.timeout_secs != null) chips.push('<span class="ct-chip">timeout</span>');
+      if (cfg.max_result_len != null) chips.push('<span class="ct-chip">result-cap</span>');
+      if (cfg.description) chips.push('<span class="ct-chip">renamed</span>');
+    }
+    if (!chips.length) chips.push('<span class="ct-chip ct-green">on</span>');
+    const lock = protectedRe.test(name) ? ' 🔒' : '';
+    const action = isCustom
+      ? `<button class="pill-btn" onclick="ctEditByName('${esc(name)}')">Edit</button>`
+      : `<button class="pill-btn" onclick="ctConfigure('${esc(name)}')">Configure</button>`;
+    rows += `<tr><td style="padding:4px 8px">${esc(name)}${lock}</td>
+      <td style="padding:4px 8px;color:var(--ink-soft)">${esc(source)}</td>
+      <td style="padding:4px 8px">${chips.join(' ')}</td>
+      <td style="padding:4px 8px;text-align:right">${action}</td></tr>`;
+  });
+  el.innerHTML =
+    `<table style="width:100%;border-collapse:collapse">
+      <thead><tr style="text-align:left;color:var(--ink-soft)">
+        <th style="padding:4px 8px">Tool</th><th style="padding:4px 8px">Source</th>
+        <th style="padding:4px 8px">Status</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table>
+     <div style="color:var(--ink-soft);font-size:11px;margin-top:8px">${shown} shown · ${_ctCustom.length} custom. MCP tools are managed under MCP Tools.</div>`;
+}
+
+function ctConfigure(name) {
+  switchSettingsTab('agentloop');
+  const txt = document.getElementById('s-loop-tool-txt');
+  if (txt) { txt.value = name; }
+  const s = document.getElementById('s-loop-status');
+  if (s) { s.textContent = 'Added "' + name + '" — click Add under Per-tool settings, set rules, then Save Profile.'; s.style.color = 'var(--accent)'; }
+}
+
+function ctEditByName(name) {
+  const t = _ctCustom.find(x => x.name === name);
+  if (!t) return;
+  ctSubtab('custom');
+  document.getElementById('ct-file').value = t.filename;
+  ctOpen();
+}
+
+function ctFillFileSelect() {
+  const sel = document.getElementById('ct-file');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">(select)</option>' +
+    _ctCustom.map(t => `<option value="${esc(t.filename)}">${esc(t.name)}${t.valid ? '' : ' ⚠'} (${esc(t.kind)})</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
+function ctOpen() {
+  const file = document.getElementById('ct-file').value;
+  const st = document.getElementById('ct-status');
+  st.textContent = '';
+  document.getElementById('ct-test-result').textContent = '';
+  if (!file) { document.getElementById('ct-yaml').value = ''; return; }
+  api('/api/custom-tools/' + encodeURIComponent(file))
+    .then(r => { document.getElementById('ct-yaml').value = r.content || ''; })
+    .catch(e => { st.textContent = 'Error: ' + e.message; st.style.color = 'var(--red)'; });
+}
+
+function ctNew(kind) {
+  const raw = (document.getElementById('ct-new-name').value || '').trim().toLowerCase();
+  const name = raw.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!name) { const s = document.getElementById('ct-status'); s.textContent = 'Enter a tool name first'; s.style.color = 'var(--red)'; return; }
+  const yaml = kind === 'shell'
+    ? `name: ${name}\ndescription: Describe what this tool does.\nkind: shell\nenabled: true\nparameters:\n  - name: arg1\n    type: string\n    required: true\nrun:\n  command: "echo {{arg1}}"\n  timeout_secs: 30\nrequire_approval: true\n`
+    : `name: ${name}\ndescription: Describe what this tool does.\nkind: http\nenabled: true\nparameters:\n  - name: query\n    type: string\n    required: true\n  - name: limit\n    type: integer\n    default: 10\nrequest:\n  method: GET\n  url: "https://api.example.com/search?q={{query}}&n={{limit}}"\n  headers:\n    User-Agent: "TigrimOS/1.0"\n  timeout_secs: 20\nresponse:\n  format: auto\n  max_len: 4000\n`;
+  document.getElementById('ct-yaml').value = yaml;
+  document.getElementById('ct-file').value = '';
+  document.getElementById('ct-new-name').value = '';
+  const s = document.getElementById('ct-status'); s.textContent = 'New "' + name + '.yaml" — edit and Save.'; s.style.color = 'var(--ink-soft)';
+  document.getElementById('ct-yaml').dataset.newname = name + '.yaml';
+}
+
+function ctSave() {
+  const yaml = document.getElementById('ct-yaml').value;
+  const st = document.getElementById('ct-status');
+  let filename = document.getElementById('ct-file').value;
+  if (!filename) {
+    const m = yaml.match(/^name:\s*([a-z0-9_]+)/m);
+    filename = (document.getElementById('ct-yaml').dataset.newname) || (m ? m[1] + '.yaml' : '');
+  }
+  if (!filename) { st.textContent = 'Cannot determine filename — add a name: field'; st.style.color = 'var(--red)'; return; }
+  api('/api/custom-tools', { method: 'POST', body: JSON.stringify({ filename, content: yaml }) })
+    .then(r => {
+      const w = (r.warnings || []).length;
+      st.textContent = w ? ('Saved (warnings: ' + r.warnings.join('; ') + ')') : 'Saved ✓';
+      st.style.color = w ? 'var(--amber, #d69e2e)' : 'var(--green)';
+      loadCustomToolsPane();
+      setTimeout(() => { document.getElementById('ct-file').value = r.filename || filename; }, 200);
+    })
+    .catch(e => { st.textContent = 'Error: ' + e.message; st.style.color = 'var(--red)'; });
+}
+
+function ctDelete() {
+  const file = document.getElementById('ct-file').value;
+  if (!file) return;
+  if (!confirm('Delete ' + file + '?')) return;
+  api('/api/custom-tools/' + encodeURIComponent(file), { method: 'DELETE' })
+    .then(() => { document.getElementById('ct-yaml').value = ''; document.getElementById('ct-file').value = ''; loadCustomToolsPane(); })
+    .catch(e => { const s = document.getElementById('ct-status'); s.textContent = 'Error: ' + e.message; s.style.color = 'var(--red)'; });
+}
+
+function ctTest() {
+  const yaml = document.getElementById('ct-yaml').value;
+  const m = yaml.match(/^name:\s*([a-z0-9_]+)/m);
+  const name = m ? m[1] : (document.getElementById('ct-file').value || '').replace(/\.ya?ml$/, '');
+  const out = document.getElementById('ct-test-result');
+  if (!name) { out.textContent = 'No tool name found'; return; }
+  let args = {};
+  try { args = JSON.parse(document.getElementById('ct-test-args').value || '{}'); }
+  catch (e) { out.textContent = 'Invalid JSON args: ' + e.message; return; }
+  out.textContent = 'Running…';
+  api('/api/custom-tools/' + encodeURIComponent(name) + '/test', { method: 'POST', body: JSON.stringify({ args }) })
+    .then(r => { out.textContent = JSON.stringify(r, null, 2); })
+    .catch(e => { out.textContent = 'Error: ' + e.message; });
 }
 
 function loadSkillStatus() {

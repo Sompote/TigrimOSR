@@ -1,21 +1,21 @@
-# TigrimOSR v0.6.3
+# TigrimOSR v0.7.0
 
 **TigrimOSR** is a native Rust AI agent platform in a single self-contained binary. Orchestrate swarms of specialist agents, and **build your own agent loop** — which tools, models, skills and MCP servers each agent uses — in simple YAML, editable from the desktop app, any browser, or your phone.
 
-Connect **Gmail / Calendar / Drive** in three clicks, search **250M+ scholarly papers** with one tool, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
+Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three clicks, search **250M+ scholarly papers** with one tool, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
 
 **⬇️ Install in under a minute — no build needed:**
-[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/TigrimOS-0.6.3.dmg) ·
-[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/TigrimOS-0.6.3-x64.msi) ·
+[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/TigrimOS-0.7.0.dmg) ·
+[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/TigrimOS-0.7.0-x64.msi) ·
 [all releases](https://github.com/Sompote/TigrimOSR/releases/latest) — or [run in Docker](#install-in-docker).
 
 **What's new (July 2026):**
 
-- 📚 **[Academic paper search (OpenAlex)](#academic-paper-search-openalex)** — a new `search_papers` tool queries 250M+ scholarly works: titles, authors, year, venue, DOI, citation counts, open-access PDFs and abstracts. No API key, no configuration.
+- 🧩 **[Custom tools in YAML](#custom-tools-yaml)** — add brand-new agent tools by dropping a `.yaml` file in `data/tools/` — an HTTP/REST call or a sandboxed shell command — no Rust, no rebuild. They honor per-tool config, approval, and timeouts like built-ins.
+- 🛠️ **[Tool management UI](#tool-management-settings--tools)** — a new **Settings → Tools** screen (desktop *and* web/mobile): a Catalog of every tool with live status chips, plus a Custom Tools editor to create, edit, validate, and **test-run** your YAML tools without invoking the model.
+- 📚 **[Academic paper search (OpenAlex)](#academic-paper-search-openalex)** — a `search_papers` tool queries 250M+ scholarly works: titles, authors, year, venue, DOI, citation counts, open-access PDFs and abstracts. No API key, no configuration.
 - 🇬 **[Connect Google](#connect-google-gmail--calendar--drive)** — three-click Gmail / Calendar / Drive access with browser login, on desktop *and* the remote web UI.
-- 🔧 **[Per-tool config](#per-tool-config-toolsconfig)** — per tool: hide it, require/waive approval, pin parameters, cap runtime & output — for built-in and MCP tools.
-- 📱 **Full mobile parity** — loop settings and per-tool settings are now editable as forms in the remote web UI, no YAML needed from a phone.
-- 🔒 **Hardening** — API keys/secrets masked across every settings surface; a sandbox path-traversal hole closed.
+- 🔧 **[Per-tool config](#per-tool-config-toolsconfig)** — per tool: hide it, require/waive approval, pin parameters, cap runtime & output — for built-in, MCP, and custom tools.
 
 ### Why TigrimOSR?
 
@@ -95,6 +95,8 @@ Everything TigrimOSR can do — orchestration, tools, remote access, theming —
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
+- **Custom tools in YAML** — define your own tools declaratively in `data/tools/*.yaml`: an HTTP/REST endpoint or a sandboxed shell command, with templated parameters (`{{query}}`), response field-selection and truncation. No code, no rebuild; loaded at runtime and managed via a REST API. See [Custom tools (YAML)](#custom-tools-yaml)
+- **Tool management screen** — **Settings → Tools** (desktop and web/mobile): a Catalog of every built-in and custom tool with live per-tool status chips, plus a Custom Tools editor to create, edit, validate and **test-run** YAML tools without the model. See [Tool management](#tool-management-settings--tools)
 - **Academic paper search** — built-in `search_papers` tool backed by [OpenAlex](https://openalex.org) (250M+ scholarly works): filter by year, sort by relevance or citations, open-access-only, with reconstructed abstracts and free-PDF links — no API key or config — see [Academic paper search](#academic-paper-search-openalex)
 - **Browser control** — opt-in toggle that lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP, or the stealthy **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine (single Rust binary, no Node required) — see [Browser Control](#browser-control)
 - **Google quick-connect** — three-click Gmail / Calendar / Drive access: paste an OAuth Client ID, auto-install the runtime, and log in with Google in your browser — see [Connect Google](#connect-google-gmail--calendar--drive)
@@ -141,7 +143,7 @@ running in under a minute.
 ### macOS
 
 **Desktop app (DMG):** download
-[`TigrimOS-0.6.3.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/TigrimOS-0.6.3.dmg),
+[`TigrimOS-0.7.0.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/TigrimOS-0.7.0.dmg),
 open it, and drag **TigrimOS** into **Applications**.
 
 > **First launch:** the app isn't notarized with Apple yet, so macOS may block it.
@@ -155,18 +157,18 @@ open it, and drag **TigrimOS** into **Applications**.
 
 ```bash
 # Apple Silicon (M1–M4)
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/tigrimos-0.6.3-macos-arm64.tar.gz | tar xz
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/tigrimos-0.7.0-macos-arm64.tar.gz | tar xz
 ./tigrimos
 
 # Intel Macs
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/tigrimos-0.6.3-macos-x86_64.tar.gz | tar xz
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/tigrimos-0.7.0-macos-x86_64.tar.gz | tar xz
 ./tigrimos
 ```
 
 ### Windows
 
 Download and run
-[`TigrimOS-0.6.3-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/TigrimOS-0.6.3-x64.msi)
+[`TigrimOS-0.7.0-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/TigrimOS-0.7.0-x64.msi)
 — it installs TigrimOS to Program Files and adds a **Start Menu** shortcut.
 
 > If **SmartScreen** shows "Windows protected your PC", click **More info** →
@@ -1540,6 +1542,113 @@ The agent drives a real browser with your logged-in sessions, so treat browser a
 
 </details>
 
+## Custom tools (YAML)
+
+Add **your own agent tools** by dropping a YAML file in `data/tools/` — no Rust, no rebuild. Each file defines one tool: either an **HTTP/REST** call or a **sandboxed shell** command.
+
+<details>
+<summary>🧩 Defining and managing custom tools</summary>
+
+Built-in tools (like the OpenAlex `search_papers` tool) are written in Rust. Custom tools let *you* add new ones declaratively — the app scans `data/tools/*.yaml` at runtime, renders each into the model's tool list next to built-in and MCP tools, and dispatches it through the **same** pipeline. That means custom tools automatically honor [per-tool config](#per-tool-config-toolsconfig) (hide, override description, default/pin params, approval, timeout, result cap) from your agent-loop profile.
+
+> Already have a built-in or MCP tool you just want to *tune* (rename, pin a parameter, gate approval, cap output)? You don't need a custom tool — use `tools.config.<name>` in an [agent-loop profile](#agent-loop-profiles-custom-agent-loop). Custom tools are for adding **new** capabilities.
+
+### HTTP tool
+
+```yaml
+# data/tools/arxiv.yaml
+name: arxiv_search              # lowercase/digits/underscore; unique
+description: Search arXiv for academic papers by keyword.
+kind: http
+enabled: true
+parameters:
+  - name: query
+    type: string               # string | integer | number | boolean
+    description: Search keywords
+    required: true
+  - name: limit
+    type: integer
+    default: 10
+request:
+  method: GET                   # GET | POST
+  url: "http://export.arxiv.org/api/query?search_query=all:{{query}}&max_results={{limit}}"
+  headers:
+    User-Agent: "TigrimOS/1.0"
+  timeout_secs: 20              # capped at 120
+response:
+  format: auto                  # auto | json | text
+  select: "/results/0"          # optional JSON Pointer into the body
+  max_len: 4000                 # truncate result (UTF-8 safe)
+```
+
+`{{param}}` placeholders are filled from the model's arguments (falling back to a parameter's `default`). Values interpolated into the `url` are **percent-encoded**; values in a POST `body` are **JSON-escaped**. Every request runs through the same **SSRF guard** as `fetch_url`, so a tool can't be pointed at loopback or cloud-metadata addresses.
+
+### Shell tool
+
+```yaml
+# data/tools/pdf_pages.yaml
+name: pdf_pages
+description: Report the page count of a PDF in the sandbox.
+kind: shell
+enabled: true
+parameters:
+  - name: file
+    type: string
+    required: true
+run:
+  command: "pdfinfo {{file}} | grep Pages"
+  timeout_secs: 30
+require_approval: true          # shell tools default to the shell-approval toggle
+```
+
+Shell tools run through the **exact same sandbox as the built-in `run_shell`** — dangerous-command blocking, sandbox-jailed working directory, per-session process groups, and VM routing all apply. They add no new execution surface.
+
+### Managing them
+
+- **Use the built-in editor** — **Settings → Tools → Custom Tools** (desktop *and* web/mobile) lets you create from a template, edit the YAML, validate-on-save, delete, and **test-run** a tool. See [Tool management](#tool-management-settings--tools).
+- Or just edit files under `data/tools/` — changes take effect on the next tool call (no restart). Files not ending in `.yaml`/`.yml` (e.g. the seeded `example.yaml.disabled`) are ignored, and an invalid file is skipped with a warning rather than breaking the others.
+- Or use the REST API (validated + testable without invoking the LLM):
+
+  | Method | Endpoint | Purpose |
+  |---|---|---|
+  | `GET` | `/api/custom-tools` | List tools with `{name, kind, enabled, valid}` |
+  | `GET` | `/api/custom-tools/{file}` | Read one tool's YAML |
+  | `POST` | `/api/custom-tools` | Validate + save (`{filename, content}`) |
+  | `POST` | `/api/custom-tools/{name}/test` | Dry-run with `{args}` and see the raw result |
+  | `DELETE` | `/api/custom-tools/{file}` | Remove a tool |
+
+Saving validates the name (no collision with a built-in or the `mcp_` namespace), the `kind`↔spec consistency, the HTTP method, and that every `{{placeholder}}` maps to a declared parameter.
+
+</details>
+
+## Tool management (Settings → Tools)
+
+A single place to see and manage every tool the agent can call — built-in, MCP, and custom — in both the desktop app and the web/mobile UI.
+
+<details>
+<summary>🛠️ The Tools screen</summary>
+
+Open **Settings → Tools**. It has two sub-tabs.
+
+**Catalog** — a table of every tool with its **source** (`built-in` or `custom · http|shell`) and live **status chips** computed from your active [agent-loop profile](#agent-loop-profiles-custom-agent-loop):
+
+| Chip | Meaning |
+|---|---|
+| `on` | default behavior, no overrides |
+| `disabled` | hidden from the model in this profile |
+| `always-ask` / `never-ask` | approval overridden for this tool |
+| `pinned` / `defaults` | parameters forced / defaulted |
+| `timeout` / `result-cap` | runtime or output-size limit set |
+| `renamed` | description overridden |
+
+Protected coordination tools (`send_task`, `wait_result`, `proto_*`, `bb_*`, …) are marked 🔒 and can't be hidden. **Configure** on a built-in jumps to the per-tool config editor; **Edit** on a custom tool opens it in the next tab.
+
+**Custom Tools** — a full editor for your `data/tools/*.yaml` files: pick a template (**+ HTTP** / **+ Shell**), edit the YAML, **Save** (validated, with warnings surfaced inline), **Delete**, and a **Test run** panel that executes the tool with JSON args and shows the raw result — **without invoking the model**, so you can iterate quickly.
+
+> Tuning an *existing* tool (rename, pin a param, gate approval, cap output) writes to your agent-loop profile's `tools.config.<name>`; adding a *new* tool writes a `data/tools/*.yaml` file. The Tools screen surfaces both in one place.
+
+</details>
+
 ## Academic paper search (OpenAlex)
 
 A built-in **`search_papers`** tool lets the agent search scholarly literature directly — no web scraping, no API key, nothing to configure.
@@ -2045,9 +2154,11 @@ What changed in each release, latest first.
 <details>
 <summary>🗒 Version history</summary>
 
-### v0.6.3
+### v0.7.0
 
-- **Academic paper search (OpenAlex)** — New built-in **`search_papers`** tool queries [OpenAlex](https://openalex.org) (250M+ scholarly works) and returns structured metadata for each result: title, authors (first 8 + "et al."), publication year, venue, DOI, citation count, open-access PDF link, and a **reconstructed abstract** (OpenAlex ships abstracts as an inverted index; the tool rebuilds the plain text). Supports `limit` (≤25), `from_year`/`to_year` range filters, `sort` by relevance or citations, and `open_access_only`. No API key and no configuration — it calls the free OpenAlex API directly with a polite `User-Agent`. Works like any agent tool, so it honors [per-tool config](#per-tool-config-toolsconfig) (hide, pin params, cap runtime, override description) and shows **"Searching papers on OpenAlex…"** in the desktop and web UIs. See [Academic paper search](#academic-paper-search-openalex).
+- **Custom tools in YAML** — Users can now add brand-new agent tools declaratively by dropping a `*.yaml` file in `data/tools/` — no Rust and no rebuild. Two kinds: **`http`** (templated GET/POST to a REST API, with URL percent-encoding, JSON-escaped bodies, JSON-Pointer response selection, and truncation) and **`shell`** (a templated command that delegates into the built-in `run_shell`, inheriting all of its sandboxing — dangerous-command blocking, sandbox-jailed cwd, process-group kill, VM routing). Custom tools are rendered into the model's tool list beside built-in and MCP tools and flow through the same dispatch, so per-tool profile config (hide, description override, default/pinned params, approval, timeout, result cap) applies to them automatically; HTTP requests go through the shared SSRF guard. A new `/api/custom-tools` REST API (list/get/save/validate/test/delete) manages them — save-time validation rejects name collisions with built-ins or the `mcp_` namespace, mismatched kind/spec blocks, bad HTTP methods, and undeclared `{{placeholders}}` — and a commented `example.yaml.disabled` is seeded on first run. See [Custom tools (YAML)](#custom-tools-yaml).
+- **Tool management UI (desktop + web/mobile)** — A new **Settings → Tools** screen in both the native app and the remote web UI. The **Catalog** sub-tab lists every tool (built-in and custom) with its source and live status chips derived from the active agent-loop profile (`disabled`, `always-ask`/`never-ask`, `pinned`, `defaults`, `timeout`, `result-cap`, `renamed`), marks protected coordination tools, and deep-links a built-in into the per-tool config editor. The **Custom Tools** sub-tab is a full editor for `data/tools/*.yaml`: create from an HTTP or shell template, edit the YAML, validate-on-save, delete, and **test-run a tool with JSON args without invoking the model** (via `/api/custom-tools/{name}/test`). On the desktop the CRUD is dual-path — direct filesystem/service calls locally, REST when pointed at a remote backend.
+- **Academic paper search (OpenAlex)** — Built-in **`search_papers`** tool queries [OpenAlex](https://openalex.org) (250M+ scholarly works) and returns structured metadata for each result: title, authors (first 8 + "et al."), publication year, venue, DOI, citation count, open-access PDF link, and a **reconstructed abstract** (OpenAlex ships abstracts as an inverted index; the tool rebuilds the plain text). Supports `limit` (≤25), `from_year`/`to_year` range filters, `sort` by relevance or citations, and `open_access_only`. No API key and no configuration — it calls the free OpenAlex API directly with a polite `User-Agent`. Works like any agent tool, so it honors [per-tool config](#per-tool-config-toolsconfig) (hide, pin params, cap runtime, override description) and shows **"Searching papers on OpenAlex…"** in the desktop and web UIs. See [Academic paper search](#academic-paper-search-openalex).
 
 ### v0.6.2
 

@@ -20,3 +20,4 @@ pub mod messaging;
 #[allow(dead_code)]
 pub mod compact;
 pub mod plugin;
+pub mod custom_tools;

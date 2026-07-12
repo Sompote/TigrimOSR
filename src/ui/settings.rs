@@ -20,6 +20,7 @@ enum SettingsSection {
     SubAgent,
     AgentLoop,
     McpTools,
+    Tools,
     Plugins,
     Remote,
     Messaging,
@@ -38,6 +39,7 @@ impl SettingsSection {
         Self::SubAgent,
         Self::AgentLoop,
         Self::McpTools,
+        Self::Tools,
         Self::Plugins,
         Self::Remote,
         Self::Messaging,
@@ -56,6 +58,7 @@ impl SettingsSection {
             Self::SubAgent => "Sub-Agent",
             Self::AgentLoop => "Agent Loop",
             Self::McpTools => "MCP Tools",
+            Self::Tools => "Tools",
             Self::Plugins => "Plugins",
             Self::Remote => "Remote",
             Self::Messaging => "Messaging",
@@ -218,6 +221,24 @@ pub struct SettingsView {
     loop_eval_model: String,
     loop_eval_rubric: String,
     loop_eval_allow_execute: bool,
+
+    // --- Tools (management: catalog + custom YAML tools) ---
+    /// 0 = Catalog (all tools), 1 = Custom Tools editor.
+    tools_subtab: u8,
+    tools_catalog_filter: String,
+    tools_show_disabled: bool,
+    /// Custom-tool summaries: {filename,name,kind,enabled,valid,error}.
+    custom_tools_list: Vec<serde_json::Value>,
+    custom_tools_loaded: bool,
+    /// tools.config of the active agent-loop profile, for Catalog status chips.
+    tools_active_config:
+        std::collections::BTreeMap<String, crate::server::services::agent_loop::ToolConfig>,
+    custom_tool_selected: String, // filename open in the editor
+    custom_tool_yaml: String,
+    custom_tool_new_name: String,
+    custom_tool_test_args: String,
+    custom_tool_test_result: Option<String>,
+    custom_tool_status: Option<String>,
 
     // --- MCP Tools ---
     mcp_tools: Vec<McpTool>,
@@ -421,6 +442,19 @@ impl Default for SettingsView {
             loop_eval_rubric: String::new(),
             loop_eval_allow_execute: false,
 
+            tools_subtab: 0,
+            tools_catalog_filter: String::new(),
+            tools_show_disabled: true,
+            custom_tools_list: Vec::new(),
+            custom_tools_loaded: false,
+            tools_active_config: std::collections::BTreeMap::new(),
+            custom_tool_selected: String::new(),
+            custom_tool_yaml: String::new(),
+            custom_tool_new_name: String::new(),
+            custom_tool_test_args: "{}".to_string(),
+            custom_tool_test_result: None,
+            custom_tool_status: None,
+
             mcp_tools: Vec::new(),
             new_mcp_name: String::new(),
             google_client_id: String::new(),
@@ -598,6 +632,7 @@ impl SettingsView {
                             SettingsSection::SubAgent => self.section_sub_agent(ui, runtime),
                             SettingsSection::AgentLoop => self.section_agent_loop(ui, runtime),
                             SettingsSection::McpTools => self.section_mcp_tools(ui, runtime),
+                            SettingsSection::Tools => self.section_tools(ui, runtime),
                             SettingsSection::Plugins => self.section_plugins(ui, ctx, runtime),
                             SettingsSection::Remote => self.section_remote(ui, runtime),
                             SettingsSection::Messaging => self.section_messaging(ui, runtime),
@@ -5342,6 +5377,564 @@ impl SettingsView {
             settings.agent_loop_profile = Some(active);
             save_settings(&settings).await;
         });
+    }
+
+    // -----------------------------------------------------------------------
+    //  Tools management (Settings > Tools): Catalog + Custom Tools editor.
+    //  Custom-tool CRUD is dual: direct fs/service calls locally, REST when
+    //  the desktop app is pointed at a remote backend.
+    // -----------------------------------------------------------------------
+
+    /// List custom tools (filename/name/kind/enabled/valid/error) from the
+    /// local data/tools folder, mirroring the /api/custom-tools list route.
+    fn load_custom_tools_local() -> Vec<serde_json::Value> {
+        use crate::server::services::custom_tools::{tools_dir, CustomTool};
+        let dir = tools_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !(name.ends_with(".yaml") || name.ends_with(".yml")) {
+                    continue;
+                }
+                let content = std::fs::read_to_string(entry.path()).unwrap_or_default();
+                match serde_yaml::from_str::<CustomTool>(&content) {
+                    Ok(t) => out.push(serde_json::json!({
+                        "filename": name, "name": t.name, "kind": t.kind,
+                        "enabled": t.enabled, "valid": true, "error": "",
+                    })),
+                    Err(e) => out.push(serde_json::json!({
+                        "filename": name,
+                        "name": name.trim_end_matches(".yaml").trim_end_matches(".yml"),
+                        "kind": "", "enabled": false, "valid": false, "error": e.to_string(),
+                    })),
+                }
+            }
+        }
+        out.sort_by(|a, b| a["filename"].as_str().unwrap_or("").cmp(b["filename"].as_str().unwrap_or("")));
+        out
+    }
+
+    /// Refresh the custom-tool list and the active profile's tools.config
+    /// (used for the Catalog status chips).
+    fn refresh_custom_tools(&mut self, runtime: &tokio::runtime::Handle) {
+        // Custom tool list — remote via REST, else local fs.
+        self.custom_tools_list = if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            client
+                .get(format!("{}/api/custom-tools", rb.url))
+                .bearer_auth(&rb.token)
+                .send()
+                .ok()
+                .and_then(|r| r.json::<Vec<serde_json::Value>>().ok())
+                .unwrap_or_default()
+        } else {
+            Self::load_custom_tools_local()
+        };
+
+        // Active profile tools.config for chips.
+        let active = runtime.block_on(get_settings()).agent_loop_profile.unwrap_or_default();
+        self.tools_active_config.clear();
+        if !active.is_empty() {
+            if let Some(p) = crate::server::services::agent_loop::load_profile(&active) {
+                if let Some(tf) = p.tools {
+                    self.tools_active_config = tf.config;
+                }
+            }
+        }
+        self.custom_tools_loaded = true;
+    }
+
+    fn open_custom_tool(&mut self, filename: &str) {
+        self.custom_tool_selected = filename.to_string();
+        self.custom_tool_test_result = None;
+        self.custom_tool_status = None;
+        self.custom_tool_yaml = if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            client
+                .get(format!("{}/api/custom-tools/{}", rb.url, filename))
+                .bearer_auth(&rb.token)
+                .send()
+                .ok()
+                .and_then(|r| r.json::<serde_json::Value>().ok())
+                .and_then(|v| v["content"].as_str().map(|s| s.to_string()))
+                .unwrap_or_default()
+        } else {
+            std::fs::read_to_string(
+                crate::server::services::custom_tools::tools_dir().join(filename),
+            )
+            .unwrap_or_default()
+        };
+    }
+
+    fn save_custom_tool(&mut self, runtime: &tokio::runtime::Handle) {
+        let filename = self.custom_tool_selected.clone();
+        if filename.is_empty() {
+            self.custom_tool_status = Some("Error: no tool selected".into());
+            return;
+        }
+        let content = self.custom_tool_yaml.clone();
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            let resp = client
+                .post(format!("{}/api/custom-tools", rb.url))
+                .bearer_auth(&rb.token)
+                .json(&serde_json::json!({"filename": filename, "content": content}))
+                .send();
+            match resp {
+                Ok(r) => {
+                    let v = r.json::<serde_json::Value>().unwrap_or_default();
+                    self.custom_tool_status = Some(match v.get("error").and_then(|e| e.as_str()) {
+                        Some(e) => format!("Error: {e}"),
+                        None => {
+                            let w = v["warnings"].as_array().map(|a| a.len()).unwrap_or(0);
+                            if w > 0 { format!("Saved (warnings: {w})") } else { "Saved".into() }
+                        }
+                    });
+                }
+                Err(e) => self.custom_tool_status = Some(format!("Error: {e}")),
+            }
+        } else {
+            // Local: parse + validate + write.
+            match serde_yaml::from_str::<crate::server::services::custom_tools::CustomTool>(&content) {
+                Ok(tool) => match crate::server::services::custom_tools::validate(&tool) {
+                    Ok(warnings) => {
+                        let dir = crate::server::services::custom_tools::tools_dir();
+                        let _ = std::fs::create_dir_all(&dir);
+                        match std::fs::write(dir.join(&filename), &content) {
+                            Ok(()) => {
+                                self.custom_tool_status = Some(if warnings.is_empty() {
+                                    "Saved".into()
+                                } else {
+                                    format!("Saved — warnings: {}", warnings.join("; "))
+                                });
+                            }
+                            Err(e) => self.custom_tool_status = Some(format!("Error writing: {e}")),
+                        }
+                    }
+                    Err(e) => self.custom_tool_status = Some(format!("Invalid: {e}")),
+                },
+                Err(e) => self.custom_tool_status = Some(format!("Invalid YAML: {e}")),
+            }
+        }
+        self.custom_tools_loaded = false; // force list refresh
+    }
+
+    fn delete_custom_tool(&mut self, filename: &str) {
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            let _ = client
+                .delete(format!("{}/api/custom-tools/{}", rb.url, filename))
+                .bearer_auth(&rb.token)
+                .send();
+        } else {
+            let fp = crate::server::services::custom_tools::tools_dir().join(filename);
+            let _ = std::fs::remove_file(fp);
+        }
+        if self.custom_tool_selected == filename {
+            self.custom_tool_selected.clear();
+            self.custom_tool_yaml.clear();
+        }
+        self.custom_tools_loaded = false;
+    }
+
+    fn test_custom_tool(&mut self, runtime: &tokio::runtime::Handle) {
+        // Resolve the tool name from the buffer (name: line) or filename.
+        let name = serde_yaml::from_str::<serde_json::Value>(&self.custom_tool_yaml)
+            .ok()
+            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+            .unwrap_or_else(|| {
+                self.custom_tool_selected
+                    .trim_end_matches(".yaml")
+                    .trim_end_matches(".yml")
+                    .to_string()
+            });
+        let args: serde_json::Value =
+            serde_json::from_str(&self.custom_tool_test_args).unwrap_or(serde_json::json!({}));
+
+        let result = if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_default();
+            client
+                .post(format!("{}/api/custom-tools/{}/test", rb.url, name))
+                .bearer_auth(&rb.token)
+                .json(&serde_json::json!({"args": args}))
+                .send()
+                .ok()
+                .and_then(|r| r.json::<serde_json::Value>().ok())
+                .unwrap_or(serde_json::json!({"error": "request failed"}))
+        } else {
+            let sandbox = crate::server::data::data_dir()
+                .join("..")
+                .join("sandbox")
+                .to_string_lossy()
+                .to_string();
+            runtime.block_on(crate::server::services::custom_tools::execute(&name, &args, &sandbox))
+        };
+        self.custom_tool_test_result =
+            Some(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()));
+    }
+
+    fn section_tools(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        self.load_settings_if_needed(runtime);
+        if !self.custom_tools_loaded {
+            self.refresh_custom_tools(runtime);
+        }
+        if self.loop_tool_catalog.is_empty() {
+            self.loop_tool_catalog = crate::server::services::toolbox::tool_catalog();
+        }
+        let dim = egui::Color32::from_rgb(124, 115, 104);
+
+        ui.add_space(8.0);
+        ui.heading("Tools");
+        ui.label(
+            egui::RichText::new(
+                "Every tool the agent can call. Catalog shows built-in and custom tools with \
+                 their per-tool config; Custom Tools lets you add your own (HTTP or shell) in YAML.",
+            )
+            .size(12.0)
+            .color(dim),
+        );
+        ui.add_space(6.0);
+
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.tools_subtab, 0, "Catalog");
+            ui.selectable_value(&mut self.tools_subtab, 1, "Custom Tools");
+            if ui.button("🔄 Refresh").clicked() {
+                self.custom_tools_loaded = false;
+                self.loop_tool_catalog = crate::server::services::toolbox::tool_catalog();
+            }
+        });
+        ui.separator();
+
+        if self.tools_subtab == 0 {
+            self.tools_catalog_view(ui);
+        } else {
+            self.tools_custom_view(ui, runtime);
+        }
+    }
+
+    /// Sub-tab 1: read-only catalog of every tool with status chips and a
+    /// jump-to-config / edit action.
+    fn tools_catalog_view(&mut self, ui: &mut egui::Ui) {
+        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let green = egui::Color32::from_rgb(34, 197, 94);
+        let amber = egui::Color32::from_rgb(214, 158, 46);
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("Filter:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.tools_catalog_filter)
+                    .desired_width(200.0)
+                    .hint_text("name…"),
+            );
+            ui.checkbox(&mut self.tools_show_disabled, "Show disabled");
+        });
+        ui.add_space(4.0);
+
+        // Custom tool names (for the SOURCE column).
+        let custom_names: std::collections::HashMap<String, (String, bool)> = self
+            .custom_tools_list
+            .iter()
+            .filter_map(|t| {
+                Some((
+                    t["name"].as_str()?.to_string(),
+                    (t["kind"].as_str().unwrap_or("").to_string(), t["enabled"].as_bool().unwrap_or(true)),
+                ))
+            })
+            .collect();
+
+        let filter = self.tools_catalog_filter.to_lowercase();
+        let catalog = self.loop_tool_catalog.clone();
+        let mut jump_to: Option<String> = None;
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::Grid::new("tools_catalog_grid")
+                .num_columns(4)
+                .spacing([12.0, 6.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Tool").strong());
+                    ui.label(egui::RichText::new("Source").strong());
+                    ui.label(egui::RichText::new("Status").strong());
+                    ui.label(egui::RichText::new("").strong());
+                    ui.end_row();
+
+                    for (name, _desc) in &catalog {
+                        if !filter.is_empty() && !name.to_lowercase().contains(&filter) {
+                            continue;
+                        }
+                        let cfg = self.tools_active_config.get(name);
+                        let disabled = cfg.and_then(|c| c.enabled) == Some(false);
+                        if disabled && !self.tools_show_disabled {
+                            continue;
+                        }
+                        let is_custom = custom_names.contains_key(name);
+                        let source = if is_custom {
+                            custom_names.get(name).map(|(k, _)| format!("custom · {k}")).unwrap_or("custom".into())
+                        } else {
+                            "built-in".to_string()
+                        };
+
+                        // Tool name (+ protected marker)
+                        let protected = name.starts_with("proto_")
+                            || name.starts_with("bb_")
+                            || matches!(name.as_str(), "send_task" | "wait_result" | "check_agents" | "spawn_subagent" | "create_architecture" | "select_swarm");
+                        ui.horizontal(|ui| {
+                            ui.label(name);
+                            if protected {
+                                ui.label(egui::RichText::new("🔒").size(11.0).color(dim));
+                            }
+                        });
+                        ui.label(egui::RichText::new(source).color(dim));
+
+                        // Status chips
+                        ui.horizontal(|ui| {
+                            let mut any = false;
+                            if disabled {
+                                ui.label(egui::RichText::new("disabled").color(amber));
+                                any = true;
+                            }
+                            if let Some(c) = cfg {
+                                match c.require_approval {
+                                    Some(true) => { ui.label(egui::RichText::new("always-ask").color(amber)); any = true; }
+                                    Some(false) => { ui.label(egui::RichText::new("never-ask").color(green)); any = true; }
+                                    None => {}
+                                }
+                                if c.pinned_params.is_some() { ui.label("pinned"); any = true; }
+                                if c.params.is_some() { ui.label("defaults"); any = true; }
+                                if c.timeout_secs.is_some() { ui.label("timeout"); any = true; }
+                                if c.max_result_len.is_some() { ui.label("result-cap"); any = true; }
+                                if c.description.is_some() { ui.label("renamed"); any = true; }
+                            }
+                            if !any {
+                                ui.label(egui::RichText::new("on").color(green));
+                            }
+                        });
+
+                        // Action
+                        if is_custom {
+                            if ui.button("Edit").clicked() {
+                                jump_to = Some(format!("custom:{name}"));
+                            }
+                        } else if ui.button("Configure").clicked() {
+                            jump_to = Some(format!("config:{name}"));
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
+
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(format!(
+                "{} tools · {} custom. MCP tools are managed under Settings → MCP Tools.",
+                catalog.len(),
+                custom_names.len()
+            ))
+            .size(11.0)
+            .color(dim),
+        );
+
+        // Handle a queued action after the immutable borrow ends.
+        if let Some(action) = jump_to {
+            if let Some(name) = action.strip_prefix("custom:") {
+                // Open the matching custom file in the Custom Tools sub-tab.
+                let file = self
+                    .custom_tools_list
+                    .iter()
+                    .find(|t| t["name"].as_str() == Some(name))
+                    .and_then(|t| t["filename"].as_str().map(|s| s.to_string()));
+                if let Some(f) = file {
+                    self.open_custom_tool(&f);
+                    self.tools_subtab = 1;
+                }
+            } else if let Some(name) = action.strip_prefix("config:") {
+                // Deep-link into the Agent Loop editor with this tool queued
+                // into the per-tool config for the active profile.
+                let active = self.active_loop_profile.clone();
+                if active.is_empty() {
+                    self.custom_tool_status =
+                        Some("Select or create an active profile in Agent Loop, then Configure.".into());
+                } else {
+                    self.open_loop_profile(&active);
+                    self.loop_tools_config.entry(name.to_string()).or_default();
+                    self.loop_tools_config_params_text.entry(name.to_string()).or_default();
+                    self.loop_tools_config_pins_text.entry(name.to_string()).or_default();
+                }
+                self.selected_section = SettingsSection::AgentLoop;
+            }
+        }
+    }
+
+    /// Sub-tab 2: create / edit / delete / test custom YAML tools.
+    fn tools_custom_view(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let red = egui::Color32::from_rgb(200, 80, 70);
+
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(
+                "Add your own tools in data/tools/*.yaml — an HTTP/REST call or a sandboxed shell \
+                 command. Templated with {{param}}. No rebuild needed.",
+            )
+            .size(11.0)
+            .color(dim),
+        );
+        ui.add_space(6.0);
+
+        // New-tool row
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.custom_tool_new_name)
+                    .desired_width(160.0)
+                    .hint_text("new tool name"),
+            );
+            if ui.button("➕ New HTTP").clicked() {
+                self.create_custom_tool_template("http");
+            }
+            if ui.button("➕ New Shell").clicked() {
+                self.create_custom_tool_template("shell");
+            }
+        });
+        ui.add_space(6.0);
+
+        let list = self.custom_tools_list.clone();
+        egui::SidePanel::left("custom_tools_list_panel")
+            .resizable(true)
+            .default_width(200.0)
+            .show_inside(ui, |ui| {
+                ui.label(egui::RichText::new("Your tools").strong());
+                ui.separator();
+                let mut delete: Option<String> = None;
+                for t in &list {
+                    let filename = t["filename"].as_str().unwrap_or("").to_string();
+                    let name = t["name"].as_str().unwrap_or(&filename);
+                    let kind = t["kind"].as_str().unwrap_or("");
+                    let valid = t["valid"].as_bool().unwrap_or(false);
+                    let enabled = t["enabled"].as_bool().unwrap_or(true);
+                    ui.horizontal(|ui| {
+                        let selected = self.custom_tool_selected == filename;
+                        let mut label = format!("{name}  ({kind})");
+                        if !valid {
+                            label = format!("⚠ {name}");
+                        } else if !enabled {
+                            label = format!("{name}  (off)");
+                        }
+                        if ui.selectable_label(selected, label).clicked() {
+                            self.open_custom_tool(&filename);
+                        }
+                        if ui.small_button("🗑").clicked() {
+                            delete = Some(filename.clone());
+                        }
+                    });
+                }
+                if let Some(f) = delete {
+                    self.delete_custom_tool(&f);
+                }
+            });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            if self.custom_tool_selected.is_empty() {
+                ui.add_space(20.0);
+                ui.label(egui::RichText::new("Select a tool on the left, or create a new one above.").color(dim));
+                return;
+            }
+            ui.label(egui::RichText::new(&self.custom_tool_selected).strong());
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical()
+                .id_salt("custom_tool_yaml_scroll")
+                .max_height(260.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.custom_tool_yaml)
+                            .code_editor()
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(14),
+                    );
+                });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if Self::save_button(ui, "💾 Save") {
+                    self.save_custom_tool(runtime);
+                }
+                if ui.button("🗑 Delete").clicked() {
+                    let f = self.custom_tool_selected.clone();
+                    self.delete_custom_tool(&f);
+                }
+            });
+            if let Some(msg) = &self.custom_tool_status {
+                let c = if msg.starts_with("Error") || msg.starts_with("Invalid") { red } else { dim };
+                ui.label(egui::RichText::new(msg).size(11.0).color(c));
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("Test run (no LLM)").strong());
+            ui.horizontal(|ui| {
+                ui.label("args (JSON):");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.custom_tool_test_args)
+                        .desired_width(280.0)
+                        .hint_text("{\"query\":\"...\"}"),
+                );
+                if ui.button("▶ Run").clicked() {
+                    self.test_custom_tool(runtime);
+                }
+            });
+            if let Some(res) = &self.custom_tool_test_result {
+                egui::ScrollArea::vertical()
+                    .id_salt("custom_tool_test_scroll")
+                    .max_height(160.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut res.clone())
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .interactive(false),
+                        );
+                    });
+            }
+        });
+    }
+
+    fn create_custom_tool_template(&mut self, kind: &str) {
+        let raw = self.custom_tool_new_name.trim().to_lowercase();
+        let name: String = raw.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+        if name.is_empty() {
+            self.custom_tool_status = Some("Enter a tool name first".into());
+            return;
+        }
+        let yaml = if kind == "shell" {
+            format!(
+                "name: {name}\ndescription: Describe what this tool does.\nkind: shell\nenabled: true\nparameters:\n  - name: arg1\n    type: string\n    required: true\nrun:\n  command: \"echo {{{{arg1}}}}\"\n  timeout_secs: 30\nrequire_approval: true\n"
+            )
+        } else {
+            format!(
+                "name: {name}\ndescription: Describe what this tool does.\nkind: http\nenabled: true\nparameters:\n  - name: query\n    type: string\n    required: true\n  - name: limit\n    type: integer\n    default: 10\nrequest:\n  method: GET\n  url: \"https://api.example.com/search?q={{{{query}}}}&n={{{{limit}}}}\"\n  headers:\n    User-Agent: \"TigrimOS/1.0\"\n  timeout_secs: 20\nresponse:\n  format: auto\n  max_len: 4000\n"
+            )
+        };
+        self.custom_tool_selected = format!("{name}.yaml");
+        self.custom_tool_yaml = yaml;
+        self.custom_tool_new_name.clear();
+        self.custom_tool_test_result = None;
+        self.custom_tool_status = Some("New tool — edit and Save.".into());
     }
 
     fn section_agent_loop(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
