@@ -2606,6 +2606,25 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "search_papers",
+                "description": "Search academic/scientific papers via OpenAlex (250M+ scholarly works). Returns title, authors, year, venue, DOI, citation count, open-access PDF link, and abstract. Use this for research literature instead of web_search.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query (matched against title, abstract, and fulltext)" },
+                        "limit": { "type": "integer", "description": "Max results to return (default 10, max 25)" },
+                        "from_year": { "type": "integer", "description": "Only papers published in or after this year" },
+                        "to_year": { "type": "integer", "description": "Only papers published in or before this year" },
+                        "sort": { "type": "string", "description": "'relevance' (default) or 'citations' (most-cited first)" },
+                        "open_access_only": { "type": "boolean", "description": "Only return open-access papers with a free PDF/fulltext" }
+                    },
+                    "required": ["query"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "fetch_url",
                 "description": "Fetch content from a URL.",
                 "parameters": {
@@ -3613,6 +3632,131 @@ async fn google_search_via_browser(query: &str) -> Option<Vec<Value>> {
         "url": url,
         "text": crate::util::truncate_utf8(text_blob, 4000),
     })])
+}
+
+/// OpenAlex ships abstracts as an inverted index (word -> positions) for
+/// copyright reasons; rebuild the plain text by position.
+fn openalex_reconstruct_abstract(inverted: &Value) -> String {
+    let Some(map) = inverted.as_object() else {
+        return String::new();
+    };
+    let mut words: Vec<(u64, &str)> = Vec::new();
+    for (word, positions) in map {
+        if let Some(arr) = positions.as_array() {
+            for p in arr {
+                if let Some(i) = p.as_u64() {
+                    words.push((i, word.as_str()));
+                }
+            }
+        }
+    }
+    words.sort_by_key(|(i, _)| *i);
+    words
+        .iter()
+        .map(|(_, w)| *w)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+async fn exec_search_papers(args: &Value) -> Value {
+    let query = args["query"].as_str().unwrap_or("");
+    if query.is_empty() {
+        return json!({ "ok": false, "error": "query is required" });
+    }
+    let limit = args["limit"].as_u64().unwrap_or(10).clamp(1, 25);
+
+    let mut filters: Vec<String> = Vec::new();
+    if let Some(y) = args["from_year"].as_u64() {
+        filters.push(format!("from_publication_date:{y}-01-01"));
+    }
+    if let Some(y) = args["to_year"].as_u64() {
+        filters.push(format!("to_publication_date:{y}-12-31"));
+    }
+    if args["open_access_only"].as_bool() == Some(true) {
+        filters.push("is_oa:true".to_string());
+    }
+
+    let mut url = format!(
+        "https://api.openalex.org/works?search={}&per-page={}&select=id,doi,title,display_name,publication_year,cited_by_count,primary_location,open_access,authorships,abstract_inverted_index",
+        urlencoding::encode(query),
+        limit
+    );
+    if !filters.is_empty() {
+        url.push_str("&filter=");
+        url.push_str(&filters.join(","));
+    }
+    if args["sort"].as_str() == Some("citations") {
+        url.push_str("&sort=cited_by_count:desc");
+    }
+
+    let client = Client::new();
+    let resp = match timeout(
+        Duration::from_secs(20),
+        client.get(&url).header("User-Agent", "TigrimOS/1.0").send(),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return json!({ "ok": false, "error": format!("OpenAlex request failed: {e}") }),
+        Err(_) => return json!({ "ok": false, "error": "OpenAlex request timed out (20s)" }),
+    };
+    let status = resp.status();
+    let data: Value = match resp.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            return json!({ "ok": false, "error": format!("OpenAlex returned invalid JSON (HTTP {status}): {e}") })
+        }
+    };
+    if !status.is_success() {
+        let msg = data["message"].as_str().unwrap_or("");
+        return json!({ "ok": false, "error": format!("OpenAlex HTTP {status}: {msg}") });
+    }
+
+    let mut results: Vec<Value> = Vec::new();
+    if let Some(works) = data["results"].as_array() {
+        for work in works {
+            let title = work["display_name"]
+                .as_str()
+                .or(work["title"].as_str())
+                .unwrap_or("");
+            let mut authors: Vec<&str> = Vec::new();
+            let mut author_total = 0;
+            if let Some(auths) = work["authorships"].as_array() {
+                author_total = auths.len();
+                for a in auths.iter().take(8) {
+                    if let Some(name) = a.pointer("/author/display_name").and_then(|n| n.as_str()) {
+                        authors.push(name);
+                    }
+                }
+            }
+            let mut author_str = authors.join(", ");
+            if author_total > 8 {
+                author_str.push_str(" et al.");
+            }
+            let abstract_text = crate::util::truncate_utf8_ellipsis(
+                &openalex_reconstruct_abstract(&work["abstract_inverted_index"]),
+                800,
+            );
+            results.push(json!({
+                "title": title,
+                "authors": author_str,
+                "year": work["publication_year"],
+                "venue": work.pointer("/primary_location/source/display_name").and_then(|v| v.as_str()).unwrap_or(""),
+                "doi": work["doi"].as_str().unwrap_or(""),
+                "cited_by_count": work["cited_by_count"],
+                "open_access_url": work.pointer("/open_access/oa_url").and_then(|u| u.as_str()).unwrap_or(""),
+                "url": work["doi"].as_str().or(work["id"].as_str()).unwrap_or(""),
+                "abstract": abstract_text,
+            }));
+        }
+    }
+
+    json!({
+        "ok": true,
+        "total_matches": data.pointer("/meta/count").cloned().unwrap_or(Value::Null),
+        "results": results,
+        "note": "Source: OpenAlex. Use fetch_url on open_access_url to read the fulltext PDF when available."
+    })
 }
 
 async fn exec_web_search(args: &Value) -> Value {
@@ -6640,6 +6784,7 @@ async fn execute_tool_with_context(
 ) -> Value {
     match name {
         "web_search" => exec_web_search(args).await,
+        "search_papers" => exec_search_papers(args).await,
         "fetch_url" => exec_fetch_url(args).await,
         "run_python" => exec_run_python(args, sandbox_dir).await,
         "run_shell" => exec_run_shell(args, sandbox_dir).await,

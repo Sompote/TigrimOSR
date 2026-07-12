@@ -1578,7 +1578,7 @@ You have access to these tools: {}.{}",
                             let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
                             let first_line = code.lines().next().unwrap_or("");
                             format!("\u{2192} {}", first_line)
-                        } else if name == "web_search" {
+                        } else if name == "web_search" || name == "search_papers" {
                             let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
                             format!("\u{2192} \"{}\"", q)
                         } else if name == "fetch_url" {
@@ -4204,6 +4204,7 @@ You have access to these tools: {}.{}",
     fn tool_label(name: &str) -> &str {
         match name {
             "web_search" => "Searching the web...",
+            "search_papers" => "Searching papers on OpenAlex...",
             "fetch_url" => "Fetching URL...",
             "run_python" => "Running Python...",
             "run_shell" => "Running command...",
@@ -5433,6 +5434,7 @@ You have access to these tools: {}.{}",
                                         "check_agents" => "Checking agent status...".to_string(),
                                         "run_python" => "Running Python code...".to_string(),
                                         "web_search" => "Searching the web...".to_string(),
+                                        "search_papers" => "Searching papers on OpenAlex...".to_string(),
                                         "fetch_url" => "Fetching URL...".to_string(),
                                         "read_file" => "Reading file...".to_string(),
                                         "write_file" => "Writing file...".to_string(),

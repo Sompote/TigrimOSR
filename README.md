@@ -1,20 +1,20 @@
-# TigrimOSR v0.6.2
+# TigrimOSR v0.6.3
 
 **TigrimOSR** is a native Rust AI agent platform in a single self-contained binary. Orchestrate swarms of specialist agents, and **build your own agent loop** — which tools, models, skills and MCP servers each agent uses — in simple YAML, editable from the desktop app, any browser, or your phone.
 
-Connect **Gmail / Calendar / Drive** in three clicks, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
+Connect **Gmail / Calendar / Drive** in three clicks, search **250M+ scholarly papers** with one tool, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
 
 **⬇️ Install in under a minute — no build needed:**
-[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/TigrimOS-0.6.2.dmg) ·
-[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/TigrimOS-0.6.2-x64.msi) ·
+[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/TigrimOS-0.6.3.dmg) ·
+[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/TigrimOS-0.6.3-x64.msi) ·
 [all releases](https://github.com/Sompote/TigrimOSR/releases/latest) — or [run in Docker](#install-in-docker).
 
 **What's new (July 2026):**
 
+- 📚 **[Academic paper search (OpenAlex)](#academic-paper-search-openalex)** — a new `search_papers` tool queries 250M+ scholarly works: titles, authors, year, venue, DOI, citation counts, open-access PDFs and abstracts. No API key, no configuration.
 - 🇬 **[Connect Google](#connect-google-gmail--calendar--drive)** — three-click Gmail / Calendar / Drive access with browser login, on desktop *and* the remote web UI.
 - 🔧 **[Per-tool config](#per-tool-config-toolsconfig)** — per tool: hide it, require/waive approval, pin parameters, cap runtime & output — for built-in and MCP tools.
 - 📱 **Full mobile parity** — loop settings and per-tool settings are now editable as forms in the remote web UI, no YAML needed from a phone.
-- 🪟 **Windows fixes** — quoted shell commands work under cmd.exe, broken PATHs self-repair, and a new `save_skill` tool lets the agent actually install generated skills.
 - 🔒 **Hardening** — API keys/secrets masked across every settings surface; a sandbox path-traversal hole closed.
 
 ### Why TigrimOSR?
@@ -24,6 +24,7 @@ Connect **Gmail / Calendar / Drive** in three clicks, chat with your agents from
 - **Don't trust — verify** — after the job, an independent **tool-using judge** checks the result against your rubric and opens the output files before the answer reaches you.
 - **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, any OpenAI-compatible API — plus Claude Code / Gemini CLI / Codex with no API keys.
 - **Full tool calling** — web search, Python, file I/O, shell, MCP servers, ClawHub skills. Charts, images and docs render inline.
+- **Academic paper search** — a built-in `search_papers` tool queries **OpenAlex** (250M+ scholarly works) for titles, authors, citations, DOIs and open-access PDFs — no API key needed. See [Academic paper search](#academic-paper-search-openalex).
 - **Your Google, connected** — three-click **Gmail / Calendar / Drive** access; tokens stay on your machine — see [Connect Google](#connect-google-gmail--calendar--drive).
 - **Browser control** — the agent drives a real browser (Chrome/Chromium, or the Node-free Rust **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine) — no paid search API. Opt-in, off by default.
 - **Plugin system** — zip plugins bundling skills, MCP servers, agents and connectors. Claude Desktop/Code and npm MCP compatible.
@@ -94,6 +95,7 @@ Everything TigrimOSR can do — orchestration, tools, remote access, theming —
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
+- **Academic paper search** — built-in `search_papers` tool backed by [OpenAlex](https://openalex.org) (250M+ scholarly works): filter by year, sort by relevance or citations, open-access-only, with reconstructed abstracts and free-PDF links — no API key or config — see [Academic paper search](#academic-paper-search-openalex)
 - **Browser control** — opt-in toggle that lets the agent drive a real Chromium/Chrome browser (navigate, click, type, screenshot, tabs, JS) via Playwright MCP, or the stealthy **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine (single Rust binary, no Node required) — see [Browser Control](#browser-control)
 - **Google quick-connect** — three-click Gmail / Calendar / Drive access: paste an OAuth Client ID, auto-install the runtime, and log in with Google in your browser — see [Connect Google](#connect-google-gmail--calendar--drive)
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
@@ -139,7 +141,7 @@ running in under a minute.
 ### macOS
 
 **Desktop app (DMG):** download
-[`TigrimOS-0.6.2.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/TigrimOS-0.6.2.dmg),
+[`TigrimOS-0.6.3.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/TigrimOS-0.6.3.dmg),
 open it, and drag **TigrimOS** into **Applications**.
 
 > **First launch:** the app isn't notarized with Apple yet, so macOS may block it.
@@ -153,18 +155,18 @@ open it, and drag **TigrimOS** into **Applications**.
 
 ```bash
 # Apple Silicon (M1–M4)
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/tigrimos-0.6.2-macos-arm64.tar.gz | tar xz
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/tigrimos-0.6.3-macos-arm64.tar.gz | tar xz
 ./tigrimos
 
 # Intel Macs
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/tigrimos-0.6.2-macos-x86_64.tar.gz | tar xz
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/tigrimos-0.6.3-macos-x86_64.tar.gz | tar xz
 ./tigrimos
 ```
 
 ### Windows
 
 Download and run
-[`TigrimOS-0.6.2-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.2/TigrimOS-0.6.2-x64.msi)
+[`TigrimOS-0.6.3-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.6.3/TigrimOS-0.6.3-x64.msi)
 — it installs TigrimOS to Program Files and adds a **Start Menu** shortcut.
 
 > If **SmartScreen** shows "Windows protected your PC", click **More info** →
@@ -1538,6 +1540,46 @@ The agent drives a real browser with your logged-in sessions, so treat browser a
 
 </details>
 
+## Academic paper search (OpenAlex)
+
+A built-in **`search_papers`** tool lets the agent search scholarly literature directly — no web scraping, no API key, nothing to configure.
+
+<details>
+<summary>📚 How paper search works</summary>
+
+TigrimOS ships a first-class research tool backed by [**OpenAlex**](https://openalex.org), a free and open index of **250M+ scholarly works**. When you ask the agent for research literature, it calls `search_papers` instead of a general web search and gets back structured metadata for each paper:
+
+- **Title, authors** (first 8 + "et al."), **publication year**, and **venue / journal**
+- **DOI** and a canonical URL
+- **Citation count** (`cited_by_count`)
+- **Open-access PDF link** when the paper is freely available
+- A **reconstructed abstract** (OpenAlex distributes abstracts as an inverted index for copyright reasons; the tool rebuilds the plain text)
+
+### No setup required
+
+There's nothing to configure — it works the moment you install. OpenAlex is a free public API, and TigrimOS calls it directly with a polite `User-Agent`. Just ask:
+
+> *"Find recent papers on soil liquefaction using machine learning."*
+> *"Search for the most-cited open-access papers on foundation settlement since 2020."*
+
+You'll see **"Searching papers on OpenAlex…"** in the UI while it runs.
+
+### Parameters the agent can use
+
+| Parameter | Meaning |
+|-----------|---------|
+| `query` | Search terms (matched against title, abstract, and fulltext) — **required** |
+| `limit` | Number of results (default 10, max 25) |
+| `from_year` / `to_year` | Restrict the publication-year range |
+| `sort` | `relevance` (default) or `citations` (most-cited first) |
+| `open_access_only` | Only return papers with a free PDF / fulltext |
+
+Because it's an ordinary agent tool, you can also govern it with [per-tool config](#per-tool-config-toolsconfig) — hide it, pin a default `limit`, cap its runtime, or override its description in an agent-loop profile. Combine it with `fetch_url` on an `open_access_url` to have the agent read a paper's fulltext PDF, and with the [job-evaluation judge](#agent-loop-profiles-custom-agent-loop) to enforce a rubric like *"a review with ≥10 papers, each with a DOI."*
+
+> **Tip:** OpenAlex serves faster, more reliable rate limits to its "polite pool" for callers that identify themselves by email. If you run heavy paper-search workloads and want to opt in, this is a one-line change in the tool's request URL — open an issue or edit `exec_search_papers` in `src/server/services/toolbox.rs`.
+
+</details>
+
 ## Connect Google (Gmail · Calendar · Drive)
 
 Three clicks give the agent **Gmail, Calendar and Drive**: paste an OAuth Client ID, auto-install the runtime, and log in with Google in your browser. Tokens stay on your machine.
@@ -2002,6 +2044,10 @@ What changed in each release, latest first.
 
 <details>
 <summary>🗒 Version history</summary>
+
+### v0.6.3
+
+- **Academic paper search (OpenAlex)** — New built-in **`search_papers`** tool queries [OpenAlex](https://openalex.org) (250M+ scholarly works) and returns structured metadata for each result: title, authors (first 8 + "et al."), publication year, venue, DOI, citation count, open-access PDF link, and a **reconstructed abstract** (OpenAlex ships abstracts as an inverted index; the tool rebuilds the plain text). Supports `limit` (≤25), `from_year`/`to_year` range filters, `sort` by relevance or citations, and `open_access_only`. No API key and no configuration — it calls the free OpenAlex API directly with a polite `User-Agent`. Works like any agent tool, so it honors [per-tool config](#per-tool-config-toolsconfig) (hide, pin params, cap runtime, override description) and shows **"Searching papers on OpenAlex…"** in the desktop and web UIs. See [Academic paper search](#academic-paper-search-openalex).
 
 ### v0.6.2
 
