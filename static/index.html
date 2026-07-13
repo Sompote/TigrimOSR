@@ -3276,7 +3276,7 @@ function loadSettings() {
                 <b>Per-tool config · <span id="ct-cfg-name"></span></b>
                 <span id="ct-cfg-profile" style="color:var(--ink-soft);font-size:12px"></span>
                 <button class="pill-btn" onclick="ctCfgClose()" style="margin-left:auto">✕ Close</button></div>
-              <div style="color:var(--ink-soft);font-size:11px;margin-bottom:6px">YAML written into the active profile's tools.config. Comments-only = remove the override.</div>
+              <div style="color:var(--ink-soft);font-size:11px;margin-bottom:6px">The tool's full definition: edit description, parameters, config — or set kind: shell/http + override: true with a run:/request: block to replace the implementation. Saving defaults removes the file.</div>
               <textarea id="ct-cfg-yaml" rows="9" style="width:100%;font-family:monospace;font-size:12px" spellcheck="false"></textarea>
               <div style="margin-top:6px"><button class="pill-btn primary" onclick="ctCfgSave()">Save</button>
                 <span id="ct-cfg-status" style="font-size:12px;margin-left:10px"></span></div>
@@ -4181,16 +4181,14 @@ function renderToolCatalog() {
 }
 
 function ctConfigure(name) {
-  const profile = _ctActiveProfile || 'default.yaml';
   document.getElementById('ct-cfg-name').textContent = name;
-  document.getElementById('ct-cfg-profile').textContent = '→ ' + profile;
+  document.getElementById('ct-cfg-profile').textContent = '→ data/tools/' + name + '.yaml';
   document.getElementById('ct-cfg-status').textContent = '';
   const ed = document.getElementById('ct-cfg');
   ed.dataset.tool = name;
-  ed.dataset.profile = profile;
   ed.hidden = false;
   document.getElementById('ct-cfg-yaml').value = 'Loading…';
-  api('/api/agent-loops/' + encodeURIComponent(profile) + '/tool-config/' + encodeURIComponent(name))
+  api('/api/custom-tools/builtin/' + encodeURIComponent(name))
     .then(r => { document.getElementById('ct-cfg-yaml').value = r.content || ''; })
     .catch(e => { document.getElementById('ct-cfg-yaml').value = ''; document.getElementById('ct-cfg-status').textContent = 'Error: ' + e.message; });
   ed.scrollIntoView({ block: 'nearest' });
@@ -4200,14 +4198,15 @@ function ctCfgClose() { document.getElementById('ct-cfg').hidden = true; }
 
 function ctCfgSave() {
   const ed = document.getElementById('ct-cfg');
-  const tool = ed.dataset.tool, profile = ed.dataset.profile;
+  const tool = ed.dataset.tool;
   const content = document.getElementById('ct-cfg-yaml').value;
   const st = document.getElementById('ct-cfg-status');
-  api('/api/agent-loops/' + encodeURIComponent(profile) + '/tool-config/' + encodeURIComponent(tool),
+  api('/api/custom-tools/builtin/' + encodeURIComponent(tool),
       { method: 'POST', body: JSON.stringify({ content }) })
-    .then(() => {
-      st.textContent = 'Saved ✓'; st.style.color = 'var(--green)';
-      loadCustomToolsPane();  // refresh chips
+    .then(r => {
+      st.textContent = (r.note || 'Saved ✓') + ((r.warnings || []).length ? ' — ' + r.warnings.join('; ') : '');
+      st.style.color = 'var(--green)';
+      loadCustomToolsPane();  // refresh chips + file list
     })
     .catch(e => { st.textContent = 'Error: ' + e.message; st.style.color = 'var(--red)'; });
 }

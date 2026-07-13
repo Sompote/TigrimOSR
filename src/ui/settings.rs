@@ -13,10 +13,6 @@ use crate::vm::{VmConfig, VmManager, VmState};
 // Section enum
 // ---------------------------------------------------------------------------
 
-/// Commented starter shown when a built-in tool has no per-tool config yet
-/// (Catalog → Configure). Matches the REST template in routes/agent_loops.rs.
-const TOOL_CFG_TEMPLATE_UI: &str = "# Per-tool config — written into this profile's tools.config.\n# Uncomment what you need; anything omitted inherits the default behavior.\n# enabled: false          # hide this tool from the model\n# require_approval: true   # or false to never ask for this tool\n# description: \"...\"       # override what the model sees\n# params: {}               # default args when the model omits them\n# pinned_params: {}        # forced args the model cannot override\n# timeout_secs: 60         # wall-clock cap\n# max_result_len: 4000     # truncate the result\n";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsSection {
     General,
@@ -5637,7 +5633,7 @@ impl SettingsView {
         ui.separator();
 
         if self.tools_subtab == 0 {
-            self.tools_catalog_view(ui);
+            self.tools_catalog_view(ui, runtime);
         } else {
             self.tools_custom_view(ui, runtime);
         }
@@ -5645,7 +5641,7 @@ impl SettingsView {
 
     /// Sub-tab 1: read-only catalog of every tool with status chips and a
     /// jump-to-config / edit action.
-    fn tools_catalog_view(&mut self, ui: &mut egui::Ui) {
+    fn tools_catalog_view(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         let dim = egui::Color32::from_rgb(124, 115, 104);
         let green = egui::Color32::from_rgb(34, 197, 94);
         let amber = egui::Color32::from_rgb(214, 158, 46);
@@ -5664,7 +5660,7 @@ impl SettingsView {
 
         // Inline per-tool config YAML editor (opened by "Configure").
         if self.tool_cfg_editing.is_some() {
-            self.tool_config_editor(ui);
+            self.tool_config_editor(ui, runtime);
             ui.separator();
         }
 
@@ -5787,7 +5783,8 @@ impl SettingsView {
                 }
             } else if let Some(name) = action.strip_prefix("config:") {
                 // Open this tool's per-tool config as YAML, right here.
-                self.open_tool_config_editor(name);
+                let name = name.to_string();
+                self.open_tool_config_editor(&name, runtime);
             }
         }
     }
@@ -5946,15 +5943,12 @@ impl SettingsView {
         self.custom_tool_status = Some("New tool — edit and Save.".into());
     }
 
-    /// Open the per-tool config of a built-in/MCP tool as YAML (the
-    /// tools.config.<name> block of the active profile, or a template).
-    fn open_tool_config_editor(&mut self, tool: &str) {
-        let mut file = self.active_loop_profile.clone();
-        if file.is_empty() {
-            crate::server::services::agent_loop::ensure_default_profile();
-            file = "default.yaml".to_string();
-        }
-        self.tool_cfg_profile = file.clone();
+    /// Open a built-in tool's FULL definition as an editable YAML file
+    /// (data/tools/<name>.yaml) — the same system as custom tools: change
+    /// description/parameters/config, or replace the implementation with
+    /// kind: shell/http + override: true.
+    fn open_tool_config_editor(&mut self, tool: &str, runtime: &tokio::runtime::Handle) {
+        self.tool_cfg_profile = format!("data/tools/{tool}.yaml");
         self.tool_cfg_status = None;
         self.tool_cfg_yaml = if let Some(rb) = crate::server::data::get_remote_backend() {
             let client = reqwest::blocking::Client::builder()
@@ -5962,7 +5956,7 @@ impl SettingsView {
                 .build()
                 .unwrap_or_default();
             client
-                .get(format!("{}/api/agent-loops/{}/tool-config/{}", rb.url, file, tool))
+                .get(format!("{}/api/custom-tools/builtin/{}", rb.url, tool))
                 .bearer_auth(&rb.token)
                 .send()
                 .ok()
@@ -5970,18 +5964,25 @@ impl SettingsView {
                 .and_then(|v| v["content"].as_str().map(|s| s.to_string()))
                 .unwrap_or_default()
         } else {
-            let existing = crate::server::services::agent_loop::load_profile(&file)
-                .and_then(|p| p.tools)
-                .and_then(|t| t.config.get(tool).cloned());
-            match existing {
-                Some(cfg) => serde_yaml::to_string(&cfg).unwrap_or_default(),
-                None => TOOL_CFG_TEMPLATE_UI.to_string(),
-            }
+            // Baselines must be the RAW built-in values (not override-applied
+            // catalog entries), so a saved file can be diffed back to default.
+            let desc = crate::server::services::toolbox::builtin_tool_description(tool)
+                .unwrap_or_default();
+            let default_approval = runtime.block_on(
+                crate::server::services::toolbox::tool_default_requires_approval(tool),
+            );
+            let schema = crate::server::services::toolbox::tool_parameter_schema(tool);
+            crate::server::services::custom_tools::builtin_editor_yaml(
+                tool,
+                &desc,
+                schema.as_ref(),
+                default_approval,
+            )
         };
         self.tool_cfg_editing = Some(tool.to_string());
     }
 
-    fn tool_config_editor(&mut self, ui: &mut egui::Ui) {
+    fn tool_config_editor(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         let dim = egui::Color32::from_rgb(124, 115, 104);
         let red = egui::Color32::from_rgb(200, 80, 70);
         let tool = self.tool_cfg_editing.clone().unwrap_or_default();
@@ -5995,7 +5996,7 @@ impl SettingsView {
             });
             ui.label(
                 egui::RichText::new(
-                    "YAML written into the active profile's tools.config. Comments-only = remove the override.",
+                    "The tool's full definition: edit description, parameters, config — or set kind: shell/http + override: true with a run:/request: block to replace the implementation. Saving defaults removes the file.",
                 )
                 .size(11.0)
                 .color(dim),
@@ -6013,7 +6014,7 @@ impl SettingsView {
                 });
             ui.horizontal(|ui| {
                 if Self::save_button(ui, "💾 Save") {
-                    self.save_tool_config_editor();
+                    self.save_tool_config_editor(runtime);
                 }
             });
             if let Some(msg) = &self.tool_cfg_status {
@@ -6023,12 +6024,11 @@ impl SettingsView {
         });
     }
 
-    fn save_tool_config_editor(&mut self) {
+    fn save_tool_config_editor(&mut self, runtime: &tokio::runtime::Handle) {
         let tool = match &self.tool_cfg_editing {
             Some(t) => t.clone(),
             None => return,
         };
-        let file = self.tool_cfg_profile.clone();
         let content = self.tool_cfg_yaml.clone();
         if let Some(rb) = crate::server::data::get_remote_backend() {
             let client = reqwest::blocking::Client::builder()
@@ -6036,64 +6036,43 @@ impl SettingsView {
                 .build()
                 .unwrap_or_default();
             let resp = client
-                .post(format!("{}/api/agent-loops/{}/tool-config/{}", rb.url, file, tool))
+                .post(format!("{}/api/custom-tools/builtin/{}", rb.url, tool))
                 .bearer_auth(&rb.token)
                 .json(&serde_json::json!({"content": content}))
                 .send();
             self.tool_cfg_status = Some(match resp {
-                Ok(r) => match r.json::<serde_json::Value>().unwrap_or_default().get("error").and_then(|e| e.as_str()) {
-                    Some(e) => format!("Error: {e}"),
-                    None => "Saved ✓".into(),
-                },
+                Ok(r) => {
+                    let v = r.json::<serde_json::Value>().unwrap_or_default();
+                    match v.get("error").and_then(|e| e.as_str()) {
+                        Some(e) => format!("Error: {e}"),
+                        None => v["note"].as_str().unwrap_or("Saved ✓").to_string(),
+                    }
+                }
                 Err(e) => format!("Error: {e}"),
             });
         } else {
-            let dir = crate::server::services::agent_loop::agent_loops_dir();
-            // Refuse to touch a missing or unparseable profile — merging into
-            // a default would silently REPLACE the whole profile on save.
-            let existing = match std::fs::read_to_string(dir.join(&file)) {
-                Ok(c) => c,
-                Err(e) => {
-                    self.tool_cfg_status = Some(format!("Error: profile '{file}' not found ({e})"));
-                    return;
-                }
-            };
-            let mut profile: crate::server::services::agent_loop::AgentLoopProfile =
-                match serde_yaml::from_str(&existing) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        self.tool_cfg_status = Some(format!(
-                            "Error: profile '{file}' has invalid YAML ({e}) — fix it in Agent Loop first"
-                        ));
-                        return;
-                    }
-                };
-            let has_content = content
-                .lines()
-                .any(|l| { let t = l.trim(); !t.is_empty() && !t.starts_with('#') });
-            let mut tf = profile.tools.take().unwrap_or_default();
-            if has_content {
-                match serde_yaml::from_str::<crate::server::services::agent_loop::ToolConfig>(&content) {
-                    Ok(cfg) => { tf.config.insert(tool.clone(), cfg); }
-                    Err(e) => {
-                        profile.tools = Some(tf);
-                        self.tool_cfg_status = Some(format!("Invalid: {e}"));
-                        return;
-                    }
-                }
-            } else {
-                tf.config.remove(&tool);
-            }
-            profile.tools = Some(tf);
-            self.tool_cfg_status = Some(match serde_yaml::to_string(&profile) {
-                Ok(y) => match std::fs::write(dir.join(&file), y) {
-                    Ok(()) => "Saved ✓".into(),
-                    Err(e) => format!("Error writing: {e}"),
+            let desc = crate::server::services::toolbox::builtin_tool_description(&tool)
+                .unwrap_or_default();
+            let default_approval = runtime.block_on(
+                crate::server::services::toolbox::tool_default_requires_approval(&tool),
+            );
+            let schema = crate::server::services::toolbox::tool_parameter_schema(&tool);
+            self.tool_cfg_status = Some(
+                match crate::server::services::custom_tools::save_builtin_doc(
+                    &tool,
+                    &content,
+                    &desc,
+                    schema.as_ref(),
+                    default_approval,
+                ) {
+                    Ok((true, w)) if w.is_empty() => "Saved ✓ (override file written)".into(),
+                    Ok((true, w)) => format!("Saved — warnings: {}", w.join("; ")),
+                    Ok((false, _)) => "Matches built-in defaults — override removed".into(),
+                    Err(e) => format!("Error: {e}"),
                 },
-                Err(e) => format!("Error: {e}"),
-            });
+            );
         }
-        // Refresh the active-profile config so Catalog chips update.
+        // Refresh lists so Catalog source/chips and Custom Tools pick it up.
         self.custom_tools_loaded = false;
     }
 

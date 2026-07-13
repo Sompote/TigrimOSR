@@ -37,11 +37,17 @@ pub struct CustomTool {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    /// "http" | "shell"
+    /// "http" | "shell" | "builtin".
+    /// "builtin" = this file customizes an EXISTING built-in tool (description,
+    /// parameters shown to the model, config) without replacing its code.
     #[serde(default)]
     pub kind: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Required (`override: true`) for an http/shell tool whose name matches a
+    /// built-in: the YAML implementation then REPLACES the built-in at dispatch.
+    #[serde(default, rename = "override", skip_serializing_if = "std::ops::Not::not")]
+    pub override_builtin: bool,
     #[serde(default)]
     pub parameters: Vec<CustomParam>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -53,6 +59,11 @@ pub struct CustomTool {
     /// Force approval on/off regardless of kind default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub require_approval: Option<bool>,
+    /// Global runtime config (same fields as a profile's tools.config entry):
+    /// approval, param defaults/pins, timeout, result cap. Profile per-tool
+    /// config overrides these field-by-field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<crate::server::services::agent_loop::ToolConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,28 +161,121 @@ pub fn load_all() -> Vec<CustomTool> {
     out
 }
 
-/// Look up one enabled tool by name.
+/// Look up one enabled EXECUTABLE (http/shell) tool by name — includes
+/// override files that shadow a built-in implementation.
 fn find(name: &str) -> Option<CustomTool> {
-    load_all().into_iter().find(|t| t.name == name && t.enabled)
+    load_all().into_iter().find(|t| {
+        t.name == name && t.enabled && matches!(t.kind.as_str(), "http" | "shell")
+    })
 }
 
-/// True if `name` is a live, enabled user-defined tool.
+/// Any tool file by name, including `kind: builtin` customization records.
+pub fn find_any(name: &str) -> Option<CustomTool> {
+    load_all().into_iter().find(|t| t.name == name)
+}
+
+/// True if `name` dispatches through the YAML executor (http/shell, including
+/// a built-in shadowed via `override: true`).
 pub fn is_custom_tool(name: &str) -> bool {
     find(name).is_some()
+}
+
+/// Global runtime config for a tool from its YAML file (any kind). Applied
+/// beneath the per-profile tools.config (profile fields win).
+pub fn global_config(name: &str) -> Option<crate::server::services::agent_loop::ToolConfig> {
+    find_any(name).and_then(|t| t.config)
 }
 
 // ---------------------------------------------------------------------------
 // Tool schema rendering (OpenAI function format)
 // ---------------------------------------------------------------------------
 
-/// Render enabled tools into the same JSON tool-spec shape produced by
-/// toolbox::tool_definitions().
+/// Render enabled EXECUTABLE tools into the same JSON tool-spec shape produced
+/// by toolbox::tool_definitions(). `kind: builtin` records are not new tools —
+/// they customize built-in specs via apply_builtin_overrides instead.
 pub fn definitions() -> Vec<Value> {
     load_all()
         .into_iter()
-        .filter(|t| t.enabled)
+        .filter(|t| t.enabled && matches!(t.kind.as_str(), "http" | "shell"))
         .map(|t| tool_to_definition(&t))
         .collect()
+}
+
+/// Apply YAML tool files onto the built-in spec list, in place:
+/// - an http/shell file with `override: true` REMOVES the built-in spec
+///   (its own spec arrives via definitions(), replacing the implementation);
+/// - a `kind: builtin` file rewrites the built-in's description and/or the
+///   parameter schema the model sees, and `enabled: false` hides it.
+pub fn apply_builtin_overrides(tools: &mut Vec<Value>) {
+    let files = load_all();
+    if files.is_empty() {
+        return;
+    }
+    for f in &files {
+        let shadows = matches!(f.kind.as_str(), "http" | "shell") && f.override_builtin && f.enabled;
+        let hides = f.kind == "builtin" && !f.enabled;
+        if shadows || hides {
+            tools.retain(|t| t["function"]["name"].as_str() != Some(f.name.as_str()));
+        }
+    }
+    for t in tools.iter_mut() {
+        let Some(name) = t["function"]["name"].as_str().map(|s| s.to_string()) else { continue };
+        let Some(f) = files.iter().find(|f| f.name == name && f.kind == "builtin" && f.enabled) else { continue };
+        if !f.description.is_empty() {
+            t["function"]["description"] = json!(f.description);
+        }
+        if !f.parameters.is_empty() {
+            t["function"]["parameters"] = params_to_schema(&f.parameters);
+        }
+    }
+}
+
+/// Convert a JSON parameter schema into the YAML parameter list (for showing
+/// a built-in's arguments in its editable tool file).
+pub fn schema_to_params(schema: &Value) -> Vec<CustomParam> {
+    let required: Vec<&str> = schema
+        .pointer("/required")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    schema
+        .pointer("/properties")
+        .and_then(|p| p.as_object())
+        .map(|props| {
+            props
+                .iter()
+                .map(|(name, p)| CustomParam {
+                    name: name.clone(),
+                    type_: p.get("type").and_then(|t| t.as_str()).unwrap_or("string").to_string(),
+                    description: p.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                    required: required.contains(&name.as_str()),
+                    default: None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Convert a YAML parameter list back into the JSON schema the model sees.
+pub fn params_to_schema(params: &[CustomParam]) -> Value {
+    let mut properties = serde_json::Map::new();
+    let mut required: Vec<String> = Vec::new();
+    for p in params {
+        let json_type = match p.type_.as_str() {
+            "integer" => "integer",
+            "number" => "number",
+            "boolean" => "boolean",
+            _ => "string",
+        };
+        properties.insert(
+            p.name.clone(),
+            json!({ "type": json_type, "description": p.description }),
+        );
+        if p.required {
+            required.push(p.name.clone());
+        }
+    }
+    json!({ "type": "object", "properties": properties, "required": required })
 }
 
 fn tool_to_definition(t: &CustomTool) -> Value {
@@ -204,6 +308,121 @@ fn tool_to_definition(t: &CustomTool) -> Value {
             }
         }
     })
+}
+
+// ---------------------------------------------------------------------------
+// Built-in tool editor documents: a built-in's FULL definition as an editable
+// YAML file (data/tools/<name>.yaml) — same system as custom tools.
+// ---------------------------------------------------------------------------
+
+/// The editor document for a built-in tool: the existing YAML file verbatim,
+/// or a generated full definition (description + parameter schema + config)
+/// with instructions for replacing the implementation.
+pub fn builtin_editor_yaml(
+    name: &str,
+    builtin_desc: &str,
+    schema: Option<&Value>,
+    default_approval: bool,
+) -> String {
+    if let Ok(existing) = std::fs::read_to_string(tools_dir().join(format!("{name}.yaml"))) {
+        if !existing.trim().is_empty() {
+            return existing;
+        }
+    }
+    let doc = CustomTool {
+        name: name.to_string(),
+        description: builtin_desc.to_string(),
+        kind: "builtin".to_string(),
+        enabled: true,
+        override_builtin: false,
+        parameters: schema.map(schema_to_params).unwrap_or_default(),
+        request: None,
+        run: None,
+        response: None,
+        require_approval: None,
+        config: Some(crate::server::services::agent_loop::ToolConfig {
+            require_approval: Some(default_approval),
+            ..Default::default()
+        }),
+    };
+    let body = serde_yaml::to_string(&doc).unwrap_or_default();
+    format!(
+        "# Tool '{name}' — full definition, editable as YAML (saved to data/tools/{name}.yaml).\n\
+         # - description / parameters: change what the model sees for this tool\n\
+         # - config: approval, default & pinned args, timeout_secs, max_result_len\n\
+         # - enabled: false hides the tool entirely\n\
+         # Replace the built-in implementation with your own command or API call by\n\
+         # setting kind: shell (or http) plus override: true, e.g.:\n\
+         #   kind: shell\n\
+         #   override: true\n\
+         #   run:\n\
+         #     command: \"ls -la {{{{path}}}}\"\n\
+         # Save stores the file only if something differs from the built-in\n\
+         # defaults; matching the defaults removes it.\n{body}"
+    )
+}
+
+/// Save a built-in tool document: parse + validate, then diff against the
+/// built-in baseline — an unchanged document deletes the file (no override).
+/// Returns (saved_as_file, warnings).
+pub fn save_builtin_doc(
+    name: &str,
+    content: &str,
+    builtin_desc: &str,
+    schema: Option<&Value>,
+    default_approval: bool,
+) -> Result<(bool, Vec<String>), String> {
+    let doc: CustomTool =
+        serde_yaml::from_str(content).map_err(|e| format!("Invalid tool YAML: {e}"))?;
+    if doc.name != name {
+        return Err(format!(
+            "The document's name '{}' must stay '{}' (create a differently-named custom tool in the Custom Tools tab instead)",
+            doc.name, name
+        ));
+    }
+    let warnings = validate(&doc)?;
+
+    // Baseline comparison: is this document just the built-in defaults?
+    // Order-insensitive on parameters so a user reordering entries (or a
+    // hand-written doc) still resets cleanly.
+    let sorted = |mut v: Vec<CustomParam>| {
+        v.sort_by(|a, b| a.name.cmp(&b.name));
+        v
+    };
+    let baseline_params = sorted(schema.map(schema_to_params).unwrap_or_default());
+    let doc_params = sorted(doc.parameters.clone());
+    let params_unchanged =
+        serde_json::to_value(&doc_params).ok() == serde_json::to_value(&baseline_params).ok();
+    let config_is_default = match &doc.config {
+        None => true,
+        Some(c) => {
+            c.enabled.is_none()
+                && (c.require_approval.is_none() || c.require_approval == Some(default_approval))
+                && c.description.is_none()
+                && c.params.is_none()
+                && c.pinned_params.is_none()
+                && c.timeout_secs.is_none()
+                && c.max_result_len.is_none()
+        }
+    };
+    let is_baseline = doc.kind == "builtin"
+        && doc.enabled
+        && !doc.override_builtin
+        && doc.description.trim() == builtin_desc.trim()
+        && params_unchanged
+        && config_is_default
+        && doc.request.is_none()
+        && doc.run.is_none()
+        && doc.require_approval.is_none();
+
+    let path = tools_dir().join(format!("{name}.yaml"));
+    if is_baseline {
+        let _ = std::fs::remove_file(&path);
+        return Ok((false, warnings));
+    }
+    let _ = std::fs::create_dir_all(tools_dir());
+    std::fs::write(&path, content).map_err(|e| format!("Failed to write: {e}"))?;
+    Ok((true, warnings))
 }
 
 // ---------------------------------------------------------------------------
@@ -435,8 +654,25 @@ pub fn validate(tool: &CustomTool) -> Result<Vec<String>, String> {
     let collides = builtins.iter().any(|t| {
         t.pointer("/function/name").and_then(|n| n.as_str()) == Some(tool.name.as_str())
     });
-    if collides {
-        return Err(format!("tool name '{}' collides with a built-in tool", tool.name));
+    // A built-in name is allowed for kind:builtin (customization record) and
+    // for http/shell with an explicit `override: true` (implementation shadow).
+    if collides && tool.kind != "builtin" && !tool.override_builtin {
+        return Err(format!(
+            "tool name '{}' matches a built-in tool — add `override: true` to replace its implementation, or use `kind: builtin` to customize it",
+            tool.name
+        ));
+    }
+    if tool.kind == "builtin" && !collides {
+        return Err(format!(
+            "kind: builtin requires the name of an existing built-in tool ('{}' is not one)",
+            tool.name
+        ));
+    }
+    if tool.override_builtin && !collides {
+        warnings.push(format!(
+            "`override: true` set but '{}' is not a built-in tool name (harmless)",
+            tool.name
+        ));
     }
 
     // Kind ⇔ spec block consistency.
@@ -467,7 +703,16 @@ pub fn validate(tool: &CustomTool) -> Result<Vec<String>, String> {
             }
             check_placeholders(&run.command, tool, &mut warnings);
         }
-        other => return Err(format!("kind must be 'http' or 'shell', got '{other}'")),
+        "builtin" => {
+            // Customization record: description/parameters/config only.
+            if tool.run.is_some() || tool.request.is_some() {
+                warnings.push(
+                    "run/request blocks are ignored for kind: builtin — set kind: shell or http (with override: true) to replace the implementation"
+                        .into(),
+                );
+            }
+        }
+        other => return Err(format!("kind must be 'http', 'shell' or 'builtin', got '{other}'")),
     }
 
     // Parameter types.

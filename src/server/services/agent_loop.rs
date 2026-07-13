@@ -502,6 +502,183 @@ pub fn profile_from_agent_def(agent_def: &Value) -> Option<AgentLoopProfile> {
     })
 }
 
+/// Layer a per-profile ToolConfig over a global (data/tools file) one:
+/// profile fields win where set, global fills the gaps.
+pub fn merge_tool_config(
+    global: Option<ToolConfig>,
+    profile: Option<&ToolConfig>,
+) -> Option<ToolConfig> {
+    match (global, profile) {
+        (None, None) => None,
+        (Some(g), None) => Some(g),
+        (None, Some(p)) => Some(p.clone()),
+        (Some(g), Some(p)) => Some(ToolConfig {
+            enabled: p.enabled.or(g.enabled),
+            require_approval: p.require_approval.or(g.require_approval),
+            description: p.description.clone().or(g.description),
+            params: p.params.clone().or(g.params),
+            pinned_params: p.pinned_params.clone().or(g.pinned_params),
+            timeout_secs: p.timeout_secs.or(g.timeout_secs),
+            max_result_len: p.max_result_len.or(g.max_result_len),
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-tool config editor documents (Settings > Tools > Configure).
+//
+// Built-in tools edit like custom-tool YAML files: the editor shows a full
+// document with the tool's ACTUAL current values (override if set, else the
+// built-in default), and save stores only the fields that differ from the
+// defaults back into tools.config.<name>. Shared by the desktop UI and the
+// /api/agent-loops/{profile}/tool-config/{tool} REST endpoints.
+// ---------------------------------------------------------------------------
+
+/// The editable document shape. `name`/`kind` are informational and ignored
+/// on save; unknown keys are ignored so stray comments/typos don't hard-fail.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolEditorDoc {
+    pub enabled: Option<bool>,
+    pub require_approval: Option<bool>,
+    pub description: Option<String>,
+    pub params: Option<serde_json::Map<String, Value>>,
+    pub pinned_params: Option<serde_json::Map<String, Value>>,
+    pub timeout_secs: Option<u64>,
+    pub max_result_len: Option<u64>,
+}
+
+/// Render the tool's parameter schema as comment lines so users know which
+/// argument keys params/pinned_params can target (e.g. `command` for
+/// run_shell). One line per parameter: name, type, required flag, description.
+fn param_schema_comments(schema: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(props) = schema.pointer("/properties").and_then(|p| p.as_object()) else {
+        return out;
+    };
+    if props.is_empty() {
+        return out;
+    }
+    let required: Vec<&str> = schema
+        .pointer("/required")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    out.push("#".to_string());
+    out.push("# Arguments this tool accepts (keys usable in params / pinned_params):".to_string());
+    for (name, p) in props {
+        let ty = p.get("type").and_then(|t| t.as_str()).unwrap_or("any");
+        let req = if required.contains(&name.as_str()) { ", required" } else { "" };
+        let desc = p
+            .get("description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .replace('\n', " ");
+        let desc = crate::util::truncate_utf8_ellipsis(&desc, 110);
+        if desc.is_empty() {
+            out.push(format!("#   {name} ({ty}{req})"));
+        } else {
+            out.push(format!("#   {name} ({ty}{req}) — {desc}"));
+        }
+    }
+    out
+}
+
+/// Render the editor YAML for one tool: current effective values plus
+/// commented hints for the optional fields that aren't set.
+pub fn tool_editor_yaml(
+    tool: &str,
+    cfg: Option<&ToolConfig>,
+    builtin_desc: &str,
+    default_approval: bool,
+    param_schema: Option<&Value>,
+) -> String {
+    let doc = ToolEditorDoc {
+        enabled: Some(cfg.and_then(|c| c.enabled).unwrap_or(true)),
+        require_approval: Some(
+            cfg.and_then(|c| c.require_approval).unwrap_or(default_approval),
+        ),
+        description: Some(
+            cfg.and_then(|c| c.description.clone())
+                .unwrap_or_else(|| builtin_desc.to_string()),
+        ),
+        params: cfg.and_then(|c| c.params.clone()),
+        pinned_params: cfg.and_then(|c| c.pinned_params.clone()),
+        timeout_secs: cfg.and_then(|c| c.timeout_secs),
+        max_result_len: cfg.and_then(|c| c.max_result_len),
+    };
+    let body = serde_yaml::to_string(&doc).unwrap_or_default();
+    // serde skips None fields via Option — but our struct serializes them as
+    // nulls; strip `key: null` lines and add commented hints instead.
+    let mut lines: Vec<String> = body
+        .lines()
+        .filter(|l| !l.trim_end().ends_with(": null"))
+        .map(|l| l.to_string())
+        .collect();
+    if doc.params.is_none() {
+        lines.push("# params: {}             # default args when the model omits them".into());
+    }
+    if doc.pinned_params.is_none() {
+        lines.push("# pinned_params: {}      # forced args the model cannot override".into());
+    }
+    if doc.timeout_secs.is_none() {
+        lines.push("# timeout_secs: 60       # wall-clock cap".into());
+    }
+    if doc.max_result_len.is_none() {
+        lines.push("# max_result_len: 4000   # truncate the result".into());
+    }
+    let mut header: Vec<String> = vec![
+        format!("# Built-in tool '{tool}' — saved into the active profile's tools.config."),
+        "# Save stores only values that differ from the defaults; matching the".into(),
+        "# defaults (or an empty file) removes the override entirely.".into(),
+    ];
+    if let Some(schema) = param_schema {
+        header.extend(param_schema_comments(schema));
+    }
+    format!("{}\n{}\n", header.join("\n"), lines.join("\n"))
+}
+
+/// Parse an editor document back into an override. Returns Ok(None) when the
+/// values match the defaults (= remove the override). Err on invalid YAML.
+pub fn tool_editor_to_config(
+    content: &str,
+    builtin_desc: &str,
+    default_approval: bool,
+) -> Result<Option<ToolConfig>, String> {
+    // Comments/blank-only = explicit clear.
+    let has_content = content
+        .lines()
+        .any(|l| { let t = l.trim(); !t.is_empty() && !t.starts_with('#') });
+    if !has_content {
+        return Ok(None);
+    }
+    let doc: ToolEditorDoc =
+        serde_yaml::from_str(content).map_err(|e| format!("Invalid tool-config YAML: {e}"))?;
+    let cfg = ToolConfig {
+        enabled: match doc.enabled {
+            Some(false) => Some(false),
+            _ => None,
+        },
+        require_approval: doc.require_approval.filter(|v| *v != default_approval),
+        description: doc
+            .description
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty() && d != builtin_desc.trim()),
+        params: doc.params.filter(|m| !m.is_empty()),
+        pinned_params: doc.pinned_params.filter(|m| !m.is_empty()),
+        timeout_secs: doc.timeout_secs,
+        max_result_len: doc.max_result_len,
+    };
+    let empty = cfg.enabled.is_none()
+        && cfg.require_approval.is_none()
+        && cfg.description.is_none()
+        && cfg.params.is_none()
+        && cfg.pinned_params.is_none()
+        && cfg.timeout_secs.is_none()
+        && cfg.max_result_len.is_none();
+    Ok(if empty { None } else { Some(cfg) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

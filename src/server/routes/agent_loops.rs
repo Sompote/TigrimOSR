@@ -25,16 +25,23 @@ use crate::server::services::agent_loop::{
     ToolFilter, DEFAULT_PROFILE_FILE,
 };
 
-/// Commented starter shown when a tool has no per-tool config yet.
-const TOOL_CFG_TEMPLATE: &str = "# Per-tool config — written into this profile's tools.config.\n# Uncomment what you need; anything omitted inherits the default behavior.\n# enabled: false          # hide this tool from the model\n# require_approval: true   # or false to never ask for this tool\n# description: \"...\"       # override what the model sees\n# params: {}               # default args when the model omits them\n# pinned_params: {}        # forced args the model cannot override\n# timeout_secs: 60         # wall-clock cap\n# max_result_len: 4000     # truncate the result\n";
-
 #[derive(Debug, Deserialize)]
 struct SaveContentBody {
     content: String,
 }
 
-/// GET /:filename/tool-config/:tool — the YAML for one tool's per-tool config
-/// in this profile (or a commented template if it has none yet).
+/// The tool's built-in description (for showing/diffing in the editor).
+fn builtin_tool_description(tool: &str) -> String {
+    crate::server::services::toolbox::tool_catalog()
+        .into_iter()
+        .find(|(n, _)| n == tool)
+        .map(|(_, d)| d)
+        .unwrap_or_default()
+}
+
+/// GET /:filename/tool-config/:tool — a full editor document with the tool's
+/// ACTUAL current values (override if set, else built-in defaults), so
+/// built-in tools edit exactly like custom-tool YAML files.
 async fn get_tool_config(Path((filename, tool)): Path<(String, String)>) -> impl IntoResponse {
     let re = regex::Regex::new(r"^[\w\-. ]+\.ya?ml$").unwrap();
     if !re.is_match(&filename) {
@@ -42,13 +49,19 @@ async fn get_tool_config(Path((filename, tool)): Path<(String, String)>) -> impl
     }
     let content = fs::read_to_string(agent_loops_dir().join(&filename)).await.unwrap_or_default();
     let profile: AgentLoopProfile = serde_yaml::from_str(&content).unwrap_or_default();
-    match profile.tools.as_ref().and_then(|t| t.config.get(&tool)) {
-        Some(cfg) => {
-            let yaml = serde_yaml::to_string(cfg).unwrap_or_default();
-            (StatusCode::OK, Json(json!({"content": yaml, "exists": true})))
-        }
-        None => (StatusCode::OK, Json(json!({"content": TOOL_CFG_TEMPLATE, "exists": false}))),
-    }
+    let cfg = profile.tools.as_ref().and_then(|t| t.config.get(&tool));
+    let desc = builtin_tool_description(&tool);
+    let default_approval =
+        crate::server::services::toolbox::tool_default_requires_approval(&tool).await;
+    let schema = crate::server::services::toolbox::tool_parameter_schema(&tool);
+    let yaml = crate::server::services::agent_loop::tool_editor_yaml(
+        &tool,
+        cfg,
+        &desc,
+        default_approval,
+        schema.as_ref(),
+    );
+    (StatusCode::OK, Json(json!({"content": yaml, "exists": cfg.is_some()})))
 }
 
 /// POST /:filename/tool-config/:tool — set (or clear) one tool's per-tool
@@ -83,23 +96,25 @@ async fn save_tool_config(
         }
     };
 
-    // A snippet with only comments/blank lines means "clear this tool's config".
-    let has_content = body
-        .content
-        .lines()
-        .any(|l| { let t = l.trim(); !t.is_empty() && !t.starts_with('#') });
-
+    // Diff the editor document against the built-in defaults: only real
+    // deviations are stored; matching defaults (or comments-only) removes
+    // the override.
+    let desc = builtin_tool_description(&tool);
+    let default_approval =
+        crate::server::services::toolbox::tool_default_requires_approval(&tool).await;
+    let parsed = crate::server::services::agent_loop::tool_editor_to_config(
+        &body.content,
+        &desc,
+        default_approval,
+    );
     let mut tf = profile.tools.take().unwrap_or_else(ToolFilter::default);
-    if has_content {
-        match serde_yaml::from_str::<crate::server::services::agent_loop::ToolConfig>(&body.content) {
-            Ok(cfg) => { tf.config.insert(tool.clone(), cfg); }
-            Err(e) => {
-                profile.tools = Some(tf);
-                return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("Invalid tool-config YAML: {e}")})));
-            }
+    match parsed {
+        Ok(Some(cfg)) => { tf.config.insert(tool.clone(), cfg); }
+        Ok(None) => { tf.config.remove(&tool); }
+        Err(e) => {
+            profile.tools = Some(tf);
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
         }
-    } else {
-        tf.config.remove(&tool);
     }
     profile.tools = Some(tf);
 

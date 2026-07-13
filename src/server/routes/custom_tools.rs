@@ -148,6 +148,59 @@ async fn test_tool(Path(name): Path<String>, Json(body): Json<TestBody>) -> impl
     (StatusCode::OK, Json(result))
 }
 
+/// Built-in description + parameter schema + default approval for one tool —
+/// all RAW baselines, unaffected by existing data/tools overrides.
+async fn builtin_baseline(name: &str) -> (String, Option<Value>, bool) {
+    let desc =
+        crate::server::services::toolbox::builtin_tool_description(name).unwrap_or_default();
+    let schema = crate::server::services::toolbox::tool_parameter_schema(name);
+    let approval = crate::server::services::toolbox::tool_default_requires_approval(name).await;
+    (desc, schema, approval)
+}
+
+/// GET /builtin/:name — the tool's FULL definition as an editable YAML doc
+/// (the data/tools/<name>.yaml file if present, else generated defaults).
+async fn get_builtin_doc(Path(name): Path<String>) -> impl IntoResponse {
+    let (desc, schema, approval) = builtin_baseline(&name).await;
+    if desc.is_empty() && schema.is_none() {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": format!("'{name}' is not a built-in tool")})));
+    }
+    let content = crate::server::services::custom_tools::builtin_editor_yaml(
+        &name, &desc, schema.as_ref(), approval,
+    );
+    let exists = crate::server::services::custom_tools::tools_dir()
+        .join(format!("{name}.yaml"))
+        .exists();
+    (StatusCode::OK, Json(json!({"content": content, "exists": exists})))
+}
+
+/// POST /builtin/:name — save the definition; a doc matching the built-in
+/// defaults deletes the file (reset to built-in).
+async fn save_builtin_doc_route(
+    Path(name): Path<String>,
+    Json(body): Json<SaveBody>,
+) -> impl IntoResponse {
+    let content = match &body.content {
+        Some(c) if !c.is_empty() => c.clone(),
+        _ => return (StatusCode::BAD_REQUEST, Json(json!({"error": "content required"}))),
+    };
+    let (desc, schema, approval) = builtin_baseline(&name).await;
+    match crate::server::services::custom_tools::save_builtin_doc(
+        &name, &content, &desc, schema.as_ref(), approval,
+    ) {
+        Ok((saved, warnings)) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "saved": saved,
+                "note": if saved { "Saved override file" } else { "Matches built-in defaults — override removed" },
+                "warnings": warnings,
+            })),
+        ),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))),
+    }
+}
+
 /// DELETE /:filename — remove a tool file.
 async fn delete_tool(Path(filename): Path<String>) -> impl IntoResponse {
     if !filename_ok(&filename) {
@@ -163,6 +216,7 @@ async fn delete_tool(Path(filename): Path<String>) -> impl IntoResponse {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(list_tools).post(save_tool))
+        .route("/builtin/{name}", get(get_builtin_doc).post(save_builtin_doc_route))
         .route("/{name}/test", post(test_tool))
         .route("/{filename}", get(get_tool).delete(delete_tool))
 }

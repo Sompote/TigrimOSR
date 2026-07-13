@@ -432,7 +432,59 @@ static APPROVAL_RX: OnceLock<TokioMutex<Option<tokio::sync::oneshot::Receiver<bo
     OnceLock::new();
 
 /// Check if a tool requires user approval based on settings
+/// The BASELINE approval default for a tool: settings toggles + custom-tool
+/// kinds only — explicitly WITHOUT the data/tools global config layer, since
+/// the tool editor diffs documents against this baseline (reading the layer
+/// here would make a saved override self-referential and impossible to reset).
+pub async fn tool_default_requires_approval(tool_name: &str) -> bool {
+    tool_requires_approval_base(tool_name).await
+}
+
+/// A built-in tool's RAW description from the compiled-in definitions —
+/// unaffected by data/tools overrides (baseline for the tool editor).
+pub fn builtin_tool_description(name: &str) -> Option<String> {
+    tool_definitions().iter().find_map(|t| {
+        if t.pointer("/function/name").and_then(|n| n.as_str()) == Some(name) {
+            t.pointer("/function/description")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// The JSON parameter schema of a built-in or custom tool (the `parameters`
+/// object of its function spec) — shown in the per-tool config editor so
+/// users know which argument keys params/pinned_params can target.
+pub fn tool_parameter_schema(name: &str) -> Option<Value> {
+    tool_definitions()
+        .into_iter()
+        .chain(crate::server::services::custom_tools::definitions())
+        .find_map(|t| {
+            if t.pointer("/function/name").and_then(|n| n.as_str()) == Some(name) {
+                t.pointer("/function/parameters").cloned()
+            } else {
+                None
+            }
+        })
+}
+
 async fn tool_requires_approval(tool_name: &str) -> bool {
+    // Global per-tool YAML config (data/tools/<name>.yaml `config:` block)
+    // overrides the settings defaults; per-profile config overrides both
+    // (handled in execute_tool_dispatch_inner).
+    if let Some(v) = crate::server::services::custom_tools::global_config(tool_name)
+        .and_then(|c| c.require_approval)
+    {
+        return v;
+    }
+    tool_requires_approval_base(tool_name).await
+}
+
+/// Settings-toggle + custom-kind approval defaults, WITHOUT the data/tools
+/// global config layer (see tool_default_requires_approval).
+async fn tool_requires_approval_base(tool_name: &str) -> bool {
     let settings = crate::server::data::get_settings().await;
     match tool_name {
         "run_shell" | "cron_create" | "cron_run_now" => {
@@ -2590,8 +2642,16 @@ pub fn tool_catalog() -> Vec<(String, String)> {
         .collect();
     // User-defined YAML tools so the agent-loop profile editor / validator
     // recognizes their names (no "unknown tool" warning when configured).
+    // kind:builtin records customize an EXISTING entry (description) instead
+    // of adding a duplicate; shadows (override: true) also just update.
     for t in crate::server::services::custom_tools::load_all() {
-        cat.push((t.name.clone(), t.description.clone()));
+        if let Some(entry) = cat.iter_mut().find(|(n, _)| n == &t.name) {
+            if !t.description.is_empty() {
+                entry.1 = t.description.clone();
+            }
+        } else {
+            cat.push((t.name.clone(), t.description.clone()));
+        }
     }
     cat
 }
@@ -6798,6 +6858,11 @@ async fn execute_tool_with_context(
     session_id: &str,
     agent_id: &str,
 ) -> Value {
+    // YAML tools dispatch first so a data/tools/<name>.yaml with
+    // `override: true` REPLACES the built-in implementation of that name.
+    if crate::server::services::custom_tools::is_custom_tool(name) {
+        return crate::server::services::custom_tools::execute(name, args, sandbox_dir).await;
+    }
     match name {
         "web_search" => exec_web_search(args).await,
         "search_papers" => exec_search_papers(args).await,
@@ -6837,12 +6902,6 @@ async fn execute_tool_with_context(
         "cron_toggle" => exec_cron_toggle(args).await,
         "cron_delete" => exec_cron_delete(args).await,
         "cron_run_now" => exec_cron_run_now(args).await,
-        // User-defined YAML tools (data/tools/*.yaml). Checked before the MCP
-        // catch-all. Per-tool profile config, approval, timeout, and result
-        // truncation are applied by the surrounding dispatch, same as built-ins.
-        _ if crate::server::services::custom_tools::is_custom_tool(name) => {
-            crate::server::services::custom_tools::execute(name, args, sandbox_dir).await
-        }
         _ if mcp::is_mcp_tool(name) => {
             // In a parallel swarm each sub-agent drives its OWN isolated browser
             // window so concurrent agents don't clobber a shared Chrome page.
@@ -8777,13 +8836,26 @@ async fn call_with_tools_inner(
         tools.extend(mcp_tools);
     }
 
-    // Inject user-defined YAML tools (data/tools/*.yaml). Added before the
-    // per-tool override pass so tools.config.<custom_name> applies to them too.
+    // YAML tool files (data/tools/*.yaml): first rewrite/hide/shadow built-in
+    // specs per kind:builtin and override:true records, then add the
+    // executable custom tools. Before the per-tool override pass so
+    // tools.config.<name> applies to them too.
+    crate::server::services::custom_tools::apply_builtin_overrides(&mut tools);
     let custom_tools = crate::server::services::custom_tools::definitions();
     if !custom_tools.is_empty() {
         info!("[call_with_tools] Adding {} custom YAML tool(s): {}", custom_tools.len(),
             custom_tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
-        tools.extend(custom_tools);
+        // A shadow (override: true) replaced the built-in spec above; guard
+        // against any residual duplicate names.
+        let existing: std::collections::HashSet<String> = tools
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str().map(|s| s.to_string()))
+            .collect();
+        tools.extend(
+            custom_tools
+                .into_iter()
+                .filter(|t| !existing.contains(t["function"]["name"].as_str().unwrap_or(""))),
+        );
     }
 
     // Per-tool profile config: enabled:false removal + description overrides.
@@ -9892,12 +9964,17 @@ async fn execute_tool_dispatch_inner(
     on_update: Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static>,
     _realtime: bool,
 ) -> Value {
-    // Per-tool profile config (tools.config.<name> in the agent-loop YAML)
-    // and protected-tool status, resolved once for the whole dispatch.
-    let tcfg = sub_agent
-        .loop_profile
-        .as_deref()
-        .and_then(|p| p.tool_config(tool_name));
+    // Per-tool config resolved once for the whole dispatch: the global YAML
+    // file config (data/tools/<name>.yaml `config:`) layered under the
+    // per-profile tools.config.<name> (profile fields win).
+    let effective_cfg = crate::server::services::agent_loop::merge_tool_config(
+        crate::server::services::custom_tools::global_config(tool_name),
+        sub_agent
+            .loop_profile
+            .as_deref()
+            .and_then(|p| p.tool_config(tool_name)),
+    );
+    let tcfg = effective_cfg.as_ref();
     let protected = is_protected_tool(tool_name, sub_agent);
 
     // Hard-deny disabled tools. The spec-level filter already hides them from
