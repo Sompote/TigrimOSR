@@ -346,19 +346,17 @@ pub fn builtin_editor_yaml(
         }),
     };
     let body = serde_yaml::to_string(&doc).unwrap_or_default();
+    // Central implementation registry: what the native code does + a
+    // ready-to-edit replacement (real command/API code) for this tool.
+    let impl_doc = crate::server::services::toolbox::builtin_impl_doc(name);
     format!(
         "# Tool '{name}' — full definition, editable as YAML (saved to data/tools/{name}.yaml).\n\
          # - description / parameters: change what the model sees for this tool\n\
          # - config: approval, default & pinned args, timeout_secs, max_result_len\n\
          # - enabled: false hides the tool entirely\n\
-         # Replace the built-in implementation with your own command or API call by\n\
-         # setting kind: shell (or http) plus override: true, e.g.:\n\
-         #   kind: shell\n\
-         #   override: true\n\
-         #   run:\n\
-         #     command: \"ls -la {{{{path}}}}\"\n\
+         # - implementation: see the ready-to-edit replacement at the bottom\n\
          # Save stores the file only if something differs from the built-in\n\
-         # defaults; matching the defaults removes it.\n{body}"
+         # defaults; matching the defaults removes it.\n{body}{impl_doc}"
     )
 }
 

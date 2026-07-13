@@ -440,6 +440,99 @@ pub async fn tool_default_requires_approval(tool_name: &str) -> bool {
     tool_requires_approval_base(tool_name).await
 }
 
+/// CENTRAL implementation registry for built-in tools, rendered into each
+/// tool's YAML editor document: what the native Rust code actually does, plus
+/// a READY-TO-EDIT replacement implementation (real command/API code) so a
+/// tool can be taken over in YAML without touching the Rust source.
+pub fn builtin_impl_doc(name: &str) -> String {
+    // (how it works, ready-to-edit override example — each line "# "-prefixed)
+    let (algo, example): (&str, &str) = match name {
+        "web_search" => (
+            "Multi-engine: drives the live browser to Google when Browser Control is on; else the Python duckduckgo-search library; falls back to the DDG instant-answer API, Google Custom Search (if configured), Wikipedia, and OpenRouter web search.",
+            "# kind: http\n# override: true\n# request:\n#   method: GET\n#   url: \"https://api.duckduckgo.com/?q={{query}}&format=json&no_html=1\"\n#   timeout_secs: 20\n# response:\n#   format: json\n#   max_len: 4000",
+        ),
+        "search_papers" => (
+            "HTTP GET to the free OpenAlex API (api.openalex.org/works) with search/filter/sort query params; reconstructs abstracts from OpenAlex's inverted index; returns title/authors/year/venue/DOI/citations/OA-PDF per work.",
+            "# kind: http\n# override: true\n# request:\n#   method: GET\n#   url: \"https://api.openalex.org/works?search={{query}}&per-page={{limit}}\"\n#   headers:\n#     User-Agent: \"TigrimOS/1.0\"\n#   timeout_secs: 20\n# response:\n#   format: json\n#   select: \"/results\"\n#   max_len: 6000",
+        ),
+        "fetch_url" => (
+            "reqwest GET/POST with a browser-like User-Agent, an SSRF guard blocking private/loopback/metadata addresses, and body truncation.",
+            "# kind: http\n# override: true\n# request:\n#   method: GET\n#   url: \"{{url}}\"\n#   timeout_secs: 30\n# response:\n#   format: auto\n#   max_len: 8000",
+        ),
+        "run_shell" => (
+            "Runs the command via /bin/sh (cmd.exe /S /C on Windows) inside the sandbox: dangerous-pattern blocklist, sandbox-jailed cwd, per-session process groups (killed with the chat), optional VM/container routing, output truncation.",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"{{command}}\"\n#   timeout_secs: 60",
+        ),
+        "run_python" => (
+            "Writes the code to the sandbox and runs python3 with a matplotlib Agg backend preamble: plt.show() auto-saves PNGs to output_file/, save_output() helper, _project_dir var; 3-tier sandboxing (Apple container CLI, sandbox-exec, direct) and per-session process groups.",
+            "# kind: shell\n# override: true\n# run:\n#   # NOTE: naive templating of multi-line code into a shell string is fragile —\n#   # prefer keeping the native implementation, or route to your own runner API:\n#   command: \"python3 -c '{{code}}'\"\n#   timeout_secs: 120",
+        ),
+        "run_react" => (
+            "Strips imports from the JSX, detects the exported component, wraps it in an HTML page loading React 18 + Babel standalone + Recharts from CDNs, writes it to output_file/ and renders it in the output panel.",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"printf '%s' '{{code}}' > output_file/component_$(date +%s).jsx && echo saved\"\n#   timeout_secs: 30",
+        ),
+        "read_file" => (
+            "Sandbox-jailed read (path-traversal guarded). PDFs are extracted with pdftotext/PyPDF and returned in chunks (chunk 0 + total_chunks; use offset); text results are UTF-8-safely truncated.",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"cat {{path}}\"\n#   timeout_secs: 15",
+        ),
+        "write_file" => (
+            "Sandbox-jailed write with parent-directory creation and path-traversal guards; rendered files (md/csv/json/html/png…) appear in the output panel.",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"printf '%s' '{{content}}' > {{path}} && echo written\"\n#   timeout_secs: 15",
+        ),
+        "list_files" => (
+            "Sandbox-jailed directory listing (name/size/type per entry), optional recursion.",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"ls -la {{path}}\"\n#   timeout_secs: 15",
+        ),
+        "delete_file" => (
+            "Sandbox-jailed single-file delete with path-traversal guards (approval-gated by default).",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"rm -- {{path}} && echo deleted\"\n#   timeout_secs: 15",
+        ),
+        "claude_code_agent" => (
+            "Spawns the local `claude` CLI (claude -p <task> --output-format json) in the sandbox with per-session process-group cleanup; no API key needed.",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"claude -p '{{task}}' --output-format text\"\n#   timeout_secs: 600",
+        ),
+        "gemini_cli_agent" => (
+            "Spawns the local `gemini` CLI with the task prompt in the sandbox; per-session process-group cleanup.",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"gemini -p '{{task}}'\"\n#   timeout_secs: 600",
+        ),
+        "openrouter_web_search" => (
+            "POST to OpenRouter's responses API with the web_search_preview tool enabled, using the OpenRouter key from Settings; returns AI-summarized results with citations.",
+            "# kind: http\n# override: true\n# request:\n#   method: POST\n#   url: \"https://openrouter.ai/api/v1/responses\"\n#   headers:\n#     Authorization: \"Bearer sk-or-REPLACE-ME\"\n#     Content-Type: \"application/json\"\n#   body: '{\"model\":\"openai/gpt-4o-mini\",\"input\":\"{{query}}\",\"tools\":[{\"type\":\"web_search_preview\"}]}'\n#   timeout_secs: 60",
+        ),
+        "remote_task" => (
+            "HTTP POST of the task to another TigrimOS instance's /api/remote endpoints (submit, poll, kill) using the remote token from Settings.",
+            "# kind: http\n# override: true\n# request:\n#   method: POST\n#   url: \"http://REMOTE-HOST:3001/api/remote/submit\"\n#   headers:\n#     Authorization: \"Bearer REMOTE-TOKEN\"\n#     Content-Type: \"application/json\"\n#   body: '{\"task\":\"{{task}}\"}'\n#   timeout_secs: 120",
+        ),
+        "clawhub_search" | "clawhub_install" => (
+            "HTTP calls to the ClawHub skill-marketplace registry (search / download + install into the skills directory).",
+            "# kind: http\n# override: true\n# request:\n#   method: GET\n#   url: \"https://clawhub.example/api/search?q={{query}}\"\n#   timeout_secs: 30",
+        ),
+        "list_skills" | "load_skill" | "save_skill" => (
+            "Native skills registry: lists/loads/writes SKILL.md packages under the app's skills directory (data/skills) and registers them for the agent loop.",
+            "# (native registry — replacement rarely useful; example)\n# kind: shell\n# override: true\n# run:\n#   command: \"ls data/skills\"",
+        ),
+        "cron_create" | "cron_list" | "cron_toggle" | "cron_delete" | "cron_run_now" => (
+            "Native scheduler CRUD on data/tasks.json; a 30s scheduler tick runs due tasks as background agent jobs.",
+            "# (native scheduler state — YAML replacement not recommended)",
+        ),
+        "list_local_mounts" => (
+            "Native: lists the host folders granted to the agent via Settings > File Mounts.",
+            "# (native — reads the mounts configuration)",
+        ),
+        n if n.starts_with("proto_") || n.starts_with("bb_") => (
+            "Native in-process inter-agent protocol state (TCP/Bus/Queue/Blackboard) shared across the swarm — protected: cannot be hidden or replaced while sub-agents are enabled.",
+            "# (protected coordination tool — not replaceable)",
+        ),
+        _ => (
+            "Implemented natively in Rust (src/server/services/toolbox.rs).",
+            "# kind: shell\n# override: true\n# run:\n#   command: \"echo replace-me {{param}}\"",
+        ),
+    };
+    format!(
+        "#\n# --- Implementation ---\n# How it works: {algo}\n#\n# Ready-to-edit replacement (uncomment + adjust to take over this tool in YAML;\n# your version runs through the same sandbox/SSRF guards as any custom tool):\n{example}\n"
+    )
+}
+
 /// A built-in tool's RAW description from the compiled-in definitions —
 /// unaffected by data/tools overrides (baseline for the tool editor).
 pub fn builtin_tool_description(name: &str) -> Option<String> {
