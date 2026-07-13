@@ -13,6 +13,10 @@ use crate::vm::{VmConfig, VmManager, VmState};
 // Section enum
 // ---------------------------------------------------------------------------
 
+/// Commented starter shown when a built-in tool has no per-tool config yet
+/// (Catalog → Configure). Matches the REST template in routes/agent_loops.rs.
+const TOOL_CFG_TEMPLATE_UI: &str = "# Per-tool config — written into this profile's tools.config.\n# Uncomment what you need; anything omitted inherits the default behavior.\n# enabled: false          # hide this tool from the model\n# require_approval: true   # or false to never ask for this tool\n# description: \"...\"       # override what the model sees\n# params: {}               # default args when the model omits them\n# pinned_params: {}        # forced args the model cannot override\n# timeout_secs: 60         # wall-clock cap\n# max_result_len: 4000     # truncate the result\n";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsSection {
     General,
@@ -239,6 +243,12 @@ pub struct SettingsView {
     custom_tool_test_args: String,
     custom_tool_test_result: Option<String>,
     custom_tool_status: Option<String>,
+    /// Per-tool config YAML editor (Catalog → Configure): the tool being
+    /// edited, the profile file it writes to, its YAML buffer and status.
+    tool_cfg_editing: Option<String>,
+    tool_cfg_profile: String,
+    tool_cfg_yaml: String,
+    tool_cfg_status: Option<String>,
 
     // --- MCP Tools ---
     mcp_tools: Vec<McpTool>,
@@ -454,6 +464,10 @@ impl Default for SettingsView {
             custom_tool_test_args: "{}".to_string(),
             custom_tool_test_result: None,
             custom_tool_status: None,
+            tool_cfg_editing: None,
+            tool_cfg_profile: String::new(),
+            tool_cfg_yaml: String::new(),
+            tool_cfg_status: None,
 
             mcp_tools: Vec::new(),
             new_mcp_name: String::new(),
@@ -5648,6 +5662,12 @@ impl SettingsView {
         });
         ui.add_space(4.0);
 
+        // Inline per-tool config YAML editor (opened by "Configure").
+        if self.tool_cfg_editing.is_some() {
+            self.tool_config_editor(ui);
+            ui.separator();
+        }
+
         // Custom tool names (for the SOURCE column).
         let custom_names: std::collections::HashMap<String, (String, bool)> = self
             .custom_tools_list
@@ -5766,19 +5786,8 @@ impl SettingsView {
                     self.tools_subtab = 1;
                 }
             } else if let Some(name) = action.strip_prefix("config:") {
-                // Deep-link into the Agent Loop editor with this tool queued
-                // into the per-tool config for the active profile.
-                let active = self.active_loop_profile.clone();
-                if active.is_empty() {
-                    self.custom_tool_status =
-                        Some("Select or create an active profile in Agent Loop, then Configure.".into());
-                } else {
-                    self.open_loop_profile(&active);
-                    self.loop_tools_config.entry(name.to_string()).or_default();
-                    self.loop_tools_config_params_text.entry(name.to_string()).or_default();
-                    self.loop_tools_config_pins_text.entry(name.to_string()).or_default();
-                }
-                self.selected_section = SettingsSection::AgentLoop;
+                // Open this tool's per-tool config as YAML, right here.
+                self.open_tool_config_editor(name);
             }
         }
     }
@@ -5935,6 +5944,157 @@ impl SettingsView {
         self.custom_tool_new_name.clear();
         self.custom_tool_test_result = None;
         self.custom_tool_status = Some("New tool — edit and Save.".into());
+    }
+
+    /// Open the per-tool config of a built-in/MCP tool as YAML (the
+    /// tools.config.<name> block of the active profile, or a template).
+    fn open_tool_config_editor(&mut self, tool: &str) {
+        let mut file = self.active_loop_profile.clone();
+        if file.is_empty() {
+            crate::server::services::agent_loop::ensure_default_profile();
+            file = "default.yaml".to_string();
+        }
+        self.tool_cfg_profile = file.clone();
+        self.tool_cfg_status = None;
+        self.tool_cfg_yaml = if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            client
+                .get(format!("{}/api/agent-loops/{}/tool-config/{}", rb.url, file, tool))
+                .bearer_auth(&rb.token)
+                .send()
+                .ok()
+                .and_then(|r| r.json::<serde_json::Value>().ok())
+                .and_then(|v| v["content"].as_str().map(|s| s.to_string()))
+                .unwrap_or_default()
+        } else {
+            let existing = crate::server::services::agent_loop::load_profile(&file)
+                .and_then(|p| p.tools)
+                .and_then(|t| t.config.get(tool).cloned());
+            match existing {
+                Some(cfg) => serde_yaml::to_string(&cfg).unwrap_or_default(),
+                None => TOOL_CFG_TEMPLATE_UI.to_string(),
+            }
+        };
+        self.tool_cfg_editing = Some(tool.to_string());
+    }
+
+    fn tool_config_editor(&mut self, ui: &mut egui::Ui) {
+        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let red = egui::Color32::from_rgb(200, 80, 70);
+        let tool = self.tool_cfg_editing.clone().unwrap_or_default();
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("Per-tool config · {tool}")).strong());
+                ui.label(egui::RichText::new(format!("→ {}", self.tool_cfg_profile)).size(11.0).color(dim));
+                if ui.button("✕ Close").clicked() {
+                    self.tool_cfg_editing = None;
+                }
+            });
+            ui.label(
+                egui::RichText::new(
+                    "YAML written into the active profile's tools.config. Comments-only = remove the override.",
+                )
+                .size(11.0)
+                .color(dim),
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("tool_cfg_scroll")
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.tool_cfg_yaml)
+                            .code_editor()
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(9),
+                    );
+                });
+            ui.horizontal(|ui| {
+                if Self::save_button(ui, "💾 Save") {
+                    self.save_tool_config_editor();
+                }
+            });
+            if let Some(msg) = &self.tool_cfg_status {
+                let c = if msg.starts_with("Error") || msg.starts_with("Invalid") { red } else { dim };
+                ui.label(egui::RichText::new(msg).size(11.0).color(c));
+            }
+        });
+    }
+
+    fn save_tool_config_editor(&mut self) {
+        let tool = match &self.tool_cfg_editing {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        let file = self.tool_cfg_profile.clone();
+        let content = self.tool_cfg_yaml.clone();
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            let resp = client
+                .post(format!("{}/api/agent-loops/{}/tool-config/{}", rb.url, file, tool))
+                .bearer_auth(&rb.token)
+                .json(&serde_json::json!({"content": content}))
+                .send();
+            self.tool_cfg_status = Some(match resp {
+                Ok(r) => match r.json::<serde_json::Value>().unwrap_or_default().get("error").and_then(|e| e.as_str()) {
+                    Some(e) => format!("Error: {e}"),
+                    None => "Saved ✓".into(),
+                },
+                Err(e) => format!("Error: {e}"),
+            });
+        } else {
+            let dir = crate::server::services::agent_loop::agent_loops_dir();
+            // Refuse to touch a missing or unparseable profile — merging into
+            // a default would silently REPLACE the whole profile on save.
+            let existing = match std::fs::read_to_string(dir.join(&file)) {
+                Ok(c) => c,
+                Err(e) => {
+                    self.tool_cfg_status = Some(format!("Error: profile '{file}' not found ({e})"));
+                    return;
+                }
+            };
+            let mut profile: crate::server::services::agent_loop::AgentLoopProfile =
+                match serde_yaml::from_str(&existing) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        self.tool_cfg_status = Some(format!(
+                            "Error: profile '{file}' has invalid YAML ({e}) — fix it in Agent Loop first"
+                        ));
+                        return;
+                    }
+                };
+            let has_content = content
+                .lines()
+                .any(|l| { let t = l.trim(); !t.is_empty() && !t.starts_with('#') });
+            let mut tf = profile.tools.take().unwrap_or_default();
+            if has_content {
+                match serde_yaml::from_str::<crate::server::services::agent_loop::ToolConfig>(&content) {
+                    Ok(cfg) => { tf.config.insert(tool.clone(), cfg); }
+                    Err(e) => {
+                        profile.tools = Some(tf);
+                        self.tool_cfg_status = Some(format!("Invalid: {e}"));
+                        return;
+                    }
+                }
+            } else {
+                tf.config.remove(&tool);
+            }
+            profile.tools = Some(tf);
+            self.tool_cfg_status = Some(match serde_yaml::to_string(&profile) {
+                Ok(y) => match std::fs::write(dir.join(&file), y) {
+                    Ok(()) => "Saved ✓".into(),
+                    Err(e) => format!("Error writing: {e}"),
+                },
+                Err(e) => format!("Error: {e}"),
+            });
+        }
+        // Refresh the active-profile config so Catalog chips update.
+        self.custom_tools_loaded = false;
     }
 
     fn section_agent_loop(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {

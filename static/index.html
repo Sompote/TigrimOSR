@@ -3271,6 +3271,16 @@ function loadSettings() {
             <div class="settings-row-field"><label>Filter</label>
               <input id="ct-filter" placeholder="tool name…" oninput="renderToolCatalog()" style="flex:1">
               <label style="flex:none;margin-left:10px;font-size:12px"><input type="checkbox" id="ct-show-disabled" checked onchange="renderToolCatalog()"> show disabled</label></div>
+            <div id="ct-cfg" hidden style="border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0;background:var(--card)">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <b>Per-tool config · <span id="ct-cfg-name"></span></b>
+                <span id="ct-cfg-profile" style="color:var(--ink-soft);font-size:12px"></span>
+                <button class="pill-btn" onclick="ctCfgClose()" style="margin-left:auto">✕ Close</button></div>
+              <div style="color:var(--ink-soft);font-size:11px;margin-bottom:6px">YAML written into the active profile's tools.config. Comments-only = remove the override.</div>
+              <textarea id="ct-cfg-yaml" rows="9" style="width:100%;font-family:monospace;font-size:12px" spellcheck="false"></textarea>
+              <div style="margin-top:6px"><button class="pill-btn primary" onclick="ctCfgSave()">Save</button>
+                <span id="ct-cfg-status" style="font-size:12px;margin-left:10px"></span></div>
+            </div>
             <div id="ct-catalog" style="font-size:13px;margin-top:8px">Loading…</div>
           </div>
 
@@ -4171,11 +4181,35 @@ function renderToolCatalog() {
 }
 
 function ctConfigure(name) {
-  switchSettingsTab('agentloop');
-  const txt = document.getElementById('s-loop-tool-txt');
-  if (txt) { txt.value = name; }
-  const s = document.getElementById('s-loop-status');
-  if (s) { s.textContent = 'Added "' + name + '" — click Add under Per-tool settings, set rules, then Save Profile.'; s.style.color = 'var(--accent)'; }
+  const profile = _ctActiveProfile || 'default.yaml';
+  document.getElementById('ct-cfg-name').textContent = name;
+  document.getElementById('ct-cfg-profile').textContent = '→ ' + profile;
+  document.getElementById('ct-cfg-status').textContent = '';
+  const ed = document.getElementById('ct-cfg');
+  ed.dataset.tool = name;
+  ed.dataset.profile = profile;
+  ed.hidden = false;
+  document.getElementById('ct-cfg-yaml').value = 'Loading…';
+  api('/api/agent-loops/' + encodeURIComponent(profile) + '/tool-config/' + encodeURIComponent(name))
+    .then(r => { document.getElementById('ct-cfg-yaml').value = r.content || ''; })
+    .catch(e => { document.getElementById('ct-cfg-yaml').value = ''; document.getElementById('ct-cfg-status').textContent = 'Error: ' + e.message; });
+  ed.scrollIntoView({ block: 'nearest' });
+}
+
+function ctCfgClose() { document.getElementById('ct-cfg').hidden = true; }
+
+function ctCfgSave() {
+  const ed = document.getElementById('ct-cfg');
+  const tool = ed.dataset.tool, profile = ed.dataset.profile;
+  const content = document.getElementById('ct-cfg-yaml').value;
+  const st = document.getElementById('ct-cfg-status');
+  api('/api/agent-loops/' + encodeURIComponent(profile) + '/tool-config/' + encodeURIComponent(tool),
+      { method: 'POST', body: JSON.stringify({ content }) })
+    .then(() => {
+      st.textContent = 'Saved ✓'; st.style.color = 'var(--green)';
+      loadCustomToolsPane();  // refresh chips
+    })
+    .catch(e => { st.textContent = 'Error: ' + e.message; st.style.color = 'var(--red)'; });
 }
 
 function ctEditByName(name) {
