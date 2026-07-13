@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="TigrimOS" Version="0.6.2" Manufacturer="Sompote"
+  <Product Id="*" Name="TigrimOS" Version="0.7.0" Manufacturer="Sompote"
            UpgradeCode="03380E26-0FEF-47C4-A82C-93DC0A72E7E7" Language="1033">
     <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine"
              Description="TigrimOS - native AI agent platform"/>
