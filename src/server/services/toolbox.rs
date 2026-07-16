@@ -7413,6 +7413,84 @@ fn to_anthropic_tools(tools: &[Value]) -> Vec<Value> {
     }).collect()
 }
 
+/// Recursively rewrite a JSON Schema node so it satisfies strict validators
+/// (Moonshot/Kimi). These reject a node that carries a combinator
+/// (`anyOf`/`oneOf`/`allOf`) alongside sibling validation keywords such as
+/// `type` or `items` — "conflicting keywords found in anyOf with parent". When
+/// a combinator is present we push the parent `type` into every branch that
+/// lacks one (so nothing is lost), then drop ALL validation keywords from the
+/// parent, keeping only the combinator(s) and annotation keywords. Finally we
+/// recurse into every nested schema location. This surfaces mainly from MCP
+/// tool schemas (e.g. Gmail's `add_label_ids`) whose Pydantic-generated
+/// nullable `anyOf` pairs with redundant parent `type`/`items` keywords.
+fn sanitize_schema_for_moonshot(schema: &mut Value) {
+    if let Some(obj) = schema.as_object_mut() {
+        let has_combinator = ["anyOf", "oneOf", "allOf"]
+            .iter()
+            .any(|k| obj.contains_key(*k));
+        if has_combinator {
+            // Preserve parent `type` by seeding it into branches that omit one.
+            if let Some(parent_type) = obj.get("type").cloned() {
+                for combinator in ["anyOf", "oneOf", "allOf"] {
+                    if let Some(branches) = obj.get_mut(combinator).and_then(|v| v.as_array_mut()) {
+                        for branch in branches.iter_mut() {
+                            if let Some(bobj) = branch.as_object_mut() {
+                                bobj.entry("type").or_insert_with(|| parent_type.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            // Keep only the combinator(s) and annotation keywords; every
+            // validation keyword must live inside the branches, not the parent.
+            const KEEP: [&str; 8] = [
+                "anyOf", "oneOf", "allOf",
+                "description", "title", "default", "examples", "deprecated",
+            ];
+            obj.retain(|k, _| KEEP.contains(&k.as_str()));
+        }
+        // Recurse into keyed sub-schema maps.
+        for key in ["properties", "$defs", "definitions", "patternProperties"] {
+            if let Some(map) = obj.get_mut(key).and_then(|v| v.as_object_mut()) {
+                for v in map.values_mut() {
+                    sanitize_schema_for_moonshot(v);
+                }
+            }
+        }
+        // Recurse into single sub-schemas.
+        for key in ["items", "additionalProperties", "not", "if", "then", "else"] {
+            if let Some(v) = obj.get_mut(key) {
+                sanitize_schema_for_moonshot(v);
+            }
+        }
+        // Recurse into combinator branches.
+        for combinator in ["anyOf", "oneOf", "allOf"] {
+            if let Some(arr) = obj.get_mut(combinator).and_then(|v| v.as_array_mut()) {
+                for v in arr.iter_mut() {
+                    sanitize_schema_for_moonshot(v);
+                }
+            }
+        }
+    } else if let Some(arr) = schema.as_array_mut() {
+        // `items` may be an array (tuple schema).
+        for v in arr.iter_mut() {
+            sanitize_schema_for_moonshot(v);
+        }
+    }
+}
+
+/// Sanitize OpenAI-format tool definitions in place for strict validators
+/// (Moonshot/Kimi). Rewrites each tool's `function.parameters` schema.
+fn sanitize_tools_for_openai(tools: &[Value]) -> Vec<Value> {
+    tools.iter().map(|t| {
+        let mut t = t.clone();
+        if let Some(params) = t.pointer_mut("/function/parameters") {
+            sanitize_schema_for_moonshot(params);
+        }
+        t
+    }).collect()
+}
+
 /// Unified LLM call supporting both Anthropic and OpenAI formats
 /// Find the `codex` CLI binary.
 /// Build a PATH string that includes common node/bun/homebrew bin dirs.
@@ -8520,7 +8598,7 @@ async fn llm_call(
         });
         if let Some(t) = tools {
             if !t.is_empty() {
-                body["tools"] = json!(t);
+                body["tools"] = json!(sanitize_tools_for_openai(t));
                 body["tool_choice"] = json!("auto");
             }
         }
