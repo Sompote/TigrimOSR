@@ -102,6 +102,8 @@ pub struct ProjectRunContext {
     pub agent_config_file: Option<String>,
     /// Agent-loop profile from an enabled project agent override, if any.
     pub agent_loop_profile: Option<String>,
+    /// Graph-mode profile from an enabled project agent override, if any.
+    pub graph_profile: Option<String>,
     /// Skills assigned to this project (filters the installed-skills block).
     pub skills: Vec<String>,
 }
@@ -149,12 +151,20 @@ pub async fn load_project_run_context(project_id: &str) -> Option<ProjectRunCont
             None
         }
     });
+    let graph_profile = project.agent_override.as_ref().and_then(|ov| {
+        if ov.enabled.unwrap_or(false) {
+            ov.graph_profile.clone().filter(|s| !s.is_empty())
+        } else {
+            None
+        }
+    });
 
     Some(ProjectRunContext {
         sandbox_dir,
         system_block: parts.join("\n\n"),
         agent_config_file,
         agent_loop_profile,
+        graph_profile,
         skills: project.skills.clone(),
     })
 }

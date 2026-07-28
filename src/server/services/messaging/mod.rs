@@ -28,7 +28,7 @@ const PROGRESS_THROTTLE: Duration = Duration::from_secs(3);
 /// Hard cap on a single agent run driven from a chat app.
 const RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
-pub const SUB_AGENT_MODES: &[&str] = &["single", "auto", "manual", "fully_auto", "router"];
+pub const SUB_AGENT_MODES: &[&str] = &["single", "auto", "manual", "fully_auto", "router", "graph"];
 
 // ---------------------------------------------------------------------------
 // Per-chat state
@@ -160,7 +160,7 @@ fn help_text() -> String {
     "TigrimOS bot commands:\n\
      /agents — list agent team configs\n\
      /model [id] — show or switch the model (switch applies to ALL sessions)\n\
-     /mode [single|auto|manual|fully_auto|router] — sub-agent mode for this chat\n\
+     /mode [single|auto|manual|fully_auto|router|graph] — sub-agent mode for this chat\n\
      /loop [profile|off] — agent-loop profile for this chat\n\
      /new — start a fresh conversation\n\
      /stop — cancel the running task\n\
@@ -437,6 +437,7 @@ pub async fn start_run(chat_key: &str, text: &str) -> Result<RunEvents, String> 
         session_title: Some(title),
         agent_mode: cs.mode.clone(),
         agent_loop_profile: cs.loop_profile.clone(),
+        graph_profile: None,
         config_file: None,
         project_id: None,
     };

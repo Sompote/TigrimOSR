@@ -765,11 +765,15 @@ impl ProjectsView {
                         } else {
                             Some(self.agent_override_config_file.clone())
                         },
-                        // Preserve a previously-set per-project loop profile.
+                        // Preserve previously-set per-project loop/graph profiles.
                         agent_loop_profile: self.projects[idx]
                             .agent_override
                             .as_ref()
                             .and_then(|ov| ov.agent_loop_profile.clone()),
+                        graph_profile: self.projects[idx]
+                            .agent_override
+                            .as_ref()
+                            .and_then(|ov| ov.graph_profile.clone()),
                         auto_architecture_type: None,
                         auto_agent_count: None,
                         auto_protocols: None,

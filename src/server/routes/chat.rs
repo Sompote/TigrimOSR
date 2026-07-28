@@ -351,6 +351,10 @@ async fn send_message(
             .get("agent_loop_profile")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        graph_profile: body
+            .get("graph_profile")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         config_file: body
             .get("config_file")
             .and_then(|v| v.as_str())
@@ -381,6 +385,8 @@ pub struct AgentRunRequest {
     pub session_title: Option<String>,
     pub agent_mode: Option<String>,
     pub agent_loop_profile: Option<String>,
+    /// Graph-mode profile filename override (data/graph/*.yaml).
+    pub graph_profile: Option<String>,
     pub config_file: Option<String>,
     pub project_id: Option<String>,
 }
@@ -491,7 +497,10 @@ pub async fn start_agent_run(
     }
 
     // Agent-loop profile: per-request body > project override > settings.
-    let loop_profile = {
+    // (Resolved before the graph gate so the profile's `graph:` knobs can
+    // turn the gate on/off; a graph worker.agent_loop_profile override is
+    // applied after gate resolution below.)
+    let mut loop_profile = {
         use crate::server::services::agent_loop;
         let request_profile = req
             .agent_loop_profile
@@ -506,6 +515,64 @@ pub async fn start_agent_run(
         }
         .map(Arc::new)
     };
+
+    // Graph gate activation — DEFAULT OFF. On when:
+    //  1. the "graph" mode is explicitly selected (request or settings), or
+    //  2. the agent-loop profile says `graph.enabled: true`, or
+    //  3. the global graphEnabled settings toggle is on
+    // (profile `graph.enabled: false` overrides the settings toggle).
+    // In explicit graph mode the loop runs in the graph profile's worker.mode;
+    // toggle-activated gates keep the user's chosen mode untouched.
+    let initial_request_mode = req.agent_mode.as_deref().unwrap_or("single");
+    let settings_graph = settings.sub_agent_mode.as_deref() == Some("graph");
+    let mode_graph =
+        initial_request_mode == "graph" || (initial_request_mode == "single" && settings_graph);
+    let profile_graph_knobs = loop_profile.as_deref().and_then(|p| p.graph.clone());
+    let gate_on = mode_graph
+        || profile_graph_knobs
+            .as_ref()
+            .and_then(|g| g.enabled)
+            .unwrap_or_else(|| settings.graph_enabled.unwrap_or(false));
+    let graph_profile_arc: Option<Arc<crate::server::services::graph::GraphProfile>> = if gate_on {
+        use crate::server::services::graph;
+        graph::ensure_default_profile();
+        // Graph profile file: loop-profile knobs > request > project > settings.
+        let knobs_profile = profile_graph_knobs
+            .as_ref()
+            .and_then(|g| g.profile.as_deref())
+            .filter(|s| !s.trim().is_empty());
+        let resolved = graph::resolve_active_profile(
+            settings.graph_profile.as_deref(),
+            project_ctx.as_ref().and_then(|c| c.graph_profile.as_deref()),
+            knobs_profile.or(req.graph_profile.as_deref()),
+        )
+        .unwrap_or_else(graph::default_profile);
+        tracing::info!(
+            "[chat] graph gate ON ({}): profile '{}', worker mode '{}', {} judge(s)",
+            if mode_graph { "graph mode" } else { "toggle/profile" },
+            resolved.name, resolved.worker_mode(), resolved.judges.len()
+        );
+        Some(Arc::new(resolved))
+    } else {
+        None
+    };
+
+    // Explicit graph mode: the graph profile's worker may name its own
+    // agent-loop profile; it applies unless the request pinned one.
+    if mode_graph {
+        if let Some(worker_profile) = graph_profile_arc
+            .as_deref()
+            .and_then(|p| p.worker.as_ref())
+            .and_then(|w| w.agent_loop_profile.as_deref())
+            .filter(|s| !s.trim().is_empty())
+        {
+            if req.agent_loop_profile.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                if let Some(p) = crate::server::services::agent_loop::load_profile(worker_profile) {
+                    loop_profile = Some(Arc::new(p));
+                }
+            }
+        }
+    }
     if let Some(m) = loop_profile.as_deref().and_then(|p| p.model.as_ref()) {
         if !m.model.trim().is_empty() {
             model = m.model.trim().to_string();
@@ -566,7 +633,14 @@ pub async fn start_agent_run(
         .unwrap_or_default();
     // Per-request agent_mode overrides settings: "single" disables sub-agents,
     // "auto"/"manual"/"fully_auto" enable them (requires config file).
+    // An explicit "graph" request is rewritten to the profile's worker mode —
+    // the gate itself rides on SubAgentConfig.graph_profile below.
     let request_mode = req.agent_mode.as_deref().unwrap_or("single");
+    let request_mode: &str = if request_mode == "graph" {
+        graph_profile_arc.as_deref().map(|p| p.worker_mode()).unwrap_or("single")
+    } else {
+        request_mode
+    };
     let sub_agent_enabled = match request_mode {
         "single" => false,
         "fully_auto" | "auto_swarm" | "router" => true, // these create their own config (router triages)
@@ -583,7 +657,16 @@ pub async fn start_agent_run(
     };
     tracing::info!("[chat] request_mode={}, config_file='{}', sub_agent_enabled={}", request_mode, config_file, sub_agent_enabled);
     let effective_mode = match request_mode {
-        "single" => settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string()),
+        // "graph" must never leak into SubAgentConfig.mode — substitute the
+        // profile's worker mode (the gate rides on graph_profile instead).
+        "single" => match settings.sub_agent_mode.as_deref() {
+            Some("graph") => graph_profile_arc
+                .as_deref()
+                .map(|p| p.worker_mode().to_string())
+                .unwrap_or_else(|| "auto".to_string()),
+            Some(m) => m.to_string(),
+            None => "auto".to_string(),
+        },
         // auto/manual without config file → use fully_auto
         "auto" | "manual" if config_file.is_empty() => "fully_auto".to_string(),
         m => m.to_string(),
@@ -636,6 +719,7 @@ pub async fn start_agent_run(
         model_pool: router_pool,
         router_tier,
         loop_profile: loop_profile.clone(),
+        graph_profile: graph_profile_arc.clone(),
     };
 
     // Register cancel flag so kill endpoint can abort this session
@@ -943,6 +1027,17 @@ You have access to these tools: {}.{}",
         };
         if let Some(sp) = profile_prompt.filter(|sp| !sp.replace_base) {
             base.push_str(&format!("\n\n=== USER INSTRUCTIONS (agent-loop profile) ===\n{}", sp.text.trim()));
+        }
+
+        // Graph mode heads-up: the worker responds better to panel rejections
+        // when it knows a review gate exists.
+        if graph_profile_arc.is_some() {
+            base.push_str(
+                "\n\nGRAPH MODE: your final answer will be reviewed by a judge panel against \
+                configured rules BEFORE it reaches the user. If the panel rejects it you will \
+                receive a structured YAML verdict — follow its `revise` instructions and return \
+                a complete corrected answer.",
+            );
         }
 
         // Inject active project context (name/description/memory/custom instructions).

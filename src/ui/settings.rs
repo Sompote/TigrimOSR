@@ -19,6 +19,7 @@ enum SettingsSection {
     AI,
     SubAgent,
     AgentLoop,
+    Graph,
     McpTools,
     Tools,
     Plugins,
@@ -38,6 +39,7 @@ impl SettingsSection {
         Self::AI,
         Self::SubAgent,
         Self::AgentLoop,
+        Self::Graph,
         Self::McpTools,
         Self::Tools,
         Self::Plugins,
@@ -57,6 +59,7 @@ impl SettingsSection {
             Self::AI => "AI / API",
             Self::SubAgent => "Sub-Agent",
             Self::AgentLoop => "Agent Loop",
+            Self::Graph => "Graph",
             Self::McpTools => "MCP Tools",
             Self::Tools => "Tools",
             Self::Plugins => "Plugins",
@@ -75,6 +78,41 @@ impl SettingsSection {
 // ---------------------------------------------------------------------------
 // Connection test status
 // ---------------------------------------------------------------------------
+
+/// Editable form model for one graph judge (mirrors graph::JudgeNode; a
+/// negative threshold means "use the aggregation threshold").
+#[derive(Debug, Clone)]
+struct GraphJudgeForm {
+    name: String,
+    model: String,
+    api_url: String,
+    api_key: String,
+    rules_file: String,
+    rules: String,
+    weight: f64,
+    threshold: f64, // < 0.0 = inherit aggregation threshold
+    use_tools: bool,
+    allow_execute: bool,
+    max_judge_rounds: u64,
+}
+
+impl Default for GraphJudgeForm {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            model: String::new(),
+            api_url: String::new(),
+            api_key: String::new(),
+            rules_file: String::new(),
+            rules: String::new(),
+            weight: 1.0,
+            threshold: -1.0,
+            use_tools: true,
+            allow_execute: false,
+            max_judge_rounds: 3,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum ConnectionStatus {
@@ -212,6 +250,9 @@ pub struct SettingsView {
     loop_compact_max_context_tokens: u64,
     loop_compact_tool_result_max_len: u64,
     loop_compact_model: String,
+    // graph gate knobs (graph: section — inherit | on | off + profile file)
+    loop_graph_gate: String,
+    loop_graph_profile: String,
     // outer evaluation loop (tool-using job-level judge)
     loop_eval_enabled: bool,
     loop_eval_threshold: f64,
@@ -221,6 +262,33 @@ pub struct SettingsView {
     loop_eval_model: String,
     loop_eval_rubric: String,
     loop_eval_allow_execute: bool,
+
+    // --- Graph mode (judge panel gating the final answer) ---
+    graph_gate_enabled: bool, // global toggle (graphEnabled) — default off
+    graph_profiles: Vec<String>,
+    active_graph_profile: String, // "" = default profile
+    graph_selected_file: String,
+    graph_new_name: String,
+    graph_yaml_mode: bool,
+    graph_yaml_text: String,
+    graph_status_msg: Option<String>,
+    graph_needs_refresh: bool,
+    // form model
+    graph_name: String,
+    graph_description: String,
+    graph_worker_mode: String,
+    graph_worker_loop_profile: String,
+    graph_judges: Vec<GraphJudgeForm>,
+    graph_agg_policy: String,
+    graph_agg_threshold: f64,
+    graph_max_iterations: u64,
+    graph_max_fix_rounds: u64,
+    graph_judge_plain_answers: bool,
+    // judge rules sub-editor
+    graph_rules_files: Vec<String>,
+    graph_rules_selected: String,
+    graph_rules_text: String,
+    graph_rules_new_name: String,
 
     // --- Tools (management: catalog + custom YAML tools) ---
     /// 0 = Catalog (all tools), 1 = Custom Tools editor.
@@ -439,6 +507,8 @@ impl Default for SettingsView {
             loop_compact_max_context_tokens: 100_000,
             loop_compact_tool_result_max_len: 6000,
             loop_compact_model: String::new(),
+            loop_graph_gate: "inherit".to_string(),
+            loop_graph_profile: String::new(),
             loop_eval_enabled: false,
             loop_eval_threshold: 0.75,
             loop_eval_max_retries: 2,
@@ -447,6 +517,30 @@ impl Default for SettingsView {
             loop_eval_model: String::new(),
             loop_eval_rubric: String::new(),
             loop_eval_allow_execute: false,
+
+            graph_gate_enabled: false,
+            graph_profiles: Vec::new(),
+            active_graph_profile: String::new(),
+            graph_selected_file: String::new(),
+            graph_new_name: String::new(),
+            graph_yaml_mode: false,
+            graph_yaml_text: String::new(),
+            graph_status_msg: None,
+            graph_needs_refresh: true,
+            graph_name: String::new(),
+            graph_description: String::new(),
+            graph_worker_mode: "single".to_string(),
+            graph_worker_loop_profile: String::new(),
+            graph_judges: Vec::new(),
+            graph_agg_policy: "all_pass".to_string(),
+            graph_agg_threshold: 0.75,
+            graph_max_iterations: 2,
+            graph_max_fix_rounds: 5,
+            graph_judge_plain_answers: true,
+            graph_rules_files: Vec::new(),
+            graph_rules_selected: String::new(),
+            graph_rules_text: String::new(),
+            graph_rules_new_name: String::new(),
 
             tools_subtab: 0,
             tools_catalog_filter: String::new(),
@@ -641,6 +735,7 @@ impl SettingsView {
                             SettingsSection::AI => self.section_ai(ui, ctx, runtime),
                             SettingsSection::SubAgent => self.section_sub_agent(ui, runtime),
                             SettingsSection::AgentLoop => self.section_agent_loop(ui, runtime),
+                            SettingsSection::Graph => self.section_graph(ui, runtime),
                             SettingsSection::McpTools => self.section_mcp_tools(ui, runtime),
                             SettingsSection::Tools => self.section_tools(ui, runtime),
                             SettingsSection::Plugins => self.section_plugins(ui, ctx, runtime),
@@ -729,6 +824,11 @@ impl SettingsView {
         // Agent Loop profile
         self.active_loop_profile = settings.agent_loop_profile.clone().unwrap_or_default();
         self.loop_needs_refresh = true;
+
+        // Graph gate + profile
+        self.graph_gate_enabled = settings.graph_enabled.unwrap_or(false);
+        self.active_graph_profile = settings.graph_profile.clone().unwrap_or_default();
+        self.graph_needs_refresh = true;
 
         // MCP Tools
         self.mcp_tools = settings.mcp_tools;
@@ -918,6 +1018,10 @@ impl SettingsView {
 
         // Agent Loop profile ("" = explicit built-in behavior)
         settings.agent_loop_profile = Some(self.active_loop_profile.clone());
+
+        // Graph gate toggle + profile ("" = default)
+        settings.graph_enabled = Some(self.graph_gate_enabled);
+        settings.graph_profile = Some(self.active_graph_profile.clone());
 
         // MCP Tools
         settings.mcp_tools = self.mcp_tools.clone();
@@ -1917,6 +2021,7 @@ impl SettingsView {
                             "auto_swarm",
                             "manual",
                             "router",
+                            "graph",
                         ] {
                             ui.selectable_value(
                                 &mut self.sub_agent_mode,
@@ -1925,6 +2030,13 @@ impl SettingsView {
                             );
                         }
                     });
+                if self.sub_agent_mode == "graph" {
+                    ui.label(
+                        egui::RichText::new("Judge panel gates the final answer — configure in the Graph tab")
+                            .size(10.0)
+                            .color(egui::Color32::GRAY),
+                    );
+                }
                 ui.end_row();
 
                 ui.label("Sub-Agent Model:");
@@ -5049,6 +5161,13 @@ impl SettingsView {
         self.loop_eval_model = e.model.unwrap_or_default();
         self.loop_eval_rubric = e.rubric.unwrap_or_default();
         self.loop_eval_allow_execute = e.allow_execute.unwrap_or(false);
+        let g = p.graph.clone().unwrap_or_default();
+        self.loop_graph_gate = match g.enabled {
+            Some(true) => "on".to_string(),
+            Some(false) => "off".to_string(),
+            None => "inherit".to_string(),
+        };
+        self.loop_graph_profile = g.profile.unwrap_or_default();
     }
 
     fn loop_form_to_profile(&self) -> crate::server::services::agent_loop::AgentLoopProfile {
@@ -5142,6 +5261,20 @@ impl SettingsView {
                 },
                 allow_execute: Some(self.loop_eval_allow_execute),
             }),
+            graph: {
+                let enabled = match self.loop_graph_gate.as_str() {
+                    "on" => Some(true),
+                    "off" => Some(false),
+                    _ => None,
+                };
+                let profile = Some(self.loop_graph_profile.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                if enabled.is_none() && profile.is_none() {
+                    None
+                } else {
+                    Some(GraphKnobs { enabled, profile })
+                }
+            },
         }
     }
 
@@ -5386,6 +5519,838 @@ impl SettingsView {
             let mut settings = get_settings().await;
             settings.agent_loop_profile = Some(active);
             save_settings(&settings).await;
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    //  Graph mode (judge panel) — profile + rules editors. Dual IO like the
+    //  agent-loop editor: direct fs locally, /api/graph-profiles when remote.
+    // -----------------------------------------------------------------------
+
+    fn scan_graph_profiles() -> Vec<String> {
+        let dir = crate::server::services::graph::graph_dir();
+        let mut files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    continue; // skip rules/
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".yaml") || name.ends_with(".yml") {
+                    files.push(name);
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
+    fn scan_graph_profiles_remote() -> Vec<String> {
+        let Some(rb) = crate::server::data::get_remote_backend() else {
+            return Vec::new();
+        };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+        client
+            .get(format!("{}/api/graph-profiles", rb.url))
+            .bearer_auth(&rb.token)
+            .send()
+            .ok()
+            .and_then(|r| r.json::<serde_json::Value>().ok())
+            .and_then(|v| v.as_array().cloned())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e["filename"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn read_graph_profile_content(filename: &str) -> Option<String> {
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_default();
+            return client
+                .get(format!("{}/api/graph-profiles/{}", rb.url, filename))
+                .bearer_auth(&rb.token)
+                .send()
+                .ok()
+                .and_then(|r| r.json::<serde_json::Value>().ok())
+                .and_then(|v| v["content"].as_str().map(|s| s.to_string()));
+        }
+        std::fs::read_to_string(crate::server::services::graph::graph_dir().join(filename)).ok()
+    }
+
+    fn write_graph_profile_content(filename: &str, content: &str) -> Result<(), String> {
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            let resp = client
+                .post(format!("{}/api/graph-profiles", rb.url))
+                .bearer_auth(&rb.token)
+                .json(&serde_json::json!({"filename": filename, "content": content}))
+                .send()
+                .map_err(|e| e.to_string())?;
+            if resp.status().is_success() {
+                return Ok(());
+            }
+            return Err(resp
+                .json::<serde_json::Value>()
+                .ok()
+                .and_then(|v| v["error"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| "Save failed".to_string()));
+        }
+        let dir = crate::server::services::graph::graph_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join(filename), content).map_err(|e| e.to_string())
+    }
+
+    fn scan_graph_rules(&mut self) {
+        if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_default();
+            self.graph_rules_files = client
+                .get(format!("{}/api/graph-profiles/rules", rb.url))
+                .bearer_auth(&rb.token)
+                .send()
+                .ok()
+                .and_then(|r| r.json::<Vec<String>>().ok())
+                .unwrap_or_default();
+            return;
+        }
+        let dir = crate::server::services::graph::rules_dir();
+        let mut files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".yaml") || name.ends_with(".yml") {
+                    files.push(name);
+                }
+            }
+        }
+        files.sort();
+        self.graph_rules_files = files;
+    }
+
+    fn open_graph_rules(&mut self, filename: &str) {
+        self.graph_rules_selected = filename.to_string();
+        self.graph_rules_text = if crate::server::data::get_remote_backend().is_some() {
+            let rb = crate::server::data::get_remote_backend().unwrap();
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_default();
+            client
+                .get(format!("{}/api/graph-profiles/rules/{}", rb.url, filename))
+                .bearer_auth(&rb.token)
+                .send()
+                .ok()
+                .and_then(|r| r.json::<serde_json::Value>().ok())
+                .and_then(|v| v["content"].as_str().map(|s| s.to_string()))
+                .unwrap_or_default()
+        } else {
+            std::fs::read_to_string(crate::server::services::graph::rules_dir().join(filename))
+                .unwrap_or_default()
+        };
+    }
+
+    fn save_graph_rules(&mut self) {
+        let filename = self.graph_rules_selected.clone();
+        if filename.is_empty() {
+            self.graph_status_msg = Some("Error: no rules file selected".to_string());
+            return;
+        }
+        if let Err(e) = serde_yaml::from_str::<serde_yaml::Value>(&self.graph_rules_text) {
+            self.graph_status_msg = Some(format!("Error: invalid rules YAML: {}", e));
+            return;
+        }
+        let result = if let Some(rb) = crate::server::data::get_remote_backend() {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default();
+            client
+                .post(format!("{}/api/graph-profiles/rules/{}", rb.url, filename))
+                .bearer_auth(&rb.token)
+                .json(&serde_json::json!({"content": self.graph_rules_text}))
+                .send()
+                .map_err(|e| e.to_string())
+                .and_then(|r| {
+                    if r.status().is_success() { Ok(()) } else { Err("Save failed".to_string()) }
+                })
+        } else {
+            let dir = crate::server::services::graph::rules_dir();
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| e.to_string())
+                .and_then(|_| {
+                    std::fs::write(dir.join(&filename), &self.graph_rules_text)
+                        .map_err(|e| e.to_string())
+                })
+        };
+        self.graph_status_msg = Some(match result {
+            Ok(()) => {
+                if !self.graph_rules_files.contains(&filename) {
+                    self.graph_rules_files.push(filename.clone());
+                    self.graph_rules_files.sort();
+                }
+                format!("Saved rules {}", filename)
+            }
+            Err(e) => format!("Error saving rules: {}", e),
+        });
+    }
+
+    fn refresh_graph_profiles(&mut self) {
+        if crate::server::data::get_remote_backend().is_some() {
+            self.graph_profiles = Self::scan_graph_profiles_remote();
+        } else {
+            crate::server::services::graph::ensure_default_profile();
+            self.graph_profiles = Self::scan_graph_profiles();
+        }
+        self.scan_graph_rules();
+        if self.graph_selected_file.is_empty()
+            || !self.graph_profiles.contains(&self.graph_selected_file)
+        {
+            let initial = if !self.active_graph_profile.is_empty()
+                && self.graph_profiles.contains(&self.active_graph_profile)
+            {
+                self.active_graph_profile.clone()
+            } else {
+                self.graph_profiles.first().cloned().unwrap_or_default()
+            };
+            self.graph_selected_file = initial;
+        }
+        if !self.graph_selected_file.is_empty() {
+            let file = self.graph_selected_file.clone();
+            self.open_graph_profile(&file);
+        }
+    }
+
+    fn open_graph_profile(&mut self, filename: &str) {
+        self.graph_selected_file = filename.to_string();
+        let content = Self::read_graph_profile_content(filename).unwrap_or_default();
+        self.graph_yaml_text = content.clone();
+        match serde_yaml::from_str::<crate::server::services::graph::GraphProfile>(&content) {
+            Ok(p) => {
+                self.populate_graph_form(&p);
+                self.graph_status_msg = None;
+            }
+            Err(e) => {
+                self.graph_status_msg = Some(format!("Error parsing {}: {}", filename, e));
+                self.graph_yaml_mode = true; // let the user fix the raw YAML
+            }
+        }
+    }
+
+    fn populate_graph_form(&mut self, p: &crate::server::services::graph::GraphProfile) {
+        self.graph_name = p.name.clone();
+        self.graph_description = p.description.clone();
+        self.graph_worker_mode = p.worker_mode().to_string();
+        self.graph_worker_loop_profile = p
+            .worker
+            .as_ref()
+            .and_then(|w| w.agent_loop_profile.clone())
+            .unwrap_or_default();
+        self.graph_judges = p
+            .judges
+            .iter()
+            .map(|j| GraphJudgeForm {
+                name: j.name.clone(),
+                model: j.model.clone(),
+                api_url: j.api_url.clone(),
+                api_key: j.api_key.clone(),
+                rules_file: j.rules_file.clone().unwrap_or_default(),
+                rules: j.rules.clone().unwrap_or_default(),
+                weight: j.weight.unwrap_or(1.0),
+                threshold: j.threshold.unwrap_or(-1.0),
+                use_tools: j.use_tools.unwrap_or(true),
+                allow_execute: j.allow_execute.unwrap_or(false),
+                max_judge_rounds: j.max_judge_rounds.unwrap_or(3),
+            })
+            .collect();
+        let agg = p.aggregation.clone().unwrap_or_default();
+        self.graph_agg_policy = if agg.policy.trim().is_empty() {
+            "all_pass".to_string()
+        } else {
+            agg.policy.clone()
+        };
+        self.graph_agg_threshold = agg.threshold.unwrap_or(0.75);
+        let knobs = p.loop_.clone().unwrap_or_default();
+        self.graph_max_iterations = knobs.max_iterations.unwrap_or(2);
+        self.graph_max_fix_rounds = knobs.max_fix_rounds.unwrap_or(5);
+        self.graph_judge_plain_answers = knobs.judge_plain_answers.unwrap_or(true);
+    }
+
+    fn graph_form_to_profile(&self) -> crate::server::services::graph::GraphProfile {
+        use crate::server::services::graph::*;
+        GraphProfile {
+            name: self.graph_name.clone(),
+            description: self.graph_description.clone(),
+            worker: Some(WorkerNode {
+                mode: self.graph_worker_mode.clone(),
+                agent_loop_profile: if self.graph_worker_loop_profile.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.graph_worker_loop_profile.trim().to_string())
+                },
+            }),
+            judges: self
+                .graph_judges
+                .iter()
+                .map(|f| JudgeNode {
+                    name: f.name.clone(),
+                    model: f.model.clone(),
+                    api_url: f.api_url.clone(),
+                    api_key: f.api_key.clone(),
+                    rules: if f.rules.trim().is_empty() { None } else { Some(f.rules.clone()) },
+                    rules_file: if f.rules_file.trim().is_empty() {
+                        None
+                    } else {
+                        Some(f.rules_file.clone())
+                    },
+                    weight: Some(f.weight),
+                    threshold: if f.threshold < 0.0 { None } else { Some(f.threshold) },
+                    use_tools: Some(f.use_tools),
+                    allow_execute: Some(f.allow_execute),
+                    max_judge_rounds: Some(f.max_judge_rounds),
+                })
+                .collect(),
+            aggregation: Some(AggregationPolicy {
+                policy: self.graph_agg_policy.clone(),
+                threshold: Some(self.graph_agg_threshold),
+            }),
+            loop_: Some(GraphLoopKnobs {
+                max_iterations: Some(self.graph_max_iterations),
+                max_fix_rounds: Some(self.graph_max_fix_rounds),
+                judge_plain_answers: Some(self.graph_judge_plain_answers),
+            }),
+        }
+    }
+
+    fn save_graph_profile(&mut self) {
+        if self.graph_selected_file.is_empty() {
+            self.graph_status_msg = Some("Error: no profile file selected".to_string());
+            return;
+        }
+        let content = if self.graph_yaml_mode {
+            self.graph_yaml_text.clone()
+        } else {
+            match serde_yaml::to_string(&self.graph_form_to_profile()) {
+                Ok(y) => y,
+                Err(e) => {
+                    self.graph_status_msg = Some(format!("Error serializing profile: {}", e));
+                    return;
+                }
+            }
+        };
+        match crate::server::services::graph::validate_graph_yaml(&content) {
+            Ok((profile, warnings)) => {
+                let file = self.graph_selected_file.clone();
+                match Self::write_graph_profile_content(&file, &content) {
+                    Ok(()) => {
+                        self.graph_yaml_text = content;
+                        self.populate_graph_form(&profile);
+                        self.graph_status_msg = Some(if warnings.is_empty() {
+                            format!("Saved {}", file)
+                        } else {
+                            format!("Saved {} — warnings: {}", file, warnings.join("; "))
+                        });
+                        if !self.graph_profiles.contains(&file) {
+                            self.graph_profiles.push(file);
+                            self.graph_profiles.sort();
+                        }
+                    }
+                    Err(e) => self.graph_status_msg = Some(format!("Error saving: {}", e)),
+                }
+            }
+            Err(e) => self.graph_status_msg = Some(format!("Error: {}", e)),
+        }
+    }
+
+    fn save_active_graph_profile(&mut self, runtime: &tokio::runtime::Handle) {
+        let active = self.active_graph_profile.clone();
+        runtime.block_on(async move {
+            let mut settings = get_settings().await;
+            settings.graph_profile = Some(active);
+            save_settings(&settings).await;
+        });
+    }
+
+    fn section_graph(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        self.load_settings_if_needed(runtime);
+        if self.graph_needs_refresh {
+            self.graph_needs_refresh = false;
+            self.refresh_graph_profiles();
+        }
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.heading("Graph Mode — Judge Panel");
+            let (tag, color) = if self.graph_gate_enabled {
+                ("● GATE ON", egui::Color32::from_rgb(34, 197, 94))
+            } else {
+                ("○ GATE OFF", egui::Color32::from_rgb(124, 115, 104))
+            };
+            ui.label(egui::RichText::new(tag).size(12.0).strong().color(color));
+        });
+        ui.label(
+            egui::RichText::new(
+                "Evaluator-optimizer graph: a panel of judge agents reviews the final answer \
+                 against YAML rules BEFORE it reaches you. A rejected answer is sent back to \
+                 the main loop with the structured verdict until it passes or max iterations \
+                 run out. Edit here or drop YAML files into data/graph/ (rules in \
+                 data/graph/rules/).",
+            )
+            .size(12.0)
+            .color(egui::Color32::from_rgb(124, 115, 104)),
+        );
+        ui.add_space(8.0);
+        if ui
+            .checkbox(
+                &mut self.graph_gate_enabled,
+                "Enable graph gate (judge final answers in every mode)",
+            )
+            .on_hover_text(
+                "Default off. On = the judge panel reviews every final answer regardless of the \
+                 selected sub-agent mode. Selecting the 'graph' mode enables the gate even when \
+                 this is off; an agent-loop profile's graph.enabled overrides this toggle.",
+            )
+            .changed()
+        {
+            let on = self.graph_gate_enabled;
+            runtime.block_on(async move {
+                let mut settings = get_settings().await;
+                settings.graph_enabled = Some(on);
+                save_settings(&settings).await;
+            });
+            self.graph_status_msg =
+                Some(format!("Graph gate {}", if on { "enabled" } else { "disabled" }));
+        }
+        ui.label(
+            egui::RichText::new(
+                "Also available per agent-loop profile YAML:  graph: { enabled: true, profile: strict.yaml }",
+            )
+            .size(10.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(8.0);
+
+        // --- Active profile selector ---
+        ui.horizontal(|ui| {
+            ui.label("Active profile:");
+            let mut changed = false;
+            egui::ComboBox::from_id_salt("active_graph_profile")
+                .selected_text(if self.active_graph_profile.is_empty() {
+                    "default.yaml".to_string()
+                } else {
+                    self.active_graph_profile.clone()
+                })
+                .show_ui(ui, |ui| {
+                    for f in self.graph_profiles.clone() {
+                        changed |= ui
+                            .selectable_value(&mut self.active_graph_profile, f.clone(), f)
+                            .changed();
+                    }
+                });
+            if changed {
+                self.save_active_graph_profile(runtime);
+                self.graph_status_msg =
+                    Some(format!("Active graph profile set to {}", self.active_graph_profile));
+            }
+        });
+        ui.add_space(8.0);
+        ui.separator();
+
+        // --- Profile file picker + New / Delete / Reset default ---
+        ui.horizontal(|ui| {
+            ui.label("Edit profile:");
+            let prev = self.graph_selected_file.clone();
+            let mut pick = self.graph_selected_file.clone();
+            egui::ComboBox::from_id_salt("graph_profile_editor_file")
+                .selected_text(if pick.is_empty() { "(none)".to_string() } else { pick.clone() })
+                .show_ui(ui, |ui| {
+                    for f in self.graph_profiles.clone() {
+                        ui.selectable_value(&mut pick, f.clone(), f);
+                    }
+                });
+            if pick != prev && !pick.is_empty() {
+                self.open_graph_profile(&pick);
+            }
+
+            ui.add_space(8.0);
+            ui.label("New:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.graph_new_name)
+                    .hint_text("profile-name")
+                    .desired_width(140.0),
+            );
+            if ui.button("Create").clicked() && !self.graph_new_name.trim().is_empty() {
+                let file =
+                    crate::server::services::graph::normalize_filename(&self.graph_new_name);
+                self.graph_name =
+                    self.graph_new_name.trim().trim_end_matches(".yaml").to_string();
+                self.graph_new_name.clear();
+                self.graph_selected_file = file;
+                self.graph_yaml_mode = false;
+                if self.graph_judges.is_empty() {
+                    self.graph_judges.push(GraphJudgeForm {
+                        name: "quality".to_string(),
+                        rules_file: crate::server::services::graph::DEFAULT_RULES_FILE.to_string(),
+                        ..Default::default()
+                    });
+                }
+                self.save_graph_profile();
+            }
+
+            if !self.graph_selected_file.is_empty()
+                && self.graph_selected_file != crate::server::services::graph::DEFAULT_PROFILE_FILE
+                && ui
+                    .add(egui::Button::new(
+                        egui::RichText::new("Delete").color(egui::Color32::from_rgb(239, 68, 68)),
+                    ))
+                    .clicked()
+            {
+                let file = self.graph_selected_file.clone();
+                if let Some(rb) = crate::server::data::get_remote_backend() {
+                    let client = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(5))
+                        .build()
+                        .unwrap_or_default();
+                    let _ = client
+                        .delete(format!("{}/api/graph-profiles/{}", rb.url, file))
+                        .bearer_auth(&rb.token)
+                        .send();
+                } else {
+                    let _ = std::fs::remove_file(
+                        crate::server::services::graph::graph_dir().join(&file),
+                    );
+                }
+                if self.active_graph_profile == file {
+                    self.active_graph_profile.clear();
+                    self.save_active_graph_profile(runtime);
+                }
+                self.graph_selected_file.clear();
+                self.graph_status_msg = Some(format!("Deleted {}", file));
+                self.graph_needs_refresh = true;
+            }
+
+            if ui
+                .button("Reset default")
+                .on_hover_text("Regenerate default.yaml (and re-seed default rules if missing)")
+                .clicked()
+            {
+                if let Some(rb) = crate::server::data::get_remote_backend() {
+                    let client = reqwest::blocking::Client::builder()
+                        .timeout(std::time::Duration::from_secs(5))
+                        .build()
+                        .unwrap_or_default();
+                    let _ = client
+                        .post(format!("{}/api/graph-profiles/reset-default", rb.url))
+                        .bearer_auth(&rb.token)
+                        .send();
+                } else if let Ok(yaml) =
+                    serde_yaml::to_string(&crate::server::services::graph::default_profile())
+                {
+                    let _ = Self::write_graph_profile_content(
+                        crate::server::services::graph::DEFAULT_PROFILE_FILE,
+                        &yaml,
+                    );
+                    crate::server::services::graph::ensure_default_profile();
+                }
+                self.graph_status_msg = Some("default.yaml regenerated".to_string());
+                self.graph_needs_refresh = true;
+            }
+        });
+
+        Self::status_label(ui, &self.graph_status_msg);
+        ui.add_space(8.0);
+
+        if self.graph_selected_file.is_empty() {
+            ui.label("No profile selected — create one above.");
+            return;
+        }
+
+        // --- Form / YAML mode toggle ---
+        ui.horizontal(|ui| {
+            let was_yaml = self.graph_yaml_mode;
+            ui.selectable_value(&mut self.graph_yaml_mode, false, "Form");
+            ui.selectable_value(&mut self.graph_yaml_mode, true, "Edit as YAML");
+            if was_yaml != self.graph_yaml_mode {
+                if self.graph_yaml_mode {
+                    if let Ok(y) = serde_yaml::to_string(&self.graph_form_to_profile()) {
+                        self.graph_yaml_text = y;
+                    }
+                } else {
+                    match serde_yaml::from_str::<crate::server::services::graph::GraphProfile>(
+                        &self.graph_yaml_text,
+                    ) {
+                        Ok(p) => {
+                            self.populate_graph_form(&p);
+                            self.graph_status_msg = None;
+                        }
+                        Err(e) => {
+                            self.graph_status_msg =
+                                Some(format!("Error: fix YAML before switching to Form: {}", e));
+                            self.graph_yaml_mode = true;
+                        }
+                    }
+                }
+            }
+            ui.add_space(12.0);
+            if Self::save_button(ui, &format!("Save {}", self.graph_selected_file)) {
+                self.save_graph_profile();
+            }
+        });
+        ui.add_space(8.0);
+
+        if self.graph_yaml_mode {
+            egui::ScrollArea::vertical()
+                .id_salt("graph_yaml_editor")
+                .max_height(420.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.graph_yaml_text)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(24),
+                    );
+                });
+        } else {
+            self.graph_form_ui(ui);
+        }
+
+        // --- Judge rules sub-editor (same files the judges load at run time) ---
+        ui.add_space(12.0);
+        ui.separator();
+        ui.heading("Judge Rules Files");
+        ui.label(
+            egui::RichText::new(
+                "Rule files in data/graph/rules/ — referenced by judges via rules_file and \
+                 rendered verbatim into the judge's system prompt. Hand-dropped files appear \
+                 here after Refresh.",
+            )
+            .size(11.0)
+            .color(egui::Color32::GRAY),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let prev = self.graph_rules_selected.clone();
+            let mut pick = self.graph_rules_selected.clone();
+            egui::ComboBox::from_id_salt("graph_rules_file_picker")
+                .selected_text(if pick.is_empty() { "(none)".to_string() } else { pick.clone() })
+                .show_ui(ui, |ui| {
+                    for f in self.graph_rules_files.clone() {
+                        ui.selectable_value(&mut pick, f.clone(), f);
+                    }
+                });
+            if pick != prev && !pick.is_empty() {
+                self.open_graph_rules(&pick);
+            }
+            ui.add_space(8.0);
+            ui.label("New:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.graph_rules_new_name)
+                    .hint_text("rules-name")
+                    .desired_width(140.0),
+            );
+            if ui.button("Create rules").clicked() && !self.graph_rules_new_name.trim().is_empty() {
+                let file =
+                    crate::server::services::graph::normalize_filename(&self.graph_rules_new_name);
+                self.graph_rules_new_name.clear();
+                self.graph_rules_selected = file;
+                self.graph_rules_text =
+                    "rules:\n  - id: my-rule\n    severity: blocker\n    description: Describe what must hold for the answer to pass.\n".to_string();
+                self.save_graph_rules();
+            }
+            if ui.button("Refresh").clicked() {
+                self.scan_graph_rules();
+            }
+            if !self.graph_rules_selected.is_empty() && ui.button("Save rules").clicked() {
+                self.save_graph_rules();
+            }
+        });
+        if !self.graph_rules_selected.is_empty() {
+            egui::ScrollArea::vertical()
+                .id_salt("graph_rules_editor")
+                .max_height(220.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.graph_rules_text)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(10),
+                    );
+                });
+        }
+    }
+
+    fn graph_form_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Name:");
+            ui.add(egui::TextEdit::singleline(&mut self.graph_name).desired_width(180.0));
+            ui.label("Description:");
+            ui.add(egui::TextEdit::singleline(&mut self.graph_description).desired_width(320.0));
+        });
+        ui.add_space(8.0);
+
+        // --- Worker node ---
+        ui.horizontal(|ui| {
+            ui.label("Worker mode:");
+            egui::ComboBox::from_id_salt("graph_worker_mode")
+                .selected_text(&self.graph_worker_mode)
+                .width(160.0)
+                .show_ui(ui, |ui| {
+                    for m in crate::server::services::graph::WORKER_MODES {
+                        ui.selectable_value(&mut self.graph_worker_mode, m.to_string(), *m);
+                    }
+                });
+            ui.label(
+                egui::RichText::new("the mode the main loop runs in under the gate")
+                    .size(10.0)
+                    .color(egui::Color32::GRAY),
+            );
+            ui.add_space(8.0);
+            ui.label("Worker loop profile:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.graph_worker_loop_profile)
+                    .desired_width(160.0)
+                    .hint_text("(optional agent-loop file)"),
+            );
+        });
+        ui.add_space(8.0);
+
+        // --- Judge panel ---
+        ui.heading("Judges");
+        let mut judge_to_delete: Option<usize> = None;
+        let rules_files = self.graph_rules_files.clone();
+        for (idx, judge) in self.graph_judges.iter_mut().enumerate() {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("Judge #{}", idx + 1)).strong());
+                    ui.label("Name:");
+                    ui.add(egui::TextEdit::singleline(&mut judge.name).desired_width(120.0));
+                    ui.label("Model:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut judge.model)
+                            .desired_width(180.0)
+                            .hint_text("(blank = session model)"),
+                    );
+                    if ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Remove").color(egui::Color32::from_rgb(239, 68, 68)),
+                        ))
+                        .clicked()
+                    {
+                        judge_to_delete = Some(idx);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("API URL:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut judge.api_url)
+                            .desired_width(220.0)
+                            .hint_text("(blank = session)"),
+                    );
+                    ui.label("API key:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut judge.api_key)
+                            .desired_width(160.0)
+                            .password(true)
+                            .hint_text("(blank = session)"),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Rules file:");
+                    egui::ComboBox::from_id_salt(format!("graph_judge_rules_{idx}"))
+                        .selected_text(if judge.rules_file.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            judge.rules_file.clone()
+                        })
+                        .width(200.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut judge.rules_file, String::new(), "(none)");
+                            for f in &rules_files {
+                                ui.selectable_value(&mut judge.rules_file, f.clone(), f.as_str());
+                            }
+                        });
+                    ui.label("Weight:");
+                    ui.add(
+                        egui::DragValue::new(&mut judge.weight).speed(0.1).range(0.0..=10.0),
+                    );
+                    ui.checkbox(&mut judge.use_tools, "verify with tools")
+                        .on_hover_text("judge may call read_file/list_files to check claims");
+                    ui.checkbox(&mut judge.allow_execute, "allow execute")
+                        .on_hover_text("also grants run_python/run_shell to this judge");
+                    ui.label("Judge rounds:");
+                    ui.add(egui::DragValue::new(&mut judge.max_judge_rounds).range(1..=6));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Extra rules:");
+                    ui.add(
+                        egui::TextEdit::multiline(&mut judge.rules)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(2)
+                            .hint_text("inline rules appended after the rules file (optional)"),
+                    );
+                });
+            });
+            ui.add_space(4.0);
+        }
+        if let Some(idx) = judge_to_delete {
+            self.graph_judges.remove(idx);
+        }
+        if ui.button("+ Add judge").clicked() {
+            self.graph_judges.push(GraphJudgeForm {
+                name: format!("judge-{}", self.graph_judges.len() + 1),
+                ..Default::default()
+            });
+        }
+        ui.add_space(8.0);
+
+        // --- Aggregation + loop knobs ---
+        ui.heading("Aggregation & Loop");
+        ui.horizontal(|ui| {
+            ui.label("Policy:");
+            egui::ComboBox::from_id_salt("graph_agg_policy")
+                .selected_text(match self.graph_agg_policy.as_str() {
+                    "majority" => "Majority vote",
+                    "weighted_average" => "Weighted average",
+                    _ => "All must pass",
+                })
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.graph_agg_policy, "all_pass".to_string(), "All must pass");
+                    ui.selectable_value(&mut self.graph_agg_policy, "majority".to_string(), "Majority vote");
+                    ui.selectable_value(
+                        &mut self.graph_agg_policy,
+                        "weighted_average".to_string(),
+                        "Weighted average",
+                    );
+                });
+            ui.label("Threshold:");
+            ui.add(
+                egui::DragValue::new(&mut self.graph_agg_threshold)
+                    .speed(0.05)
+                    .range(0.0..=1.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Max iterations:");
+            ui.add(egui::DragValue::new(&mut self.graph_max_iterations).range(1..=5))
+                .on_hover_text("judge → revise cycles before the answer is released anyway");
+            ui.label("Fix rounds per iteration:");
+            ui.add(egui::DragValue::new(&mut self.graph_max_fix_rounds).range(1..=10))
+                .on_hover_text("worker tool rounds granted to address a rejection");
+            ui.checkbox(&mut self.graph_judge_plain_answers, "judge plain answers")
+                .on_hover_text("also judge answers produced without any tool calls");
         });
     }
 
@@ -6540,6 +7505,43 @@ impl SettingsView {
                         );
                     }
                 }
+            });
+
+        // --- Graph gate (judge panel) ---
+        egui::CollapsingHeader::new("Graph Gate (Judge Panel)")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "Judge panel reviewing the final answer before delivery (configure judges \
+                         in the Graph tab). Inherit = follow the global toggle in the Graph tab \
+                         (default off).",
+                    )
+                    .size(11.0)
+                    .color(egui::Color32::from_rgb(124, 115, 104)),
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Gate:");
+                    egui::ComboBox::from_id_salt("loop_graph_gate")
+                        .selected_text(match self.loop_graph_gate.as_str() {
+                            "on" => "On",
+                            "off" => "Off",
+                            _ => "Inherit (settings)",
+                        })
+                        .width(160.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.loop_graph_gate, "inherit".to_string(), "Inherit (settings)");
+                            ui.selectable_value(&mut self.loop_graph_gate, "on".to_string(), "On");
+                            ui.selectable_value(&mut self.loop_graph_gate, "off".to_string(), "Off");
+                        });
+                    ui.label("Graph profile:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.loop_graph_profile)
+                            .desired_width(180.0)
+                            .hint_text("(blank = active profile)"),
+                    )
+                    .on_hover_text("Filename in data/graph/, e.g. strict.yaml");
+                });
             });
 
         // --- Compaction ---

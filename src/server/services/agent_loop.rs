@@ -46,6 +46,11 @@ pub struct AgentLoopProfile {
     /// job finishes (top-level main agent only, never sub-agents).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation: Option<EvaluationKnobs>,
+    /// Graph gate: judge panel (data/graph/ profiles) reviewing the final
+    /// answer before delivery. `enabled` overrides the global graphEnabled
+    /// setting either way; omitted = follow settings (default off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph: Option<GraphKnobs>,
 }
 
 impl AgentLoopProfile {
@@ -285,6 +290,20 @@ pub struct EvaluationKnobs {
     pub allow_execute: Option<bool>,
 }
 
+/// Graph-gate knobs inside an agent-loop profile:
+///   graph:
+///     enabled: true              # turn the judge panel on/off for this profile
+///     profile: strict.yaml       # optional graph profile in data/graph/ (default: active/global)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GraphKnobs {
+    /// Some(true/false) overrides the global graphEnabled setting; None = follow it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Graph profile filename in data/graph/ used when the gate is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
@@ -381,6 +400,9 @@ pub fn default_profile_from_settings(settings: &Value) -> AgentLoopProfile {
             rubric: None,
             allow_execute: Some(false),
         }),
+        // Graph gate deliberately unset: omitted = follow the global
+        // graphEnabled setting, which defaults to OFF.
+        graph: None,
     }
 }
 
@@ -499,6 +521,8 @@ pub fn profile_from_agent_def(agent_def: &Value) -> Option<AgentLoopProfile> {
         // Per-agent evaluation is meaningless: the outer eval loop only runs
         // for the top-level main agent, never for team/sub-agents.
         evaluation: None,
+        // Same reasoning: the graph gate is top-level only.
+        graph: None,
     })
 }
 
@@ -683,6 +707,25 @@ pub fn tool_editor_to_config(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn graph_knobs_parse_and_round_trip() {
+        let yaml = "name: g\ngraph:\n  enabled: true\n  profile: strict.yaml\n";
+        let p: AgentLoopProfile = serde_yaml::from_str(yaml).unwrap();
+        let g = p.graph.as_ref().unwrap();
+        assert_eq!(g.enabled, Some(true));
+        assert_eq!(g.profile.as_deref(), Some("strict.yaml"));
+        let out = serde_yaml::to_string(&p).unwrap();
+        let p2: AgentLoopProfile = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(p2.graph.unwrap().enabled, Some(true));
+        // Omitted section stays None (= follow the global toggle, default off).
+        let p3: AgentLoopProfile = serde_yaml::from_str("name: plain\n").unwrap();
+        assert!(p3.graph.is_none());
+        // enabled: false explicitly overrides the settings toggle.
+        let p4: AgentLoopProfile =
+            serde_yaml::from_str("graph:\n  enabled: false\n").unwrap();
+        assert_eq!(p4.graph.unwrap().enabled, Some(false));
+    }
 
     #[test]
     fn config_less_profile_still_parses() {

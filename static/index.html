@@ -994,6 +994,7 @@ h4.md-h { font-size: 1em; }
           <button class="chip" id="agent-mode-chip" onclick="cycleAgentMode()"><span class="lead"></span><span id="agent-mode-label">Single Agent</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <button class="chip" id="project-chip" onclick="switchTab('projects')" title="Active project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="project-chip-label">No Project</span></button>
           <button class="chip arch-tag-chip hidden" id="agent-arch-tag" onclick="switchTab('agents')" title="Active architecture — tap to change"></button>
+          <button class="chip hidden" id="graph-gate-chip" onclick="switchSettingsAndTab('graph')" title="Graph gate is ON — a judge panel reviews final answers before delivery. Tap to configure." style="color:#9355c8;border-color:#9355c8">⬡ GRAPH</button>
         </div>
         <div class="attach-bar" id="attach-bar"></div>
         <div class="composer">
@@ -1112,6 +1113,7 @@ h4.md-h { font-size: 1em; }
           <option value="auto">Auto</option>
           <option value="manual">Manual</option>
           <option value="fully_auto">Fully Auto</option>
+          <option value="graph">Graph (judged)</option>
         </select>
         <button class="pill-btn primary" style="flex:none" onclick="openArchEditor()">+ New Architecture</button>
         <button class="pill-btn" id="arch-edit-btn" style="flex:none" onclick="editArchConfig()">Edit</button>
@@ -1460,10 +1462,12 @@ function showApp() {
 }
 
 function checkServerStatus() {
-  api('/api/settings').then(() => {
+  api('/api/settings').then(s => {
     document.getElementById('vmdot').classList.add('on');
     document.getElementById('vmlabel').textContent = 'Server';
     document.getElementById('vm-ghost').textContent = 'connected';
+    _graphEnabled = s && s.graphEnabled === true;
+    updateGraphGateChip();
   }).catch(() => {
     document.getElementById('vmdot').classList.remove('on');
     document.getElementById('vm-ghost').textContent = 'offline';
@@ -1711,8 +1715,8 @@ function newSession() {
 let sending = false;
 function getAgentMode() { return localStorage.getItem('tigrimos_agent_mode') || 'single'; }
 
-const agentModes = ['single', 'router', 'auto', 'manual', 'fully_auto'];
-const agentModeLabels = { single: 'Single Agent', router: 'Router', auto: 'Auto Swarm', manual: 'Manual', fully_auto: 'Fully Auto' };
+const agentModes = ['single', 'router', 'auto', 'manual', 'fully_auto', 'graph'];
+const agentModeLabels = { single: 'Single Agent', router: 'Router', auto: 'Auto Swarm', manual: 'Manual', fully_auto: 'Fully Auto', graph: 'Graph (judged)' };
 function cycleAgentMode() {
   const cur = getAgentMode();
   const next = agentModes[(agentModes.indexOf(cur) + 1) % agentModes.length];
@@ -1729,6 +1733,7 @@ function updateAgentModeChip() {
   const mode = getAgentMode();
   const label = document.getElementById('agent-mode-label');
   if (label) label.textContent = agentModeLabels[mode] || 'Single Agent';
+  updateGraphGateChip(); // graph badge follows mode + settings toggle
   // Show the active architecture name as a tag when running a team
   // (Manual / Auto Swarm) so remote users can see which swarm is live.
   const tag = document.getElementById('agent-arch-tag');
@@ -3089,6 +3094,7 @@ function loadSettings() {
       <div class="settings-tabs" id="settings-tabs">
         <button class="settings-tab active" data-pane="ai" onclick="switchSettingsTab('ai')">AI / API</button>
         <button class="settings-tab" data-pane="agentloop" onclick="switchSettingsTab('agentloop')">Agent Loop</button>
+        <button class="settings-tab" data-pane="graph" onclick="switchSettingsTab('graph')">Graph</button>
         <button class="settings-tab" data-pane="appearance" onclick="switchSettingsTab('appearance')">Appearance</button>
         <button class="settings-tab" data-pane="mcp" onclick="switchSettingsTab('mcp')">MCP Tools</button>
         <button class="settings-tab" data-pane="tools" onclick="switchSettingsTab('tools')">Tools</button>
@@ -3251,6 +3257,66 @@ function loadSettings() {
             <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:600">Available tools, MCP servers &amp; skills (catalog)</summary>
             <div id="s-loop-catalog" style="font-size:12px;color:var(--ink-soft);margin-top:8px">Loading…</div>
           </details>
+        </div>
+      </div>
+
+      <div class="settings-pane" id="pane-graph" hidden>
+        <div class="settings-group">
+          <h3>Graph Mode — Judge Panel <span id="s-graph-gate-tag" style="font-size:12px;margin-left:8px;color:var(--ink-soft)">○ GATE OFF</span></h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">
+            Evaluator-optimizer graph: a panel of judge agents reviews the final answer against
+            YAML rules BEFORE it reaches you. A rejected answer is sent back to the main loop
+            with the structured verdict until it passes or max iterations run out. Profiles live
+            in <code>data/graph/</code>, judge rules in <code>data/graph/rules/</code> — edit
+            here or drop files there.</div>
+          <div class="settings-row-field"><label>Graph gate</label>
+            <label style="display:flex;align-items:center;gap:8px;flex:1;font-size:13px">
+              <input type="checkbox" id="s-graph-gate" onchange="toggleGraphGate(this)">
+              Judge final answers in every mode (default off)
+            </label></div>
+          <div style="color:var(--ink-soft);font-size:11px;margin:2px 0 8px">
+            Off = judges only run when the <b>Graph (judged)</b> agent mode is selected. An
+            agent-loop profile can override this per profile with
+            <code>graph: { enabled: true, profile: strict.yaml }</code>.</div>
+          <div class="settings-row-field"><label>Active profile</label>
+            <select id="s-graph-active" onchange="setActiveGraphProfile()" style="flex:1"></select></div>
+        </div>
+        <div class="settings-group">
+          <h3>Edit Profile</h3>
+          <div class="settings-row-field"><label>Profile</label>
+            <select id="s-graph-file" onchange="openGraphProfile()" style="flex:1"></select>
+            <button class="pill-btn" onclick="deleteGraphProfile()" style="flex:none;margin-left:8px">Delete</button></div>
+          <div class="settings-row-field"><label>New profile</label>
+            <input id="s-graph-new" placeholder="profile-name" style="flex:1">
+            <button class="pill-btn" onclick="createGraphProfile()" style="flex:none;margin-left:8px">+ Create</button>
+            <button class="pill-btn" onclick="resetGraphDefault()" style="flex:none;margin-left:8px" title="Regenerate default.yaml (re-seeds default rules if missing)">Reset default</button></div>
+          <div style="color:var(--ink-soft);font-size:11px;margin:4px 0 8px">
+            <code>worker.mode</code>: single | auto | manual | fully_auto | auto_swarm | router ·
+            <code>aggregation.policy</code>: all_pass (default) | majority | weighted_average ·
+            each judge: <code>name, model, api_url, api_key, rules_file, rules, weight, threshold, use_tools, allow_execute</code> ·
+            <code>loop</code>: max_iterations (1-5), max_fix_rounds (1-10), judge_plain_answers</div>
+          <div class="settings-row-field" style="align-items:flex-start"><label>YAML</label>
+            <textarea id="s-graph-yaml" rows="16" style="flex:1;font-family:monospace;font-size:12px" spellcheck="false"></textarea></div>
+          <div style="margin-top:8px">
+            <button class="pill-btn primary" onclick="saveGraphProfile()">Save Profile</button>
+            <span id="s-graph-status" style="font-size:13px;margin-left:10px"></span></div>
+        </div>
+        <div class="settings-group">
+          <h3>Judge Rules Files</h3>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">
+            Rule files referenced by judges via <code>rules_file</code> — rendered verbatim into
+            the judge's system prompt. <code>severity: blocker</code> rules fail the verdict;
+            <code>warn</code> rules are noted only.</div>
+          <div class="settings-row-field"><label>Rules file</label>
+            <select id="s-graph-rules-file" onchange="openGraphRules()" style="flex:1"></select>
+            <button class="pill-btn" onclick="deleteGraphRules()" style="flex:none;margin-left:8px">Delete</button></div>
+          <div class="settings-row-field"><label>New rules</label>
+            <input id="s-graph-rules-new" placeholder="rules-name" style="flex:1">
+            <button class="pill-btn" onclick="createGraphRules()" style="flex:none;margin-left:8px">+ Create</button></div>
+          <div class="settings-row-field" style="align-items:flex-start"><label>YAML</label>
+            <textarea id="s-graph-rules-yaml" rows="10" style="flex:1;font-family:monospace;font-size:12px" spellcheck="false"></textarea></div>
+          <div style="margin-top:8px">
+            <button class="pill-btn primary" onclick="saveGraphRules()">Save Rules</button></div>
         </div>
       </div>
 
@@ -3506,6 +3572,7 @@ function loadSettings() {
     loadPlugins();
     loadSkillsLibrary();
     loadAgentLoopPane(data.agentLoopProfile || '');
+    loadGraphPane(data.graphProfile || 'default.yaml', data.graphEnabled === true);
     loadCustomToolsPane(data.agentLoopProfile || '');
     loadMessagingStatus();
     loadGoogleCard();
@@ -3895,6 +3962,210 @@ function resetLoopDefault() {
       }
     })
     .catch(e => setLoopStatus('Error: ' + (e.message || e), true));
+}
+
+// ---- Graph mode (judge panel) profiles + rules ----
+let _graphEnabled = false;
+function updateGraphGateChip() {
+  const chip = document.getElementById('graph-gate-chip');
+  if (chip) chip.classList.toggle('hidden', !(_graphEnabled || getAgentMode() === 'graph'));
+  const tag = document.getElementById('s-graph-gate-tag');
+  if (tag) {
+    tag.textContent = _graphEnabled ? '● GATE ON' : '○ GATE OFF';
+    tag.style.color = _graphEnabled ? 'var(--green, #22c55e)' : 'var(--ink-soft)';
+  }
+}
+function toggleGraphGate(el) {
+  const on = !!el.checked;
+  api('/api/settings', { method: 'PUT', body: JSON.stringify({ graphEnabled: on }) })
+    .then(() => {
+      _graphEnabled = on;
+      updateGraphGateChip();
+      setGraphStatus('Graph gate ' + (on ? 'enabled' : 'disabled'), false);
+    })
+    .catch(e => { el.checked = !on; setGraphStatus('Error: ' + (e.message || e), true); });
+}
+function switchSettingsAndTab(pane) {
+  switchTab('settings');
+  // Settings content renders async — retry until the pane exists.
+  let tries = 0;
+  const t = setInterval(() => {
+    if (document.getElementById('pane-' + pane) || ++tries > 20) {
+      clearInterval(t);
+      if (document.getElementById('pane-' + pane)) switchSettingsTab(pane);
+    }
+  }, 150);
+}
+function setGraphStatus(msg, isErr) {
+  const s = document.getElementById('s-graph-status');
+  if (!s) return;
+  s.textContent = msg;
+  s.style.color = isErr ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)';
+}
+function loadGraphPane(active, enabled) {
+  _graphEnabled = enabled === true;
+  const gate = document.getElementById('s-graph-gate');
+  if (gate) gate.checked = _graphEnabled;
+  updateGraphGateChip();
+  api('/api/graph-profiles').then(list => {
+    const profiles = Array.isArray(list) ? list : [];
+    const activeSel = document.getElementById('s-graph-active');
+    const fileSel = document.getElementById('s-graph-file');
+    if (!activeSel || !fileSel) return;
+    activeSel.innerHTML = profiles.map(p => {
+      const meta = [p.workerMode ? 'worker: ' + p.workerMode : '', p.judges ? p.judges + ' judge' + (p.judges > 1 ? 's' : '') : ''].filter(Boolean).join(', ');
+      return `<option value="${esc(p.filename)}" ${p.filename === active ? 'selected' : ''}>${esc(p.filename)}${meta ? ' — ' + esc(meta) : ''}</option>`;
+    }).join('');
+    fileSel.innerHTML = profiles.map(p =>
+      `<option value="${esc(p.filename)}">${esc(p.filename)}</option>`).join('');
+    const open = profiles.some(p => p.filename === active)
+      ? active
+      : (profiles[0] ? profiles[0].filename : '');
+    if (open) { fileSel.value = open; openGraphProfile(); }
+  }).catch(() => {});
+  api('/api/graph-profiles/rules').then(list => {
+    const sel = document.getElementById('s-graph-rules-file');
+    if (!sel) return;
+    const files = Array.isArray(list) ? list : [];
+    sel.innerHTML = files.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+    if (files.length) { sel.value = files[0]; openGraphRules(); }
+  }).catch(() => {});
+}
+function setActiveGraphProfile() {
+  const v = document.getElementById('s-graph-active').value;
+  api('/api/settings', { method: 'PUT', body: JSON.stringify({ graphProfile: v }) })
+    .then(() => setGraphStatus('Active graph profile: ' + v, false))
+    .catch(e => setGraphStatus('Error saving active profile: ' + (e.message || e), true));
+}
+function openGraphProfile(keepStatus) {
+  const f = document.getElementById('s-graph-file').value;
+  if (!f) return;
+  api('/api/graph-profiles/' + encodeURIComponent(f)).then(d => {
+    document.getElementById('s-graph-yaml').value = d.content || '';
+    if (!keepStatus) setGraphStatus('', false);
+  }).catch(e => setGraphStatus('Error loading ' + f + ': ' + (e.message || e), true));
+}
+function saveGraphProfile() {
+  const f = document.getElementById('s-graph-file').value;
+  if (!f) { setGraphStatus('No profile selected', true); return; }
+  const content = document.getElementById('s-graph-yaml').value;
+  api('/api/graph-profiles', { method: 'POST', body: JSON.stringify({ filename: f, content }) })
+    .then(d => {
+      if (d.error) { setGraphStatus('Error: ' + d.error, true); return; }
+      const warn = (d.warnings || []).length ? ' — warnings: ' + d.warnings.join('; ') : '';
+      setGraphStatus('Saved ' + d.filename + warn, false);
+      openGraphProfile(true); // re-sync (masked api_key round-trip)
+    })
+    .catch(e => setGraphStatus('Error: ' + (e.message || e), true));
+}
+function createGraphProfile() {
+  const nameEl = document.getElementById('s-graph-new');
+  const name = (nameEl.value || '').trim();
+  if (!name) { setGraphStatus('Enter a profile name first', true); return; }
+  const fn = /\.ya?ml$/.test(name) ? name : name + '.yaml';
+  // Seed the new profile from default.yaml.
+  api('/api/graph-profiles/default.yaml')
+    .then(d => (d.content || '').replace(/^name:.*$/m, 'name: ' + name.replace(/\.ya?ml$/, '')))
+    .catch(() => 'name: ' + name + '\njudges:\n  - name: quality\n    rules_file: default_rules.yaml\n')
+    .then(content => api('/api/graph-profiles', { method: 'POST', body: JSON.stringify({ filename: fn, content }) }))
+    .then(d => {
+      if (d.error) { setGraphStatus('Error: ' + d.error, true); return; }
+      nameEl.value = '';
+      setGraphStatus('Created ' + d.filename, false);
+      const active = document.getElementById('s-graph-active').value;
+      loadGraphPane(active);
+      setTimeout(() => {
+        const fileSel = document.getElementById('s-graph-file');
+        if (fileSel) { fileSel.value = d.filename; openGraphProfile(); }
+      }, 300);
+    })
+    .catch(e => setGraphStatus('Error: ' + (e.message || e), true));
+}
+function deleteGraphProfile() {
+  const f = document.getElementById('s-graph-file').value;
+  if (!f) return;
+  if (f === 'default.yaml') { setGraphStatus('default.yaml cannot be deleted (use Reset default to regenerate it)', true); return; }
+  if (!confirm('Delete graph profile ' + f + '?')) return;
+  api('/api/graph-profiles/' + encodeURIComponent(f), { method: 'DELETE' })
+    .then(() => {
+      const activeSel = document.getElementById('s-graph-active');
+      if (activeSel.value === f) {
+        activeSel.value = 'default.yaml';
+        setActiveGraphProfile();
+      }
+      setGraphStatus('Deleted ' + f, false);
+      loadGraphPane(activeSel.value);
+    })
+    .catch(e => setGraphStatus('Error: ' + (e.message || e), true));
+}
+function resetGraphDefault() {
+  if (!confirm('Regenerate the default graph profile?')) return;
+  api('/api/graph-profiles/reset-default', { method: 'POST' })
+    .then(d => {
+      if (d.error) { setGraphStatus('Error: ' + d.error, true); return; }
+      setGraphStatus('default.yaml regenerated', false);
+      const fileSel = document.getElementById('s-graph-file');
+      if (fileSel && fileSel.value === 'default.yaml') {
+        document.getElementById('s-graph-yaml').value = d.content || '';
+      }
+    })
+    .catch(e => setGraphStatus('Error: ' + (e.message || e), true));
+}
+function openGraphRules() {
+  const f = document.getElementById('s-graph-rules-file').value;
+  if (!f) return;
+  api('/api/graph-profiles/rules/' + encodeURIComponent(f))
+    .then(d => { document.getElementById('s-graph-rules-yaml').value = d.content || ''; })
+    .catch(e => setGraphStatus('Error loading rules ' + f + ': ' + (e.message || e), true));
+}
+function saveGraphRules() {
+  const f = document.getElementById('s-graph-rules-file').value;
+  if (!f) { setGraphStatus('No rules file selected', true); return; }
+  const content = document.getElementById('s-graph-rules-yaml').value;
+  api('/api/graph-profiles/rules/' + encodeURIComponent(f), { method: 'POST', body: JSON.stringify({ content }) })
+    .then(d => {
+      if (d.error) { setGraphStatus('Error: ' + d.error, true); return; }
+      setGraphStatus('Saved rules ' + d.filename, false);
+    })
+    .catch(e => setGraphStatus('Error: ' + (e.message || e), true));
+}
+function createGraphRules() {
+  const nameEl = document.getElementById('s-graph-rules-new');
+  const name = (nameEl.value || '').trim();
+  if (!name) { setGraphStatus('Enter a rules file name first', true); return; }
+  const fn = /\.ya?ml$/.test(name) ? name : name + '.yaml';
+  const content = 'rules:\n  - id: my-rule\n    severity: blocker\n    description: Describe what must hold for the answer to pass.\n';
+  api('/api/graph-profiles/rules/' + encodeURIComponent(fn), { method: 'POST', body: JSON.stringify({ content }) })
+    .then(d => {
+      if (d.error) { setGraphStatus('Error: ' + d.error, true); return; }
+      nameEl.value = '';
+      setGraphStatus('Created rules ' + d.filename, false);
+      api('/api/graph-profiles/rules').then(list => {
+        const sel = document.getElementById('s-graph-rules-file');
+        if (!sel) return;
+        sel.innerHTML = (list || []).map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+        sel.value = d.filename;
+        openGraphRules();
+      }).catch(() => {});
+    })
+    .catch(e => setGraphStatus('Error: ' + (e.message || e), true));
+}
+function deleteGraphRules() {
+  const f = document.getElementById('s-graph-rules-file').value;
+  if (!f) return;
+  if (f === 'default_rules.yaml') { setGraphStatus('default_rules.yaml cannot be deleted (referenced by the default profile)', true); return; }
+  if (!confirm('Delete rules file ' + f + '? Judges referencing it will run without it.')) return;
+  api('/api/graph-profiles/rules/' + encodeURIComponent(f), { method: 'DELETE' })
+    .then(() => {
+      setGraphStatus('Deleted rules ' + f, false);
+      api('/api/graph-profiles/rules').then(list => {
+        const sel = document.getElementById('s-graph-rules-file');
+        if (!sel) return;
+        sel.innerHTML = (list || []).map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+        if (sel.value) openGraphRules(); else document.getElementById('s-graph-rules-yaml').value = '';
+      }).catch(() => {});
+    })
+    .catch(e => setGraphStatus('Error: ' + (e.message || e), true));
 }
 
 // ---- Plugins ----

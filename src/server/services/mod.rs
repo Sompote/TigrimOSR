@@ -4,6 +4,7 @@ pub mod socket;
 pub mod scheduler;
 pub mod toolbox;
 pub mod agent_loop;
+pub mod graph;
 pub mod proc_registry;
 pub mod skill_synthesizer;
 #[allow(dead_code)]

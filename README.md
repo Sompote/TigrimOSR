@@ -1,16 +1,17 @@
-# TigrimOSR v0.7.0
+# TigrimOSR v0.7.1
 
 **TigrimOSR** is a native Rust AI agent platform in a single self-contained binary. Orchestrate swarms of specialist agents, and **build your own agent loop** — which tools, models, skills and MCP servers each agent uses — in simple YAML, editable from the desktop app, any browser, or your phone.
 
 Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three clicks, search **250M+ scholarly papers** with one tool, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
 
 **⬇️ Install in under a minute — no build needed:**
-[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/TigrimOS-0.7.0.dmg) ·
-[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/TigrimOS-0.7.0-x64.msi) ·
+[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1.dmg) ·
+[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1-x64.msi) ·
 [all releases](https://github.com/Sompote/TigrimOSR/releases/latest) — or [run in Docker](#install-in-docker).
 
 **What's new (July 2026):**
 
+- 🕸️ **[Graph mode — judge panel](#graph-mode-judge-panel)** — evaluator-optimizer gate: a panel of one or more **judge agents** reviews the final answer against your YAML rules *before* it reaches you, and sends a structured verdict back for revision until it passes. Off by default — flip one toggle, pick the **Graph (judged)** mode, or add two lines to an agent-loop profile.
 - 🧩 **[Custom tools in YAML](#custom-tools-yaml)** — add brand-new agent tools by dropping a `.yaml` file in `data/tools/` — an HTTP/REST call or a sandboxed shell command — no Rust, no rebuild. They honor per-tool config, approval, and timeouts like built-ins.
 - 🛠️ **[Tool management UI](#tool-management-settings--tools)** — a new **Settings → Tools** screen (desktop *and* web/mobile): a Catalog of every tool with live status chips, plus a Custom Tools editor to create, edit, validate, and **test-run** your YAML tools without invoking the model.
 - 📚 **[Academic paper search (OpenAlex)](#academic-paper-search-openalex)** — a `search_papers` tool queries 250M+ scholarly works: titles, authors, year, venue, DOI, citation counts, open-access PDFs and abstracts. No API key, no configuration.
@@ -21,7 +22,7 @@ Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three cl
 
 - **Multi-agent orchestration** — 6 swarm modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator) with real inter-agent protocols and a shared blackboard.
 - **Your agent loop, your rules** — YAML profiles control tools, MCP servers, skills, model & prompt, self-verification and compaction — down to [per-tool config](#per-tool-config-toolsconfig) (hide, pin params, approval, caps).
-- **Don't trust — verify** — after the job, an independent **tool-using judge** checks the result against your rubric and opens the output files before the answer reaches you.
+- **Don't trust — verify** — after the job, an independent **tool-using judge** checks the result against your rubric and opens the output files before the answer reaches you — or turn on **[Graph mode](#graph-mode-judge-panel)** for a full judge *panel* with YAML rule files and a revise-until-pass loop.
 - **Any LLM, any provider** — OpenAI, Anthropic, DeepSeek, Kimi, Gemini, Ollama, any OpenAI-compatible API — plus Claude Code / Gemini CLI / Codex with no API keys.
 - **Full tool calling** — web search, Python, file I/O, shell, MCP servers, ClawHub skills. Charts, images and docs render inline.
 - **Academic paper search** — a built-in `search_papers` tool queries **OpenAlex** (250M+ scholarly works) for titles, authors, citations, DOIs and open-access PDFs — no API key needed. See [Academic paper search](#academic-paper-search-openalex).
@@ -92,6 +93,7 @@ Everything TigrimOSR can do — orchestration, tools, remote access, theming —
 
 - **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
 - **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist plus **per-tool config** (hide a tool, per-tool approval override, parameter defaults & pins, description override, timeout / result caps — built-in and MCP tools alike), MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification), **job evaluation (outer loop, tool-using judge)** and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
+- **Graph mode (judge panel)** — evaluator-optimizer gate: single- or multi-judge panel reviews the final answer against YAML rule files before delivery, returns a structured YAML verdict, and loops the main agent through revisions until it passes (`all_pass` / `majority` / `weighted_average` aggregation). Off by default; toggleable globally, per agent-loop profile, or by selecting the **Graph (judged)** mode — see [Graph mode](#graph-mode-judge-panel)
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
 - **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
@@ -143,7 +145,7 @@ running in under a minute.
 ### macOS
 
 **Desktop app (DMG):** download
-[`TigrimOS-0.7.0.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/TigrimOS-0.7.0.dmg),
+[`TigrimOS-0.7.1.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1.dmg),
 open it, and drag **TigrimOS** into **Applications**.
 
 > **First launch:** the app isn't notarized with Apple yet, so macOS may block it.
@@ -157,18 +159,18 @@ open it, and drag **TigrimOS** into **Applications**.
 
 ```bash
 # Apple Silicon (M1–M4)
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/tigrimos-0.7.0-macos-arm64.tar.gz | tar xz
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/tigrimos-0.7.1-macos-arm64.tar.gz | tar xz
 ./tigrimos
 
 # Intel Macs
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/tigrimos-0.7.0-macos-x86_64.tar.gz | tar xz
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/tigrimos-0.7.1-macos-x86_64.tar.gz | tar xz
 ./tigrimos
 ```
 
 ### Windows
 
 Download and run
-[`TigrimOS-0.7.0-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.0/TigrimOS-0.7.0-x64.msi)
+[`TigrimOS-0.7.1-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1-x64.msi)
 — it installs TigrimOS to Program Files and adds a **Start Menu** shortcut.
 
 > If **SmartScreen** shows "Windows protected your PC", click **More info** →
@@ -1022,6 +1024,7 @@ Enable sub-agents in Settings and select an agent config file. Included configs 
 | **Auto** | Standard tool-calling loop with optional sub-agent delegation |
 | **Auto Swarm** | Starts with `select_swarm` to pick an existing YAML config, then boots agent team |
 | **Manual** | No automatic tool calling; agents respond with instructions only |
+| **Graph (judged)** | Evaluator-optimizer gate — runs the loop in the graph profile's `worker.mode`, then a judge panel reviews the final answer before delivery (see [Graph mode](#graph-mode-judge-panel)) |
 
 ### Router mode (routing agentic system)
 
@@ -1130,6 +1133,7 @@ allowed to do and how it behaves:
 | `loop` | Max tool rounds & tool calls, temperature, max tokens, **reflection loop** (LLM judge scores the final answer and retries gaps), **step verification** (judge each team agent's step), checkpoints, max sub-agent spawn depth |
 | `compaction` | Context compression: every-N-rounds interval, kept-message window, token budget, per-tool-result trim, and an optional cheaper summarization model |
 | `evaluation` | **Job evaluation (outer loop)** — a **tool-using judge** runs once after the whole job finishes (top-level main agent only, never sub-agents): it verifies the final result against the objective and an optional **rubric**, reading output files (`read_file`/`list_files`) to check claimed artifacts exist; below the threshold the gap list is fed back and the orchestrator gets bounded extra rounds to delegate targeted fixes. Supports a dedicated **judge model** (avoid self-grading), `allow_execute` for run-the-tests verification, retries/judge-round caps |
+| `graph` | **Graph gate** — turn the [judge panel](#graph-mode-judge-panel) on/off for runs using this profile (`enabled: true/false`; omitted = follow the global toggle, default off) and optionally pick the graph profile file (`profile: strict.yaml` in `data/graph/`) |
 
 **Editing:**
 - **Desktop app** — **Settings → Agent Loop**: form editor (tool/MCP/skill checkboxes, sliders, and a **Per-tool config** panel under Tools — pick a tool, set approval/enable/timeout/params without touching YAML) plus a raw **Edit as YAML** mode with validate-on-save.
@@ -1255,6 +1259,132 @@ Notes:
   deliberate act, and coordination tools can never be approval-gated at all.
 
 ---
+
+</details>
+
+## Graph mode (judge panel)
+
+Wire your agent as an **evaluator-optimizer graph**: the worker node produces the answer, a panel of one or more **judge nodes** reviews it against your YAML rules *before it reaches you*, and a failing verdict is sent back — as structured YAML — for revision until the panel passes it. **Off by default**; when on, a **⬡ GRAPH** badge shows in the chat header (desktop) and next to the mode chip (web/mobile).
+
+```mermaid
+flowchart TD
+    subgraph P["⚖️ Judge panel — 1..N judges, sequential, fail-open"]
+        J1["Judge 'quality'<br/>rules YAML + own model<br/>verifies output files with read-only tools"]
+        J2["Judge 'facts' … (optional)<br/>own rules_file, weight, threshold"]
+    end
+
+    U(["👤 User request"]) --> W["🤖 Worker node<br/>agent loop runs in worker.mode<br/>(single · auto · fully_auto · router · …)"]
+    W -->|"draft final answer"| P
+    P -->|"structured YAML verdicts<br/>score · satisfied · rule_results · revise"| A{"Aggregate<br/>all_pass · majority ·<br/>weighted_average"}
+    A -->|"✓ pass — or max_iterations exhausted"| H(["✅ Answer released to you<br/>graph ✓ Passed — aggregate score 0.88"])
+    A -->|"✗ rejected"| R["Verdict YAML injected back<br/>into the conversation as<br/>revision instructions"]
+    R -->|"up to max_fix_rounds tool rounds,<br/>then re-judge (≤ max_iterations cycles)"| W
+
+    style P fill:#f3ebfa,stroke:#9355c8
+    style H fill:#e8f6ee,stroke:#22c55e
+    style R fill:#fdf0ec,stroke:#e0704a
+```
+
+*The verification loop: the worker's draft never goes straight to you — each judge checks it against its rule file (optionally opening the produced files), the verdicts aggregate, and a rejection loops the worker through bounded revision rounds. Judges fail open, so a broken judge can never trap your answer.*
+
+<details>
+<summary>🕸 Turning it on, judge & rules YAML, aggregation policies & API</summary>
+
+Inspired by the graph-engineering / evaluator-optimizer pattern: nodes do work, edges carry
+delegation and feedback, and a **judge gate** sits between the worker and the human.
+
+**Three ways to turn the gate on (default is off):**
+
+| How | Where | Effect |
+|-----|-------|--------|
+| Select the **Graph (judged)** mode | Mode picker (desktop Sub-Agent settings, web mode chip, Telegram/LINE `/mode graph`) | Gate on for those runs; the loop runs in the graph profile's `worker.mode` (single, fully_auto, router, …) |
+| **Global toggle** | **Settings → Graph → Enable graph gate** (desktop & web) — `graphEnabled` in settings | Judges review final answers in **every** mode, without changing your selected mode |
+| **Agent-loop profile YAML** | `graph:` section in `data/agent_loops/*.yaml` | Per-profile on/off; `enabled: false` overrides the global toggle, so one profile can opt out |
+
+```yaml
+# in an agent-loop profile (data/agent_loops/*.yaml)
+graph:
+  enabled: true            # true/false overrides the global toggle; omit = follow it
+  profile: strict.yaml     # optional graph profile in data/graph/ (omit = active profile)
+```
+
+**Graph profiles** live in `data/graph/*.yaml` (a default is seeded on first use) and define
+the worker, the judge panel, and the loop:
+
+```yaml
+name: default
+description: Evaluator-optimizer graph — a judge panel reviews the final answer before delivery.
+worker:
+  mode: single             # single | auto | manual | fully_auto | auto_swarm | router
+judges:                    # one entry = single judge, several = multi-judge panel
+  - name: quality
+    model: ""              # "" = session model (use a different one to avoid self-grading)
+    rules_file: default_rules.yaml   # file in data/graph/rules/
+    weight: 1.0
+    use_tools: true        # judge may read_file/list_files to verify claimed artifacts
+    allow_execute: false   # true also grants run_python/run_shell (e.g. run the tests)
+aggregation:
+  policy: all_pass         # all_pass (default) | majority | weighted_average
+  threshold: 0.75
+loop:
+  max_iterations: 2        # judge→revise cycles (clamped 1–5) before releasing anyway
+  max_fix_rounds: 5        # worker tool rounds per revision (clamped 1–10)
+  judge_plain_answers: true # also judge answers produced without tool calls
+```
+
+**Judge rules** are plain YAML files in `data/graph/rules/`, rendered verbatim into the
+judge's system prompt — `severity: blocker` rules fail the verdict, `warn` rules are noted:
+
+```yaml
+rules:
+  - id: answers-all-parts
+    severity: blocker
+    description: Every distinct part of the user's request is answered in the final answer itself.
+  - id: no-fabrication
+    severity: blocker
+    description: Claims must be backed by tool evidence; no invented data, numbers, or files.
+```
+
+**How the loop runs:**
+
+1. The worker finishes; each judge reviews the answer (optionally verifying files with
+   read-only tools — its calls show as `judge:<name>:read_file` in the activity log) and
+   returns a **structured YAML verdict**: score, satisfied, per-rule `rule_results`, and
+   concrete `revise` instructions.
+2. Verdicts combine under the aggregation policy — **all_pass** (every judge must pass),
+   **majority** vote, or **weighted_average** score vs. the threshold (per-judge `weight`
+   and `threshold` overrides supported).
+3. **Pass** → the chat shows `[graph] ✓ Passed — … aggregate score 0.92` and the answer is
+   released. **Fail** → the full verdict YAML is injected back into the conversation, the
+   worker gets bounded fix rounds, and the panel re-judges — up to `max_iterations`.
+4. Judges **fail open**: a broken judge is skipped, and if every judge errors the answer is
+   released — a misconfigured judge can never trap your answer.
+
+**Editing & UI:**
+
+- **Desktop** — **Settings → Graph**: gate toggle with a **GATE ON/OFF** tag, active-profile
+  picker, a form editor (worker mode, judges with add/remove, per-judge model/endpoint/key,
+  rules-file picker, weights, aggregation, iteration knobs), a raw **Edit as YAML** mode with
+  validate-on-save, and a rules-file editor. The Agent Loop editor has a matching
+  **Graph Gate** section (Inherit / On / Off + profile).
+- **Web / mobile** — the same **Settings → Graph** pane (gate checkbox, profile YAML editor
+  with masked judge API keys, rules editor); the **⬡ GRAPH** chip above the composer jumps
+  straight to it.
+- **Files** — everything is plain YAML on disk: hand-edit `data/graph/*.yaml` and
+  `data/graph/rules/*.yaml` and the next run picks it up (profiles load per run, no restart).
+- **REST** — `GET/POST /api/graph-profiles`, `GET/DELETE /api/graph-profiles/{file}`,
+  `POST /api/graph-profiles/reset-default`, and `GET/POST/DELETE /api/graph-profiles/rules/{file}`.
+  Per-judge `api_key` values are masked on read and restored on save, like other secrets.
+
+**Notes & safety:**
+
+- The gate runs **once per job, top level only** — sub-agents are never judged by the panel
+  (they keep `step_verification`), so a swarm pays for one review, not one per agent.
+- Judges are read-only by default; `allow_execute: true` is flagged with a warning on save.
+- Iterations and fix rounds are hard-clamped (5 / 10), so a strict rule set can't loop forever.
+- Relation to `evaluation:` (the single tool-using judge): the graph gate **supersedes** it at
+  the top level when both are on — a job is never judged twice. Existing evaluation/reflection
+  profiles behave exactly as before when the gate is off.
 
 </details>
 
@@ -2153,6 +2283,12 @@ What changed in each release, latest first.
 
 <details>
 <summary>🗒 Version history</summary>
+
+### v0.7.1
+
+- **Graph mode — evaluator-optimizer judge panel** — New graph gate wires the agent as worker node → judge panel → human: a panel of one or more **judge agents** reviews the final answer against user-defined YAML rule files *before* it reaches you, returns a **structured YAML verdict** (score, satisfied, per-rule results, concrete `revise` instructions), and on failure feeds it back to the main loop for bounded revision cycles until the panel passes it. Judges can each run on their **own model/endpoint/key** (avoid self-grading), verify claimed artifacts with read-only tools (visible as `judge:<name>:*` in the activity log), and combine under **all_pass** (default), **majority**, or **weighted_average** aggregation with per-judge weights/thresholds. Judges **fail open** — a broken judge can never trap an answer — and iteration/fix-round caps are hard-clamped. Configuration is plain YAML on disk: graph profiles in `data/graph/*.yaml` (with a `worker.mode` so the gate can wrap any existing agent mode) and judge rules in `data/graph/rules/*.yaml` (`severity: blocker` vs `warn`), seeded with sensible defaults on first use. See [Graph mode](#graph-mode-judge-panel).
+- **Gate on/off — default OFF, three switches** — The gate is **off by default** and activates via (1) the new **Graph (judged)** agent mode (also `/mode graph` in Telegram/LINE), (2) a global **Enable graph gate** toggle (`graphEnabled`) that judges answers in *every* mode, or (3) a per-profile `graph: { enabled: true, profile: strict.yaml }` section in agent-loop YAML — profile `enabled: false` overrides the global toggle. When active, a **⬡ GRAPH** badge shows in the desktop chat header and next to the web/mobile mode chip (tap it to open the settings pane), and the Graph settings tab shows a **GATE ON/OFF** tag.
+- **Graph editors on desktop + web/mobile + API** — New **Settings → Graph** tab in both UIs: gate toggle, active-profile picker, judge-panel form editor (add/remove judges, per-judge model/endpoint/key, rules-file picker, weights, tool access, aggregation policy, iteration knobs), raw YAML mode with validate-on-save, and a judge-rules file editor. The Agent Loop editor gained a matching **Graph Gate** (Inherit/On/Off + profile) section. New REST endpoints under `/api/graph-profiles` (profiles CRUD, reset-default, rules CRUD) with per-judge `api_key` masking on read and restore-on-save.
 
 ### v0.7.0
 

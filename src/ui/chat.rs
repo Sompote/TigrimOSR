@@ -410,6 +410,10 @@ pub struct ChatView {
 
     // --- Log panel ---
     show_log_panel: bool,
+    /// Cached graph-gate indicator (settings graphEnabled || mode "graph"),
+    /// re-read from settings.json at most every few seconds.
+    graph_badge_on: bool,
+    graph_badge_last_check: Option<std::time::Instant>,
     log_session_id: Option<String>,
     log_content: String,
     log_agent_history: String,
@@ -472,6 +476,8 @@ impl ChatView {
             output_panel: OutputPanel::default(),
             sidebar_width: 262.0,
             show_log_panel: false,
+            graph_badge_on: false,
+            graph_badge_last_check: None,
             log_session_id: None,
             log_content: String::new(),
             log_agent_history: String::new(),
@@ -903,6 +909,60 @@ impl ChatView {
 
         // Build sub-agent config from settings + active project
         let sub_agent_mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string());
+        // Graph gate activation — DEFAULT OFF. On when the "graph" mode is
+        // explicitly selected, the agent-loop profile says `graph.enabled:
+        // true`, or the global graphEnabled toggle is on (profile false
+        // overrides the toggle). Explicit graph mode runs the loop in the
+        // graph profile's worker.mode; a toggle-activated gate keeps the
+        // user's chosen mode. The gate rides on SubAgentConfig.graph_profile.
+        let mode_graph = sub_agent_mode == "graph";
+        let profile_graph_knobs = loop_profile.as_deref().and_then(|p| p.graph.clone());
+        let gate_on = mode_graph
+            || profile_graph_knobs
+                .as_ref()
+                .and_then(|g| g.enabled)
+                .unwrap_or_else(|| settings.graph_enabled.unwrap_or(false));
+        let graph_profile_arc = if gate_on {
+            use crate::server::services::graph;
+            graph::ensure_default_profile();
+            let project_graph = self.selected_project_id.as_ref().and_then(|pid| {
+                cached_projects
+                    .iter()
+                    .find(|p| p.id == *pid)
+                    .and_then(|p| p.agent_override.as_ref())
+                    .filter(|ov| ov.enabled.unwrap_or(false))
+                    .and_then(|ov| ov.graph_profile.clone())
+            });
+            let knobs_profile = profile_graph_knobs
+                .as_ref()
+                .and_then(|g| g.profile.clone())
+                .filter(|s| !s.trim().is_empty());
+            let resolved = graph::resolve_active_profile(
+                settings.graph_profile.as_deref(),
+                project_graph.as_deref(),
+                knobs_profile.as_deref(),
+            )
+            .unwrap_or_else(graph::default_profile);
+            eprintln!(
+                "[Graph] Gate ON ({}): profile '{}', worker mode '{}', {} judge(s)",
+                if mode_graph { "graph mode" } else { "toggle/profile" },
+                resolved.name,
+                resolved.worker_mode(),
+                resolved.judges.len()
+            );
+            Some(std::sync::Arc::new(resolved))
+        } else {
+            None
+        };
+        // Only explicit graph mode adopts the worker mode.
+        let sub_agent_mode = if mode_graph {
+            graph_profile_arc
+                .as_deref()
+                .map(|p| p.worker_mode().to_string())
+                .unwrap_or(sub_agent_mode)
+        } else {
+            sub_agent_mode
+        };
         let is_realtime = sub_agent_mode == "manual";
 
         // Router: the ORCHESTRATOR (triage + dispatch + merge) can run on a
@@ -935,7 +995,18 @@ impl ChatView {
         };
 
         let sub_agent_config = {
-            let enabled = settings.sub_agent_enabled.unwrap_or(false);
+            // Explicit graph mode decides delegation from its worker mode: a
+            // "single" worker runs the plain loop (plus the gate), anything
+            // else enables sub-agents. A toggle-activated gate leaves the
+            // global sub-agent toggle in charge.
+            let enabled = if mode_graph {
+                graph_profile_arc
+                    .as_deref()
+                    .map(|p| p.worker_mode() != "single")
+                    .unwrap_or(false)
+            } else {
+                settings.sub_agent_enabled.unwrap_or(false)
+            };
 
             // Check for project-level agent override, fall back to global settings,
             // then fall back to any architecture auto-created in a previous fully_auto session.
@@ -1033,11 +1104,13 @@ impl ChatView {
                     model_pool: router_pool,
                     router_tier,
                     loop_profile: loop_profile.clone(),
+                    graph_profile: graph_profile_arc.clone(),
                 }
             } else {
                 // Profile applies to plain single-agent chat too (tool filtering).
                 SubAgentConfig {
                     loop_profile: loop_profile.clone(),
+                    graph_profile: graph_profile_arc.clone(),
                     ..SubAgentConfig::default()
                 }
             }
@@ -1289,6 +1362,20 @@ You have access to these tools: {}.{}",
             base_system
         } else {
             format!("{}{}", base_system, soul_block)
+        };
+
+        // Graph mode heads-up: the worker responds better to panel rejections
+        // when it knows a review gate exists.
+        let base_system = if graph_profile_arc.is_some() {
+            format!(
+                "{}\n\nGRAPH MODE: your final answer will be reviewed by a judge panel against \
+                configured rules BEFORE it reaches the user. If the panel rejects it you will \
+                receive a structured YAML verdict — follow its `revise` instructions and return \
+                a complete corrected answer.",
+                base_system
+            )
+        } else {
+            base_system
         };
 
         let system_prompt = match self.build_project_system_prompt(runtime) {
@@ -3280,6 +3367,47 @@ You have access to these tools: {}.{}",
         // Session header with project info
         ui.horizontal(|ui| {
             ui.heading(&session.title);
+
+            // Graph-gate badge: visible whenever the judge panel will review
+            // answers (settings toggle on, or sub-agent mode "graph"). Cached —
+            // settings.json is only re-read every few seconds.
+            let stale = self
+                .graph_badge_last_check
+                .map(|t| t.elapsed().as_secs() >= 3)
+                .unwrap_or(true);
+            if stale {
+                self.graph_badge_last_check = Some(std::time::Instant::now());
+                self.graph_badge_on = std::fs::read_to_string(
+                    crate::server::data::data_dir().join("settings.json"),
+                )
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .map(|v| {
+                    v["graphEnabled"].as_bool().unwrap_or(false)
+                        || v["subAgentMode"].as_str() == Some("graph")
+                })
+                .unwrap_or(false);
+            }
+            if self.graph_badge_on {
+                ui.add_space(8.0);
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgba_premultiplied(147, 85, 200, 25))
+                    .corner_radius(4.0)
+                    .inner_margin(egui::Margin::symmetric(6, 2))
+                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(147, 85, 200)))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("⬡ GRAPH")
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(147, 85, 200)),
+                        )
+                        .on_hover_text(
+                            "Graph gate is ON — a judge panel reviews final answers before \
+                             delivery (Settings > Graph). Agent-loop profiles can also turn \
+                             the gate on/off per profile.",
+                        );
+                    });
+            }
 
             // Show project badge if assigned
             if let Some(ref pid) = session.project_id {

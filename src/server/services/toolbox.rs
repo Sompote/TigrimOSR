@@ -1,4 +1,5 @@
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -688,6 +689,8 @@ pub struct SubAgentConfig {
     pub router_tier: String,           // "fast" | "ultra"; "" outside router mode
     // --- User agent-loop profile (None = built-in behavior) ---
     pub loop_profile: Option<Arc<crate::server::services::agent_loop::AgentLoopProfile>>,
+    // --- Graph mode: judge panel gating the final answer (None = no gate) ---
+    pub graph_profile: Option<Arc<crate::server::services::graph::GraphProfile>>,
 }
 
 impl Default for SubAgentConfig {
@@ -708,6 +711,7 @@ impl Default for SubAgentConfig {
             model_pool: Vec::new(),
             router_tier: String::new(),
             loop_profile: None,
+            graph_profile: None,
         }
     }
 }
@@ -6746,6 +6750,9 @@ fn exec_spawn_subagent(
         model_pool: sub_agent.model_pool.clone(),
         router_tier: sub_agent.router_tier.clone(),
         loop_profile: child_profile,
+        // The graph gate only fires at top level (depth 0, agent "main");
+        // children never carry it.
+        graph_profile: None,
     };
 
     // Recursive call — propagate ToolCall/ToolResult to parent UI (drop TextChunk to avoid mangling main text)
@@ -9100,7 +9107,62 @@ async fn call_with_tools_inner(
     let evaluation_enabled = eval_knobs.enabled
         .unwrap_or_else(|| settings["agentEvaluationEnabled"].as_bool().unwrap_or(false));
     let is_top_level = sub_agent.depth == 0 && sub_agent.agent_id == "main";
-    let effective_eval_config: Option<EvalConfig> = if is_top_level && evaluation_enabled {
+    // Graph mode: a judge panel from the graph profile gates the final answer.
+    // Takes precedence over the profile `evaluation` section at top level; a
+    // profile without judges degrades to the legacy branches below.
+    let graph_eval_config: Option<EvalConfig> = if is_top_level {
+        sub_agent.graph_profile.as_deref().and_then(|gp| {
+            if gp.judges.is_empty() {
+                warn!("[Graph] Profile '{}' has no judges — gate disabled", gp.name);
+                return None;
+            }
+            let agg = gp.aggregation.clone().unwrap_or_default();
+            let policy = match agg.policy.trim() {
+                "" => "all_pass".to_string(),
+                p => p.to_string(),
+            };
+            let agg_threshold = agg.threshold.unwrap_or(0.75).clamp(0.0, 1.0);
+            let knobs = gp.loop_.clone().unwrap_or_default();
+            let judges: Vec<ResolvedJudge> = gp.judges.iter().enumerate().map(|(i, j)| {
+                ResolvedJudge {
+                    name: if j.name.trim().is_empty() { format!("judge-{}", i + 1) } else { j.name.clone() },
+                    model: if j.model.trim().is_empty() { model.to_string() } else { j.model.clone() },
+                    api_url: if j.api_url.trim().is_empty() { api_url.to_string() } else { j.api_url.clone() },
+                    api_key: if j.api_key.trim().is_empty() { api_key.to_string() } else { j.api_key.clone() },
+                    rules: crate::server::services::graph::resolve_judge_rules(j),
+                    weight: j.weight.unwrap_or(1.0),
+                    threshold: j.threshold.map(|t| t.clamp(0.0, 1.0)),
+                    use_tools: j.use_tools.unwrap_or(true),
+                    allow_execute: j.allow_execute.unwrap_or(false),
+                    max_judge_rounds: j.max_judge_rounds.unwrap_or(3).clamp(1, 6) as usize,
+                }
+            }).collect();
+            info!("[Graph] Gate active: {} judge(s), policy {}, threshold {:.2}", judges.len(), policy, agg_threshold);
+            Some(EvalConfig {
+                tool_judge: true,
+                threshold: agg_threshold,
+                max_retries: knobs.max_iterations.unwrap_or(2).clamp(1, 5) as usize,
+                max_fix_rounds: knobs.max_fix_rounds.unwrap_or(5).clamp(1, 10) as usize,
+                max_judge_rounds: 3, // per-judge values are used instead
+                judge_model: model.to_string(),
+                judge_api_url: api_url.to_string(),
+                judge_api_key: api_key.to_string(),
+                rubric: String::new(),
+                allow_execute: false,
+                graph: Some(GraphEvalConfig {
+                    judges,
+                    policy,
+                    agg_threshold,
+                    judge_plain_answers: knobs.judge_plain_answers.unwrap_or(true),
+                }),
+            })
+        })
+    } else {
+        None
+    };
+    let effective_eval_config: Option<EvalConfig> = if graph_eval_config.is_some() {
+        graph_eval_config
+    } else if is_top_level && evaluation_enabled {
         Some(EvalConfig {
             tool_judge: true,
             threshold: eval_knobs.threshold
@@ -9122,6 +9184,7 @@ async fn call_with_tools_inner(
                 .unwrap_or_else(|| api_key.to_string()),
             rubric: eval_knobs.rubric.clone().unwrap_or_default(),
             allow_execute: eval_knobs.allow_execute.unwrap_or(false),
+            graph: None,
         })
     } else if reflection_enabled {
         // Byte-for-byte legacy reflection: text-only judge on the session model.
@@ -9136,6 +9199,7 @@ async fn call_with_tools_inner(
             judge_api_key: api_key.to_string(),
             rubric: String::new(),
             allow_execute: false,
+            graph: None,
         })
     } else {
         None
@@ -9562,9 +9626,10 @@ async fn call_with_tools_inner(
                 // Outer evaluation: this is a normal completion too (some
                 // providers return tool_calls: [] instead of omitting the
                 // key). Judge before the final TextChunk so the UI receives
-                // the improved answer. Plain no-tool replies are never judged.
+                // the improved answer. Plain no-tool replies are only judged
+                // in graph mode (judge_plain_answers).
                 if let Some(eval_cfg) = &effective_eval_config {
-                    if total_tool_calls > 0 && !content.is_empty() {
+                    if eval_cfg.should_judge(total_tool_calls) && !content.is_empty() {
                         let eval_result = run_evaluation_loop(
                             &client, api_key, api_url, model, &mut all_messages, &user_objective,
                             eval_cfg, temperature, max_tokens,
@@ -10012,7 +10077,9 @@ async fn call_with_tools_inner(
             // Runs BEFORE the final TextChunk emission so the UI receives the
             // improved answer, not the pre-evaluation draft. Note checkpoint
             // was already cleared above — see the comment at completion point A.
-            if effective_eval_config.is_some() && total_tool_calls > 0 && !content.is_empty() {
+            if effective_eval_config.as_ref().is_some_and(|c| c.should_judge(total_tool_calls))
+                && !content.is_empty()
+            {
                 let eval_cfg = effective_eval_config.as_ref().unwrap();
                 let reflection_result = run_evaluation_loop(
                     &client, api_key, api_url, model, &mut all_messages, &user_objective,
@@ -10296,6 +10363,187 @@ struct EvalConfig {
     judge_api_key: String,
     rubric: String,
     allow_execute: bool,
+    /// Graph mode: judge panel replacing the single judge above. When Some,
+    /// the legacy judge_* fields are unused (each judge carries its own).
+    graph: Option<GraphEvalConfig>,
+}
+
+impl EvalConfig {
+    /// Whether the final answer should be judged. Legacy evaluation only
+    /// judges after real work (tool calls); graph mode gates plain replies
+    /// too when judge_plain_answers is set — gating is its whole point.
+    fn should_judge(&self, total_tool_calls: usize) -> bool {
+        total_tool_calls > 0
+            || self.graph.as_ref().map(|g| g.judge_plain_answers).unwrap_or(false)
+    }
+}
+
+/// Judge panel config resolved from a GraphProfile (creds/rules loaded once
+/// per job; rules_file contents already read from data/graph/rules/).
+struct GraphEvalConfig {
+    judges: Vec<ResolvedJudge>,
+    /// "all_pass" | "majority" | "weighted_average"
+    policy: String,
+    agg_threshold: f64,
+    judge_plain_answers: bool,
+}
+
+struct ResolvedJudge {
+    name: String,
+    model: String,
+    api_url: String,
+    api_key: String,
+    rules: String,
+    weight: f64,
+    threshold: Option<f64>,
+    use_tools: bool,
+    allow_execute: bool,
+    max_judge_rounds: usize,
+}
+
+/// One rule's echo in a graph judge verdict.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct RuleResult {
+    #[serde(default)]
+    rule: String,
+    #[serde(default)]
+    pass: bool,
+    #[serde(default)]
+    note: String,
+}
+
+/// Structured YAML verdict returned by a graph judge and fed back to the
+/// worker verbatim (serialized) as revision instructions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct GraphJudgeVerdict {
+    #[serde(default)]
+    judge: String,
+    #[serde(default)]
+    score: f64,
+    #[serde(default)]
+    satisfied: bool,
+    #[serde(default)]
+    missing: String,
+    #[serde(default)]
+    rule_results: Vec<RuleResult>,
+    #[serde(default)]
+    revise: String,
+}
+
+/// Aggregate panel report — serialized to YAML for the revise message.
+#[derive(Debug, Serialize)]
+struct GraphAggregateReport {
+    pass: bool,
+    policy: String,
+    aggregate_score: f64,
+    threshold: f64,
+    judges: Vec<GraphJudgeVerdict>,
+    revise: String,
+}
+
+/// First fenced code block body ("```yaml\n...\n```" or plain "```"), if any.
+/// Byte indices from find() land on ASCII fence chars, so slicing is safe.
+fn extract_fenced_block(text: &str) -> Option<&str> {
+    let start = text.find("```")?;
+    let after = &text[start + 3..];
+    let nl = after.find('\n')?;
+    let body = &after[nl + 1..];
+    let end = body.find("```")?;
+    Some(&body[..end])
+}
+
+/// Parse a graph judge's structured YAML verdict. Accepts a fenced YAML block
+/// or bare YAML (YAML is a JSON superset, so JSON verdicts parse too); falls
+/// back to the legacy JSON-substring scan. None = fail open, like the legacy
+/// parser. A candidate only counts when it carries score or satisfied, so
+/// stray "key: value" prose can't masquerade as a verdict.
+fn parse_graph_verdict(content: &str) -> Option<GraphJudgeVerdict> {
+    let stripped = strip_think_blocks(content);
+    let mut candidates: Vec<&str> = Vec::new();
+    if let Some(block) = extract_fenced_block(&stripped) {
+        candidates.push(block);
+    }
+    candidates.push(&stripped);
+    for candidate in candidates {
+        if let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(candidate) {
+            let is_verdict = v.as_mapping().map(|m| {
+                m.contains_key(serde_yaml::Value::String("score".into()))
+                    || m.contains_key(serde_yaml::Value::String("satisfied".into()))
+            }) == Some(true);
+            if is_verdict {
+                if let Ok(doc) = serde_yaml::from_value::<GraphJudgeVerdict>(v) {
+                    return Some(doc);
+                }
+            }
+        }
+    }
+    parse_judge_verdict(&stripped)
+        .or_else(|| parse_judge_verdict(content))
+        .map(|v| GraphJudgeVerdict {
+            judge: String::new(),
+            score: v.score,
+            satisfied: v.satisfied,
+            missing: v.missing,
+            rule_results: Vec::new(),
+            revise: String::new(),
+        })
+}
+
+/// Combine panel verdicts into (pass, aggregate_score, report_yaml).
+/// Judges with weight <= 0 are ignored (unless every judge has weight <= 0,
+/// in which case all count with weight 1 — a profile of ignored judges would
+/// otherwise silently pass everything).
+fn aggregate_verdicts(
+    judges: &[ResolvedJudge],
+    verdicts: &[(usize, GraphJudgeVerdict)],
+    policy: &str,
+    agg_threshold: f64,
+) -> (bool, f64, String) {
+    let all_ignored = verdicts.iter().all(|(i, _)| judges[*i].weight <= 0.0);
+    let considered: Vec<&(usize, GraphJudgeVerdict)> = verdicts
+        .iter()
+        .filter(|(i, _)| all_ignored || judges[*i].weight > 0.0)
+        .collect();
+    let weight_of = |i: usize| if all_ignored { 1.0 } else { judges[i].weight };
+    let judge_passes = |i: usize, v: &GraphJudgeVerdict| {
+        v.satisfied || v.score >= judges[i].threshold.unwrap_or(agg_threshold)
+    };
+
+    let total_weight: f64 = considered.iter().map(|(i, _)| weight_of(*i)).sum();
+    let aggregate_score = if total_weight > 0.0 {
+        considered.iter().map(|(i, v)| weight_of(*i) * v.score).sum::<f64>() / total_weight
+    } else {
+        0.0
+    };
+    let pass_count = considered.iter().filter(|(i, v)| judge_passes(*i, v)).count();
+    let pass = match policy {
+        "majority" => pass_count * 2 > considered.len(),
+        "weighted_average" => aggregate_score >= agg_threshold,
+        _ => pass_count == considered.len(), // all_pass (default)
+    };
+
+    let revise = considered
+        .iter()
+        .filter(|(i, v)| !judge_passes(*i, v))
+        .map(|(_, v)| {
+            let instr = if v.revise.trim().is_empty() { &v.missing } else { &v.revise };
+            format!("[{}] {}", v.judge, instr.trim())
+        })
+        .filter(|s| !s.ends_with("] "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let report = GraphAggregateReport {
+        pass,
+        policy: policy.to_string(),
+        aggregate_score,
+        threshold: agg_threshold,
+        judges: verdicts.iter().map(|(_, v)| v.clone()).collect(),
+        revise,
+    };
+    let yaml = serde_yaml::to_string(&report).unwrap_or_else(|_| {
+        format!("pass: {}\naggregate_score: {:.2}\n", pass, aggregate_score)
+    });
+    (pass, aggregate_score, yaml)
 }
 
 /// Extract the verdict JSON from a judge reply. Shared by the text-only and
@@ -10553,6 +10801,165 @@ async fn judge_job_with_tools(
     }
 }
 
+/// One graph judge's review: verify the final answer against the judge's YAML
+/// rules and return a structured YAML verdict. use_tools=true runs the same
+/// bespoke read-only tool loop as judge_job_with_tools (never routed through
+/// call_with_tools — no recursion, no approval gates); use_tools=false is a
+/// single near-deterministic call. Returns None (fail open) on any failure.
+#[allow(clippy::too_many_arguments)]
+async fn run_graph_judge(
+    client: &Client,
+    judge: &ResolvedJudge,
+    objective: &str,
+    evidence: &str,
+    answer: &str,
+    sandbox_dir: &str,
+    sub_agent: &SubAgentConfig,
+    on_update: Arc<dyn Fn(ToolUpdate) + Send + Sync + 'static>,
+) -> Option<GraphJudgeVerdict> {
+    let verdict_format = format!(
+        "judge: {}\n\
+        score: <0.0-1.0>\n\
+        satisfied: <true|false>\n\
+        rule_results:\n\
+        \x20 - rule: <rule id>\n\
+        \x20   pass: <true|false>\n\
+        \x20   note: \"<short reason>\"\n\
+        missing: \"<concrete, actionable list of what is missing or wrong; empty if satisfied>\"\n\
+        revise: \"<concrete instructions telling the worker how to fix the answer; empty if satisfied>\"",
+        judge.name
+    );
+    let rules_section = if judge.rules.trim().is_empty() {
+        String::new()
+    } else {
+        format!("RULES (mandatory — verify each one, echo each rule id in rule_results):\n{}\n\n", judge.rules)
+    };
+    // Rules are BINDING and live in the SYSTEM prompt, like the legacy rubric:
+    // judges anchor on "satisfies the objective" and treat mid-message
+    // criteria as advisory otherwise.
+    let system_content = format!(
+        "You are '{}', a strict evaluation judge in a review panel. The FINAL ANSWER below is about to be \
+        delivered to the human; decide whether it may pass. Score how well it satisfies the user's objective{}\
+        Judge the answer the reader will receive, not the effort spent. An answer that only describes what it \
+        WOULD do is NOT satisfied. If ANY blocker-severity rule fails, set satisfied=false and cap the score at 0.5. \
+        When done, output ONLY the verdict as a YAML document in exactly this shape:\n{}",
+        judge.name,
+        if judge.rules.trim().is_empty() {
+            ". ".to_string()
+        } else {
+            format!(
+                " AND every one of these MANDATORY RULES:\n{}\nThe rules are requirements in addition to the \
+                objective, even if the objective does not mention them. ",
+                judge.rules
+            )
+        },
+        verdict_format
+    );
+    let user_content = format!(
+        "OBJECTIVE:\n{}\n\n\
+        {}EVIDENCE (tool calls and generated files):\n{}\n\n\
+        FINAL ANSWER:\n{}\n\n\
+        Respond with ONLY the verdict YAML (no prose around it).",
+        objective, rules_section, evidence, answer
+    );
+
+    if !judge.use_tools {
+        let msgs = vec![
+            json!({"role": "system", "content": system_content}),
+            json!({"role": "user", "content": user_content}),
+        ];
+        let data = match llm_call(client, &judge.api_key, &judge.api_url, &judge.model, &msgs, None, 0.1, 2048).await {
+            Ok(d) => d,
+            Err(e) => {
+                error!("[Graph] Judge '{}' call failed: {}", judge.name, e);
+                return None;
+            }
+        };
+        let content = data["choices"][0]["message"]["content"].as_str().unwrap_or("");
+        info!("[Graph] Judge '{}' raw verdict: {}", judge.name, crate::util::truncate_utf8(content, 300));
+        return parse_graph_verdict(content);
+    }
+
+    let mut allowed: Vec<&str> = vec!["read_file", "list_files"];
+    if judge.allow_execute {
+        allowed.extend(["run_python", "run_shell"]);
+    }
+    let judge_tools: Vec<Value> = tool_definitions().into_iter()
+        .filter(|t| t["function"]["name"].as_str().map(|n| allowed.contains(&n)).unwrap_or(false))
+        .collect();
+    let mut msgs = vec![
+        json!({"role": "system", "content": format!(
+            "{}\nYou may call the provided tools to verify that claimed files/artifacts actually exist and \
+            match the claims BEFORE scoring (paths are relative to the working directory).", system_content
+        )}),
+        json!({"role": "user", "content": format!(
+            "{}\nVerify what you need with tools first, then output ONLY the verdict YAML.", user_content
+        )}),
+    ];
+
+    for _judge_round in 0..judge.max_judge_rounds {
+        if sub_agent.cancel_flag.load(Ordering::Relaxed) {
+            info!("[Graph] Abort signal — skipping judge '{}'", judge.name);
+            return None;
+        }
+        let data = match llm_call(client, &judge.api_key, &judge.api_url, &judge.model, &msgs, Some(&judge_tools), 0.1, 2048).await {
+            Ok(d) => d,
+            Err(e) => {
+                error!("[Graph] Judge '{}' call failed: {}", judge.name, e);
+                return None;
+            }
+        };
+        let message = data["choices"][0]["message"].clone();
+        let mut assistant_msg = message.clone();
+        if assistant_msg["content"].as_str().unwrap_or("").is_empty() {
+            assistant_msg["content"] = json!("(verifying...)");
+        }
+        msgs.push(assistant_msg);
+
+        let calls = message["tool_calls"].as_array().filter(|c| !c.is_empty()).cloned();
+        let Some(calls) = calls else {
+            let content = message["content"].as_str().unwrap_or("");
+            info!("[Graph] Judge '{}' raw verdict: {}", judge.name, crate::util::truncate_utf8(content, 300));
+            if let Some(v) = parse_graph_verdict(content) {
+                return Some(v);
+            }
+            // Narration without a verdict — nudge, spend another round.
+            msgs.push(json!({"role": "user", "content":
+                "Continue verifying with the tools if needed, or output ONLY the verdict YAML now."}));
+            continue;
+        };
+        for call in &calls {
+            let name = call["function"]["name"].as_str().unwrap_or("unknown");
+            let args: Value = serde_json::from_str(call["function"]["arguments"].as_str().unwrap_or("{}")).unwrap_or(json!({}));
+            let id = call["id"].as_str().unwrap_or("");
+            let display = format!("judge:{}:{}", judge.name, name);
+            let result = if allowed.contains(&name) {
+                on_update(ToolUpdate::ToolCall { name: display.clone(), args: args.clone() });
+                let r = execute_tool_with_context(name, &args, sandbox_dir, &sub_agent.session_id, "evaluator").await;
+                on_update(ToolUpdate::ToolResult { name: display, result: r.clone() });
+                r
+            } else {
+                json!({"ok": false, "error": format!("tool '{}' is not allowed for the judge", name)})
+            };
+            let result_str = compact::compress_tool_result(name, &result, 4000);
+            msgs.push(json!({"role": "tool", "tool_call_id": id, "content": result_str}));
+        }
+    }
+
+    msgs.push(json!({"role": "user", "content": "Verification budget exhausted. Output ONLY the verdict YAML now."}));
+    match llm_call(client, &judge.api_key, &judge.api_url, &judge.model, &msgs, None, 0.1, 2048).await {
+        Ok(d) => {
+            let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("");
+            info!("[Graph] Judge '{}' forced verdict: {}", judge.name, crate::util::truncate_utf8(content, 300));
+            parse_graph_verdict(content)
+        }
+        Err(e) => {
+            error!("[Graph] Judge '{}' final verdict call failed: {}", judge.name, e);
+            None
+        }
+    }
+}
+
 /// Outer evaluation / legacy reflection loop: judge the final result against
 /// the user objective; below cfg.threshold, inject the gap list and grant
 /// bounded extra tool rounds (the orchestrator can re-delegate targeted fixes),
@@ -10598,57 +11005,108 @@ async fn run_evaluation_loop(
             .and_then(|m| m["content"].as_str())
             .unwrap_or("(none)");
 
-        let verdict = if cfg.tool_judge {
-            judge_job_with_tools(
-                client, cfg, user_objective, &evidence, last_assistant,
-                sandbox_dir, sub_agent, on_update.clone(),
-            ).await
-        } else {
-            judge_task_result(
-                client, &cfg.judge_api_key, &cfg.judge_api_url, &cfg.judge_model,
-                user_objective, &evidence, last_assistant,
-                "the user's objective",
-            ).await
-        };
-        let verdict = match verdict {
-            Some(v) => v,
-            None => break, // judge failed → fail open (treat as satisfied)
-        };
-        let (score, satisfied, missing) = (verdict.score, verdict.satisfied, verdict.missing);
-
-        info!("[Evaluation] Score: {:.2}, Satisfied: {}, Missing: {}", score, satisfied, crate::util::truncate_utf8(&missing, 200));
-
-        if score >= cfg.threshold || satisfied {
-            info!("[Evaluation] Score {:.2} >= threshold {:.2}. Objective satisfied.", score, cfg.threshold);
-            // Make a PASSING evaluation visible too — without this, users
-            // can't tell the eval loop ran at all (logs go to stderr, which
-            // Finder-launched apps discard).
+        // Feedback message injected on a failing verdict. Role must be "user":
+        // several OpenAI-compatible APIs reject system messages mid-conversation
+        // (consistent with the other loop nudges). Both branches break out of
+        // the retry loop on pass or judge failure (fail open).
+        let gap_message: String = if let Some(g) = &cfg.graph {
+            // --- Graph judge panel: sequential, each judge fails open ---
+            let mut verdicts: Vec<(usize, GraphJudgeVerdict)> = Vec::new();
+            for (i, judge) in g.judges.iter().enumerate() {
+                if sub_agent.cancel_flag.load(Ordering::Relaxed) {
+                    info!("[Graph] Abort signal — skipping judge panel");
+                    return None;
+                }
+                match run_graph_judge(
+                    client, judge, user_objective, &evidence, last_assistant,
+                    sandbox_dir, sub_agent, on_update.clone(),
+                ).await {
+                    Some(mut v) => {
+                        v.judge = judge.name.clone();
+                        info!("[Graph] Judge '{}': score {:.2}, satisfied {}", judge.name, v.score, v.satisfied);
+                        verdicts.push((i, v));
+                    }
+                    None => warn!("[Graph] Judge '{}' failed — skipped (fail open)", judge.name),
+                }
+            }
+            if verdicts.is_empty() {
+                warn!("[Graph] Every judge failed — releasing answer (fail open)");
+                break;
+            }
+            let (pass, agg_score, report_yaml) =
+                aggregate_verdicts(&g.judges, &verdicts, &g.policy, g.agg_threshold);
+            if pass {
+                info!("[Graph] Panel passed — policy {}, aggregate {:.2}", g.policy, agg_score);
+                on_update(ToolUpdate::TextChunk(format!(
+                    "[graph] ✓ Passed — {} judge(s), policy {}, aggregate score {:.2} (threshold {:.2})\n\n",
+                    verdicts.len(), g.policy, agg_score, g.agg_threshold
+                )));
+                break;
+            }
+            info!("[Graph] Panel rejected (iteration {}/{}) — aggregate {:.2}", retry_round + 1, cfg.max_retries, agg_score);
             on_update(ToolUpdate::TextChunk(format!(
-                "[evaluation] ✓ Passed — score {:.2}/1.0 (threshold {:.2})\n\n",
-                score, cfg.threshold
+                "[graph] ✗ Rejected (iteration {}/{}) — aggregate score {:.2}, policy {} — revising...\n",
+                retry_round + 1, cfg.max_retries, agg_score, g.policy
             )));
-            break;
-        }
+            format!(
+                "⚠️ GRAPH EVALUATION CHECK (iteration {}/{}): a judge panel reviewed your final answer before \
+                delivery and REJECTED it. Structured verdict:\n```yaml\n{}```\n\
+                Follow the `revise` instructions and fix every failed rule — do not redo completed work. If you \
+                are coordinating agents, delegate the fixes as targeted tasks (send_task/spawn_subagent) and wait \
+                for the results. Then give a COMPLETE final answer that includes both your previous results and the fixes.",
+                retry_round + 1, cfg.max_retries, report_yaml
+            )
+        } else {
+            // --- Legacy single judge ---
+            let verdict = if cfg.tool_judge {
+                judge_job_with_tools(
+                    client, cfg, user_objective, &evidence, last_assistant,
+                    sandbox_dir, sub_agent, on_update.clone(),
+                ).await
+            } else {
+                judge_task_result(
+                    client, &cfg.judge_api_key, &cfg.judge_api_url, &cfg.judge_model,
+                    user_objective, &evidence, last_assistant,
+                    "the user's objective",
+                ).await
+            };
+            let verdict = match verdict {
+                Some(v) => v,
+                None => break, // judge failed → fail open (treat as satisfied)
+            };
+            let (score, satisfied, missing) = (verdict.score, verdict.satisfied, verdict.missing);
 
-        // Score below threshold — re-enter agent loop to address gaps.
-        // Role must be "user": several OpenAI-compatible APIs reject system
-        // messages mid-conversation (consistent with the other loop nudges).
-        info!("[Evaluation] Score {:.2} < threshold {:.2}. Re-entering agent loop...", score, cfg.threshold);
-        on_update(ToolUpdate::TextChunk(format!(
-            "[evaluation] Score {:.1}/1.0 — addressing gaps: {}",
-            score, crate::util::truncate_utf8(&missing, 200)
-        )));
+            info!("[Evaluation] Score: {:.2}, Satisfied: {}, Missing: {}", score, satisfied, crate::util::truncate_utf8(&missing, 200));
 
-        all_messages.push(json!({
-            "role": "user",
-            "content": format!(
+            if score >= cfg.threshold || satisfied {
+                info!("[Evaluation] Score {:.2} >= threshold {:.2}. Objective satisfied.", score, cfg.threshold);
+                // Make a PASSING evaluation visible too — without this, users
+                // can't tell the eval loop ran at all (logs go to stderr, which
+                // Finder-launched apps discard).
+                on_update(ToolUpdate::TextChunk(format!(
+                    "[evaluation] ✓ Passed — score {:.2}/1.0 (threshold {:.2})\n\n",
+                    score, cfg.threshold
+                )));
+                break;
+            }
+
+            // Score below threshold — re-enter agent loop to address gaps.
+            info!("[Evaluation] Score {:.2} < threshold {:.2}. Re-entering agent loop...", score, cfg.threshold);
+            on_update(ToolUpdate::TextChunk(format!(
+                "[evaluation] Score {:.1}/1.0 — addressing gaps: {}",
+                score, crate::util::truncate_utf8(&missing, 200)
+            )));
+
+            format!(
                 "⚠️ SYSTEM EVALUATION CHECK: Your answer scored {:.1}/1.0 (threshold: {:.1}). The evaluation found these gaps:\n{}\n\n\
                 Address ONLY what is missing — do not redo completed work. If you are coordinating agents, \
                 delegate the missing pieces as targeted fix-up tasks (send_task/spawn_subagent) and wait for \
                 the results. Then give a COMPLETE final answer that includes both your previous results and the fixes.",
                 score, cfg.threshold, missing
             )
-        }));
+        };
+
+        all_messages.push(json!({"role": "user", "content": gap_message}));
 
         // Run additional tool rounds to address the gaps (tiger_cowork: up to 5)
         for _extra_round in 0..cfg.max_fix_rounds {
@@ -11089,5 +11547,164 @@ mod claude_cli_tests {
         assert!(!is_native_executable(&dir.join("does_not_exist").to_string_lossy()));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod graph_judge_tests {
+    use super::*;
+
+    fn judge(name: &str, weight: f64, threshold: Option<f64>) -> ResolvedJudge {
+        ResolvedJudge {
+            name: name.to_string(),
+            model: String::new(),
+            api_url: String::new(),
+            api_key: String::new(),
+            rules: String::new(),
+            weight,
+            threshold,
+            use_tools: false,
+            allow_execute: false,
+            max_judge_rounds: 3,
+        }
+    }
+
+    fn verdict(score: f64, satisfied: bool) -> GraphJudgeVerdict {
+        GraphJudgeVerdict { score, satisfied, ..Default::default() }
+    }
+
+    #[test]
+    fn parses_bare_yaml_verdict() {
+        let v = parse_graph_verdict(
+            "judge: quality\nscore: 0.6\nsatisfied: false\nrule_results:\n  - rule: answers-all-parts\n    pass: false\n    note: \"missing chart\"\nmissing: \"second chart\"\nrevise: \"add the chart\"\n",
+        ).unwrap();
+        assert_eq!(v.judge, "quality");
+        assert!(!v.satisfied);
+        assert_eq!(v.rule_results.len(), 1);
+        assert_eq!(v.rule_results[0].rule, "answers-all-parts");
+        assert_eq!(v.revise, "add the chart");
+    }
+
+    #[test]
+    fn parses_fenced_yaml_verdict() {
+        let v = parse_graph_verdict(
+            "Here is my verdict:\n```yaml\nscore: 0.9\nsatisfied: true\nmissing: \"\"\n```\nDone.",
+        ).unwrap();
+        assert!(v.satisfied);
+        assert!((v.score - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn falls_back_to_json_verdict() {
+        let v = parse_graph_verdict(
+            "{\"score\": 0.8, \"satisfied\": true, \"missing\": \"\"}",
+        ).unwrap();
+        assert!(v.satisfied);
+        assert!(v.rule_results.is_empty());
+    }
+
+    #[test]
+    fn thai_text_survives_verdict_parse() {
+        // Thai text in notes/missing must round-trip without byte-slice panics.
+        let v = parse_graph_verdict(
+            "score: 0.3\nsatisfied: false\nmissing: \"ขาดกราฟแท่งที่ผู้ใช้ขอ และคำอธิบายภาษาไทย\"\nrevise: \"เพิ่มกราฟ\"\n",
+        ).unwrap();
+        assert!(v.missing.contains("กราฟ"));
+        // truncate_utf8 on a boundary inside a Thai char must not panic.
+        let _ = crate::util::truncate_utf8(&v.missing, 10);
+    }
+
+    #[test]
+    fn garbage_fails_open() {
+        assert!(parse_graph_verdict("I think it looks fine!").is_none());
+        assert!(parse_graph_verdict("").is_none());
+    }
+
+    #[test]
+    fn prose_with_colon_is_not_a_verdict() {
+        assert!(parse_graph_verdict("Note: the answer is fine").is_none());
+    }
+
+    #[test]
+    fn all_pass_policy_requires_every_judge() {
+        let judges = vec![judge("a", 1.0, None), judge("b", 1.0, None)];
+        let both = vec![(0usize, verdict(0.9, true)), (1usize, verdict(0.8, true))];
+        let (pass, _, _) = aggregate_verdicts(&judges, &both, "all_pass", 0.75);
+        assert!(pass);
+        let one_fail = vec![(0usize, verdict(0.9, true)), (1usize, verdict(0.3, false))];
+        let (pass, _, yaml) = aggregate_verdicts(&judges, &one_fail, "all_pass", 0.75);
+        assert!(!pass);
+        assert!(yaml.contains("pass: false"));
+    }
+
+    #[test]
+    fn majority_policy() {
+        let judges = vec![judge("a", 1.0, None), judge("b", 1.0, None), judge("c", 1.0, None)];
+        let two_of_three = vec![
+            (0usize, verdict(0.9, true)),
+            (1usize, verdict(0.8, true)),
+            (2usize, verdict(0.2, false)),
+        ];
+        let (pass, _, _) = aggregate_verdicts(&judges, &two_of_three, "majority", 0.75);
+        assert!(pass);
+        let one_of_three = vec![
+            (0usize, verdict(0.9, true)),
+            (1usize, verdict(0.2, false)),
+            (2usize, verdict(0.2, false)),
+        ];
+        let (pass, _, _) = aggregate_verdicts(&judges, &one_of_three, "majority", 0.75);
+        assert!(!pass);
+    }
+
+    #[test]
+    fn weighted_average_policy() {
+        let judges = vec![judge("a", 3.0, None), judge("b", 1.0, None)];
+        // (3*0.9 + 1*0.4) / 4 = 0.775 >= 0.75
+        let vs = vec![(0usize, verdict(0.9, false)), (1usize, verdict(0.4, false))];
+        let (pass, score, _) = aggregate_verdicts(&judges, &vs, "weighted_average", 0.75);
+        assert!(pass);
+        assert!((score - 0.775).abs() < 1e-9);
+        // Flip the weights: (1*0.9 + 3*0.4) / 4 = 0.525 < 0.75
+        let judges = vec![judge("a", 1.0, None), judge("b", 3.0, None)];
+        let (pass, _, _) = aggregate_verdicts(&judges, &vs, "weighted_average", 0.75);
+        assert!(!pass);
+    }
+
+    #[test]
+    fn per_judge_threshold_override() {
+        // Judge passes on score with its own lenient threshold.
+        let judges = vec![judge("a", 1.0, Some(0.5))];
+        let vs = vec![(0usize, verdict(0.6, false))];
+        let (pass, _, _) = aggregate_verdicts(&judges, &vs, "all_pass", 0.75);
+        assert!(pass);
+    }
+
+    #[test]
+    fn zero_weight_judges_are_ignored_unless_all_zero() {
+        // Weight-0 blocker is ignored when another judge counts.
+        let judges = vec![judge("a", 1.0, None), judge("b", 0.0, None)];
+        let vs = vec![(0usize, verdict(0.9, true)), (1usize, verdict(0.1, false))];
+        let (pass, _, _) = aggregate_verdicts(&judges, &vs, "all_pass", 0.75);
+        assert!(pass);
+        // All-zero weights: everyone counts with weight 1 (no silent pass-all).
+        let judges = vec![judge("a", 0.0, None), judge("b", 0.0, None)];
+        let (pass, score, _) = aggregate_verdicts(&judges, &vs, "all_pass", 0.75);
+        assert!(!pass);
+        assert!((score - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn revise_collects_failing_judges_only() {
+        let judges = vec![judge("style", 1.0, None), judge("facts", 1.0, None)];
+        let mut bad = verdict(0.2, false);
+        bad.judge = "facts".to_string();
+        bad.revise = "cite the source".to_string();
+        let mut good = verdict(0.9, true);
+        good.judge = "style".to_string();
+        good.revise = "n/a".to_string();
+        let vs = vec![(0usize, good), (1usize, bad)];
+        let (_, _, yaml) = aggregate_verdicts(&judges, &vs, "all_pass", 0.75);
+        assert!(yaml.contains("[facts] cite the source"));
+        assert!(!yaml.contains("[style] n/a"));
     }
 }

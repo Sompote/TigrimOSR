@@ -149,7 +149,8 @@ fn api_key_line_re() -> regex::Regex {
 }
 
 /// Mask api_key values in raw profile YAML before returning it to clients.
-fn mask_yaml_api_keys(content: &str) -> String {
+/// (Shared with routes/graph.rs — graph profiles carry per-judge api_key.)
+pub(crate) fn mask_yaml_api_keys(content: &str) -> String {
     let re = api_key_line_re();
     re.replace_all(content, |caps: &regex::Captures| {
         format!(
@@ -162,7 +163,7 @@ fn mask_yaml_api_keys(content: &str) -> String {
 }
 
 /// Mask api_key string values anywhere in the parsed profile JSON.
-fn mask_json_api_keys(v: &mut Value) {
+pub(crate) fn mask_json_api_keys(v: &mut Value) {
     match v {
         Value::Object(map) => {
             for (k, val) in map.iter_mut() {
@@ -189,7 +190,7 @@ fn mask_json_api_keys(v: &mut Value) {
 /// Replace masked api_key placeholders in an incoming profile with the
 /// original values from the existing file on disk, so a masked round-trip
 /// through the editor doesn't corrupt stored keys.
-fn restore_masked_api_keys(incoming: &str, existing: &str) -> String {
+pub(crate) fn restore_masked_api_keys(incoming: &str, existing: &str) -> String {
     let re = api_key_line_re();
     let mut originals: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for caps in re.captures_iter(existing) {
@@ -452,6 +453,26 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
         if e.allow_execute == Some(true) {
             warnings.push(
                 "evaluation.allow_execute is on — the evaluator judge may execute code (run_python/run_shell) in the sandbox".to_string(),
+            );
+        }
+    }
+    if let Some(g) = &profile.graph {
+        if let Some(p) = g.profile.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if !crate::server::services::graph::is_safe_filename(p) {
+                return Err(format!("graph.profile: unsafe filename '{}'", p));
+            }
+            let path = crate::server::services::graph::graph_dir()
+                .join(crate::server::services::graph::normalize_filename(p));
+            if !path.exists() {
+                warnings.push(format!(
+                    "graph.profile '{}' not found in data/graph/ — the gate will fall back to the default profile",
+                    p
+                ));
+            }
+        }
+        if g.enabled == Some(true) {
+            warnings.push(
+                "graph.enabled is on — a judge panel will review final answers before delivery (this adds LLM calls per run)".to_string(),
             );
         }
     }
