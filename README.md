@@ -1266,24 +1266,9 @@ Notes:
 
 Wire your agent as an **evaluator-optimizer graph**: the worker node produces the answer, a panel of one or more **judge nodes** reviews it against your YAML rules *before it reaches you*, and a failing verdict is sent back — as structured YAML — for revision until the panel passes it. **Off by default**; when on, a **⬡ GRAPH** badge shows in the chat header (desktop) and next to the mode chip (web/mobile).
 
-```mermaid
-flowchart TD
-    subgraph P["⚖️ Judge panel — 1..N judges, sequential, fail-open"]
-        J1["Judge 'quality'<br/>rules YAML + own model<br/>verifies output files with read-only tools"]
-        J2["Judge 'facts' … (optional)<br/>own rules_file, weight, threshold"]
-    end
-
-    U(["👤 User request"]) --> W["🤖 Worker node<br/>agent loop runs in worker.mode<br/>(single · auto · fully_auto · router · …)"]
-    W -->|"draft final answer"| P
-    P -->|"structured YAML verdicts<br/>score · satisfied · rule_results · revise"| A{"Aggregate<br/>all_pass · majority ·<br/>weighted_average"}
-    A -->|"✓ pass — or max_iterations exhausted"| H(["✅ Answer released to you<br/>graph ✓ Passed — aggregate score 0.88"])
-    A -->|"✗ rejected"| R["Verdict YAML injected back<br/>into the conversation as<br/>revision instructions"]
-    R -->|"up to max_fix_rounds tool rounds,<br/>then re-judge (≤ max_iterations cycles)"| W
-
-    style P fill:#f3ebfa,stroke:#9355c8
-    style H fill:#e8f6ee,stroke:#22c55e
-    style R fill:#fdf0ec,stroke:#e0704a
-```
+<p align="center">
+  <img src="assets/graph_mode_verification_loop.png" width="720" alt="Graph mode verification loop — the worker node drafts the answer, the judge panel returns structured YAML verdicts, the verdicts aggregate (all_pass / majority / weighted_average), a pass releases the answer to you, and a rejection injects the verdict back into the conversation for bounded revision rounds">
+</p>
 
 *The verification loop: the worker's draft never goes straight to you — each judge checks it against its rule file (optionally opening the produced files), the verdicts aggregate, and a rejection loops the worker through bounded revision rounds. Judges fail open, so a broken judge can never trap your answer.*
 
