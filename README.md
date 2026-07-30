@@ -87,27 +87,43 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 
 ## CLI mode (tigrim)
 
-**New in v0.7.2** — TigrimOS in your terminal, Claude Code-style. Copy the `tigrim` binary into any folder and run it there: that folder becomes the agent's workspace, a `.tigrimos/` directory holds your project-local YAML agents, agent-loop profiles and graph profiles (with fallback to your global TigrimOS settings, so a fresh folder needs zero setup), and every major feature is a slash command away — `/agents`, `/model`, `/mode`, `/loop`, `/graph`, `/skills`, `/mcp` and more. Type a message to chat with streaming answers, tool-call progress and y/n approval prompts; or script it with `tigrim -p "prompt"` for one-shot runs in CI and pipelines. The desktop app and headless server are unchanged — all three share the same engine, settings and profiles.
+**New in v0.7.2** — TigrimOS in your terminal, Claude Code-style. **No installation**: download the single `tigrim` file, copy it into the folder you want the agent to work in, and run it. That folder becomes the agent's workspace, a `.tigrimos/` directory holds your project-local YAML agents, agent-loop profiles and graph profiles (with fallback to your global TigrimOS settings, so a fresh folder needs zero setup), and every major feature is a slash command away — `/agents`, `/model`, `/mode`, `/loop`, `/graph`, `/skills`, `/mcp` and more. Type a message to chat with streaming answers, tool-call progress and y/n approval prompts; or script it with `./tigrim -p "prompt"` for one-shot runs in CI and pipelines. The desktop app and headless server are unchanged — all three share the same engine, settings and profiles.
 
 ```bash
-cd my-project
-tigrim                      # interactive agent REPL in this folder
-tigrim -p "summarize the CSV files here"   # one-shot: answer on stdout
+cd my-project        # the folder you want the agent to work in
+
+# download the binary into this folder (Apple Silicon; more platforms below)
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7.2-macos-arm64.tar.gz | tar xz
+
+./tigrim                                     # interactive agent REPL — that's it
+./tigrim -p "summarize the CSV files here"   # one-shot: answer on stdout
 ```
 
 <details>
-<summary>⌨️ Full CLI guide — setup, slash commands, project folder, one-shot flags</summary>
+<summary>⌨️ Full CLI guide — install per platform, slash commands, project folder, one-shot flags</summary>
 
-### Setup
+### Install — copy one file, run it
 
-`tigrim` is built alongside the desktop binary — no extra install:
+There is nothing to install system-wide: `tigrim` is a single self-contained binary. Copy it into any folder and run `./tigrim` there.
 
 ```bash
-cargo build --release --bins        # produces target/release/tigrim (and tigrimos)
-cp target/release/tigrim ~/bin/     # or anywhere on your PATH — it's one file
+# macOS — Apple Silicon (M1–M4)
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7.2-macos-arm64.tar.gz | tar xz
+
+# macOS — Intel
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7.2-macos-x86_64.tar.gz | tar xz
+
+./tigrim
 ```
 
-Run it in any folder. On the very first run (if no global API key is configured yet) it asks for your API base URL, key and model once and saves them **globally** — every other folder is then zero-config. If you already use the desktop app, `tigrim` picks up your existing key, model, MCP servers and skills automatically.
+> **macOS first run:** like any unsigned download, macOS may quarantine it. Clear it once:
+> ```bash
+> xattr -d com.apple.quarantine ./tigrim
+> ```
+
+The same file works from anywhere — it always uses the **current directory** as the workspace, so you can also keep one copy on your `PATH` (`cp tigrim /usr/local/bin/`) instead of one per folder. Building from source works too: `cargo build --release --bins` produces `target/release/tigrim`.
+
+On the very first run (if no global API key is configured yet) it asks for your API base URL, key and model once and saves them **globally** — every other folder is then zero-config. If you already use the desktop app, `tigrim` picks up your existing key, model, MCP servers and skills automatically.
 
 ### The `.tigrimos/` project folder
 
