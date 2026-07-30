@@ -180,11 +180,11 @@ async fn connect(Json(body): Json<ConnectBody>) -> impl IntoResponse {
 /// Public (no-auth) relay for the Google OAuth callback.
 ///
 /// The workspace-mcp callback listener binds localhost on the machine RUNNING
-/// TigrimOS — a remote browser's redirect to http://localhost:8000/... lands
+/// AndrewOS — a remote browser's redirect to http://localhost:8000/... lands
 /// on the USER's machine and dies ("Safari can't connect to the server").
-/// Mounting /oauth2callback on the TigrimOS server itself (which the remote
+/// Mounting /oauth2callback on the AndrewOS server itself (which the remote
 /// browser CAN reach) lets the user rescue the login by replacing
-/// `localhost:8000` in the failed redirect URL with the TigrimOS host:port —
+/// `localhost:8000` in the failed redirect URL with the AndrewOS host:port —
 /// we forward the query string to the local listener and return its response.
 ///
 /// No bearer auth: Google redirects the user's browser here without our

@@ -157,7 +157,7 @@ pub enum CommandOutcome {
 }
 
 fn help_text() -> String {
-    "TigrimOS bot commands:\n\
+    "AndrewOS bot commands:\n\
      /agents — list agent team configs\n\
      /model [id] — show or switch the model (switch applies to ALL sessions)\n\
      /mode [single|auto|manual|fully_auto|router|graph] — sub-agent mode for this chat\n\
@@ -575,7 +575,7 @@ mod tests {
             BotCommand::Model(Some("deepseek-chat".to_string()))
         );
         assert_eq!(
-            parse_command("/model@TigrimBot deepseek-chat"),
+            parse_command("/model@AndrewBot deepseek-chat"),
             BotCommand::Model(Some("deepseek-chat".to_string()))
         );
         assert_eq!(parse_command("/MODE router"), BotCommand::Mode(Some("router".to_string())));

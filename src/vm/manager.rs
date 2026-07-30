@@ -24,7 +24,7 @@ use uuid::Uuid;
 /// Errors that can occur during VM operations.
 #[derive(Debug, Error)]
 #[allow(dead_code)]
-pub enum TigrimOSError {
+pub enum AndrewOSError {
     #[error("Download failed: {0}")]
     DownloadFailed(String),
 
@@ -200,7 +200,7 @@ impl VmManagerInner {
 // VmManager (public API)
 // ---------------------------------------------------------------------------
 
-/// Manages the full TigrimOS VM lifecycle through QEMU.
+/// Manages the full AndrewOS VM lifecycle through QEMU.
 ///
 /// All mutable state is behind `Arc<Mutex<…>>` so the manager can be shared
 /// across async tasks (e.g. a health-check loop running concurrently with a
@@ -263,7 +263,7 @@ impl VmManager {
     /// 4. Create cloud-init seed (if needed)
     /// 5. Start QEMU child process
     /// 6. Begin health-check polling
-    pub async fn start_vm(&self) -> Result<(), TigrimOSError> {
+    pub async fn start_vm(&self) -> Result<(), AndrewOSError> {
         // Guard: only start from Stopped or Error.
         {
             let st = self.inner.lock().await.state;
@@ -294,10 +294,10 @@ impl VmManager {
     }
 
     /// The fallible core of `start_vm`.
-    async fn start_vm_inner(&self) -> Result<(), TigrimOSError> {
+    async fn start_vm_inner(&self) -> Result<(), AndrewOSError> {
         // Step 1: directories.
-        VmConfig::ensure_directories().map_err(TigrimOSError::Io)?;
-        self.append_console("[TigrimOS] Directories ready").await;
+        VmConfig::ensure_directories().map_err(AndrewOSError::Io)?;
+        self.append_console("[AndrewOS] Directories ready").await;
 
         // Step 2: qemu-img.
         self.ensure_qemu_img().await?;
@@ -310,14 +310,14 @@ impl VmManager {
 
         // Step 4: cloud-init seed.
         if !VmConfig::seed_iso_path().exists() {
-            self.append_console("[TigrimOS] Creating cloud-init seed...")
+            self.append_console("[AndrewOS] Creating cloud-init seed...")
                 .await;
             self.create_cloud_init_seed().await?;
         }
 
         // Step 5: start QEMU.
         self.inner.lock().await.state = VmState::Starting;
-        self.append_console("[TigrimOS] Starting QEMU virtual machine...")
+        self.append_console("[AndrewOS] Starting QEMU virtual machine...")
             .await;
         self.launch_qemu().await?;
 
@@ -326,11 +326,11 @@ impl VmManager {
             let mut g = self.inner.lock().await;
             if VmConfig::is_provisioned() {
                 g.state = VmState::Running;
-                g.append_console("[TigrimOS] VM started successfully");
+                g.append_console("[AndrewOS] VM started successfully");
             } else {
                 g.state = VmState::Provisioning;
                 g.append_console(
-                    "[TigrimOS] First run -- provisioning via cloud-init (this takes several minutes)...",
+                    "[AndrewOS] First run -- provisioning via cloud-init (this takes several minutes)...",
                 );
             }
         }
@@ -377,7 +377,7 @@ impl VmManager {
             let mut g = self.inner.lock().await;
             g.vm_ip_address = None;
             g.state = VmState::Stopped;
-            g.append_console("[TigrimOS] VM stopped");
+            g.append_console("[AndrewOS] VM stopped");
         }
     }
 
@@ -404,7 +404,7 @@ impl VmManager {
         }
 
         self.append_console(
-            "[TigrimOS] VM reset -- will re-download and provision on next start",
+            "[AndrewOS] VM reset -- will re-download and provision on next start",
         )
         .await;
     }
@@ -463,21 +463,21 @@ impl VmManager {
     }
 
     /// Ensure `qemu-img` is available; install via Homebrew if missing.
-    async fn ensure_qemu_img(&self) -> Result<(), TigrimOSError> {
+    async fn ensure_qemu_img(&self) -> Result<(), AndrewOSError> {
         if let Some(path) = Self::find_qemu_img() {
-            self.append_console(&format!("[TigrimOS] Found qemu-img at {}", path))
+            self.append_console(&format!("[AndrewOS] Found qemu-img at {}", path))
                 .await;
             return Ok(());
         }
 
-        self.append_console("[TigrimOS] qemu-img not found -- installing via Homebrew...")
+        self.append_console("[AndrewOS] qemu-img not found -- installing via Homebrew...")
             .await;
 
         let result =
             Self::run_process("/bin/bash", &["-l", "-c", "brew install qemu 2>&1"]).await?;
 
         if result.exit_code != 0 {
-            return Err(TigrimOSError::ProvisioningFailed(format!(
+            return Err(AndrewOSError::ProvisioningFailed(format!(
                 "qemu-img is required to convert Ubuntu cloud images.\n\
                  Install manually in Terminal: brew install qemu\n\
                  Output: {}{}",
@@ -486,14 +486,14 @@ impl VmManager {
         }
 
         if Self::find_qemu_img().is_none() {
-            return Err(TigrimOSError::ProvisioningFailed(
+            return Err(AndrewOSError::ProvisioningFailed(
                 "brew install succeeded but qemu-img not found.\n\
                  Try running in Terminal: brew install qemu"
                     .to_string(),
             ));
         }
 
-        self.append_console("[TigrimOS] qemu installed successfully")
+        self.append_console("[AndrewOS] qemu installed successfully")
             .await;
         Ok(())
     }
@@ -503,7 +503,7 @@ impl VmManager {
     // ===================================================================
 
     /// Download Ubuntu QCOW2 cloud image and convert to raw with qemu-img.
-    async fn download_and_prepare_image(&self) -> Result<(), TigrimOSError> {
+    async fn download_and_prepare_image(&self) -> Result<(), AndrewOSError> {
         let (arch_label, cloud_img_url) = if cfg!(target_arch = "aarch64") {
             ("arm64", "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64.img")
         } else {
@@ -515,17 +515,17 @@ impl VmManager {
         // Download if not already cached.
         if !qcow2_path.exists() {
             self.append_console(&format!(
-                "[TigrimOS] Downloading Ubuntu Server 22.04 ({})...",
+                "[AndrewOS] Downloading Ubuntu Server 22.04 ({})...",
                 arch_label
             ))
             .await;
-            self.append_console("[TigrimOS] This is ~700MB, please wait...")
+            self.append_console("[AndrewOS] This is ~700MB, please wait...")
                 .await;
             self.inner.lock().await.progress = 0.0;
 
             let response = reqwest::get(cloud_img_url).await?;
             if !response.status().is_success() {
-                return Err(TigrimOSError::DownloadFailed(format!(
+                return Err(AndrewOSError::DownloadFailed(format!(
                     "HTTP {} downloading Ubuntu image",
                     response.status()
                 )));
@@ -534,23 +534,23 @@ impl VmManager {
             tokio::fs::write(&qcow2_path, &bytes).await?;
 
             self.inner.lock().await.progress = 0.5;
-            self.append_console("[TigrimOS] Download complete").await;
+            self.append_console("[AndrewOS] Download complete").await;
         } else {
             self.inner.lock().await.progress = 0.5;
-            self.append_console("[TigrimOS] Using cached Ubuntu cloud image")
+            self.append_console("[AndrewOS] Using cached Ubuntu cloud image")
                 .await;
         }
 
         // Convert QCOW2 -> raw.
         self.inner.lock().await.state = VmState::Converting;
         self.append_console(&format!(
-            "[TigrimOS] Converting QCOW2 -> raw format ({}GB)...",
+            "[AndrewOS] Converting QCOW2 -> raw format ({}GB)...",
             VmConfig::DISK_SIZE_GB
         ))
         .await;
 
         let qemu_img = Self::find_qemu_img()
-            .ok_or_else(|| TigrimOSError::QemuNotFound("qemu-img not found".to_string()))?;
+            .ok_or_else(|| AndrewOSError::QemuNotFound("qemu-img not found".to_string()))?;
 
         let _ = std::fs::remove_file(VmConfig::raw_disk_path());
 
@@ -586,7 +586,7 @@ impl VmManager {
         )
         .await?;
         if convert.exit_code != 0 {
-            return Err(TigrimOSError::ProvisioningFailed(format!(
+            return Err(AndrewOSError::ProvisioningFailed(format!(
                 "qemu-img convert failed: {}",
                 convert.stderr
             )));
@@ -600,12 +600,12 @@ impl VmManager {
         )
         .await?;
         let first_lines: String = info.stdout.lines().take(3).collect::<Vec<_>>().join(", ");
-        self.append_console(&format!("[TigrimOS] Image info: {}", first_lines))
+        self.append_console(&format!("[AndrewOS] Image info: {}", first_lines))
             .await;
 
         self.inner.lock().await.progress = 1.0;
         self.append_console(&format!(
-            "[TigrimOS] Raw disk image ready ({}GB)",
+            "[AndrewOS] Raw disk image ready ({}GB)",
             VmConfig::DISK_SIZE_GB
         ))
         .await;
@@ -620,8 +620,8 @@ impl VmManager {
     /// Create a FAT12 seed image with cloud-init NoCloud data using `hdiutil`.
     ///
     /// Contains: `meta-data`, `user-data` (full provisioning: Node 20,
-    /// Python3, TigrimOS service), and `network-config` (DHCP).
-    async fn create_cloud_init_seed(&self) -> Result<(), TigrimOSError> {
+    /// Python3, AndrewOS service), and `network-config` (DHCP).
+    async fn create_cloud_init_seed(&self) -> Result<(), AndrewOSError> {
         let seed_dir = VmConfig::app_support_dir().join("seed");
         tokio::fs::create_dir_all(&seed_dir).await?;
 
@@ -664,7 +664,7 @@ ethernets:
         )
         .await?;
         if dd.exit_code != 0 {
-            return Err(TigrimOSError::ProvisioningFailed(format!(
+            return Err(AndrewOSError::ProvisioningFailed(format!(
                 "Failed to create seed image: {}",
                 dd.stderr
             )));
@@ -677,7 +677,7 @@ ethernets:
         )
         .await?;
         if attach.exit_code != 0 {
-            return Err(TigrimOSError::ProvisioningFailed(format!(
+            return Err(AndrewOSError::ProvisioningFailed(format!(
                 "Failed to attach seed image: {}",
                 attach.stderr
             )));
@@ -690,11 +690,11 @@ ethernets:
             .next()
             .unwrap_or("")
             .to_string();
-        self.append_console(&format!("[TigrimOS] Seed device: {}", device_path))
+        self.append_console(&format!("[AndrewOS] Seed device: {}", device_path))
             .await;
 
         if device_path.is_empty() {
-            return Err(TigrimOSError::ProvisioningFailed(
+            return Err(AndrewOSError::ProvisioningFailed(
                 "Could not find device for seed image".to_string(),
             ));
         }
@@ -740,7 +740,7 @@ ethernets:
         // Cleanup.
         let _ = tokio::fs::remove_dir_all(&mount_point).await;
 
-        self.append_console("[TigrimOS] Cloud-init seed created (raw FAT12)")
+        self.append_console("[AndrewOS] Cloud-init seed created (raw FAT12)")
             .await;
         Ok(())
     }
@@ -751,9 +751,9 @@ ethernets:
 
     /// Spawn the QEMU system emulator as a child process and wire up stdout
     /// capture for console output and IP detection.
-    async fn launch_qemu(&self) -> Result<(), TigrimOSError> {
+    async fn launch_qemu(&self) -> Result<(), AndrewOSError> {
         let qemu_bin = Self::find_qemu_system().ok_or_else(|| {
-            TigrimOSError::QemuNotFound(
+            AndrewOSError::QemuNotFound(
                 "qemu-system binary not found. Install via: brew install qemu".to_string(),
             )
         })?;
@@ -885,7 +885,7 @@ ethernets:
         }
 
         self.append_console(&format!(
-            "[TigrimOS] QEMU config: {} CPUs, {}GB RAM",
+            "[AndrewOS] QEMU config: {} CPUs, {}GB RAM",
             VmConfig::cpu_count(),
             VmConfig::MEMORY_GB
         ))
@@ -900,7 +900,7 @@ ethernets:
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| {
-                TigrimOSError::ProvisioningFailed(format!("Failed to start QEMU: {}", e))
+                AndrewOSError::ProvisioningFailed(format!("Failed to start QEMU: {}", e))
             })?;
 
         // Capture stdout in background for console output + IP detection.
@@ -939,7 +939,7 @@ ethernets:
     // ===================================================================
 
     /// Spawn a background task that polls every 5 s for VM IP detection and
-    /// TigrimOS service readiness.
+    /// AndrewOS service readiness.
     async fn start_health_check(&self) {
         {
             let mut g = self.inner.lock().await;
@@ -971,7 +971,7 @@ ethernets:
                     let mut g = inner.lock().await;
                     if g.vm_ip_address.is_none() {
                         if let Some(ip) = detect_vm_ip(&g.console_output) {
-                            g.append_console(&format!("[TigrimOS] Detected VM IP: {}", ip));
+                            g.append_console(&format!("[AndrewOS] Detected VM IP: {}", ip));
                             g.vm_ip_address = Some(ip);
                         }
                     }
@@ -984,7 +984,7 @@ ethernets:
                         if let Some(ip) = find_vm_via_arp().await {
                             let mut g = inner.lock().await;
                             g.append_console(&format!(
-                                "[TigrimOS] Found VM at {} (ARP table)",
+                                "[AndrewOS] Found VM at {} (ARP table)",
                                 ip
                             ));
                             g.vm_ip_address = Some(ip);
@@ -1005,7 +1005,7 @@ ethernets:
                 // TCP probe.
                 if !try_tcp_connect(&check_host, check_port).await {
                     inner.lock().await.append_console(&format!(
-                        "[TigrimOS] Waiting for TigrimOS (port {} not open on {})...",
+                        "[AndrewOS] Waiting for AndrewOS (port {} not open on {})...",
                         check_port, check_host
                     ));
                     continue;
@@ -1049,13 +1049,13 @@ ethernets:
                             let _ = std::fs::write(VmConfig::provisioned_marker(), b"");
                         }
                         g.append_console(&format!(
-                            "[TigrimOS] TigrimOS is ready at http://{}:{}",
+                            "[AndrewOS] AndrewOS is ready at http://{}:{}",
                             check_host, check_port
                         ));
                     }
                 } else {
                     inner.lock().await.append_console(&format!(
-                        "[TigrimOS] Port {} open on {} but service not responding yet...",
+                        "[AndrewOS] Port {} open on {} but service not responding yet...",
                         check_port, check_host
                     ));
                 }
@@ -1063,7 +1063,7 @@ ethernets:
         });
     }
 
-    /// Public accessor: parse `TIGRIMOS_IP=<ip>` from console output.
+    /// Public accessor: parse `ANDREWOS_IP=<ip>` from console output.
     #[allow(dead_code)]
     pub async fn detect_vm_ip(&self) -> Option<String> {
         let g = self.inner.lock().await;
@@ -1091,7 +1091,7 @@ ethernets:
         };
         g.shared_folders.push(entry);
         g.append_console(&format!(
-            "[TigrimOS] Added shared folder: {} (read-only: {})",
+            "[AndrewOS] Added shared folder: {} (read-only: {})",
             name, read_only
         ));
         drop(g);
@@ -1116,7 +1116,7 @@ ethernets:
                 if let Some(e) = g.shared_folders.iter_mut().find(|e| e.id == id) {
                     e.read_only = new_val;
                 }
-                g.append_console(&format!("[TigrimOS] {}: read-only = {}", name, new_val));
+                g.append_console(&format!("[AndrewOS] {}: read-only = {}", name, new_val));
             }
         }
         self.save_shared_folder_config().await;
@@ -1160,12 +1160,12 @@ ethernets:
     // ===================================================================
 
     /// Run an external command and capture its stdout / stderr.
-    pub async fn run_process(path: &str, args: &[&str]) -> Result<ProcessResult, TigrimOSError> {
+    pub async fn run_process(path: &str, args: &[&str]) -> Result<ProcessResult, AndrewOSError> {
         let output = Command::new(path)
             .args(args)
             .output()
             .await
-            .map_err(TigrimOSError::Io)?;
+            .map_err(AndrewOSError::Io)?;
 
         Ok(ProcessResult {
             exit_code: output.status.code().unwrap_or(-1),
@@ -1180,12 +1180,12 @@ ethernets:
 // holds only an Arc<Mutex<VmManagerInner>>)
 // ===========================================================================
 
-/// Parse `TIGRIMOS_IP=<ip>` from raw console text.
+/// Parse `ANDREWOS_IP=<ip>` from raw console text.
 fn detect_vm_ip(console: &str) -> Option<String> {
     // Primary: explicit marker from print-ip.sh.
     for line in console.lines().rev() {
-        if line.contains("TIGRIMOS_IP=") {
-            if let Some(rest) = line.split("TIGRIMOS_IP=").last() {
+        if line.contains("ANDREWOS_IP=") {
+            if let Some(rest) = line.split("ANDREWOS_IP=").last() {
                 let ip = rest.trim().split_whitespace().next().unwrap_or("");
                 if is_valid_vm_ip(ip) {
                     return Some(ip.to_string());
@@ -1308,7 +1308,7 @@ write_files:
       GW=$(ip route | grep default | awk '{print $3}' | head -1)
       if [ -n "$GW" ]; then
         grep -q "host.local" /etc/hosts || echo "$GW host.local host.docker.internal" >> /etc/hosts
-        echo "[TigrimOS] Host gateway: $GW (accessible as host.local)"
+        echo "[AndrewOS] Host gateway: $GW (accessible as host.local)"
       fi
 
   - path: /etc/systemd/system/host-gateway.service
@@ -1345,47 +1345,47 @@ write_files:
         done
       }
 
-      echo "[TigrimOS] Waiting for network..."
+      echo "[AndrewOS] Waiting for network..."
       for i in $(seq 1 15); do
         if wget -q --spider --timeout=5 http://ports.ubuntu.com 2>/dev/null || \
            ping -c1 -W3 192.168.64.1 >/dev/null 2>&1; then
-          echo "[TigrimOS] Network OK"
+          echo "[AndrewOS] Network OK"
           break
         fi
-        echo "[TigrimOS] Network not ready, waiting... ($i/15)"
+        echo "[AndrewOS] Network not ready, waiting... ($i/15)"
         sleep 3
       done
 
-      echo "[TigrimOS] Enabling universe repository..."
+      echo "[AndrewOS] Enabling universe repository..."
       apt-get install -y software-properties-common 2>/dev/null || true
       add-apt-repository -y universe 2>/dev/null || \
         sed -i 's/^deb \(.*\) jammy main$/deb \1 jammy main universe/' /etc/apt/sources.list
 
-      echo "[TigrimOS] Installing base packages..."
+      echo "[AndrewOS] Installing base packages..."
       retry 5 15 apt-get update -qq
       retry 3 10 apt-get install -y curl git build-essential python3 python3-pip python3-venv net-tools
 
-      echo "[TigrimOS] Installing Node.js 20..."
+      echo "[AndrewOS] Installing Node.js 20..."
       retry 3 5 bash -c 'curl -4 -fsSL https://deb.nodesource.com/setup_20.x | bash -'
       retry 3 5 apt-get install -y nodejs
 
-      echo "[TigrimOS] Setting up Python venv..."
+      echo "[AndrewOS] Setting up Python venv..."
       python3 -m venv /opt/venv
       retry 3 10 /opt/venv/bin/pip install --no-cache-dir numpy pillow matplotlib pandas scipy seaborn openpyxl python-docx
 
-      echo "[TigrimOS] Installing npm packages..."
+      echo "[AndrewOS] Installing npm packages..."
       retry 3 10 npm i -g clawhub tsx
 
-      echo "[TigrimOS] Setting up TigrimOS..."
+      echo "[AndrewOS] Setting up AndrewOS..."
       mkdir -p /app
 
       if [ -d /mnt/tiger-cowork ] && [ -f /mnt/tiger-cowork/package.json ]; then
-        echo "[TigrimOS] Copying from local source..."
+        echo "[AndrewOS] Copying from local source..."
         cp -r /mnt/tiger-cowork/* /app/
       else
-        echo "[TigrimOS] Local source not found, cloning from GitHub..."
+        echo "[AndrewOS] Local source not found, cloning from GitHub..."
         apt-get install -y -qq git 2>/dev/null || true
-        retry 3 5 git clone --depth 1 https://github.com/Sompote/TigrimOS.git /tmp/tigris-src
+        retry 3 5 git clone --depth 1 https://github.com/Sompote/AndrewOS.git /tmp/tigris-src
         cp -r /tmp/tigris-src/tiger_cowork/* /app/
         rm -rf /tmp/tigris-src
       fi
@@ -1404,7 +1404,7 @@ write_files:
 
       cat > /etc/systemd/system/tiger-cowork.service << 'SVCEOF'
       [Unit]
-      Description=TigrimOS
+      Description=AndrewOS
       After=network.target
 
       [Service]
@@ -1428,7 +1428,7 @@ write_files:
       systemctl start tiger-cowork
 
       touch /var/lib/tigris-provisioned
-      echo "[TigrimOS] Setup complete!"
+      echo "[AndrewOS] Setup complete!"
 
   - path: /opt/print-ip.sh
     permissions: "0755"
@@ -1437,16 +1437,16 @@ write_files:
       for i in $(seq 1 60); do
         IP=$(ip -4 addr show scope global | grep inet | awk '{print $2}' | cut -d/ -f1 | head -1)
         if [ -n "$IP" ] && [ "$IP" != "127.0.0.1" ]; then
-          echo "TIGRIMOS_IP=$IP" > /dev/hvc0 2>/dev/null || true
-          echo "TIGRIMOS_IP=$IP"
+          echo "ANDREWOS_IP=$IP" > /dev/hvc0 2>/dev/null || true
+          echo "ANDREWOS_IP=$IP"
           while true; do
             sleep 10
-            echo "TIGRIMOS_IP=$IP" > /dev/hvc0 2>/dev/null || true
+            echo "ANDREWOS_IP=$IP" > /dev/hvc0 2>/dev/null || true
           done
         fi
         sleep 2
       done
-      echo "TIGRIMOS_IP=FAILED" > /dev/hvc0 2>/dev/null || true
+      echo "ANDREWOS_IP=FAILED" > /dev/hvc0 2>/dev/null || true
 
   - path: /etc/systemd/system/print-ip.service
     content: |
@@ -1499,14 +1499,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_tigrimos_ip_from_console() {
-        let console = "[12:00:01] boot\n[12:00:05] TIGRIMOS_IP=192.168.64.3\n";
+    fn parse_andrewos_ip_from_console() {
+        let console = "[12:00:01] boot\n[12:00:05] ANDREWOS_IP=192.168.64.3\n";
         assert_eq!(detect_vm_ip(console), Some("192.168.64.3".to_string()));
     }
 
     #[test]
-    fn parse_tigrimos_ip_failed_marker() {
-        let console = "TIGRIMOS_IP=FAILED\n";
+    fn parse_andrewos_ip_failed_marker() {
+        let console = "ANDREWOS_IP=FAILED\n";
         assert_eq!(detect_vm_ip(console), None);
     }
 

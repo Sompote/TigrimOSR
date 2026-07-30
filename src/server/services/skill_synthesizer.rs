@@ -1660,7 +1660,7 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     };
 
     // CLI providers (claude-code, gemini-cli, codex-cli) are not supported for skill synthesis
-    if api_url_raw.starts_with("claude-code") || api_url_raw.starts_with("gemini-cli") || api_url_raw.starts_with("codex-cli") {
+    if crate::server::services::cli_models::is_local_cli_url(&api_url_raw) {
         let mut status = synth_status().lock().await;
         status.running = false;
         return Err(format!("Skill auto-update requires an API provider (not {}). Please set an API URL in Settings (e.g. OpenAI, DeepSeek, MiniMax).", api_url_raw));

@@ -7,7 +7,7 @@
 // opens the Google login page in the user's browser; tokens are cached under
 // ~/.google_workspace_mcp/credentials, so login happens once.
 //
-// TigrimOS's job: find/install `uvx`, write the MCP settings entry (command +
+// AndrewOS's job: find/install `uvx`, write the MCP settings entry (command +
 // OAuth client env vars), connect it, and trigger the login so the browser
 // opens right away instead of mid-conversation.
 // ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ pub const GOOGLE_CONSOLE_URL: &str = "https://console.cloud.google.com/apis/cred
 
 /// Fixed port for the workspace-mcp OAuth callback listener
 /// (http://localhost:{PORT}/oauth2callback). Pinned via WORKSPACE_MCP_PORT so
-/// the TigrimOS /oauth2callback relay always knows where to forward.
+/// the AndrewOS /oauth2callback relay always knows where to forward.
 pub const GOOGLE_CALLBACK_PORT: u16 = 8000;
 
 /// Locate `uvx` (the uv tool runner workspace-mcp is launched with). Checks
@@ -121,7 +121,7 @@ pub fn build_google_mcp_entry(
     // The local OAuth callback (http://localhost:8000/oauth2callback) is plain
     // http — allow it.
     env.insert("OAUTHLIB_INSECURE_TRANSPORT".to_string(), "1".to_string());
-    // Pin the callback port so the login URL and the TigrimOS relay
+    // Pin the callback port so the login URL and the AndrewOS relay
     // (/oauth2callback) are deterministic.
     env.insert("WORKSPACE_MCP_PORT".to_string(), GOOGLE_CALLBACK_PORT.to_string());
     if !email.trim().is_empty() {

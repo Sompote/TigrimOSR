@@ -1,16 +1,16 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: TigrimOS Installer for Windows
+:: AndrewOS Installer for Windows
 :: Clones, builds, and creates an installation folder
 
-set APP_NAME=TigrimOS
-set REPO_URL=https://github.com/Sompote/TigrimOSR.git
-set BINARY_NAME=tigrimos.exe
+set APP_NAME=AndrewOS
+set REPO_URL=https://github.com/Sompote/AndrewOS.git
+set BINARY_NAME=andrewos.exe
 
 echo.
 echo ========================================
-echo   TigrimOS Installer for Windows
+echo   AndrewOS Installer for Windows
 echo ========================================
 echo.
 
@@ -48,7 +48,7 @@ echo [OK] Prerequisites found (git, rustc, cargo)
 echo.
 
 :: ── Select install location ──
-echo Where would you like to install TigrimOS?
+echo Where would you like to install AndrewOS?
 echo.
 echo   1) Home directory         (%USERPROFILE%\%APP_NAME%)
 echo   2) Program Files          (%ProgramFiles%\%APP_NAME%)
@@ -78,7 +78,7 @@ if exist "%INSTALL_DIR%\.git" (
     cd /d "%INSTALL_DIR%"
     git pull --ff-only || echo [WARN] Pull failed, continuing with existing code...
 ) else (
-    echo Cloning TigrimOS...
+    echo Cloning AndrewOS...
     if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
     git clone %REPO_URL% "%INSTALL_DIR%"
     cd /d "%INSTALL_DIR%"
@@ -88,7 +88,7 @@ echo [OK] Source ready
 echo.
 
 :: ── Build ──
-echo Building TigrimOS (release mode)...
+echo Building AndrewOS (release mode)...
 echo This may take a few minutes on first build.
 echo.
 
@@ -149,7 +149,7 @@ powershell -NoProfile -Command ^
      $sc = $ws.CreateShortcut('%USERPROFILE%\Desktop\%APP_NAME%.lnk'); ^
      $sc.TargetPath = '%DIST_DIR%\%APP_NAME%.exe'; ^
      $sc.WorkingDirectory = '%DIST_DIR%'; ^
-     $sc.Description = 'TigrimOS - AI Agent Platform'; ^
+     $sc.Description = 'AndrewOS - AI Agent Platform'; ^
      if (Test-Path '%DIST_DIR%\icon.png') { $sc.IconLocation = '%DIST_DIR%\%APP_NAME%.exe' }; ^
      $sc.Save()"
 
@@ -166,7 +166,7 @@ powershell -NoProfile -Command ^
      $sc = $ws.CreateShortcut('%START_DIR%\%APP_NAME%.lnk'); ^
      $sc.TargetPath = '%DIST_DIR%\%APP_NAME%.exe'; ^
      $sc.WorkingDirectory = '%DIST_DIR%'; ^
-     $sc.Description = 'TigrimOS - AI Agent Platform'; ^
+     $sc.Description = 'AndrewOS - AI Agent Platform'; ^
      $sc.Save()"
 
 echo [OK] Start Menu entry created

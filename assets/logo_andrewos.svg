@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512"
+     role="img" aria-label="AndrewOS">
+  <title>AndrewOS</title>
+  <!--
+    AndrewOS mark. Geometry reconstructed from the identity sheet by measuring
+    the artwork pixel-for-pixel, not by eye:
+
+      circle centre (50,50), centreline radius 40, stroke 8
+      ring is broken twice — a 36° gap at the upper right that the dot sits in
+      (dot centred at 41.1°, exactly mid-gap), and a wide gap at the bottom
+      where the A's legs pass through
+      legs run at 25.8° from vertical and are cut flat, not perpendicular,
+      so the A is a filled polygon rather than a stroked path
+
+    Single source of truth for the mark. assets/logo_andrewos.png and
+    assets/logo_sidebar.png are rasterised from this file; keep them in step.
+  -->
+  <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt">
+    <!-- upper-right terminus, counter-clockwise over the top to lower left -->
+    <path d="M 71.79 16.45 A 40 40 0 0 0 20.28 76.77"/>
+    <!-- lower-right terminus, up the right flank to just under the dot -->
+    <path d="M 80.20 76.24 A 40 40 0 0 0 86.68 34.05"/>
+  </g>
+  <!-- The A. Miter apex, flat feet. -->
+  <path fill="currentColor"
+        d="M 50 22.91 L 15.93 93.40 L 24.81 93.40 L 50 41.28 L 75.19 93.40 L 84.07 93.40 Z"/>
+  <circle cx="81" cy="23" r="6" fill="#0057FC"/>
+</svg>

@@ -610,7 +610,7 @@ async fn detect_shares() -> impl IntoResponse {
 /// Test if a directory is writable by attempting to create and remove a temp file.
 async fn test_write_permission(dir_path: &str) -> &'static str {
     let test_file = format!(
-        "{}/.tigrimos_write_test_{}",
+        "{}/.andrewos_write_test_{}",
         dir_path,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

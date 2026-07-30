@@ -34,7 +34,7 @@ pub struct SandboxManager {
 
 impl SandboxManager {
     /// Create a new `SandboxManager` that persists bookmarks inside
-    /// `app_support_dir` (e.g. `~/Library/Application Support/TigrimOS`).
+    /// `app_support_dir` (e.g. `~/Library/Application Support/AndrewOS`).
     pub fn new(app_support_dir: &Path) -> Self {
         let bookmarks_path = app_support_dir.join("sandbox_bookmarks.json");
         Self { bookmarks_path }

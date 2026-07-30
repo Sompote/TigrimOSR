@@ -131,6 +131,9 @@ const REMOTE_BLOCKED_PREFIXES: &[&str] = &[
     "/api/messaging/tunnel",
     // Returns the host's raw Claude Code OAuth token — owner only.
     "/api/settings/claude-code-oauth",
+    // Enumerates which agent CLIs and versions are installed on the host, and
+    // spawns those binaries to do it — host inventory, so owner only.
+    "/api/settings/cli-models",
     // Installs software (the uv runtime) on the bare host — owner only.
     "/api/google/install-uv",
 ];
@@ -276,6 +279,9 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
 
     // Pre-install bundled skills (web-search)
     install_bundled_skills(&data_dir).await;
+    // Specialist agent teams imported from the subagent catalogs. Skipped for
+    // any file already present, so user edits survive.
+    services::agent_library::install_bundled_teams().await;
 
     // Auto-generate default file token
     let tokens = get_file_tokens().await;
@@ -375,7 +381,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     // Network exposure policy. Default is token-based: only listen on all
     // interfaces when some form of auth is configured (owner token, or remote
     // access enabled WITH a token). Otherwise bind loopback — an unauthenticated
-    // TigrimOS must never be reachable from the network ("/api/terminal/exec" is
+    // AndrewOS must never be reachable from the network ("/api/terminal/exec" is
     // RCE). Cloudflare tunnels connect via loopback, so tunnels keep working.
     //
     // VPN-exclusive override: when VPN is enabled it takes precedence — the
@@ -388,7 +394,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         let remote_ready = settings.remote_enabled == Some(true) && token_set;
         (remote_ready, settings.vpn_enabled == Some(true))
     };
-    let env_bind_all = std::env::var("TIGRIMOS_BIND_ALL").ok().as_deref() == Some("1");
+    let env_bind_all = std::env::var("ANDREWOS_BIND_ALL").ok().as_deref() == Some("1");
 
     // Resolve the concrete addresses to listen on.
     let bind_addrs: Vec<String> = if settings_vpn_enabled {
@@ -397,7 +403,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         match crate::server::services::vpn::tailnet_ip().await {
             Some(ip) => {
                 tracing::info!(
-                    "TigrimOS server in VPN-exclusive mode: listening on 127.0.0.1 + tailnet IP {} only \
+                    "AndrewOS server in VPN-exclusive mode: listening on 127.0.0.1 + tailnet IP {} only \
                      (ordinary LAN/public IP is NOT reachable)",
                     ip
                 );
@@ -406,17 +412,17 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
             None => {
                 tracing::warn!(
                     "VPN enabled but no tailnet IP available (is Tailscale up?) — binding 127.0.0.1 only. \
-                     Start Tailscale, then restart TigrimOS."
+                     Start Tailscale, then restart AndrewOS."
                 );
             }
         }
         addrs
     } else if owner_token_set || settings_remote_ready || env_bind_all {
-        tracing::info!("TigrimOS server listening on ALL interfaces (token auth configured)");
+        tracing::info!("AndrewOS server listening on ALL interfaces (token auth configured)");
         vec!["0.0.0.0".to_string()]
     } else {
         tracing::info!(
-            "TigrimOS server listening on 127.0.0.1 only (no auth configured). \
+            "AndrewOS server listening on 127.0.0.1 only (no auth configured). \
              Enable Remote Access with a token in Settings (then restart) for LAN/mobile access."
         );
         vec!["127.0.0.1".to_string()]
@@ -436,7 +442,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         return;
     }
 
-    tracing::info!("TigrimOS server running on http://localhost:{}", port);
+    tracing::info!("AndrewOS server running on http://localhost:{}", port);
     tracing::info!("Sandbox directory: {}", sandbox_dir);
 
     // Optional Tailscale VPN: detect/refresh the tailnet address if enabled so

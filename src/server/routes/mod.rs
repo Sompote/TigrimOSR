@@ -8,6 +8,7 @@ pub mod projects;
 pub mod agents;
 pub mod agent_loops;
 pub mod graph;
+pub mod workflows;
 pub mod custom_tools;
 pub mod terminal;
 pub mod local_files;
@@ -36,6 +37,7 @@ pub fn build_api_routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
         .nest("/agents", agents::router())
         .nest("/agent-loops", agent_loops::router())
         .nest("/graph-profiles", graph::router())
+        .nest("/workflows", workflows::router())
         .nest("/custom-tools", custom_tools::router())
         .nest("/terminal", terminal::router())
         .nest("/local-files", local_files::router())

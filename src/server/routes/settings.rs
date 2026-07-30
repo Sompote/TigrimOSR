@@ -44,6 +44,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/remote-token/regenerate", post(regenerate_remote_token))
         .route("/remote-instances/test", post(test_remote_instance))
         .route("/claude-code-oauth", get(get_claude_code_oauth))
+        .route("/cli-models", get(get_cli_models))
+        .route("/cli-models/refresh", post(refresh_cli_models))
         .route("/file-tokens", get(list_file_tokens).post(create_file_token))
         .route("/file-tokens/{id}", delete(delete_file_token))
         .route("/file-tokens/{id}/regenerate", post(regenerate_file_token))
@@ -529,6 +531,31 @@ async fn test_remote_instance(Json(body): Json<Value>) -> impl IntoResponse {
 
 // ---------------------------------------------------------------------------
 // Claude Code OAuth
+// ---------------------------------------------------------------------------
+// GET  /cli-models          — models + effort levels of the CLIs installed here
+// POST /cli-models/refresh  — same, bypassing the cache
+//
+// Backs the provider/model/effort dropdowns in Settings, the Sub-Agent roster,
+// and the chat composer, so none of them carry a hardcoded model list.
+// ---------------------------------------------------------------------------
+
+async fn get_cli_models() -> Json<Value> {
+    cli_models_payload(false).await
+}
+
+async fn refresh_cli_models() -> Json<Value> {
+    cli_models_payload(true).await
+}
+
+async fn cli_models_payload(force: bool) -> Json<Value> {
+    let providers = crate::server::services::cli_models::get_providers(force).await;
+    Json(json!({
+        "success": true,
+        "providers": providers,
+        "available": providers.iter().filter(|p| p.available).count(),
+    }))
+}
+
 // ---------------------------------------------------------------------------
 
 async fn get_claude_code_oauth() -> Json<Value> {

@@ -761,7 +761,7 @@ request:
   method: GET
   url: "http://export.arxiv.org/api/query?search_query=all:{{query}}&max_results={{limit}}"
   headers:
-    User-Agent: "TigrimOS/1.0"
+    User-Agent: "AndrewOS/1.0"
   timeout_secs: 20
 response:
   format: text

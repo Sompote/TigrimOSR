@@ -327,7 +327,7 @@ impl ProjectsView {
                             egui::RichText::new("+ Create Project")
                                 .color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(18, 154, 145)),
+                        .fill(crate::ui::theme::accent_color()),
                     )
                     .clicked()
                 {
@@ -439,7 +439,7 @@ impl ProjectsView {
                 .stroke(egui::Stroke::new(
                     1.0,
                     if is_selected {
-                        egui::Color32::from_rgb(18, 154, 145)
+                        crate::ui::theme::accent_color()
                     } else {
                         egui::Color32::from_gray(60)
                     },
@@ -452,7 +452,7 @@ impl ProjectsView {
                         ui.label(
                             egui::RichText::new("\u{1F4C1}")
                                 .size(20.0)
-                                .color(egui::Color32::from_rgb(18, 154, 145)),
+                                .color(crate::ui::theme::accent_color()),
                         );
                         ui.vertical(|ui| {
                             ui.add(egui::Label::new(egui::RichText::new(&project.name).strong().size(14.0)).wrap());
@@ -548,7 +548,7 @@ impl ProjectsView {
                 };
                 let btn = if is_active {
                     egui::Button::new(text)
-                        .fill(egui::Color32::from_rgb(18, 154, 145))
+                        .fill(crate::ui::theme::accent_color())
                         .corner_radius(egui::CornerRadius::same(4))
                 } else {
                     egui::Button::new(text)
@@ -943,7 +943,7 @@ impl ProjectsView {
                     egui::Button::new(
                         egui::RichText::new("Reload").color(egui::Color32::WHITE),
                     )
-                    .fill(egui::Color32::from_rgb(18, 154, 145)),
+                    .fill(crate::ui::theme::accent_color()),
                 )
                 .clicked()
             {
@@ -1063,7 +1063,7 @@ impl ProjectsView {
                         egui::Button::new(
                             egui::RichText::new("Upload").color(egui::Color32::WHITE),
                         )
-                        .fill(egui::Color32::from_rgb(18, 154, 145)),
+                        .fill(crate::ui::theme::accent_color()),
                     )
                     .clicked()
                 {
@@ -1281,7 +1281,7 @@ impl ProjectsView {
                             };
                             let btn = if is_sel {
                                 egui::Button::new(text)
-                                    .fill(egui::Color32::from_rgb(18, 154, 145))
+                                    .fill(crate::ui::theme::accent_color())
                             } else {
                                 egui::Button::new(text).frame(false)
                             };
@@ -1563,7 +1563,7 @@ impl ProjectsView {
                     .inner_margin(egui::Margin::same(10))
                     .corner_radius(egui::CornerRadius::same(6))
                     .fill(egui::Color32::from_rgb(220, 238, 255))
-                    .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(18, 154, 145)))
+                    .stroke(egui::Stroke::new(1.5, crate::ui::theme::accent_color()))
                     .show(ui, |ui| {
                         if let Some(info) = skill_info {
                             let status = if info.enabled { "enabled" } else { "disabled" };
@@ -1676,7 +1676,7 @@ impl ProjectsView {
                                         .size(11.0)
                                         .color(egui::Color32::WHITE),
                                 )
-                                .fill(egui::Color32::from_rgb(18, 154, 145)),
+                                .fill(crate::ui::theme::accent_color()),
                             )
                             .clicked()
                         {
@@ -1778,8 +1778,8 @@ impl ProjectsView {
             egui::Frame::default()
                 .inner_margin(egui::Margin::same(10))
                 .corner_radius(egui::CornerRadius::same(6))
-                .fill(egui::Color32::from_rgba_premultiplied(74, 144, 226, 25))
-                .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(18, 154, 145)))
+                .fill(egui::Color32::from_rgba_unmultiplied(74, 144, 226, 25))
+                .stroke(egui::Stroke::new(1.5, crate::ui::theme::accent_color()))
                 .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new(&session.title)
@@ -1800,7 +1800,7 @@ impl ProjectsView {
                                     .size(11.0)
                                     .color(egui::Color32::WHITE),
                             )
-                            .fill(egui::Color32::from_rgb(18, 154, 145)),
+                            .fill(crate::ui::theme::accent_color()),
                         ).clicked() {
                             open_session_id = Some(session.id.clone());
                         }
@@ -1858,7 +1858,7 @@ impl ProjectsView {
                         egui::Frame::default()
                             .inner_margin(egui::Margin::same(8))
                             .corner_radius(egui::CornerRadius::same(4))
-                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
+                            .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
                             .show(ui, |ui| {
                                 ui.label(egui::RichText::new(&session.title).size(12.0));
                                 ui.label(
@@ -1873,7 +1873,7 @@ impl ProjectsView {
                                             .size(11.0)
                                             .color(egui::Color32::WHITE),
                                     )
-                                    .fill(egui::Color32::from_rgb(18, 154, 145)),
+                                    .fill(crate::ui::theme::accent_color()),
                                 ).clicked() {
                                     link_session_id = Some(session.id.clone());
                                 }
@@ -1974,7 +1974,7 @@ impl ProjectsView {
                             egui::Button::new(
                                 egui::RichText::new("Create").color(egui::Color32::WHITE),
                             )
-                            .fill(egui::Color32::from_rgb(18, 154, 145)),
+                            .fill(crate::ui::theme::accent_color()),
                         )
                         .clicked()
                     {

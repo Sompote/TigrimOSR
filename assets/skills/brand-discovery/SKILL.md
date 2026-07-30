@@ -9,9 +9,9 @@ description: Handle typos and variations in brand/product names to discover corr
 This skill handles misspellings, typos, and variations in brand names to successfully find information about products or companies.
 
 ## Common Issues Handled
-- Typos: "tigrimos" → "TigrimOS"
+- Typos: "andrewos" → "AndrewOS"
 - Spelling variations: "macos" → "macOS"
-- Capitalization: "TIgrimos" → "TigrimOS"
+- Capitalization: "TIgrimos" → "AndrewOS"
 - Spacing: "kmutt" → "KMUTT"
 - Character swaps: "tigros" → "TigerBot"
 
@@ -32,7 +32,7 @@ This skill handles misspellings, typos, and variations in brand names to success
 
 ```python
 BRAND_CORRECTIONS = {
-    "tigrimos": ["TigrimOS", "TigerBot", "TigerOS"],
+    "andrewos": ["AndrewOS", "TigerBot", "TigerOS"],
     "kmutt": ["KMUTT", "King Mongkut's University"],
     "macos": ["macOS", "Mac OS"],
 }

@@ -1,7 +1,7 @@
 # Bundled font licenses
 
 All fonts below are open-source and redistributable. They are embedded in the
-TigrimOS binary and selectable in Settings → Theme → Font family.
+AndrewOS binary and selectable in Settings → Theme → Font family.
 
 | Font | License | Source |
 |------|---------|--------|

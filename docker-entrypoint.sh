@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TigrimOS container entrypoint.
+# AndrewOS container entrypoint.
 # Runs once as root to fix volume ownership and validate config, then drops to
 # the unprivileged `tiger` user before launching the server.
 set -euo pipefail

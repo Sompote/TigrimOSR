@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# TigrimOS — headless web server in a container.
+# AndrewOS — headless web server in a container.
 # Multi-stage: build the Rust binary, then ship it on a slim runtime that has
 # the Python/Node/shell tools the agent shells out to at runtime.
 
@@ -12,7 +12,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs \
     && cargo build --release \
-    && rm -rf src target/release/deps/tigrimos* target/release/tigrimos
+    && rm -rf src target/release/deps/andrewos* target/release/andrewos
 
 # Real sources. assets/ and static/ are needed at compile time (include_str!/include_bytes!).
 COPY src ./src
@@ -72,7 +72,7 @@ RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
 RUN useradd -m -u 1000 -s /bin/bash tiger
 
 WORKDIR /app
-COPY --from=builder /app/target/release/tigrimos /usr/local/bin/tigrimos
+COPY --from=builder /app/target/release/andrewos /usr/local/bin/andrewos
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
     && mkdir -p /app/data /app/sandbox \
@@ -90,4 +90,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
     CMD curl -fsS http://127.0.0.1:3001/web > /dev/null || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
-CMD ["tigrimos", "--headless"]
+CMD ["andrewos", "--headless"]

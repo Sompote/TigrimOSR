@@ -1,7 +1,7 @@
 //! VM configuration — paths, constants, and helpers.
 //!
 //! Rust equivalent of the Swift `VMConfig` struct.  All VM artefacts live under
-//! `<data_dir>/TigrimOS/` where `data_dir` is `~/Library/Application Support`
+//! `<data_dir>/AndrewOS/` where `data_dir` is `~/Library/Application Support`
 //! on macOS (provided by [`dirs::data_dir`]).  A custom storage path can be
 //! persisted in `settings.json` inside that directory.
 
@@ -23,7 +23,7 @@ struct Settings {
 // VmConfig
 // ---------------------------------------------------------------------------
 
-/// Central configuration for the TigrimOS virtual machine.
+/// Central configuration for the AndrewOS virtual machine.
 ///
 /// Every method is an associated function (no `&self`) so callers can use
 /// `VmConfig::raw_disk_path()` etc. without instantiation — mirrors the Swift
@@ -35,10 +35,15 @@ impl VmConfig {
     // Directories
     // -----------------------------------------------------------------------
 
-    /// Default Application Support directory: `<data_dir>/TigrimOS/`.
+    /// Default Application Support directory: `<data_dir>/AndrewOS/`.
+    ///
+    /// Delegates to [`crate::server::data::app_root_dir`] rather than joining
+    /// the product name itself. That function also owns the pre-rebrand
+    /// (`TigrimOS`) fallback, so an upgraded install keeps its already-
+    /// provisioned disk image, seed and `.provisioned` marker instead of
+    /// finding an empty directory and re-downloading ~700MB.
     pub fn default_app_support_dir() -> PathBuf {
-        let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-        base.join("TigrimOS")
+        crate::server::data::app_root_dir()
     }
 
     /// Effective storage root.  Returns the custom path from `settings.json`
@@ -112,11 +117,23 @@ impl VmConfig {
         Self::app_support_dir().join("machine_id.bin")
     }
 
-    /// Default shared folder on the host — `~/TigrimOS_Shared/`.
+    /// Default shared folder on the host — `~/AndrewOS_Shared/`.
+    ///
+    /// Keeps using the pre-rebrand `~/TigrimOS_Shared` when that is the folder
+    /// the user already has files in. This is a host folder the user put real
+    /// work into; silently pointing the VM at a new empty one would look like
+    /// data loss.
     pub fn default_shared_dir() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("TigrimOS_Shared")
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let current = home.join("AndrewOS_Shared");
+        if current.exists() {
+            return current;
+        }
+        let legacy = home.join("TigrimOS_Shared");
+        if legacy.exists() {
+            return legacy;
+        }
+        current
     }
 
     /// Marker file created after the first successful provision.
@@ -148,7 +165,7 @@ impl VmConfig {
     #[allow(dead_code)]
     pub const DISK_SIZE_BYTES: u64 = Self::DISK_SIZE_GB * 1024 * 1024 * 1024;
 
-    /// Port the TigrimOS service listens on inside the guest.
+    /// Port the AndrewOS service listens on inside the guest.
     pub const VM_PORT: u16 = 3001;
 
     /// Port forwarded to the host via QEMU user-mode networking.

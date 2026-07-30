@@ -1,10 +1,10 @@
 #!/bin/bash
-# TigrimOS Installer for macOS
+# AndrewOS Installer for macOS
 # Clones, builds, and creates a .app bundle
 
-APP_NAME="TigrimOS"
-REPO_URL="https://github.com/Sompote/TigrimOSR.git"
-BINARY_NAME="tigrimos"
+APP_NAME="AndrewOS"
+REPO_URL="https://github.com/Sompote/AndrewOS.git"
+BINARY_NAME="andrewos"
 
 # Ensure we're in a readable directory (curl | bash may inherit a restricted cwd)
 cd "$HOME" 2>/dev/null || cd /tmp 2>/dev/null || true
@@ -35,7 +35,7 @@ die() {
 
 echo ""
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  TigrimOS Installer for macOS${NC}"
+echo -e "${BLUE}  AndrewOS Installer for macOS${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
@@ -48,7 +48,7 @@ echo -e "${GREEN}[OK]${NC} Prerequisites found (git, rustc, cargo)"
 
 # ── Select clone location ──
 echo ""
-echo -e "${YELLOW}Where would you like to install TigrimOS?${NC}"
+echo -e "${YELLOW}Where would you like to install AndrewOS?${NC}"
 echo ""
 echo "  1) Home directory       (~/$APP_NAME)"
 echo "  2) Applications Support (~/Library/Application Support/$APP_NAME)"
@@ -80,7 +80,7 @@ else
         echo -e "${YELLOW}Removing existing non-git directory at $INSTALL_DIR...${NC}"
         rm -rf "$INSTALL_DIR"
     fi
-    echo -e "${BLUE}Cloning TigrimOS...${NC}"
+    echo -e "${BLUE}Cloning AndrewOS...${NC}"
     mkdir -p "$(dirname "$INSTALL_DIR")"
     # Run git from $HOME to avoid "Unable to read current working directory" when piped via curl
     (cd "$HOME" && git clone "$REPO_URL" "$INSTALL_DIR") || die "git clone failed"
@@ -95,7 +95,7 @@ echo -e "${GREEN}[OK]${NC} Source ready at $INSTALL_DIR"
 
 # ── Build ──
 echo ""
-echo -e "${BLUE}Building TigrimOS (release mode)...${NC}"
+echo -e "${BLUE}Building AndrewOS (release mode)...${NC}"
 echo "This may take a few minutes on first build."
 echo ""
 
@@ -108,7 +108,7 @@ echo ""
 echo -e "${GREEN}[OK]${NC} Build complete"
 
 # ── Seed app data directory ──
-APP_DATA_DIR="$HOME/Library/Application Support/TigrimOS/data"
+APP_DATA_DIR="$HOME/Library/Application Support/AndrewOS/data"
 if [ ! -d "$APP_DATA_DIR/agents" ] && [ -d "$INSTALL_DIR/data/agents" ]; then
     echo -e "${BLUE}Copying agent configs to app data...${NC}"
     mkdir -p "$APP_DATA_DIR"
@@ -162,7 +162,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key>
     <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>
-    <string>com.tigrimos.app</string>
+    <string>com.andrewos.app</string>
     <key>CFBundleVersion</key>
     <string>0.7.0</string>
     <key>CFBundleShortVersionString</key>

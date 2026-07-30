@@ -90,20 +90,20 @@ fn extension_badge(name: &str) -> Option<(&'static str, egui::Color32)> {
         "bmp" => ("BMP", egui::Color32::from_rgb(194, 100, 39)),
         "mp4" | "mov" | "avi" | "mkv" => ("VID", egui::Color32::from_rgb(128, 0, 128)),
         "mp3" | "wav" | "flac" | "ogg" => ("AUD", egui::Color32::from_rgb(128, 0, 128)),
-        "zip" | "tar" | "gz" | "7z" | "rar" => ("ZIP", egui::Color32::from_rgb(124, 115, 104)),
+        "zip" | "tar" | "gz" | "7z" | "rar" => ("ZIP", crate::ui::theme::text_secondary_color()),
         "py" => ("PY", egui::Color32::from_rgb(55, 118, 171)),
         "rs" => ("RS", egui::Color32::from_rgb(183, 65, 14)),
         "js" | "jsx" => ("JS", egui::Color32::from_rgb(247, 223, 30)),
         "ts" | "tsx" => ("TS", egui::Color32::from_rgb(49, 120, 198)),
         "html" | "htm" => ("HTML", egui::Color32::from_rgb(228, 77, 38)),
         "css" | "scss" | "sass" => ("CSS", egui::Color32::from_rgb(86, 61, 124)),
-        "json" => ("JSON", egui::Color32::from_rgb(124, 115, 104)),
-        "yaml" | "yml" => ("YAML", egui::Color32::from_rgb(124, 115, 104)),
-        "toml" => ("TOML", egui::Color32::from_rgb(124, 115, 104)),
-        "xml" => ("XML", egui::Color32::from_rgb(124, 115, 104)),
+        "json" => ("JSON", crate::ui::theme::text_secondary_color()),
+        "yaml" | "yml" => ("YAML", crate::ui::theme::text_secondary_color()),
+        "toml" => ("TOML", crate::ui::theme::text_secondary_color()),
+        "xml" => ("XML", crate::ui::theme::text_secondary_color()),
         "md" | "markdown" => ("MD", egui::Color32::from_rgb(86, 61, 124)),
-        "txt" => ("TXT", egui::Color32::from_rgb(124, 115, 104)),
-        "log" => ("LOG", egui::Color32::from_rgb(124, 115, 104)),
+        "txt" => ("TXT", crate::ui::theme::text_secondary_color()),
+        "log" => ("LOG", crate::ui::theme::text_secondary_color()),
         "csv" => ("CSV", egui::Color32::from_rgb(33, 115, 70)),
         "sql" => ("SQL", egui::Color32::from_rgb(0, 114, 198)),
         "sh" | "bash" | "zsh" => ("SH", egui::Color32::from_rgb(60, 60, 60)),
@@ -118,13 +118,13 @@ fn extension_badge(name: &str) -> Option<(&'static str, egui::Color32)> {
         "r" => ("R", egui::Color32::from_rgb(39, 104, 177)),
         "bib" => ("BIB", egui::Color32::from_rgb(120, 94, 70)),
         "tex" | "latex" => ("TEX", egui::Color32::from_rgb(0, 128, 128)),
-        "ini" | "cfg" | "conf" => ("CFG", egui::Color32::from_rgb(124, 115, 104)),
+        "ini" | "cfg" | "conf" => ("CFG", crate::ui::theme::text_secondary_color()),
         _ => return None,
     };
     Some((label, color))
 }
 
-/// Native egui file browser for the TigrimOS sandbox directory.
+/// Native egui file browser for the AndrewOS sandbox directory.
 pub struct FilesView {
     sandbox_dir: String,
     current_path: String,
@@ -164,7 +164,7 @@ pub struct FilesView {
 
 impl Default for FilesView {
     fn default() -> Self {
-        let sandbox_dir = std::env::var("TIGRIMOS_SANDBOX_DIR")
+        let sandbox_dir = std::env::var("ANDREWOS_SANDBOX_DIR")
             .unwrap_or_else(|_| crate::server::data::get_sandbox_dir_sync());
         let _ = std::fs::create_dir_all(&sandbox_dir);
         Self {
@@ -711,7 +711,7 @@ impl FilesView {
             let badge_rect = ui.allocate_space(egui::vec2(36.0, 20.0));
             let rect = badge_rect.1;
             ui.painter()
-                .rect_filled(rect, 3.0, egui::Color32::from_rgb(124, 115, 104));
+                .rect_filled(rect, 3.0, crate::ui::theme::text_secondary_color());
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -785,7 +785,7 @@ impl FilesView {
                 ui.label(
                     egui::RichText::new(trimmed)
                         .monospace()
-                        .color(egui::Color32::from_rgb(168, 158, 144)),
+                        .color(crate::ui::theme::text_secondary_color()),
                 );
             } else if trimmed.is_empty() {
                 ui.add_space(4.0);
@@ -878,10 +878,10 @@ impl FilesView {
     // ── Sidebar rendering ──
 
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
-        let sidebar_bg = egui::Color32::from_rgb(244, 238, 229);
-        let text_dim = egui::Color32::from_rgb(124, 115, 104);
-        let text_normal = egui::Color32::from_rgb(52, 48, 42);
-        let accent = egui::Color32::from_rgb(18, 154, 145);
+        let sidebar_bg = crate::ui::theme::surface_color();
+        let text_dim = crate::ui::theme::text_secondary_color();
+        let text_normal = crate::ui::theme::text_primary_color();
+        let accent = crate::ui::theme::accent_color();
 
         ui.painter().rect_filled(
             ui.available_rect_before_wrap(),
@@ -945,7 +945,7 @@ impl FilesView {
         for (label, section, count) in &lib_items {
             let is_active = self.active_section == *section;
             let bg = if is_active {
-                egui::Color32::from_rgb(239, 231, 218)
+                crate::ui::theme::border_color()
             } else {
                 egui::Color32::TRANSPARENT
             };
@@ -1002,7 +1002,7 @@ impl FilesView {
         for (dir_name, count) in &places_clone {
             let is_active = self.active_section == LibrarySection::Place(dir_name.clone());
             let bg = if is_active {
-                egui::Color32::from_rgb(239, 231, 218)
+                crate::ui::theme::border_color()
             } else {
                 egui::Color32::TRANSPARENT
             };
@@ -1086,7 +1086,7 @@ impl FilesView {
                 ui.painter().rect_filled(
                     bar_rect,
                     2.0,
-                    egui::Color32::from_rgb(230, 220, 204),
+                    crate::ui::theme::border_color(),
                 );
                 let filled = egui::Rect::from_min_size(
                     bar_rect.min,
@@ -1332,7 +1332,7 @@ impl FilesView {
                 egui::pos2(full_rect.min.x + sidebar_w, full_rect.min.y),
                 egui::pos2(full_rect.min.x + sidebar_w, full_rect.max.y),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)),
+            egui::Stroke::new(1.0, crate::ui::theme::border_color()),
         );
 
         let mut main_ui = ui.new_child(
@@ -1345,15 +1345,15 @@ impl FilesView {
     }
 
     fn render_main_area(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
-        let text_dim = egui::Color32::from_rgb(168, 158, 144);
-        let text_normal = egui::Color32::from_rgb(52, 48, 42);
-        let accent = egui::Color32::from_rgb(18, 154, 145);
+        let text_dim = crate::ui::theme::text_secondary_color();
+        let text_normal = crate::ui::theme::text_primary_color();
+        let accent = crate::ui::theme::accent_color();
 
         // Warm surface background
         ui.painter().rect_filled(
             ui.available_rect_before_wrap(),
             0.0,
-            egui::Color32::from_rgb(251, 247, 241),
+            crate::ui::theme::surface_color(),
         );
 
         ui.add_space(8.0);
@@ -1472,7 +1472,7 @@ impl FilesView {
                             .size(12.0)
                             .color(egui::Color32::WHITE),
                     )
-                    .fill(egui::Color32::from_rgb(230, 220, 204))
+                    .fill(crate::ui::theme::border_color())
                     .corner_radius(6.0),
                 );
                 if new_btn.clicked() {
@@ -1531,7 +1531,7 @@ impl FilesView {
             ui.add_space(12.0);
             let search_w = 200.0_f32.min(ui.available_width() * 0.3);
             egui::Frame::NONE
-                .fill(egui::Color32::from_rgb(239, 231, 218))
+                .fill(crate::ui::theme::border_color())
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::symmetric(8, 4))
                 .show(ui, |ui| {
@@ -1671,7 +1671,7 @@ impl FilesView {
         if !self.selected_set.is_empty() {
             ui.add_space(4.0);
             egui::Frame::NONE
-                .fill(egui::Color32::from_rgb(239, 231, 218))
+                .fill(crate::ui::theme::border_color())
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::symmetric(12, 6))
                 .outer_margin(egui::Margin::symmetric(12, 0))
@@ -1694,7 +1694,7 @@ impl FilesView {
                                         .size(12.0)
                                         .color(egui::Color32::WHITE),
                                 )
-                                .fill(egui::Color32::from_rgb(168, 158, 144))
+                                .fill(crate::ui::theme::text_secondary_color())
                                 .corner_radius(6.0),
                             )
                             .clicked()
@@ -1808,7 +1808,7 @@ impl FilesView {
                 egui::pos2(ui.min_rect().min.x + 12.0, ui.cursor().min.y),
                 egui::pos2(ui.min_rect().max.x - 8.0, ui.cursor().min.y),
             ],
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(230, 220, 204)),
+            egui::Stroke::new(0.5, crate::ui::theme::border_color()),
         );
         ui.add_space(2.0);
 
@@ -1878,7 +1878,7 @@ impl FilesView {
                         ui.painter().rect_filled(
                             row_rect,
                             0.0,
-                            egui::Color32::from_rgb(244, 238, 229),
+                            crate::ui::theme::surface_color(),
                         );
                     }
 

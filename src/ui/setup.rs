@@ -28,7 +28,7 @@ impl SetupView {
 
         let mut still_open = self.open;
 
-        egui::Window::new("TigrimOS Setup")
+        egui::Window::new("AndrewOS Setup")
             .open(&mut still_open)
             .resizable(false).collapsible(false)
             .default_size([560.0, 480.0])
@@ -80,7 +80,7 @@ impl SetupView {
                             let enabled = !(self.step == 1 && !self.agreed_to_security);
                             if ui.add_enabled(enabled, egui::Button::new("Next")).clicked() { self.step += 1; }
                         } else {
-                            let btn = egui::Button::new(egui::RichText::new("Start TigrimOS").size(15.0).strong())
+                            let btn = egui::Button::new(egui::RichText::new("Start AndrewOS").size(15.0).strong())
                                 .fill(egui::Color32::from_rgb(34, 197, 94));
                             if ui.add(btn).clicked() {
                                 let vm = vm_manager.clone();
@@ -99,9 +99,9 @@ impl SetupView {
         ui.vertical_centered(|ui| {
             ui.label(egui::RichText::new("\u{1F42F}").size(64.0));
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("Welcome to TigrimOS").size(26.0).strong());
+            ui.label(egui::RichText::new("Welcome to AndrewOS").size(26.0).strong());
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("TigrimOS runs inside a secure Ubuntu sandbox\non your machine. No Docker required.").size(14.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new("AndrewOS runs inside a secure Ubuntu sandbox\non your machine. No Docker required.").size(14.0).color(egui::Color32::GRAY));
         });
         ui.add_space(16.0);
         for (icon, text) in [
@@ -127,7 +127,7 @@ impl SetupView {
         });
         ui.add_space(16.0);
         for (icon, title, detail) in [
-            ("\u{1F5A5}", "VM Isolation", "TigrimOS runs in a real Ubuntu VM. It cannot access your host processes, files, or network except through controlled channels."),
+            ("\u{1F5A5}", "VM Isolation", "AndrewOS runs in a real Ubuntu VM. It cannot access your host processes, files, or network except through controlled channels."),
             ("\u{1F4C1}", "File Access", "No host folders are shared by default. You choose which folders to share and their permissions."),
             ("\u{1F310}", "Network", "The VM uses NAT networking. Only the configured port is forwarded."),
         ] {
@@ -155,14 +155,14 @@ impl SetupView {
             ui.label(egui::RichText::new("\u{2705}").size(48.0).color(egui::Color32::from_rgb(34, 197, 94)));
             ui.add_space(8.0);
             ui.label(egui::RichText::new("Ready to Go").size(22.0).strong());
-            ui.label("TigrimOS will now:");
+            ui.label("AndrewOS will now:");
         });
         ui.add_space(12.0);
         let steps = [
             "Download Ubuntu 22.04 cloud image (~700MB)".to_string(),
             format!("Create a {}GB virtual disk", disk_size_gb),
             "Install Node.js 20, Python 3, and dependencies".to_string(),
-            "Deploy TigrimOS inside the VM".to_string(),
+            "Deploy AndrewOS inside the VM".to_string(),
             format!("Start the web UI at localhost:{}", port),
         ];
         for (i, text) in steps.iter().enumerate() {

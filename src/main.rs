@@ -1,3 +1,10 @@
+// Release builds run as a true Windows GUI app, so launching AndrewOS from a
+// shortcut, the Start menu or Explorer opens just the window — no console
+// flashing behind it. Debug builds keep the console for development, and
+// `--headless` re-attaches to the calling terminal (see attach_parent_console)
+// so server logs still appear when it is run from a shell.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod security;
 mod server;
 mod ui;
@@ -6,6 +13,20 @@ mod vm;
 
 use std::sync::Arc;
 use vm::manager::VmManager;
+
+/// Attach to the console of the process that launched us, so a GUI-subsystem
+/// binary can still write logs when run from a terminal.
+///
+/// Declared inline rather than pulling in a Windows API crate for one call.
+#[cfg(windows)]
+fn attach_parent_console() {
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    // Failure just means there was no parent console — nothing to recover from.
+    unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
 
 /// In headless mode on an interactive terminal, offer to install the Playwright
 /// browser and enable browser control. Skipped entirely on non-interactive
@@ -87,6 +108,14 @@ fn main() {
 
     let headless = std::env::args().any(|a| a == "--headless");
 
+    // A GUI-subsystem binary has no console of its own, so headless runs would
+    // print their logs into the void. Re-attach to the terminal that launched
+    // us. No-op when there isn't one (a service, Docker, a double-click).
+    #[cfg(windows)]
+    if headless {
+        attach_parent_console();
+    }
+
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     let handle = runtime.handle().clone();
 
@@ -110,15 +139,34 @@ fn main() {
         // Require access token for security — prompt if not set via env
         let access_token = if access_token.is_empty() {
             println!("===========================================");
-            println!("  TigrimOS Headless Mode — Security Setup");
+            println!("  AndrewOS Headless Mode — Security Setup");
             println!("===========================================");
             println!();
             loop {
                 print!("Enter access token: ");
                 use std::io::Write;
-                std::io::stdout().flush().unwrap();
+                std::io::stdout().flush().ok();
                 let mut input = String::new();
-                std::io::stdin().read_line(&mut input).unwrap();
+                match std::io::stdin().read_line(&mut input) {
+                    // EOF — there is no terminal, so no token will ever arrive.
+                    // Re-prompting here spins forever and fills the log, which
+                    // is what a Docker run, systemd unit or CI job without a
+                    // TTY hits. Fail with something actionable instead.
+                    Ok(0) => {
+                        eprintln!();
+                        eprintln!("No terminal is attached, so no access token can be entered.");
+                        eprintln!("Set it in the environment instead:");
+                        eprintln!("  ACCESS_TOKEN=<your-token> andrewos --headless");
+                        std::process::exit(2);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!();
+                        eprintln!("Could not read the access token: {e}");
+                        eprintln!("Set ACCESS_TOKEN in the environment and start again.");
+                        std::process::exit(2);
+                    }
+                }
                 let token = input.trim().to_string();
                 if !token.is_empty() {
                     println!();
@@ -167,7 +215,7 @@ fn main() {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("TigrimOS")
+            .with_title("AndrewOS")
             .with_icon(std::sync::Arc::new(icon))
             .with_min_inner_size([1100.0, 700.0])
             .with_inner_size([1200.0, 800.0])
@@ -180,11 +228,11 @@ fn main() {
     let handle_clone = handle.clone();
 
     eframe::run_native(
-        "TigrimOS",
+        "AndrewOS",
         options,
         Box::new(move |cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(ui::app::TigrimOSApp::new(
+            Ok(Box::new(ui::app::AndrewOSApp::new(
                 cc,
                 vm_clone,
                 handle_clone,

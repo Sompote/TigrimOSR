@@ -3,14 +3,114 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>TigrimOS Remote</title>
+<title>AndrewOS Remote</title>
+<!-- Favicon: the mark as an inline SVG data URI. No extra request, and no
+     /favicon.ico 404 against the authenticated API. Geometry mirrors
+     assets/logo_andrewos.svg — change both together. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='none' stroke='%23ECEFF4' stroke-width='8'%3E%3Cpath d='M 71.79 16.45 A 40 40 0 0 0 20.28 76.77'/%3E%3Cpath d='M 80.20 76.24 A 40 40 0 0 0 86.68 34.05'/%3E%3C/g%3E%3Cpath fill='%23ECEFF4' d='M 50 22.91 L 15.93 93.40 L 24.81 93.40 L 50 41.28 L 75.19 93.40 L 84.07 93.40 Z'/%3E%3Ccircle cx='81' cy='23' r='6' fill='%230057FC'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <style>
+/* ===== AndrewOS — dark liquid glass (default) =====
+   Surfaces are translucent and sit over a fixed ambient backdrop, so depth
+   comes from layered translucency + hairlines rather than heavy borders.
+   A specular top edge (--glass-hi) reads as light catching a glass lip. */
 :root {
+  --bg:        #0B0D12;
+  --surface:   rgba(255,255,255,.045);
+  --rail:      rgba(255,255,255,.032);
+  --card:      rgba(255,255,255,.062);
+  --line:      rgba(255,255,255,.16);
+  --line-soft: rgba(255,255,255,.09);
+  --ink:       #ECEFF4;
+  --ink-soft:  #A6AEBC;
+  --ink-faint: #7D8695;
+  --accent:      #35D6C4;
+  --accent-deep: #1FB9A8;
+  --accent-soft: rgba(53,214,196,.15);
+  --accent-ink:  #8FF0E4;
+  --green: #4ADE80;
+  --red:   #F2716A;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  /* Two-layer depth: a tight contact shadow plus a wide ambient one. */
+  --shadow-card: 0 1px 1px rgba(0,0,0,.45), 0 12px 32px -14px rgba(0,0,0,.80);
+  --shadow-pop:  0 2px 4px rgba(0,0,0,.45), 0 28px 64px -20px rgba(0,0,0,.88);
+  --font: "Plus Jakarta Sans", "Noto Sans Thai", system-ui, sans-serif;
+  /* Glass tokens */
+  --glass-blur: 20px;
+  --glass-sat: 165%;
+  --glass-hi: rgba(255,255,255,.085);
+  /* Project motion curve — decelerating, never linear. */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Ambient field behind the glass. Fixed so surfaces slide over it rather
+   than dragging their own background along. */
+body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(1100px 620px at 12% -8%, rgba(53,214,196,.10), transparent 60%),
+    radial-gradient(900px 560px at 100% 0%, rgba(96,132,255,.09), transparent 62%),
+    radial-gradient(760px 520px at 50% 108%, rgba(168,85,247,.06), transparent 60%);
+  background-attachment: fixed;
+}
+
+/* The glass itself. Grouped so every surface picks up the same treatment. */
+.card, .drawer, .modal-card, .composer, .chip, .pill-btn,
+.settings-group, .theme-card, .router-pool-row {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border-top-color: var(--glass-hi);
+}
+
+/* Brand mark. Strokes inherit `currentColor` so the mark follows the theme's
+   text colour on light and dark alike; only the dot is a fixed brand blue. */
+.brand-mark { color: var(--ink); display: block; }
+.login-box .brand-mark { margin: 0 auto 10px; }
+.brand { display: flex; align-items: center; gap: 9px; }
+.brand-mark--sm { flex: none; }
+
+/* Tactile press. Explicit properties — never transition-all. */
+.chip, .pill-btn, .theme-card, .send-btn {
+  transition: background-color .18s var(--ease), border-color .18s var(--ease),
+              color .18s var(--ease), box-shadow .18s var(--ease),
+              transform .12s var(--ease);
+}
+.chip:active, .pill-btn:active, .theme-card:active, .send-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(.985);
+}
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* Backdrop-filter is expensive and unsupported on some engines; fall back to
+   opaque surfaces so the UI stays legible instead of washing out. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --surface: #14181F;
+    --rail:    #11151B;
+    --card:    #191E27;
+  }
+}
+
+/* ===== UI Themes (color of the web remote) ===== */
+
+html[data-theme="light"] {
   --bg:        #F4EEE5;
   --surface:   #FBF7F1;
   --rail:      #EFE7DA;
@@ -19,24 +119,28 @@
   --line-soft: #EFE7DA;
   --ink:       #34302A;
   --ink-soft:  #7C7368;
-  --ink-faint: #A89E90;
+  --ink-faint: #7D7365;
   --accent:      #129A91;
   --accent-deep: #0C817A;
   --accent-soft: #E1F1EF;
   --accent-ink:  #0A5F5A;
   --green: #4FAE55;
   --red:   #C9554E;
-  --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 20px;
-  --r-xl: 26px;
   --shadow-card: 0 1px 2px rgba(52,48,42,.04), 0 8px 24px -12px rgba(52,48,42,.18);
   --shadow-pop:  0 18px 50px -16px rgba(52,48,42,.34);
-  --font: "Plus Jakarta Sans", "Noto Sans Thai", system-ui, sans-serif;
+  --glass-hi: rgba(255,255,255,.9);
 }
-
-/* ===== UI Themes (color of the web remote) ===== */
-/* Light = the default :root values above. */
+/* Opaque themes opt out of the glass treatment. */
+html[data-theme="light"] body,
+html[data-theme="chatgpt"] body,
+html[data-theme="minimal"] body,
+html[data-theme="teal"] body { background-image: none; }
+html[data-theme="light"] .card, html[data-theme="light"] .drawer,
+html[data-theme="light"] .modal-card, html[data-theme="light"] .composer,
+html[data-theme="chatgpt"] .card, html[data-theme="minimal"] .card,
+html[data-theme="teal"] .card {
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
 
 html[data-theme="dark"] {
   --bg:        #15171C;
@@ -47,7 +151,7 @@ html[data-theme="dark"] {
   --line-soft: #272C34;
   --ink:       #E8EAEE;
   --ink-soft:  #9AA1AC;
-  --ink-faint: #6B727D;
+  --ink-faint: #89909B;
   --accent:      #2DD4BF;
   --accent-deep: #14B8A6;
   --accent-soft: #15403C;
@@ -100,7 +204,7 @@ html[data-theme="vivid"] {
   --line-soft: #2A1F50;
   --ink:       #F4EEFF;
   --ink-soft:  #BBA9E6;
-  --ink-faint: #8979B8;
+  --ink-faint: #8F7FBE;
   --accent:      #C026D3;
   --accent-deep: #A21CAF;
   --accent-soft: rgba(192,38,211,.20);
@@ -127,7 +231,7 @@ html[data-theme="chatgpt"] {
   --line-soft: #ECECED;
   --ink:       #2D333A;
   --ink-soft:  #6E7681;
-  --ink-faint: #9CA3AF;
+  --ink-faint: #6E7581;
   --accent:      #10A37F;
   --accent-deep: #0D8C6D;
   --accent-soft: #E7F6F1;
@@ -147,7 +251,7 @@ html[data-theme="minimal"] {
   --line-soft: #F2F2F2;
   --ink:       #18181B;
   --ink-soft:  #71717A;
-  --ink-faint: #A1A1AA;
+  --ink-faint: #74747D;
   --accent:      #18181B;
   --accent-deep: #000000;
   --accent-soft: #F0F0F0;
@@ -167,7 +271,7 @@ html[data-theme="teal"] {
   --line-soft: #DDEFEB;
   --ink:       #133E3A;
   --ink-soft:  #4F7A74;
-  --ink-faint: #82A8A2;
+  --ink-faint: #567C76;
   --accent:      #0D9488;
   --accent-deep: #0B7C72;
   --accent-soft: #CBEDE8;
@@ -183,7 +287,7 @@ html[data-theme="teal"] {
 .theme-card {
   border: 2px solid var(--line); border-radius: var(--r-md); padding: 12px;
   cursor: pointer; background: var(--card); text-align: left;
-  transition: border-color .15s ease, transform .1s ease, box-shadow .15s ease;
+  transition: border-color .15s var(--ease), transform .1s var(--ease), box-shadow .15s var(--ease);
   display: flex; flex-direction: column; gap: 10px;
 }
 .theme-card:active { transform: translateY(1px); }
@@ -216,7 +320,7 @@ input, textarea, select {
   font-size: 14px;
   width: 100%;
   outline: none;
-  transition: border-color .15s ease, box-shadow .15s ease;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea { resize: vertical; }
@@ -251,7 +355,7 @@ select {
   width: 100%; padding: 13px; border-radius: var(--r-md);
   background: var(--accent); color: #fff; font-weight: 700; font-size: 15px;
   box-shadow: 0 7px 16px -7px color-mix(in srgb, var(--accent) 70%, transparent);
-  transition: background .14s ease;
+  transition: background .14s var(--ease);
 }
 .login-btn:hover { background: var(--accent-deep); }
 .login-btn:disabled { opacity: .4; cursor: default; }
@@ -260,7 +364,9 @@ select {
   flex: 1; padding: 10px 8px; border-radius: var(--r-sm);
   font-size: 12px; font-weight: 600; color: var(--ink-soft);
   background: var(--surface); border: 1px solid var(--line);
-  transition: all .15s ease;
+  transition: background-color .15s var(--ease), border-color .15s var(--ease),
+              color .15s var(--ease), box-shadow .15s var(--ease),
+              transform .12s var(--ease);
 }
 .backend-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
@@ -276,7 +382,7 @@ select {
 .ab-btn {
   width: 40px; height: 40px; border-radius: 12px; flex: none;
   display: grid; place-items: center; color: var(--ink-soft);
-  transition: background .13s ease, color .13s ease;
+  transition: background .13s var(--ease), color .13s var(--ease);
 }
 .ab-btn:active { background: rgba(52,48,42,.08); color: var(--ink); }
 .ab-btn svg { width: 21px; height: 21px; stroke-width: 1.95; }
@@ -290,7 +396,7 @@ select {
 .ab-title .sub { font-size: 11.5px; font-weight: 600; color: var(--ink-faint); white-space: nowrap; }
 .ab-title .sub .live { color: var(--accent); }
 #backend-badge {
-  font-size: 11px; padding: 4px 10px; border-radius: 20px;
+  font-size: 11px; padding: 4px 10px; border-radius: var(--r-lg);
   font-weight: 600; white-space: nowrap; flex: none;
 }
 
@@ -340,7 +446,7 @@ select {
 .react-row { display: flex; gap: 3px; margin-top: 2px; }
 .react {
   width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
-  color: var(--ink-faint); transition: background .12s ease, color .12s ease;
+  color: var(--ink-faint); transition: background .12s var(--ease), color .12s var(--ease);
 }
 .react svg { width: 15px; height: 15px; stroke-width: 1.9; }
 .react:active { background: rgba(52,48,42,.07); }
@@ -364,7 +470,7 @@ select {
 }
 .msg.system-msg .bubble-system {
   background: var(--accent-soft); color: var(--accent-ink);
-  padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 600;
+  padding: 8px 16px; border-radius: var(--r-lg); font-size: 13px; font-weight: 600;
 }
 
 /* Typing indicator */
@@ -379,10 +485,10 @@ select {
 .chips::-webkit-scrollbar { display: none; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px; flex: none;
-  padding: 6px 11px; border-radius: 20px;
+  padding: 6px 11px; border-radius: var(--r-lg);
   font-size: 12px; font-weight: 600; color: var(--ink-soft);
   background: var(--card); border: 1px solid var(--line);
-  transition: background .12s ease, color .12s ease, border-color .12s;
+  transition: background .12s var(--ease), color .12s var(--ease), border-color .12s;
 }
 .chip svg { width: 13px; height: 13px; stroke-width: 2; color: var(--ink-faint); }
 .chip .lead { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
@@ -395,7 +501,7 @@ select {
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--r-xl); box-shadow: var(--shadow-card);
   padding: 6px 6px 6px 7px;
-  transition: border-color .15s ease, box-shadow .15s ease;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
 }
 .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 0 0 4px var(--accent-soft); }
 .composer .attach {
@@ -413,9 +519,9 @@ select {
 .composer textarea::placeholder { color: var(--ink-faint); }
 .composer textarea:focus { box-shadow: none; }
 .send-btn {
-  width: 40px; height: 40px; border-radius: 14px; flex: none;
+  width: 40px; height: 40px; border-radius: var(--r-md); flex: none;
   display: grid; place-items: center; color: #fff; background: var(--accent);
-  transition: background .14s ease, transform .12s ease, opacity .14s ease;
+  transition: background .14s var(--ease), transform .12s var(--ease), opacity .14s var(--ease);
 }
 .send-btn:active { transform: scale(.92); }
 .send-btn:disabled { opacity: .38; }
@@ -429,8 +535,8 @@ select {
 .tabbar { padding-bottom: max(env(safe-area-inset-bottom, 0px), 12px); }
 .tab-item {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 6px 2px; border-radius: 14px; color: var(--ink-faint);
-  font-size: 10.5px; font-weight: 600; transition: color .14s ease;
+  padding: 6px 2px; border-radius: var(--r-md); color: var(--ink-faint);
+  font-size: 10.5px; font-weight: 600; transition: color .14s var(--ease);
 }
 .tab-item svg { width: 22px; height: 22px; stroke-width: 1.9; }
 .tab-item.active { color: var(--accent); }
@@ -441,7 +547,7 @@ select {
 /* ===== Drawer ===== */
 .scrim {
   position: fixed; inset: 0; z-index: 18; background: rgba(20,17,12,.42);
-  opacity: 0; pointer-events: none; transition: opacity .28s ease;
+  opacity: 0; pointer-events: none; transition: opacity .28s var(--ease);
   backdrop-filter: blur(1px);
 }
 .scrim.show { opacity: 1; pointer-events: auto; }
@@ -516,7 +622,10 @@ select {
   flex-shrink: 0; width: 32px; height: 32px; padding: 0;
   border-radius: var(--r-md); border: 1px solid var(--line);
   background: var(--card); color: var(--accent); font-size: 16px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; transition: all .12s ease;
+  display: flex; align-items: center; justify-content: center;
+  transition: background-color .15s var(--ease), border-color .15s var(--ease),
+              color .15s var(--ease), box-shadow .15s var(--ease),
+              transform .12s var(--ease);
 }
 .file-dl:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .proj-field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
@@ -538,7 +647,10 @@ select {
 .pill-btn {
   padding: 9px 16px; border-radius: var(--r-md); font-size: 13px; font-weight: 600;
   background: var(--card); border: 1px solid var(--line); color: var(--ink-soft);
-  transition: all .12s ease;
+  /* No `transition` here on purpose. The shared rule above already animates
+     this element, and `transition` is a shorthand — re-declaring it at equal
+     specificity replaces that rule outright rather than adding to it, which is
+     how the old `transition: all` quietly beat the correct declaration. */
 }
 .pill-btn:active { background: var(--accent-soft); color: var(--accent-ink); }
 .pill-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -553,7 +665,7 @@ select {
 .file-item {
   padding: 12px 16px; border-bottom: 1px solid var(--line-soft);
   cursor: pointer; display: flex; align-items: center; gap: 10px; font-size: 14px;
-  transition: background .1s ease;
+  transition: background .1s var(--ease);
 }
 .file-item:hover { background: var(--accent-soft); }
 .file-icon { font-size: 18px; width: 24px; text-align: center; }
@@ -570,6 +682,12 @@ select {
   flex: 1; overflow-y: auto; padding: 16px;
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+  /* Fixed-width digits: terminal output is the densest numeric view in the app,
+     and proportional figures make counters jitter and columns drift as they
+     tick. Deliberately NOT changing the warm terminal palette below — it reads
+     as a terminal, and recolouring it to match the shell would be taste, not
+     legibility. */
+  font-variant-numeric: tabular-nums;
   background: #1a1714; color: #e8e0d4;
 }
 .term-entry { margin-bottom: 12px; }
@@ -591,7 +709,7 @@ select {
 .card h3 { font-size: 15px; margin-bottom: 8px; font-weight: 700; }
 .card .detail { font-size: 13px; color: var(--ink-soft); margin-bottom: 4px; }
 .card .badge {
-  display: inline-block; padding: 3px 10px; border-radius: 20px;
+  display: inline-block; padding: 3px 10px; border-radius: var(--r-lg);
   font-size: 11px; font-weight: 700;
 }
 .badge.running { background: #dbeafe; color: #2563eb; }
@@ -625,10 +743,10 @@ select {
 }
 .active-task-card .at-go {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 7px 14px; border-radius: 20px;
+  padding: 7px 14px; border-radius: var(--r-lg);
   background: var(--accent); color: #fff;
   font-size: 13px; font-weight: 600;
-  transition: background .12s ease;
+  transition: background .12s var(--ease);
 }
 .active-task-card .at-go:active { background: var(--accent-deep); }
 .active-task-card .at-go svg { width: 14px; height: 14px; stroke-width: 2.3; }
@@ -663,7 +781,7 @@ select {
 .agent-bar-inner select { flex: 1; min-width: 160px; max-width: 400px; }
 .active-arch-tag {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
-  font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 14px;
+  font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: var(--r-md);
   background: var(--accent-soft); color: var(--accent-ink); border: 1px solid var(--accent);
   max-width: 280px; white-space: nowrap; overflow: hidden;
 }
@@ -734,13 +852,13 @@ select {
 .arch-preview-box.visible { display: block; }
 .arch-preview-box svg { width: 100%; max-height: 420px; display: block; touch-action: none; user-select: none; }
 .arch-node { cursor: crosshair; }
-.arch-node circle { transition: stroke .1s ease, filter .1s ease; }
+.arch-node circle { transition: stroke .1s var(--ease), filter .1s var(--ease); }
 .arch-node.arch-target circle { stroke: var(--accent); stroke-width: 3.5; }
 .arch-node.arch-source circle { filter: brightness(1.15); }
 .arch-conn-chip {
   display: inline-flex; align-items: center; gap: 4px; flex: 1; min-width: 120px;
   font-size: 12px; font-weight: 600; color: var(--ink);
-  background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 5px 11px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--r-md); padding: 5px 11px;
 }
 .arch-editor-foot {
   padding: 12px 18px; border-top: 1px solid var(--line);
@@ -819,7 +937,7 @@ h4.md-h { font-size: 1em; }
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-sm); padding: 6px 10px;
   font-size: 12px; color: var(--ink-soft); cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
+  transition: background .12s var(--ease), border-color .12s var(--ease);
   max-width: 260px;
 }
 .chat-file-card:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
@@ -828,7 +946,7 @@ h4.md-h { font-size: 1em; }
 .chat-file-thumb {
   border-radius: var(--r-sm); border: 1px solid var(--line);
   max-width: 220px; max-height: 160px; cursor: pointer;
-  object-fit: cover; transition: transform .15s ease, box-shadow .15s ease;
+  object-fit: cover; transition: transform .15s var(--ease), box-shadow .15s var(--ease);
 }
 .chat-file-thumb:hover { transform: scale(1.03); box-shadow: var(--shadow-card); }
 
@@ -848,7 +966,7 @@ h4.md-h { font-size: 1em; }
 .lightbox-label {
   position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
   background: rgba(0,0,0,.6); color: #fff; padding: 6px 16px;
-  border-radius: 20px; font-size: 13px; font-weight: 600;
+  border-radius: var(--r-lg); font-size: 13px; font-weight: 600;
 }
 /* ── Chat file viewer modal ── */
 .file-modal {
@@ -939,7 +1057,15 @@ h4.md-h { font-size: 1em; }
 <!-- LOGIN PAGE -->
 <div id="login-page">
   <div class="login-box">
-    <h1>Tigrim<b>OS</b></h1>
+    <svg class="brand-mark" viewBox="0 0 100 100" width="64" height="64" aria-hidden="true">
+      <g fill="none" stroke="currentColor" stroke-width="8">
+        <path d="M 71.79 16.45 A 40 40 0 0 0 20.28 76.77"/>
+        <path d="M 80.20 76.24 A 40 40 0 0 0 86.68 34.05"/>
+      </g>
+      <path fill="currentColor" d="M 50 22.91 L 15.93 93.40 L 24.81 93.40 L 50 41.28 L 75.19 93.40 L 84.07 93.40 Z"/>
+      <circle cx="81" cy="23" r="6" fill="#0057FC"/>
+    </svg>
+    <h1>Andrew<b>OS</b></h1>
     <p>Remote Control</p>
     <div id="login-error"></div>
     <div style="margin-bottom:12px">
@@ -965,7 +1091,7 @@ h4.md-h { font-size: 1em; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/></svg>
     </button>
     <div class="ab-title">
-      <div class="name"><span id="appbar-title">TigrimOS</span></div>
+      <div class="name"><span id="appbar-title">AndrewOS</span></div>
       <div class="sub"><span id="appbar-sub">Remote</span> · <span class="live" id="appbar-status">online</span></div>
     </div>
     <span id="backend-badge"></span>
@@ -1282,7 +1408,17 @@ h4.md-h { font-size: 1em; }
   <div class="scrim" id="scrim"></div>
   <aside class="drawer" id="drawer">
     <div class="drawer-head">
-      <div class="brand">Tigrim<b>OS</b></div>
+      <div class="brand">
+        <svg class="brand-mark brand-mark--sm" viewBox="0 0 100 100" width="22" height="22" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="8">
+            <path d="M 71.79 16.45 A 40 40 0 0 0 20.28 76.77"/>
+            <path d="M 80.20 76.24 A 40 40 0 0 0 86.68 34.05"/>
+          </g>
+          <path fill="currentColor" d="M 50 22.91 L 15.93 93.40 L 24.81 93.40 L 50 41.28 L 75.19 93.40 L 84.07 93.40 Z"/>
+          <circle cx="81" cy="23" r="6" fill="#0057FC"/>
+        </svg>
+        <span>Andrew<b>OS</b></span>
+      </div>
       <button class="drawer-x" id="drawerX" aria-label="Close menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></button>
     </div>
     <button class="new-chat-btn" id="newChatDrawer" onclick="newSession(); closeDrawer();">
@@ -1332,13 +1468,13 @@ h4.md-h { font-size: 1em; }
 
 <script>
 // Apply saved UI theme before first paint to avoid a flash of the default.
-(function(){ var t = localStorage.getItem('tigrimos_theme');
-  if (t && t !== 'light') document.documentElement.setAttribute('data-theme', t); })();
+(function(){ var t = localStorage.getItem('andrewos_theme') || localStorage.getItem('andrewos_theme');
+  if (t && t !== 'glass') document.documentElement.setAttribute('data-theme', t); })();
 
 // ========== API ==========
-let backendMode = localStorage.getItem('tigrimos_backend_mode') || 'local';
-let BASE = backendMode === 'remote' ? (localStorage.getItem('tigrimos_backend') || location.origin) : location.origin;
-let TOKEN = localStorage.getItem('tigrimos_token') || '';
+let backendMode = localStorage.getItem('andrewos_backend_mode') || 'local';
+let BASE = backendMode === 'remote' ? (localStorage.getItem('andrewos_backend') || location.origin) : location.origin;
+let TOKEN = localStorage.getItem('andrewos_token') || '';
 
 function setBackend(mode) {
   backendMode = mode;
@@ -1346,7 +1482,7 @@ function setBackend(mode) {
   document.getElementById('btn-remote').classList.toggle('active', mode === 'remote');
   document.getElementById('remote-url-field').style.display = mode === 'remote' ? 'block' : 'none';
   if (mode === 'remote') {
-    const saved = localStorage.getItem('tigrimos_remote_url') || '';
+    const saved = localStorage.getItem('andrewos_remote_url') || '';
     document.getElementById('remote-url-input').value = saved;
   }
 }
@@ -1395,13 +1531,13 @@ function doLogin() {
     const remoteUrl = document.getElementById('remote-url-input').value.trim().replace(/\/+$/, '');
     if (!remoteUrl) { document.getElementById('login-error').textContent = 'Enter remote server URL'; return; }
     BASE = remoteUrl;
-    localStorage.setItem('tigrimos_backend', remoteUrl);
-    localStorage.setItem('tigrimos_remote_url', remoteUrl);
-    localStorage.setItem('tigrimos_backend_mode', 'remote');
+    localStorage.setItem('andrewos_backend', remoteUrl);
+    localStorage.setItem('andrewos_remote_url', remoteUrl);
+    localStorage.setItem('andrewos_backend_mode', 'remote');
   } else {
     BASE = location.origin;
-    localStorage.setItem('tigrimos_backend', location.origin);
-    localStorage.setItem('tigrimos_backend_mode', 'local');
+    localStorage.setItem('andrewos_backend', location.origin);
+    localStorage.setItem('andrewos_backend_mode', 'local');
   }
   TOKEN = t;
   authRequired = true;
@@ -1409,14 +1545,14 @@ function doLogin() {
 
   // Try connecting: first without token, then with token
   fetch(BASE + '/api/settings').then(function(r) {
-    if (r.ok) { localStorage.setItem('tigrimos_token', t); showApp(); return; }
+    if (r.ok) { localStorage.setItem('andrewos_token', t); showApp(); return; }
     // Server requires auth
     if (!t) { errEl.textContent = 'Access token required'; return; }
     // Verify token
     return fetch(BASE + '/api/settings', {
       headers: { 'Authorization': 'Bearer ' + t }
     }).then(function(r2) {
-      if (r2.ok) { localStorage.setItem('tigrimos_token', t); showApp(); }
+      if (r2.ok) { localStorage.setItem('andrewos_token', t); showApp(); }
       else { errEl.textContent = 'Invalid token'; }
     });
   }).catch(function() {
@@ -1425,7 +1561,7 @@ function doLogin() {
     fetch(BASE + '/api/settings', {
       headers: { 'Authorization': 'Bearer ' + t }
     }).then(function(r) {
-      if (r.ok) { localStorage.setItem('tigrimos_token', t); showApp(); }
+      if (r.ok) { localStorage.setItem('andrewos_token', t); showApp(); }
       else { errEl.textContent = 'Invalid token'; }
     }).catch(function() { errEl.textContent = 'Cannot connect to server'; });
   });
@@ -1433,9 +1569,9 @@ function doLogin() {
 
 function doLogout() {
   TOKEN = '';
-  localStorage.removeItem('tigrimos_token');
-  localStorage.removeItem('tigrimos_backend');
-  localStorage.removeItem('tigrimos_backend_mode');
+  localStorage.removeItem('andrewos_token');
+  localStorage.removeItem('andrewos_backend');
+  localStorage.removeItem('andrewos_backend_mode');
   backendMode = 'local'; BASE = location.origin;
   setBackend('local');
   document.getElementById('app').style.display = 'none';
@@ -1447,7 +1583,7 @@ function switchBackend() {
 }
 
 function showApp() {
-  console.log('[TigrimOS] showApp called, TOKEN=' + (TOKEN ? 'set' : 'empty'));
+  console.log('[AndrewOS] showApp called, TOKEN=' + (TOKEN ? 'set' : 'empty'));
   document.getElementById('login-page').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   updateBackendBadge();
@@ -1458,7 +1594,7 @@ function showApp() {
     loadAgents();
     loadProjects();
     updateAgentModeChip();
-  } catch(e) { console.error('[TigrimOS] showApp error:', e); }
+  } catch(e) { console.error('[AndrewOS] showApp error:', e); }
 }
 
 function checkServerStatus() {
@@ -1476,10 +1612,10 @@ function checkServerStatus() {
 
 // Auto-login: try no-auth first, then with saved token
 (function autoLogin() {
-  console.log('[TigrimOS] Auto-login attempt, BASE=' + BASE);
+  console.log('[AndrewOS] Auto-login attempt, BASE=' + BASE);
   fetch(BASE + '/api/settings')
     .then(function(r) {
-      console.log('[TigrimOS] Settings response: ' + r.status);
+      console.log('[AndrewOS] Settings response: ' + r.status);
       if (r.ok) { showApp(); return; }
       if (TOKEN) {
         fetch(BASE + '/api/settings', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
@@ -1487,7 +1623,7 @@ function checkServerStatus() {
       }
     })
     .catch(function(err) {
-      console.log('[TigrimOS] Auto-login error: ' + err.message);
+      console.log('[AndrewOS] Auto-login error: ' + err.message);
       if (TOKEN) {
         fetch(BASE + '/api/settings', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
           .then(function(r) { if (r.ok) showApp(); }).catch(function() {});
@@ -1526,7 +1662,7 @@ document.getElementById('tabbar').addEventListener('click', e => {
 
 // ========== PROJECTS ==========
 let projects = [];
-let selectedProjectId = localStorage.getItem('tigrimos_project_id') || null;
+let selectedProjectId = localStorage.getItem('andrewos_project_id') || null;
 
 function loadProjects() {
   api('/api/projects').then(data => {
@@ -1562,8 +1698,8 @@ function renderProjects() {
 
 function setSelectedProject(id) {
   selectedProjectId = id;
-  if (id) localStorage.setItem('tigrimos_project_id', id);
-  else localStorage.removeItem('tigrimos_project_id');
+  if (id) localStorage.setItem('andrewos_project_id', id);
+  else localStorage.removeItem('andrewos_project_id');
   updateProjectChip();
 }
 
@@ -1680,7 +1816,7 @@ function renderMessages(msgs) {
       return `<div class="msg ai">
         <div class="avatar">T</div>
         <div class="msg-col">
-          <div class="msg-head"><span class="msg-name">TigrimOS</span></div>
+          <div class="msg-head"><span class="msg-name">AndrewOS</span></div>
           <div class="bubble-ai">${md(m.content)}${renderChatFiles(m.files)}</div>
           <div class="react-row">
             <button class="react" onclick="copyBubble(this)" title="Copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-linecap="round"/></svg></button>
@@ -1713,14 +1849,26 @@ function newSession() {
 }
 
 let sending = false;
-function getAgentMode() { return localStorage.getItem('tigrimos_agent_mode') || 'single'; }
+function getAgentMode() { return localStorage.getItem('andrewos_agent_mode') || 'single'; }
 
-const agentModes = ['single', 'router', 'auto', 'manual', 'fully_auto', 'graph'];
-const agentModeLabels = { single: 'Single Agent', router: 'Router', auto: 'Auto Swarm', manual: 'Manual', fully_auto: 'Fully Auto', graph: 'Graph (judged)' };
+// Workflow patterns run as a DAG of agent nodes, dispatched by
+// run_workflow_turn() in src/server/routes/chat.rs. These ids must match
+// pattern_catalog() in src/server/services/workflow.rs — an id that exists
+// there but not here is unreachable from this UI.
+const agentModes = ['single', 'router', 'auto', 'manual', 'fully_auto', 'graph',
+  'classify_and_act', 'fanout_and_synthesize', 'adversarial_verification',
+  'generate_and_filter', 'tournament', 'loop_until_done',
+  'debate', 'hierarchical_swarm', 'sequential_pipeline', 'mixture_of_agents'];
+const agentModeLabels = { single: 'Single Agent', router: 'Router', auto: 'Auto Swarm', manual: 'Manual', fully_auto: 'Fully Auto', graph: 'Graph (judged)',
+  classify_and_act: 'Classify → Act', fanout_and_synthesize: 'Fanout → Synthesize',
+  adversarial_verification: 'Adversarial Verify', generate_and_filter: 'Generate → Filter',
+  tournament: 'Tournament', loop_until_done: 'Loop Until Done',
+  debate: 'Debate', hierarchical_swarm: 'Hierarchical', sequential_pipeline: 'Sequential Pipeline',
+  mixture_of_agents: 'Mixture-of-Agents' };
 function cycleAgentMode() {
   const cur = getAgentMode();
   const next = agentModes[(agentModes.indexOf(cur) + 1) % agentModes.length];
-  localStorage.setItem('tigrimos_agent_mode', next);
+  localStorage.setItem('andrewos_agent_mode', next);
   updateAgentModeChip();
 }
 function archDisplayName(fn) {
@@ -1932,7 +2080,7 @@ function sendMessage() {
     el.innerHTML += `<div class="msg ai" id="thinking-msg">
       <div class="avatar">T</div>
       <div class="msg-col">
-        <div class="msg-head"><span class="msg-name">TigrimOS</span></div>
+        <div class="msg-head"><span class="msg-name">AndrewOS</span></div>
         <div class="bubble-ai typing-dots"><i class="td"></i></div>
       </div>
     </div>`;
@@ -2211,7 +2359,7 @@ function updateAgentSelect() {
       const count = c.agentCount ? ` — ${c.agentCount} agents` : '';
       return `<option value="${esc(fn)}" ${fn === prev ? 'selected' : ''}>${esc(label + count)}</option>`;
     }).join('');
-  const savedMode = localStorage.getItem('tigrimos_agent_mode') || 'single';
+  const savedMode = localStorage.getItem('andrewos_agent_mode') || 'single';
   const modeSel = document.getElementById('agents-mode-select');
   if (modeSel) modeSel.value = savedMode;
   const preview = document.getElementById('agent-config-preview');
@@ -2231,7 +2379,7 @@ function updateAgentSelect() {
 
 function selectAgentMode() {
   const mode = document.getElementById('agents-mode-select').value;
-  localStorage.setItem('tigrimos_agent_mode', mode);
+  localStorage.setItem('andrewos_agent_mode', mode);
   updateAgentModeChip();
   api('/api/settings').then(data => {
     data.subAgentMode = mode === 'single' ? 'auto' : mode;
@@ -2270,7 +2418,7 @@ function applyAgentConfig() {
   const modeSel = document.getElementById('agents-mode-select');
   if (val && modeSel && modeSel.value === 'single') {
     modeSel.value = 'auto';
-    localStorage.setItem('tigrimos_agent_mode', 'auto');
+    localStorage.setItem('andrewos_agent_mode', 'auto');
   }
   const mode = modeSel ? modeSel.value : 'auto';
   const status = document.getElementById('agent-config-status');
@@ -3021,9 +3169,16 @@ function goToChat(sessionId) {
 // Built-in AI providers — mirrors src/ui/settings.rs builtin_providers().
 // Selecting one ("connect to system") auto-fills the API URL + default model.
 const AI_PROVIDERS = [
-  { name: 'Claude Code (Local)', url: 'claude-code', model: 'claude-sonnet-4-20250514' },
+  // Local CLI backends. Default models use aliases where the CLI offers one so
+  // they keep resolving to the current model; the Model dropdown is populated
+  // from live CLI discovery regardless.
+  { name: 'Claude Code (Local)', url: 'claude-code', model: 'sonnet' },
   { name: 'Gemini CLI (Local)', url: 'gemini-cli', model: 'gemini-2.5-pro' },
-  { name: 'Codex (Local)', url: 'codex-cli', model: 'gpt-5.4' },
+  { name: 'Codex (Local)', url: 'codex-cli', model: 'gpt-5.6-sol' },
+  { name: 'Antigravity (Local)', url: 'agy-cli', model: 'gemini-3.6-flash-high' },
+  { name: 'OpenCode (Local)', url: 'opencode-cli', model: '' },
+  { name: 'Grok (Local)', url: 'grok-cli', model: 'grok-4.5' },
+  { name: 'GitHub Copilot (Local)', url: 'copilot-cli', model: '' },
   { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1', model: 'openrouter/auto' },
   { name: 'xAI (Grok)', url: 'https://api.x.ai/v1', model: 'grok-3' },
   { name: 'Anthropic (Claude)', url: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-20250514' },
@@ -3083,6 +3238,7 @@ function loadSettings() {
       enabled: t.enabled !== false,
     }));
     const curUrl = data.tigerBotApiUrl || '';
+    _savedReasoningEffort = data.reasoningEffort || '';
     const providerOpts = ['<option value="">Custom / manual…</option>']
       .concat(AI_PROVIDERS.map(p =>
         `<option value="${esc(p.name)}" ${p.url === curUrl ? 'selected' : ''}>${esc(p.name)}</option>`))
@@ -3111,7 +3267,14 @@ function loadSettings() {
           <div class="settings-row-field"><label>Connect to System</label>
             <select id="s-provider" onchange="applyProvider()" style="flex:1">${providerOpts}</select>
             <button class="pill-btn" onclick="addProvider()" style="flex:none;margin-left:8px">+ Add</button></div>
-          <div class="settings-row-field"><label>Model</label><input id="s-model" value="${esc(data.tigerBotModel || '')}"></div>
+          <div class="settings-row-field" id="s-model-pick-row"><label>Model</label>
+            <select id="s-model-select" onchange="onModelPicked()" style="flex:1"></select>
+            <button class="pill-btn" onclick="refreshCliModels()" style="flex:none;margin-left:8px" title="Re-query the installed CLIs for their current models">Refresh</button></div>
+          <div class="settings-row-field" id="s-effort-row"><label>Effort</label>
+            <select id="s-effort" style="flex:1"></select></div>
+          <div class="settings-row-field" id="s-model-custom-row"><label>Model id</label><input id="s-model" value="${esc(data.tigerBotModel || '')}"></div>
+          <div class="settings-row-field"><label></label>
+            <span id="s-model-source" style="font-size:12px;color:var(--ink-soft)"></span></div>
           <div class="settings-row-field"><label>API URL</label><input id="s-api-url" value="${esc(curUrl)}"></div>
           <div class="settings-row-field"><label>API Key</label><input id="s-api-key" type="password" value="${esc(data.tigerBotApiKey || '')}"></div>
           <div class="settings-row-field"><label></label>
@@ -3149,7 +3312,8 @@ function loadSettings() {
         </div>
         <div class="settings-group">
           <h3>Router Model Pool</h3>
-          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">Used by <b>Router</b> mode. Define the pool of LLMs the orchestrator routes agents to. Each entry has its own model id, endpoint and key — mix providers freely. Blank URL/Key inherit the main AI Provider settings. The orchestrator assigns each agent a best-fit model by <b>tier</b> + <b>strengths</b>.</div>
+          <div style="color:var(--ink-soft);font-size:12px;margin-bottom:10px">The pool of LLMs your agents run on. Each entry has its own model id, endpoint and key — mix providers freely, including local CLIs. Blank URL/Key inherit the main AI Provider settings.<br>
+          <b>Router</b> mode assigns each agent a best-fit model by <b>tier</b> + <b>strengths</b>. <b>Roles</b> bind an entry to specific swarm/workflow roles (<code>worker</code>, <code>judge</code>, <code>verifier</code>, <code>synthesizer</code>, <code>generator</code>, <code>classifier</code>…) — so you can run judges on a stronger model than workers. A role-specific entry always wins over a blank-roles entry; blank means "any role".</div>
           <div class="settings-row-field"><label>Tier</label>
             <select id="s-router-tier" style="flex:1">
               <option value="fast" ${data.routerTier !== 'ultra' ? 'selected' : ''}>Router (fast)</option>
@@ -3571,6 +3735,8 @@ function loadSettings() {
     loadSkillStatus();
     loadPlugins();
     loadSkillsLibrary();
+    // Populate the model/effort dropdowns from the CLIs installed on the host.
+    loadCliModels(false);
     loadAgentLoopPane(data.agentLoopProfile || '');
     loadGraphPane(data.graphProfile || 'default.yaml', data.graphEnabled === true);
     loadCustomToolsPane(data.agentLoopProfile || '');
@@ -3655,12 +3821,12 @@ function googleConnect() {
     if (!d.ok) { setGoogleStatus('❌ ' + esc(d.error || d.message || 'failed'), true); return; }
     const rescue = '<br>💡 If the login ends on a <b>“can’t connect to localhost”</b> page: in that page’s address bar, ' +
       'replace <code>localhost:8000</code> with <code>' + esc(location.host) + '</code> and press Enter — ' +
-      'TigrimOS relays the callback to the Google server and the login completes.';
+      'AndrewOS relays the callback to the Google server and the login completes.';
     if (d.url) {
       setGoogleStatus('🔑 <a href="' + esc(d.url) + '" target="_blank" rel="noopener"><b>Open the Google login</b></a> — ' +
         'sign in and approve access.' + rescue, false);
     } else {
-      setGoogleStatus('✅ ' + esc(d.message || 'Login started') + ' If TigrimOS runs on this machine, a Google sign-in window has opened.' + rescue, false);
+      setGoogleStatus('✅ ' + esc(d.message || 'Login started') + ' If AndrewOS runs on this machine, a Google sign-in window has opened.' + rescue, false);
     }
     setTimeout(loadGoogleCard, 6000);
   }).catch(e => setGoogleStatus('❌ ' + esc(e.message || e), true));
@@ -4336,6 +4502,7 @@ function uploadSkillFile(input) {
 // Switch the active settings tab (panes stay in the DOM so edits persist).
 // ========== THEME ==========
 const THEMES = [
+  { id: 'glass',       name: 'AndrewOS Glass', sw: ['#0B0D12', '#1A1F29', '#35D6C4'] },
   { id: 'light',       name: 'Light',       sw: ['#F4EEE5', '#FFFFFF', '#129A91'] },
   { id: 'dark',        name: 'Dark',        sw: ['#15171C', '#23272F', '#2DD4BF'] },
   { id: 'transparent', name: 'Transparent', sw: ['#0E1116', '#38BDF8', '#A855F7'] },
@@ -4345,12 +4512,16 @@ const THEMES = [
   { id: 'teal',        name: 'Teal',        sw: ['#EAF5F3', '#FFFFFF', '#0D9488'] },
 ];
 
-function getTheme() { return localStorage.getItem('tigrimos_theme') || 'light'; }
+function getTheme() {
+  return localStorage.getItem('andrewos_theme')
+      || localStorage.getItem('andrewos_theme')  // migrate pre-rebrand preference
+      || 'glass';
+}
 
 function applyTheme(id) {
-  if (id === 'light') document.documentElement.removeAttribute('data-theme');
+  if (id === 'glass') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', id);
-  localStorage.setItem('tigrimos_theme', id);
+  localStorage.setItem('andrewos_theme', id);
   document.querySelectorAll('#theme-grid .theme-card').forEach(c =>
     c.classList.toggle('active', c.dataset.theme === id));
 }
@@ -4516,7 +4687,7 @@ function ctNew(kind) {
   if (!name) { const s = document.getElementById('ct-status'); s.textContent = 'Enter a tool name first'; s.style.color = 'var(--red)'; return; }
   const yaml = kind === 'shell'
     ? `name: ${name}\ndescription: Describe what this tool does.\nkind: shell\nenabled: true\nparameters:\n  - name: arg1\n    type: string\n    required: true\nrun:\n  command: "echo {{arg1}}"\n  timeout_secs: 30\nrequire_approval: true\n`
-    : `name: ${name}\ndescription: Describe what this tool does.\nkind: http\nenabled: true\nparameters:\n  - name: query\n    type: string\n    required: true\n  - name: limit\n    type: integer\n    default: 10\nrequest:\n  method: GET\n  url: "https://api.example.com/search?q={{query}}&n={{limit}}"\n  headers:\n    User-Agent: "TigrimOS/1.0"\n  timeout_secs: 20\nresponse:\n  format: auto\n  max_len: 4000\n`;
+    : `name: ${name}\ndescription: Describe what this tool does.\nkind: http\nenabled: true\nparameters:\n  - name: query\n    type: string\n    required: true\n  - name: limit\n    type: integer\n    default: 10\nrequest:\n  method: GET\n  url: "https://api.example.com/search?q={{query}}&n={{limit}}"\n  headers:\n    User-Agent: "AndrewOS/1.0"\n  timeout_secs: 20\nresponse:\n  format: auto\n  max_len: 4000\n`;
   document.getElementById('ct-yaml').value = yaml;
   document.getElementById('ct-file').value = '';
   document.getElementById('ct-new-name').value = '';
@@ -4598,6 +4769,129 @@ function applyProvider() {
   if (!p) return;
   document.getElementById('s-api-url').value = p.url;
   document.getElementById('s-model').value = p.model;
+  populateModelControls();
+}
+
+// ---------- CLI model discovery ----------
+// The server probes the agent CLIs installed on the host and reports the models
+// and reasoning-effort tiers each one actually supports. That keeps this screen
+// correct when a vendor ships a new model, instead of freezing whatever string
+// was hardcoded the day this shipped.
+
+let _cliProviders = null;
+let _savedReasoningEffort = '';
+
+// Maps the sentinel API URLs used by local CLI providers to a discovery id.
+// Only URLs the agent runtime can actually dispatch to appear here.
+const CLI_URL_TO_PROVIDER = {
+  'claude-code': 'claude',
+  'gemini-cli': 'gemini',
+  'codex-cli': 'codex',
+  'agy-cli': 'antigravity',
+  'opencode-cli': 'opencode',
+  'grok-cli': 'grok',
+  'copilot-cli': 'copilot',
+};
+
+function currentCliProvider() {
+  if (!_cliProviders) return null;
+  const url = (document.getElementById('s-api-url')?.value || '').trim();
+  const id = CLI_URL_TO_PROVIDER[url];
+  if (!id) return null;
+  return _cliProviders.find(p => p.id === id) || null;
+}
+
+function loadCliModels(force) {
+  const opts = force ? { method: 'POST' } : {};
+  const path = force ? '/api/settings/cli-models/refresh' : '/api/settings/cli-models';
+  return api(path, opts)
+    .then(r => { _cliProviders = r.providers || []; })
+    .catch(() => { _cliProviders = []; })
+    .then(() => populateModelControls());
+}
+
+function refreshCliModels() {
+  const note = document.getElementById('s-model-source');
+  if (note) note.textContent = 'Querying installed CLIs…';
+  loadCliModels(true);
+}
+
+// Show the dropdowns when the selected provider is a discoverable local CLI;
+// fall back to the free-text box for hosted APIs and custom providers.
+function populateModelControls() {
+  const pickRow = document.getElementById('s-model-pick-row');
+  const effortRow = document.getElementById('s-effort-row');
+  const customRow = document.getElementById('s-model-custom-row');
+  const note = document.getElementById('s-model-source');
+  const sel = document.getElementById('s-model-select');
+  const effortSel = document.getElementById('s-effort');
+  if (!pickRow || !sel || !effortSel) return;
+
+  const prov = currentCliProvider();
+  const current = (document.getElementById('s-model')?.value || '').trim();
+
+  if (!prov || !prov.models || !prov.models.length) {
+    pickRow.style.display = 'none';
+    effortRow.style.display = 'none';
+    if (customRow) customRow.style.display = '';
+    if (note) {
+      note.textContent = prov
+        ? (prov.error || `${prov.name} is installed but reported no models — enter a model id above.`)
+        : '';
+    }
+    return;
+  }
+
+  pickRow.style.display = '';
+  if (customRow) customRow.style.display = '';
+
+  // Keep whatever is already saved selectable even if discovery no longer
+  // lists it, so opening Settings never silently changes the active model.
+  const ids = prov.models.map(m => m.id);
+  const opts = prov.models.map(m =>
+    `<option value="${esc(m.id)}"${m.id === current ? ' selected' : ''}>${esc(m.label || m.id)}</option>`);
+  if (current && !ids.includes(current)) {
+    opts.unshift(`<option value="${esc(current)}" selected>${esc(current)} (saved)</option>`);
+  }
+  sel.innerHTML = opts.join('');
+
+  populateEffortControl(prov);
+
+  if (note) {
+    const origin = prov.source === 'cache' ? `read from ${prov.name}'s own model cache`
+                : prov.source === 'cli' ? `reported by \`${prov.binary} models\``
+                : 'built-in list — this CLI cannot enumerate its models';
+    note.textContent = `${prov.models.length} model(s) — ${origin}${prov.version ? ' · ' + prov.version : ''}`;
+  }
+}
+
+// Effort tiers are per-model where the CLI reports them that way (Codex), and
+// per-provider otherwise (Claude Code).
+function populateEffortControl(prov) {
+  const effortRow = document.getElementById('s-effort-row');
+  const effortSel = document.getElementById('s-effort');
+  const chosen = document.getElementById('s-model-select')?.value;
+  const model = (prov.models || []).find(m => m.id === chosen);
+  const efforts = (model && model.efforts && model.efforts.length) ? model.efforts : (prov.efforts || []);
+
+  if (!efforts.length) {
+    effortRow.style.display = 'none';
+    effortSel.innerHTML = '';
+    return;
+  }
+  effortRow.style.display = '';
+  const saved = _savedReasoningEffort || (model && model.defaultEffort) || '';
+  effortSel.innerHTML = ['<option value="">(CLI default)</option>']
+    .concat(efforts.map(e => `<option value="${esc(e)}"${e === saved ? ' selected' : ''}>${esc(e)}</option>`))
+    .join('');
+}
+
+function onModelPicked() {
+  const sel = document.getElementById('s-model-select');
+  const input = document.getElementById('s-model');
+  if (sel && input) input.value = sel.value;
+  const prov = currentCliProvider();
+  if (prov) populateEffortControl(prov);
 }
 
 // Add a custom provider (session-local) and select it — matches the desktop
@@ -4748,8 +5042,25 @@ function routerPoolRowHTML(e) {
     <div class="settings-row-field"><label>API Key</label><input class="rp-apikey" type="password" value="${esc(e.api_key || '')}" placeholder="(optional) inherit if blank"></div>
     <div class="settings-row-field"><label>Tier</label><select class="rp-tier" style="flex:1">${opt('fast')}${opt('balanced')}${opt('deep')}</select></div>
     <div class="settings-row-field"><label>Strengths</label><input class="rp-strengths" value="${esc(e.strengths || '')}" placeholder="e.g. marketing research, mathematics, coding"></div>
+    <div class="settings-row-field"><label>Roles</label><input class="rp-roles" value="${esc((e.roles || []).join(', '))}" placeholder="blank = any role · e.g. judge, verifier"></div>
+    <div class="settings-row-field"><label>Effort</label><select class="rp-effort" style="flex:1">${effortOptionsHTML(e.effort || '')}</select></div>
     <div class="settings-row-field"><label></label><button class="pill-btn danger" onclick="this.closest('.router-pool-row').remove()" style="flex:none;font-size:11px;padding:5px 10px">Remove</button></div>
   </div>`;
+}
+
+// Union of every effort tier any installed CLI reports, so one roster row can
+// target whichever provider it names. Falls back to the common tiers before
+// discovery has landed.
+function effortOptionsHTML(selected) {
+  const tiers = [];
+  (_cliProviders || []).forEach(p => {
+    (p.efforts || []).forEach(e => { if (!tiers.includes(e)) tiers.push(e); });
+    (p.models || []).forEach(m => (m.efforts || []).forEach(e => { if (!tiers.includes(e)) tiers.push(e); }));
+  });
+  if (!tiers.length) ['low', 'medium', 'high', 'xhigh', 'max'].forEach(e => tiers.push(e));
+  return ['<option value="">(default)</option>']
+    .concat(tiers.map(e => `<option value="${esc(e)}"${e === selected ? ' selected' : ''}>${esc(e)}</option>`))
+    .join('');
 }
 function addRouterPoolRow() {
   const list = document.getElementById('router-pool-list');
@@ -4760,7 +5071,8 @@ function gatherRouterPool() {
     const g = sel => { const el = row.querySelector(sel); return el ? el.value : ''; };
     const label = g('.rp-label'), model = g('.rp-model');
     const id = (label || model).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    return { id, label, model, api_url: g('.rp-apiurl'), api_key: g('.rp-apikey'), tier: g('.rp-tier'), strengths: g('.rp-strengths') };
+    const roles = g('.rp-roles').split(',').map(r => r.trim()).filter(Boolean);
+    return { id, label, model, api_url: g('.rp-apiurl'), api_key: g('.rp-apikey'), tier: g('.rp-tier'), strengths: g('.rp-strengths'), roles, effort: g('.rp-effort') };
   }).filter(e => e.model);
 }
 
@@ -4768,6 +5080,7 @@ function saveSettings() {
   const s = document.getElementById('s-save-status');
   const body = {
     tigerBotModel: document.getElementById('s-model').value,
+    reasoningEffort: (document.getElementById('s-effort')?.value || '') || null,
     tigerBotApiUrl: document.getElementById('s-api-url').value || null,
     tigerBotApiKey: document.getElementById('s-api-key').value,
     webSearchEnabled: document.getElementById('s-web-search').checked,

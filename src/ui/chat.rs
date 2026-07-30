@@ -355,7 +355,7 @@ fn link_kind_color(kind: &str) -> egui::Color32 {
         "direct"   => egui::Color32::from_rgb(219, 39, 119),  // pink
         "bus"      => egui::Color32::from_rgb(8, 145, 178),   // cyan
         "spawn"    => egui::Color32::from_rgb(124, 58, 237),  // purple
-        _          => egui::Color32::from_rgb(168, 158, 144), // gray
+        _          => crate::ui::theme::text_secondary_color(), // gray
     }
 }
 
@@ -375,6 +375,11 @@ fn tool_to_link_kind(tool: &str) -> &'static str {
 
 #[allow(dead_code)]
 pub struct ChatView {
+    /// Models/effort tiers discovered from the CLIs installed on this machine,
+    /// backing the composer's model picker. Loaded off-thread — probing spawns
+    /// processes and must never block a UI frame.
+    cli_providers: std::sync::Arc<std::sync::Mutex<Option<Vec<crate::server::services::cli_models::CliProvider>>>>,
+    cli_providers_loading: bool,
     sessions: Vec<ChatSessionSummary>,
     pub selected_session_id: Option<String>,
     selected_session: Option<ChatSession>,
@@ -457,6 +462,8 @@ impl Default for ChatView {
 impl ChatView {
     pub fn new() -> Self {
         Self {
+            cli_providers: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            cli_providers_loading: false,
             sessions: Vec::new(),
             selected_session_id: None,
             selected_session: None,
@@ -806,9 +813,7 @@ impl ChatView {
             }
             if !m.api_url.trim().is_empty() {
                 let raw = m.api_url.trim().to_string();
-                api_url = if raw.starts_with("claude-code")
-                    || raw.starts_with("gemini-cli")
-                    || raw.starts_with("codex-cli")
+                api_url = if crate::server::services::cli_models::is_local_cli_url(&raw)
                     || raw.ends_with("/chat/completions")
                 {
                     raw
@@ -909,6 +914,29 @@ impl ChatView {
 
         // Build sub-agent config from settings + active project
         let sub_agent_mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string());
+
+        // A workflow pattern ("tournament", "debate", ...) runs as a DAG of
+        // agent nodes rather than the sub-agent loop. Detected from the same
+        // catalog the web UI uses, and dispatched at the tool-loop site below.
+        // Like "graph" it must never reach SubAgentConfig.mode, which only
+        // understands the swarm modes.
+        let workflow_pattern: Option<String> =
+            crate::server::services::workflow::pattern_catalog()
+                .iter()
+                .find(|(id, _)| *id == sub_agent_mode)
+                .map(|(id, _)| id.to_string());
+        // Width sizes the parallel stage; reuses the swarm agent-count knob so
+        // one setting governs both. build_pattern clamps it.
+        let workflow_width: usize = settings
+            .extra
+            .get("autoAgentCount")
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .map(|n| n as usize)
+            .unwrap_or(3);
+        let workflow_model_pool = settings.model_pool.clone().unwrap_or_default();
+        // Each node runs as its own single agent; the topology does the work.
+        let sub_agent_mode =
+            if workflow_pattern.is_some() { "single".to_string() } else { sub_agent_mode };
         // Graph gate activation — DEFAULT OFF. On when the "graph" mode is
         // explicitly selected, the agent-loop profile says `graph.enabled:
         // true`, or the global graphEnabled toggle is on (profile false
@@ -1090,6 +1118,7 @@ impl ChatView {
 
                 SubAgentConfig {
                     enabled: true,
+                    effort: settings.reasoning_effort.clone().unwrap_or_default(),
                     config_file,
                     agent_ids,
                     api_key: api_key.clone(),
@@ -1287,7 +1316,7 @@ Only use your own tools (web_search, run_python, etc.) for quick lookups or task
             )
         } else {
             format!(
-            "You are TigrimOS, an AI assistant with tools for search, code execution, files, and skills.\n\
+            "You are AndrewOS, an AI assistant with tools for search, code execution, files, and skills.\n\
 Rules:\n\
 - Always use tools to produce real results — never just describe what you would do.\n\
 - If a tool call fails, analyze the error, fix it, and retry. Try a different approach after two failures.\n\
@@ -2150,7 +2179,14 @@ You have access to these tools: {}.{}",
                 };
 
                 let tool_future = async {
-                    if use_realtime {
+                    if let Some(pattern) = workflow_pattern.as_deref() {
+                        // Same helper the web route uses, so both front-ends
+                        // run identical topologies through identical plumbing.
+                        crate::server::routes::chat::run_workflow_turn(
+                            pattern, workflow_width, &messages, &orch_api_key, &orch_api_url,
+                            &orch_model, &sandbox_dir, &sid, workflow_model_pool,
+                        ).await
+                    } else if use_realtime {
                         call_with_tools_realtime(
                             &orch_api_key, &orch_api_url, &orch_model, messages, system_prompt, &sandbox_dir,
                             on_update_cb, sub_agent_config,
@@ -2833,7 +2869,7 @@ You have access to these tools: {}.{}",
         }
         self.show_file_overlay(ui.ctx());
 
-        let _border_color   = egui::Color32::from_rgb(230, 220, 204);
+        let _border_color   = crate::ui::theme::border_color();
 
         // Collect all output files from current session messages
         // Also include files from streaming state
@@ -2910,9 +2946,9 @@ You have access to these tools: {}.{}",
             let drag_response = ui.interact(drag_rect, drag_id, egui::Sense::drag());
             // Highlight on hover/drag
             let handle_color = if drag_response.hovered() || drag_response.dragged() {
-                egui::Color32::from_rgb(18, 154, 145) // teal accent
+                crate::ui::theme::accent_color() // teal accent
             } else {
-                egui::Color32::from_rgb(230, 220, 204) // warm line
+                crate::ui::theme::border_color() // warm line
             };
             ui.painter().rect_filled(drag_rect, 0.0, handle_color);
             if drag_response.dragged() {
@@ -3032,7 +3068,7 @@ You have access to these tools: {}.{}",
             let btn = egui::Button::new(
                 egui::RichText::new("+ New").size(12.0).color(egui::Color32::WHITE),
             )
-            .fill(egui::Color32::from_rgb(18, 154, 145))
+            .fill(crate::ui::theme::accent_color())
             .corner_radius(6.0);
             if ui.add(btn).clicked() {
                 self.create_session(runtime);
@@ -3041,7 +3077,7 @@ You have access to these tools: {}.{}",
                 egui::RichText::new("Chats")
                     .size(15.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(52, 48, 42)),
+                    .color(crate::ui::theme::text_primary_color()),
             );
         });
 
@@ -3112,14 +3148,14 @@ You have access to these tools: {}.{}",
                     };
 
                     let card_bg = if is_selected {
-                        egui::Color32::from_rgba_premultiplied(18, 154, 145, 25)
+                        crate::ui::theme::accent_color().gamma_multiply(0.12)
                     } else {
                         egui::Color32::WHITE
                     };
                     let card_stroke = if is_selected {
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(18, 154, 145))
+                        egui::Stroke::new(1.0, crate::ui::theme::accent_color())
                     } else {
-                        egui::Stroke::new(0.5, egui::Color32::from_rgb(230, 220, 204))
+                        egui::Stroke::new(0.5, crate::ui::theme::border_color())
                     };
 
                     // Format relative timestamp
@@ -3154,9 +3190,9 @@ You have access to these tools: {}.{}",
                                             .size(13.0)
                                             .strong()
                                             .color(if is_selected {
-                                                egui::Color32::from_rgb(18, 154, 145)
+                                                crate::ui::theme::accent_color()
                                             } else {
-                                                egui::Color32::from_rgb(52, 48, 42)
+                                                crate::ui::theme::text_primary_color()
                                             }),
                                     );
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3186,9 +3222,9 @@ You have access to these tools: {}.{}",
                                 // Message preview
                                 if !summary.last_message_preview.is_empty() {
                                     let preview_color = if summary.last_message_role == "user" {
-                                        egui::Color32::from_rgb(18, 154, 145)
+                                        crate::ui::theme::accent_color()
                                     } else {
-                                        egui::Color32::from_rgb(124, 115, 104)
+                                        crate::ui::theme::text_secondary_color()
                                     };
                                     ui.add(egui::Label::new(
                                         egui::RichText::new(&summary.last_message_preview)
@@ -3281,15 +3317,15 @@ You have access to these tools: {}.{}",
                     let top_pad = (welcome_height / 2.0 - 80.0).max(20.0);
                     ui.add_space(top_pad);
                     // Logo image — embed as bytes to preserve alpha transparency
-                    let logo_bytes = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/logo_tigrimos.png"));
-                    let logo_image = egui::Image::from_bytes("bytes://logo_tigrimos", logo_bytes.as_slice())
+                    let logo_bytes = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/logo_andrewos.png"));
+                    let logo_image = egui::Image::from_bytes("bytes://logo_andrewos", logo_bytes.as_slice())
                         .max_width(96.0)
                         .max_height(96.0)
                         .tint(super::theme::text_primary_color());
                     ui.add(logo_image);
                     ui.add_space(8.0);
                     ui.heading(
-                        egui::RichText::new("TigrimOS")
+                        egui::RichText::new("AndrewOS")
                             .size(28.0)
                             .strong()
                             .color(super::theme::text_primary_color()),
@@ -3391,7 +3427,7 @@ You have access to these tools: {}.{}",
             if self.graph_badge_on {
                 ui.add_space(8.0);
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgba_premultiplied(147, 85, 200, 25))
+                    .fill(egui::Color32::from_rgb(147, 85, 200).gamma_multiply(0.12))
                     .corner_radius(4.0)
                     .inner_margin(egui::Margin::symmetric(6, 2))
                     .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(147, 85, 200)))
@@ -3414,15 +3450,15 @@ You have access to these tools: {}.{}",
                 if let Some(proj) = self.projects.iter().find(|p| &p.id == pid) {
                     ui.add_space(8.0);
                     egui::Frame::new()
-                        .fill(egui::Color32::from_rgba_premultiplied(18, 154, 145, 25))
+                        .fill(crate::ui::theme::accent_color().gamma_multiply(0.12))
                         .corner_radius(4.0)
                         .inner_margin(egui::Margin::symmetric(6, 2))
-                        .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(18, 154, 145)))
+                        .stroke(egui::Stroke::new(0.5, crate::ui::theme::accent_color()))
                         .show(ui, |ui| {
                             ui.label(
                                 egui::RichText::new(&proj.name)
                                     .size(11.0)
-                                    .color(egui::Color32::from_rgb(18, 154, 145)),
+                                    .color(crate::ui::theme::accent_color()),
                             );
                         });
                 }
@@ -3435,10 +3471,10 @@ You have access to these tools: {}.{}",
                     let log_btn = egui::Button::new(
                         egui::RichText::new("\u{1F4CB} Log")
                             .size(12.0)
-                            .color(egui::Color32::from_rgb(124, 115, 104)),
+                            .color(crate::ui::theme::text_secondary_color()),
                     )
-                    .fill(egui::Color32::from_rgb(239, 231, 218))
-                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(230, 220, 204)))
+                    .fill(crate::ui::theme::border_color())
+                    .stroke(egui::Stroke::new(0.5, crate::ui::theme::border_color()))
                     .corner_radius(14.0);
                     if ui.add(log_btn).on_hover_text("View agent activity log").clicked() {
                         self.show_log_panel = !self.show_log_panel;
@@ -3455,10 +3491,10 @@ You have access to these tools: {}.{}",
                     let gfx_btn = egui::Button::new(
                         egui::RichText::new("\u{1F4CA} Graphic")
                             .size(12.0)
-                            .color(egui::Color32::from_rgb(124, 115, 104)),
+                            .color(crate::ui::theme::text_secondary_color()),
                     )
-                    .fill(egui::Color32::from_rgb(239, 231, 218))
-                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(230, 220, 204)))
+                    .fill(crate::ui::theme::border_color())
+                    .stroke(egui::Stroke::new(0.5, crate::ui::theme::border_color()))
                     .corner_radius(14.0);
                     if ui.add(gfx_btn).on_hover_text("View agent network diagram").clicked() {
                         self.show_log_panel = true;
@@ -3522,23 +3558,23 @@ You have access to these tools: {}.{}",
             };
 
             let mode_color = if !sub_enabled {
-                egui::Color32::from_rgb(168, 158, 144) // gray
+                crate::ui::theme::text_secondary_color() // gray
             } else {
                 match mode.as_str() {
-                    "fully_auto" => egui::Color32::from_rgb(18, 154, 145),  // blue
+                    "fully_auto" => crate::ui::theme::accent_color(),  // blue
                     "auto" => egui::Color32::from_rgb(34, 197, 94),         // green
                     "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),  // purple
                     "manual" => egui::Color32::from_rgb(239, 68, 68),       // red
                     "router" => egui::Color32::from_rgb(255, 140, 0),       // orange
-                    _ => egui::Color32::from_rgb(18, 154, 145),             // blue
+                    _ => crate::ui::theme::accent_color(),             // blue
                 }
             };
 
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(239, 231, 218))
+                .fill(crate::ui::theme::border_color())
                 .corner_radius(6.0)
                 .inner_margin(egui::Margin::symmetric(10, 4))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
+                .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         // Swarm mode badge
@@ -3565,7 +3601,7 @@ You have access to these tools: {}.{}",
                                     .color(egui::Color32::from_rgb(80, 85, 95)),
                             );
                             egui::Frame::new()
-                                .fill(egui::Color32::from_rgb(18, 154, 145))
+                                .fill(crate::ui::theme::accent_color())
                                 .corner_radius(4.0)
                                 .inner_margin(egui::Margin::symmetric(6, 2))
                                 .show(ui, |ui| {
@@ -3639,7 +3675,7 @@ You have access to these tools: {}.{}",
                         // Tab bar
                         ui.horizontal(|ui| {
                             let tab0_color = if self.log_tab == 0 {
-                                egui::Color32::from_rgb(18, 154, 145)
+                                crate::ui::theme::accent_color()
                             } else {
                                 egui::Color32::GRAY
                             };
@@ -3666,7 +3702,7 @@ You have access to these tools: {}.{}",
                                     .unwrap_or_else(|_| "(No agent history yet - sub-agents haven't been used in this session)".to_string());
                             }
                             let tab2_color = if self.log_tab == 2 {
-                                egui::Color32::from_rgb(18, 154, 145)
+                                crate::ui::theme::accent_color()
                             } else {
                                 egui::Color32::GRAY
                             };
@@ -3713,7 +3749,7 @@ You have access to these tools: {}.{}",
                                         } else if line.contains("FULLY_AUTO:") || line.contains("AUTO_SWARM:") {
                                             egui::Color32::from_rgb(124, 58, 237)
                                         } else if line.starts_with("  ") {
-                                            egui::Color32::from_rgb(124, 115, 104)
+                                            crate::ui::theme::text_secondary_color()
                                         } else {
                                             egui::Color32::from_rgb(55, 65, 81)
                                         };
@@ -3748,7 +3784,7 @@ You have access to these tools: {}.{}",
                                                         let tool = data.and_then(|d| d.get("tool")).and_then(|v| v.as_str()).unwrap_or("?");
                                                         let args = data.and_then(|d| d.get("args_preview")).and_then(|v| v.as_str()).unwrap_or("");
                                                         let args_short = if args.len() > 120 { &args[..floor_char_boundary(args, 120)] } else { args };
-                                                        (egui::Color32::from_rgb(18, 154, 145),
+                                                        (crate::ui::theme::accent_color(),
                                                          format!("[{}] {} > {} {}", ts_short, agent_id, tool, args_short))
                                                     }
                                                     "TOOL_RESULT" => {
@@ -3937,16 +3973,20 @@ You have access to these tools: {}.{}",
                                 && !is_streaming;
 
                         // ── Toolbar row (bottom part) ──
-                        ui.add_space(4.0);
+                        // Controls sit on a common 28px height so the attach
+                        // button, mode pill and model chip share one baseline;
+                        // only Send breaks it, at 32px, because it is the
+                        // primary action.
+                        ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.spacing_mut().item_spacing.x = 8.0;
 
                             // (+) Attach button — circular
                             let attach_btn = egui::Button::new(
-                                egui::RichText::new("+").size(16.0).color(egui::Color32::from_rgb(124, 115, 104)),
+                                egui::RichText::new("+").size(16.0).color(crate::ui::theme::text_secondary_color()),
                             )
                             .fill(egui::Color32::TRANSPARENT)
-                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
+                            .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
                             .corner_radius(14.0)
                             .min_size(egui::vec2(28.0, 28.0));
                             if ui.add_enabled(!is_streaming, attach_btn).on_hover_text("Attach files").clicked() {
@@ -3968,18 +4008,34 @@ You have access to these tools: {}.{}",
                                     _ => "Single Agent",
                                 };
                                 let mode_color = match current_mode {
-                                    "fully_auto" => egui::Color32::from_rgb(18, 154, 145),
+                                    "fully_auto" => crate::ui::theme::accent_color(),
                                     "auto" => egui::Color32::from_rgb(34, 197, 94),
                                     "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),
                                     "manual" => egui::Color32::from_rgb(239, 68, 68),
                                     "router" => egui::Color32::from_rgb(255, 140, 0),
-                                    _ => egui::Color32::from_rgb(168, 158, 144),
+                                    // "Single agent" is the neutral default, so it reads as a
+                                    // quiet card chip rather than competing with the modes that
+                                    // actually mean something is running.
+                                    _ => crate::ui::theme::card_color(),
+                                };
+                                let mode_ink = if current_mode == "single" {
+                                    crate::ui::theme::text_secondary_color()
+                                } else {
+                                    // White on a mid-tone fill is unreadable; pick per fill.
+                                    crate::ui::theme::readable_on(mode_color)
                                 };
                                 let pill = egui::Button::new(
-                                    egui::RichText::new(format!("{} \u{25BE}", swarm_label)).size(11.0).color(egui::Color32::WHITE).strong(),
+                                    // U+25BC, not U+25BE: the bundled face has no small
+                                    // triangle, so 25BE rendered as a tofu box.
+                                    egui::RichText::new(format!("{}  \u{25BC}", swarm_label))
+                                        .size(11.0)
+                                        .color(mode_ink)
+                                        .strong(),
                                 )
                                 .fill(mode_color)
-                                .corner_radius(12.0);
+                                .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
+                                .corner_radius(14)
+                                .min_size(egui::vec2(0.0, 28.0));
                                 let pill_resp = ui.add(pill);
                                 let popup_id = ui.id().with("agent_mode_popup");
                                 if pill_resp.clicked() {
@@ -3988,8 +4044,8 @@ You have access to these tools: {}.{}",
                                 egui::popup_below_widget(ui, popup_id, &pill_resp, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                                     ui.set_min_width(140.0);
                                     let modes: &[(&str, &str, egui::Color32)] = &[
-                                        ("single", "Single Agent", egui::Color32::from_rgb(168, 158, 144)),
-                                        ("fully_auto", "Fully Auto", egui::Color32::from_rgb(18, 154, 145)),
+                                        ("single", "Single Agent", crate::ui::theme::text_secondary_color()),
+                                        ("fully_auto", "Fully Auto", crate::ui::theme::accent_color()),
                                         ("auto", "Auto", egui::Color32::from_rgb(34, 197, 94)),
                                         ("auto_swarm", "Auto Swarm", egui::Color32::from_rgb(168, 85, 247)),
                                         ("manual", "Manual", egui::Color32::from_rgb(239, 68, 68)),
@@ -4019,13 +4075,13 @@ You have access to these tools: {}.{}",
                                 let mut remove_idx: Option<usize> = None;
                                 for (i, file) in self.attached_files.iter().enumerate() {
                                     egui::Frame::new()
-                                        .fill(egui::Color32::from_rgb(239, 231, 218))
+                                        .fill(crate::ui::theme::border_color())
                                         .corner_radius(10.0)
                                         .inner_margin(egui::Margin::symmetric(6, 2))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                                ui.label(egui::RichText::new(&file.name).size(11.0).color(egui::Color32::from_rgb(52, 48, 42)));
+                                                ui.label(egui::RichText::new(&file.name).size(11.0).color(crate::ui::theme::text_primary_color()));
                                                 if ui.small_button("x").clicked() {
                                                     remove_idx = Some(i);
                                                 }
@@ -4039,7 +4095,7 @@ You have access to these tools: {}.{}",
 
                             // Right side: model name + send/stop button
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.spacing_mut().item_spacing.x = 8.0;
 
                                 // Send/Stop button — circular
                                 if is_streaming {
@@ -4056,15 +4112,24 @@ You have access to these tools: {}.{}",
                                     }
                                 } else {
                                     let send_color = if can_send {
-                                        egui::Color32::from_rgb(18, 154, 145)
+                                        crate::ui::theme::accent_color()
                                     } else {
-                                        egui::Color32::from_rgb(230, 220, 204)
+                                        crate::ui::theme::card_color()
                                     };
                                     let send_btn = egui::Button::new(
-                                        egui::RichText::new("\u{2191}").size(16.0).strong().color(egui::Color32::WHITE), // ↑
+                                        egui::RichText::new("\u{2191}") // ↑
+                                            .size(16.0)
+                                            .strong()
+                                            // Readable on the accent when armed, and clearly
+                                            // muted (not just pale) when there is nothing to send.
+                                            .color(if can_send {
+                                                crate::ui::theme::readable_on(send_color)
+                                            } else {
+                                                crate::ui::theme::text_secondary_color()
+                                            }),
                                     )
                                     .fill(send_color)
-                                    .corner_radius(16.0)
+                                    .corner_radius(16)
                                     .min_size(egui::vec2(32.0, 32.0));
                                     if ui.add_enabled(can_send, send_btn).on_hover_text("Send").clicked()
                                         || (enter_pressed && can_send)
@@ -4075,24 +4140,10 @@ You have access to these tools: {}.{}",
                                     }
                                 }
 
-                                // Model name label
-                                let settings = runtime.block_on(crate::server::data::get_settings());
-                                let model_name = if settings.tiger_bot_model.is_empty() {
-                                    "gpt-4o-mini"
-                                } else {
-                                    &settings.tiger_bot_model
-                                };
-                                // Truncate long model names
-                                let display_model = if model_name.len() > 20 {
-                                    format!("{}...", &model_name[..model_name.char_indices().nth(20).map(|(i,_)|i).unwrap_or(model_name.len())])
-                                } else {
-                                    model_name.to_string()
-                                };
-                                ui.label(
-                                    egui::RichText::new(&display_model)
-                                        .size(11.5)
-                                        .color(egui::Color32::from_rgb(124, 115, 104)),
-                                );
+                                // Model picker — pick the CLI provider, then a
+                                // model it actually reports, then an effort
+                                // tier that model actually supports.
+                                self.model_picker(ui, runtime);
                             });
                         });
                     });
@@ -4101,6 +4152,116 @@ You have access to these tools: {}.{}",
     }
 
     // ---------------------------------------------------------------------
+    /// Composer model picker: provider → model → effort, populated from the
+    /// CLIs actually installed on this machine.
+    ///
+    /// Selecting anything writes it straight to settings, so the next message
+    /// uses it — the label is a control, not a status readout.
+    fn model_picker(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
+        use crate::server::services::cli_models::{provider_sentinel_url, CliProvider};
+
+        // Kick off discovery once; render from whatever has landed.
+        if !self.cli_providers_loading
+            && self.cli_providers.lock().map(|g| g.is_none()).unwrap_or(false)
+        {
+            self.cli_providers_loading = true;
+            let slot = self.cli_providers.clone();
+            runtime.spawn(async move {
+                let providers = crate::server::services::cli_models::get_providers(false).await;
+                if let Ok(mut g) = slot.lock() {
+                    *g = Some(providers);
+                }
+            });
+        }
+
+        let settings = runtime.block_on(crate::server::data::get_settings());
+        let current_model = settings.tiger_bot_model.clone();
+        let current_effort = settings.reasoning_effort.clone().unwrap_or_default();
+
+        let label = if current_model.is_empty() { "Select model".to_string() } else { current_model.clone() };
+        let display: String = if label.chars().count() > 20 {
+            format!("{}…", label.chars().take(20).collect::<String>())
+        } else {
+            label
+        };
+        let display = if current_effort.is_empty() {
+            display
+        } else {
+            format!("{display} · {current_effort}")
+        };
+
+        let providers: Vec<CliProvider> = self
+            .cli_providers
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| p.available && !p.models.is_empty())
+            .collect();
+
+        let mut chosen: Option<(String, String, String)> = None; // (api_url, model, effort)
+
+        // Same chip treatment as the mode pill so the two read as a pair
+        // rather than one styled control next to a bare menu button.
+        ui.style_mut().spacing.button_padding = egui::vec2(10.0, 6.0);
+        ui.visuals_mut().widgets.inactive.weak_bg_fill = crate::ui::theme::card_color();
+        ui.visuals_mut().widgets.inactive.bg_stroke =
+            egui::Stroke::new(1.0, crate::ui::theme::border_color());
+        ui.visuals_mut().widgets.inactive.corner_radius = egui::CornerRadius::same(14);
+        ui.visuals_mut().widgets.hovered.corner_radius = egui::CornerRadius::same(14);
+        ui.visuals_mut().widgets.open.corner_radius = egui::CornerRadius::same(14);
+
+        ui.menu_button(
+            egui::RichText::new(&display).size(11.5).color(crate::ui::theme::text_secondary_color()),
+            |ui| {
+                if providers.is_empty() {
+                    ui.label(
+                        egui::RichText::new("No local CLI reported any models yet.")
+                            .size(11.0)
+                            .weak(),
+                    );
+                    return;
+                }
+                for p in &providers {
+                    let sentinel = provider_sentinel_url(&p.id);
+                    ui.menu_button(&p.name, |ui| {
+                        for m in &p.models {
+                            let efforts = if m.efforts.is_empty() { &p.efforts } else { &m.efforts };
+                            if efforts.is_empty() {
+                                if ui.button(&m.label).clicked() {
+                                    chosen = Some((sentinel.to_string(), m.id.clone(), String::new()));
+                                    ui.close_menu();
+                                }
+                            } else {
+                                ui.menu_button(&m.label, |ui| {
+                                    if ui.button("(CLI default)").clicked() {
+                                        chosen = Some((sentinel.to_string(), m.id.clone(), String::new()));
+                                        ui.close_menu();
+                                    }
+                                    for e in efforts {
+                                        if ui.button(e).clicked() {
+                                            chosen = Some((sentinel.to_string(), m.id.clone(), e.clone()));
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    });
+                }
+            },
+        );
+
+        if let Some((api_url, model, effort)) = chosen {
+            let mut s = settings;
+            s.tiger_bot_model = model;
+            s.tiger_bot_api_url = Some(api_url);
+            s.reasoning_effort = if effort.is_empty() { None } else { Some(effort) };
+            runtime.block_on(crate::server::data::save_settings(&s));
+        }
+    }
+
     // Render a single chat message bubble with rich markdown
     // ---------------------------------------------------------------------
 
@@ -4167,7 +4328,7 @@ You have access to these tools: {}.{}",
                             .color(if is_user {
                                 text_color.gamma_multiply(0.75)
                             } else {
-                                egui::Color32::from_rgb(168, 158, 144)
+                                crate::ui::theme::text_secondary_color()
                             }),
                     );
 
@@ -4265,7 +4426,7 @@ You have access to these tools: {}.{}",
                             .color(if is_user {
                                 text_color.gamma_multiply(0.6)
                             } else {
-                                egui::Color32::from_rgb(168, 158, 144)
+                                crate::ui::theme::text_secondary_color()
                             }),
                     );
 
@@ -4279,11 +4440,11 @@ You have access to these tools: {}.{}",
                                 .as_ref()
                                 .and_then(|f| f.rating.as_deref());
 
-                            let default_color = egui::Color32::from_rgb(168, 158, 144);
+                            let default_color = crate::ui::theme::text_secondary_color();
 
                             // Thumbs up
                             let up_color = if current_rating == Some("up") {
-                                egui::Color32::from_rgb(18, 154, 145) // teal active
+                                crate::ui::theme::accent_color() // teal active
                             } else { default_color };
                             let up_bg = if current_rating == Some("up") {
                                 egui::Color32::from_rgb(225, 241, 239) // accent-soft
@@ -4356,7 +4517,7 @@ You have access to these tools: {}.{}",
             egui::Frame::new()
                 .fill(bg_color)
                 .corner_radius(egui::CornerRadius { nw: 6, ne: 20, sw: 20, se: 20 })
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
+                .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
                 .inner_margin(egui::Margin::symmetric(18, 14))
                 .show(ui, |ui| {
                     // Fix streaming bubble to the same ~2/3 width as finished messages.
@@ -4369,13 +4530,13 @@ You have access to these tools: {}.{}",
                         egui::RichText::new(assistant_label())
                             .size(11.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(168, 158, 144)),
+                            .color(crate::ui::theme::text_secondary_color()),
                     );
 
                     // Show tool calls if any (vertical list with detail)
                     if !tool_calls.is_empty() {
                         egui::Frame::new()
-                            .fill(egui::Color32::from_rgb(244, 238, 229))
+                            .fill(crate::ui::theme::surface_color())
                             .corner_radius(6.0)
                             .inner_margin(egui::Margin::symmetric(8, 6))
                             .show(ui, |ui| {
@@ -4395,14 +4556,14 @@ You have access to these tools: {}.{}",
                                         ui.add(egui::Label::new(
                                             egui::RichText::new(&tc.args_preview)
                                                 .size(11.0)
-                                                .color(egui::Color32::from_rgb(124, 115, 104)),
+                                                .color(crate::ui::theme::text_secondary_color()),
                                         ).wrap());
                                     }
                                     if tc.status == "done" && !tc.result_preview.is_empty() {
                                         ui.add(egui::Label::new(
                                             egui::RichText::new(format!("\u{21AA} {}", tc.result_preview))
                                                 .size(11.0)
-                                                .color(egui::Color32::from_rgb(124, 115, 104)),
+                                                .color(crate::ui::theme::text_secondary_color()),
                                         ).wrap());
                                     }
                                     ui.add_space(2.0);
@@ -4416,7 +4577,7 @@ You have access to these tools: {}.{}",
                             egui::RichText::new("thinking...")
                                 .size(14.0)
                                 .italics()
-                                .color(egui::Color32::from_rgb(168, 158, 144)),
+                                .color(crate::ui::theme::text_secondary_color()),
                         );
                     } else if !text.is_empty() {
                         render_markdown_content(ui, text, text_color);
@@ -4426,7 +4587,7 @@ You have access to these tools: {}.{}",
                     ui.label(
                         egui::RichText::new("\u{25CF}")
                             .size(10.0)
-                            .color(egui::Color32::from_rgb(18, 154, 145)),
+                            .color(crate::ui::theme::accent_color()),
                     );
 
                     }); // close ui.vertical
@@ -5171,17 +5332,17 @@ You have access to these tools: {}.{}",
             ui.spacing_mut().item_spacing.x = 6.0;
             if ui.add(egui::Button::new(
                 egui::RichText::new("\u{21BB} Reload").size(11.0)
-            ).corner_radius(4.0).fill(egui::Color32::from_rgb(244, 238, 229))).clicked() {
+            ).corner_radius(4.0).fill(crate::ui::theme::surface_color())).clicked() {
                 let sid = self.graphic_loaded_config.clone();
                 self.load_graphic_data(&sid);
             }
             ui.separator();
             if ui.add(egui::Button::new(egui::RichText::new("+").size(12.0).strong())
-                .corner_radius(4.0).fill(egui::Color32::from_rgb(244, 238, 229)).min_size(egui::vec2(24.0, 20.0))).clicked() {
+                .corner_radius(4.0).fill(crate::ui::theme::surface_color()).min_size(egui::vec2(24.0, 20.0))).clicked() {
                 self.graphic_zoom = (self.graphic_zoom + 0.15).min(3.0);
             }
             if ui.add(egui::Button::new(egui::RichText::new("\u{2212}").size(12.0).strong())
-                .corner_radius(4.0).fill(egui::Color32::from_rgb(244, 238, 229)).min_size(egui::vec2(24.0, 20.0))).clicked() {
+                .corner_radius(4.0).fill(crate::ui::theme::surface_color()).min_size(egui::vec2(24.0, 20.0))).clicked() {
                 self.graphic_zoom = (self.graphic_zoom - 0.15).max(0.3);
             }
             ui.separator();
@@ -5193,7 +5354,7 @@ You have access to these tools: {}.{}",
                 ));
             };
             pill(ui, "Working", working, egui::Color32::from_rgb(34, 197, 94));
-            pill(ui, "Done", done, egui::Color32::from_rgb(168, 158, 144));
+            pill(ui, "Done", done, crate::ui::theme::text_secondary_color());
             pill(ui, "Idle", idle, egui::Color32::from_rgb(120, 130, 140));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(egui::RichText::new(format!("{} agents", total)).size(10.5).color(egui::Color32::from_rgb(100, 110, 120)));
@@ -5222,9 +5383,9 @@ You have access to these tools: {}.{}",
         // ── LEFT: Diagram area ──
         ui.allocate_ui_at_rect(diagram_rect, |ui| {
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(250, 251, 253))
+                .fill(crate::ui::theme::card_color())
                 .corner_radius(8.0)
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 220, 204)))
+                .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
                 .inner_margin(0.0)
                 .show(ui, |ui| {
                     let canvas_size = egui::vec2(diagram_w, panel_h);
@@ -5238,7 +5399,7 @@ You have access to these tools: {}.{}",
 
                     // Grid background
                     let grid_size = 24.0;
-                    let grid_color = egui::Color32::from_rgba_premultiplied(180, 185, 195, 50);
+                    let grid_color = crate::ui::theme::text_secondary_color().gamma_multiply(0.2);
                     {
                         let mut x = canvas_rect.min.x;
                         while x < canvas_rect.max.x {
@@ -5316,17 +5477,17 @@ You have access to these tools: {}.{}",
                         let both_done = from_done && to_done;
 
                         let base_edge_color = match edge.protocol.as_str() {
-                            "tcp"        => egui::Color32::from_rgb(18, 154, 145),
+                            "tcp"        => crate::ui::theme::accent_color(),
                             "queue"      => egui::Color32::from_rgb(245, 158, 11),
                             "bus"        => egui::Color32::from_rgb(168, 85, 247),
                             "blackboard" => egui::Color32::from_rgb(34, 197, 94),
-                            _ => egui::Color32::from_rgb(18, 154, 145),
+                            _ => crate::ui::theme::accent_color(),
                         };
                         // Active = colored, Done = grey, Idle = light grey
                         let edge_color = if is_active {
                             base_edge_color
                         } else if both_done {
-                            egui::Color32::from_rgb(200, 192, 178)
+                            crate::ui::theme::text_secondary_color()
                         } else {
                             egui::Color32::from_rgb(220, 212, 198)
                         };
@@ -5356,7 +5517,7 @@ You have access to these tools: {}.{}",
                                 egui::Align2::CENTER_BOTTOM,
                                 &label_text,
                                 egui::FontId::proportional(9.0 * zoom),
-                                if is_active { egui::Color32::from_rgb(52, 48, 42) } else { egui::Color32::from_rgb(200, 192, 178) },
+                                if is_active { crate::ui::theme::text_primary_color() } else { crate::ui::theme::text_secondary_color() },
                             );
                         }
                     }
@@ -5380,9 +5541,9 @@ You have access to these tools: {}.{}",
                             let is_active = from_working || to_working;
                             let both_done = from_done && to_done;
                             let color = if is_active {
-                                egui::Color32::from_rgb(18, 154, 145)
+                                crate::ui::theme::accent_color()
                             } else if both_done {
-                                egui::Color32::from_rgb(200, 192, 178)
+                                crate::ui::theme::text_secondary_color()
                             } else {
                                 egui::Color32::from_rgb(220, 212, 198)
                             };
@@ -5409,8 +5570,8 @@ You have access to these tools: {}.{}",
                         if !canvas_rect.intersects(node_rect) { continue; }
 
                         let base_color = match agent.role.as_str() {
-                            "human"        => egui::Color32::from_rgb(168, 158, 144),
-                            "orchestrator" => egui::Color32::from_rgb(18, 154, 145),
+                            "human"        => crate::ui::theme::text_secondary_color(),
+                            "orchestrator" => crate::ui::theme::accent_color(),
                             "worker"       => egui::Color32::from_rgb(34, 197, 94),
                             "checker"      => egui::Color32::from_rgb(245, 158, 11),
                             "reporter"     => egui::Color32::from_rgb(168, 85, 247),
@@ -5499,7 +5660,7 @@ You have access to these tools: {}.{}",
                                 egui::Align2::RIGHT_BOTTOM,
                                 &tool_display,
                                 egui::FontId::proportional(7.5 * zoom),
-                                egui::Color32::from_rgba_premultiplied(255, 255, 255, 180),
+                                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180),
                             );
                         }
                     }
@@ -5521,7 +5682,7 @@ You have access to these tools: {}.{}",
                         egui::RichText::new("Agent Activity")
                             .size(13.0)
                             .strong()
-                            .color(egui::Color32::from_rgb(52, 48, 42)),
+                            .color(crate::ui::theme::text_primary_color()),
                     );
                     ui.add_space(2.0);
                     ui.add(egui::Separator::default().spacing(4.0));
@@ -5596,7 +5757,7 @@ You have access to these tools: {}.{}",
                                 // Status dot color
                                 let dot_color = match agent.status.as_str() {
                                     "working" => egui::Color32::from_rgb(34, 197, 94),
-                                    "done" => egui::Color32::from_rgb(168, 158, 144),
+                                    "done" => crate::ui::theme::text_secondary_color(),
                                     _ => egui::Color32::from_rgb(210, 202, 188),
                                 };
 
@@ -5605,7 +5766,7 @@ You have access to these tools: {}.{}",
                                     .fill(if agent.status == "working" {
                                         egui::Color32::from_rgb(225, 241, 239) // #E1F1EF teal-soft tint for active
                                     } else {
-                                        egui::Color32::from_rgb(239, 231, 218)
+                                        crate::ui::theme::border_color()
                                     })
                                     .corner_radius(6.0)
                                     .inner_margin(egui::Margin::symmetric(8, 6))
@@ -5624,7 +5785,7 @@ You have access to these tools: {}.{}",
                                                 _ => "",
                                             };
                                             ui.label(egui::RichText::new(format!("{}{}", role_icon, agent.name))
-                                                .size(11.0).strong().color(egui::Color32::from_rgb(52, 48, 42)));
+                                                .size(11.0).strong().color(crate::ui::theme::text_primary_color()));
                                         });
                                         // Current action — prominent, only when working
                                         if !current_action.is_empty() {
@@ -5877,16 +6038,16 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
         // Blockquote
         if trimmed.starts_with("> ") {
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(244, 238, 229))
+                .fill(crate::ui::theme::surface_color())
                 .inner_margin(egui::Margin::symmetric(12, 4))
-                .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(18, 154, 145)))
+                .stroke(egui::Stroke::new(2.0, crate::ui::theme::accent_color()))
                 .corner_radius(4.0)
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(
                         egui::RichText::new(clean_inline_md(&trimmed[2..]))
                             .size(base)
                             .italics()
-                            .color(egui::Color32::from_rgb(124, 115, 104)),
+                            .color(crate::ui::theme::text_secondary_color()),
                     ).wrap());
                 });
             continue;
@@ -6003,11 +6164,11 @@ fn render_markdown_table(ui: &mut egui::Ui, lines: &[&str], default_color: egui:
 
     ui.add_space(4.0);
 
-    let header_bg = egui::Color32::from_rgba_premultiplied(18, 154, 145, 25);
+    let header_bg = crate::ui::theme::accent_color().gamma_multiply(0.12);
     let even_bg = egui::Color32::WHITE;
-    let odd_bg = egui::Color32::from_rgb(244, 238, 229);
-    let border_color = egui::Color32::from_rgb(230, 220, 204);
-    let header_text_color = egui::Color32::from_rgb(18, 154, 145);
+    let odd_bg = crate::ui::theme::surface_color();
+    let border_color = crate::ui::theme::border_color();
+    let header_text_color = crate::ui::theme::accent_color();
 
     egui::Frame::new()
         .fill(even_bg)
@@ -6062,7 +6223,7 @@ fn render_markdown_table(ui: &mut egui::Ui, lines: &[&str], default_color: egui:
                         ui.painter().hline(
                             rect.left()..=rect.right(),
                             y,
-                            egui::Stroke::new(1.5, egui::Color32::from_rgb(18, 154, 145)),
+                            egui::Stroke::new(1.5, crate::ui::theme::accent_color()),
                         );
                     }
                 }

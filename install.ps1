@@ -1,20 +1,20 @@
-# TigrimOS Installer for Windows (PowerShell)
+# AndrewOS Installer for Windows (PowerShell)
 # Clones, builds, and creates an installation folder.
 #
 # Designed to be run directly via:
-#   irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/Sompote/AndrewOS/main/install.ps1 | iex
 #
 # Optional environment overrides (useful for non-interactive / piped runs):
-#   $env:TIGRIMOS_INSTALL_DIR   -> install location (skips the location prompt)
-#   $env:TIGRIMOS_NONINTERACTIVE = "1" -> accept all defaults, no prompts
+#   $env:ANDREWOS_INSTALL_DIR   -> install location (skips the location prompt)
+#   $env:ANDREWOS_NONINTERACTIVE = "1" -> accept all defaults, no prompts
 
-$APP_NAME    = "TigrimOS"
-$REPO_URL    = "https://github.com/Sompote/TigrimOSR.git"
-$BINARY_NAME = "tigrimos.exe"
+$APP_NAME    = "AndrewOS"
+$REPO_URL    = "https://github.com/Sompote/AndrewOS.git"
+$BINARY_NAME = "andrewos.exe"
 
 # ── Helpers ──
 function Test-NonInteractive {
-    return ($env:TIGRIMOS_NONINTERACTIVE -eq "1")
+    return ($env:ANDREWOS_NONINTERACTIVE -eq "1")
 }
 
 function Read-Default {
@@ -299,11 +299,11 @@ function Ensure-Prerequisites {
 
 # ── Select location ──
 function Select-Location {
-    if ($env:TIGRIMOS_INSTALL_DIR) { return $env:TIGRIMOS_INSTALL_DIR }
+    if ($env:ANDREWOS_INSTALL_DIR) { return $env:ANDREWOS_INSTALL_DIR }
     if (Test-NonInteractive)       { return "$env:USERPROFILE\$APP_NAME" }
 
     Write-Host ""
-    Write-Host "Where would you like to install TigrimOS?" -ForegroundColor Yellow
+    Write-Host "Where would you like to install AndrewOS?" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  1) Home directory         ($env:USERPROFILE\$APP_NAME)"
     Write-Host "  2) Program Files          ($env:ProgramFiles\$APP_NAME)"
@@ -341,7 +341,7 @@ function Install-Source {
         catch { Write-Host "[WARN] Pull failed, continuing with existing code..." -ForegroundColor Yellow }
     } else {
         Write-Host ""
-        Write-Host "Cloning TigrimOS..." -ForegroundColor Cyan
+        Write-Host "Cloning AndrewOS..." -ForegroundColor Cyan
         $parent = Split-Path $Dir -Parent
         if ($parent -and -not (Test-Path $parent)) {
             New-Item -ItemType Directory -Path $parent -Force | Out-Null
@@ -363,7 +363,7 @@ function Build-App {
     $ErrorActionPreference = "Continue"
 
     Write-Host ""
-    Write-Host "Building TigrimOS (release mode)..." -ForegroundColor Cyan
+    Write-Host "Building AndrewOS (release mode)..." -ForegroundColor Cyan
     Write-Host "This may take a few minutes on first build."
     Write-Host ""
 
@@ -409,7 +409,7 @@ function Create-Shortcuts {
         $sc = $ws.CreateShortcut("$env:USERPROFILE\Desktop\$APP_NAME.lnk")
         $sc.TargetPath = "$DistDir\$APP_NAME.exe"
         $sc.WorkingDirectory = $DistDir
-        $sc.Description = "TigrimOS - AI Agent Platform"
+        $sc.Description = "AndrewOS - AI Agent Platform"
         $sc.Save()
         Write-Host "[OK] Desktop shortcut created" -ForegroundColor Green
     }
@@ -421,19 +421,19 @@ function Create-Shortcuts {
         $sc = $ws.CreateShortcut("$startDir\$APP_NAME.lnk")
         $sc.TargetPath = "$DistDir\$APP_NAME.exe"
         $sc.WorkingDirectory = $DistDir
-        $sc.Description = "TigrimOS - AI Agent Platform"
+        $sc.Description = "AndrewOS - AI Agent Platform"
         $sc.Save()
         Write-Host "[OK] Start Menu entry created" -ForegroundColor Green
     }
 }
 
 # ── Main (wrapped so `return` aborts cleanly without killing the host) ──
-function Install-TigrimOS {
+function Install-AndrewOS {
     $ErrorActionPreference = "Stop"
 
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  TigrimOS Installer for Windows" -ForegroundColor Cyan
+    Write-Host "  AndrewOS Installer for Windows" -ForegroundColor Cyan
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host ""
 
@@ -470,4 +470,4 @@ function Install-TigrimOS {
     }
 }
 
-Install-TigrimOS
+Install-AndrewOS

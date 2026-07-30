@@ -16,4 +16,4 @@ pub mod terminal_view;
 pub mod math_render;
 
 #[allow(unused_imports)]
-pub use app::TigrimOSApp;
+pub use app::AndrewOSApp;

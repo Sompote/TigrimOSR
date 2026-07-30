@@ -173,7 +173,7 @@ pub async fn handle_events(payload: Value) {
                     &reply_token,
                     &user_id,
                     &format!(
-                        "Unauthorized. Your LINE user id is {} — add it to lineAllowedUserIds in TigrimOS Settings.",
+                        "Unauthorized. Your LINE user id is {} — add it to lineAllowedUserIds in AndrewOS Settings.",
                         user_id
                     ),
                 )

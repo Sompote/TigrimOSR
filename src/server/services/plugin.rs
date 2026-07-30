@@ -155,7 +155,7 @@ pub async fn install_plugin(zip_bytes: &[u8]) -> Result<InstalledPlugin, String>
         }
     }
 
-    // Find and parse manifest (TigrimOS plugin.yaml or Claude formats)
+    // Find and parse manifest (AndrewOS plugin.yaml or Claude formats)
     let manifest = find_and_parse_manifest(&mut archive)?;
 
     // Validate plugin ID
@@ -478,7 +478,7 @@ fn find_and_parse_manifest(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>
         }
     }
 
-    // 1. TigrimOS native: plugin.yaml
+    // 1. AndrewOS native: plugin.yaml
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| format!("ZIP error: {e}"))?;
         let name = file.name().to_string();

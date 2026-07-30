@@ -31,7 +31,7 @@ pub enum Tab {
     Folders,
 }
 
-pub struct TigrimOSApp {
+pub struct AndrewOSApp {
     pub vm_manager: Arc<VmManager>,
     pub selected_tab: Tab,
     pub show_reset_alert: bool,
@@ -65,7 +65,7 @@ struct VmSnapshot {
     shared_folders: Vec<SharedFolderEntry>,
 }
 
-impl TigrimOSApp {
+impl AndrewOSApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         vm_manager: Arc<VmManager>,
@@ -189,7 +189,45 @@ impl TigrimOSApp {
     }
 }
 
-impl eframe::App for TigrimOSApp {
+/// A collapsed-rail icon button, painted by hand.
+///
+/// egui derives a button's text position from the *parent layout's* alignment,
+/// so in the rail's top-down column the glyph is pushed to the left edge of the
+/// button box. Padding cannot correct that — every glyph has a different width,
+/// so any fixed padding centres exactly one of them. Allocating the square and
+/// painting the glyph at `rect.center()` centres all of them on both axes.
+#[allow(clippy::too_many_arguments)]
+fn rail_icon_button(
+    ui: &mut egui::Ui,
+    glyph: &str,
+    side: f32,
+    glyph_size: f32,
+    fill: egui::Color32,
+    hover_fill: egui::Color32,
+    stroke: egui::Stroke,
+    ink: egui::Color32,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let radius = egui::CornerRadius::same((side * 0.27) as u8);
+        let bg = if resp.hovered() { hover_fill } else { fill };
+        let painter = ui.painter();
+        painter.rect_filled(rect, radius, bg);
+        if stroke.width > 0.0 {
+            painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
+        }
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph,
+            egui::FontId::proportional(glyph_size),
+            ink,
+        );
+    }
+    resp
+}
+
+impl eframe::App for AndrewOSApp {
     /// Clear to fully transparent so the "Transparent" theme's translucent
     /// panel fills reveal the desktop. Opaque themes paint over this entirely.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -211,7 +249,11 @@ impl eframe::App for TigrimOSApp {
         let sidebar_bg = super::theme::hover_color();  // warm rail
 
         // ── Left sidebar (Kimi-style) ────────────────────────────────
-        let sidebar_w = if self.sidebar_open { 240.0 } else { 52.0 };
+        // Collapsed rail: 48px controls + the frame's 8px margins each side.
+        // It was 52px wide, which forced 36px buttons — small enough that the
+        // icons read as faint marks rather than targets.
+        const RAIL_BTN: f32 = 48.0;
+        let sidebar_w = if self.sidebar_open { 240.0 } else { RAIL_BTN + 18.0 };
 
         egui::SidePanel::left("nav_sidebar")
             .exact_width(sidebar_w)
@@ -222,24 +264,37 @@ impl eframe::App for TigrimOSApp {
                 .stroke(egui::Stroke::NONE))
             .show(ctx, |ui| {
                 ui.set_min_width(sidebar_w - 16.0);
-                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.spacing_mut().item_spacing.y = 4.0;
+                // Expanded, these are real labelled buttons and need padding.
+                // Collapsed, they are drawn by `rail_icon_button`, which centres
+                // the glyph itself and ignores padding entirely.
+                if self.sidebar_open {
+                    ui.spacing_mut().button_padding = egui::vec2(12.0, 8.0);
+                }
 
                 // ── Header: Logo icon + text + collapse toggle ──
                 // Pre-load sidebar logo texture
                 let sidebar_logo_id = self.get_sidebar_logo(ctx).map(|t| t.id());
                 ui.horizontal(|ui| {
                     if self.sidebar_open {
-                        // "Tigrim" in dark + "OS" in accent bold (matching template)
-                        ui.label(egui::RichText::new("Tigrim").size(19.0).strong().color(text_dark));
+                        // "Andrew" in dark + "OS" in accent bold (matching template)
+                        ui.label(egui::RichText::new("Andrew").size(19.0).strong().color(text_dark));
                         ui.add_space(-6.0);
                         ui.label(egui::RichText::new("OS").size(19.0).strong().color(accent));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let icon = if self.sidebar_open { "\u{2039}" } else { "\u{2630}" }; // ‹ or ☰
-                        let btn = egui::Button::new(egui::RichText::new(icon).size(16.0).color(text_dim))
-                            .fill(egui::Color32::TRANSPARENT)
-                            .corner_radius(9.0);
-                        if ui.add(btn).on_hover_text(if self.sidebar_open { "Collapse sidebar" } else { "Expand sidebar" }).clicked() {
+                        let resp = rail_icon_button(
+                            ui,
+                            icon,
+                            RAIL_BTN,
+                            20.0,
+                            egui::Color32::TRANSPARENT,
+                            super::theme::hover_color(),
+                            egui::Stroke::new(1.0, super::theme::border_color()),
+                            text_dim,
+                        );
+                        if resp.on_hover_text(if self.sidebar_open { "Collapse sidebar" } else { "Expand sidebar" }).clicked() {
                             self.sidebar_open = !self.sidebar_open;
                         }
                     });
@@ -247,15 +302,40 @@ impl eframe::App for TigrimOSApp {
 
                 ui.add_space(8.0);
 
-                // ── New Chat button (filled teal pill, matching template) ──
+                // ── New Chat button — the rail's one filled control ──
                 {
                     let (label, icon) = if self.sidebar_open { ("+  New chat", "") } else { ("+", "New chat") };
-                    let btn = egui::Button::new(egui::RichText::new(label).size(14.0).strong().color(egui::Color32::WHITE))
-                        .fill(accent)
-                        .stroke(egui::Stroke::NONE)
-                        .corner_radius(14.0)
-                        .min_size(egui::vec2(if self.sidebar_open { ui.available_width() } else { 36.0 }, 38.0));
-                    let resp = ui.add(btn);
+                    // The rail is one shape system: 36-wide rounded squares at
+                    // radius 10. This button was a 36x38 squircle at radius 14,
+                    // so it read as a lopsided blob wedged between the hairline
+                    // hamburger above and the nav items below. Same box as its
+                    // neighbours; it earns its prominence from the accent fill,
+                    // not from a different silhouette.
+                    // White on the teal accent is 1.82:1 — the glyph was washing
+                    // out into its own fill. readable_on picks near-black here
+                    // (8.88:1) and still does the right thing if the accent is
+                    // re-themed.
+                    let ink = super::theme::readable_on(accent);
+                    let resp = if self.sidebar_open {
+                        ui.add(
+                            egui::Button::new(egui::RichText::new(label).size(15.0).strong().color(ink))
+                                .fill(accent)
+                                .stroke(egui::Stroke::NONE)
+                                .corner_radius(13)
+                                .min_size(egui::vec2(ui.available_width(), RAIL_BTN)),
+                        )
+                    } else {
+                        rail_icon_button(
+                            ui,
+                            "+",
+                            RAIL_BTN,
+                            24.0,
+                            accent,
+                            super::theme::accent_color().gamma_multiply(0.85),
+                            egui::Stroke::NONE,
+                            ink,
+                        )
+                    };
                     if !self.sidebar_open {
                         resp.clone().on_hover_text(icon);
                     }
@@ -285,18 +365,22 @@ impl eframe::App for TigrimOSApp {
 
                 for &(tab, icon, label) in nav_items {
                     let is_active = self.selected_tab == tab;
-                    let text_color = if is_active {
-                        egui::Color32::from_rgb(10, 95, 90) // accent-ink for active
-                    } else {
-                        text_dim
-                    };
+                    // Active state is an accent tint, not a solid white card.
+                    // The white came from the original light-theme template and
+                    // read as a bright blob punched into a dark navy rail.
+                    let text_color = if is_active { accent } else { text_dim };
                     let bg = if is_active {
-                        egui::Color32::WHITE // white card for active (like template)
+                        egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 38)
                     } else {
                         egui::Color32::TRANSPARENT
                     };
                     let stroke = if is_active {
-                        egui::Stroke::new(0.5, egui::Color32::from_rgba_premultiplied(52, 48, 42, 12))
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_unmultiplied(
+                                accent.r(), accent.g(), accent.b(), 90,
+                            ),
+                        )
                     } else {
                         egui::Stroke::NONE
                     };
@@ -306,18 +390,26 @@ impl eframe::App for TigrimOSApp {
                     } else {
                         icon.to_string()
                     };
-                    let font_weight = if is_active { 14.5 } else { 14.0 };
+                    let font_weight = if self.sidebar_open { 14.5 } else { 18.0 };
                     let rich = if is_active {
                         egui::RichText::new(&btn_text).size(font_weight).strong().color(text_color)
                     } else {
                         egui::RichText::new(&btn_text).size(font_weight).color(text_color)
                     };
-                    let btn = egui::Button::new(rich)
-                        .fill(bg)
-                        .stroke(stroke)
-                        .corner_radius(10.0)
-                        .min_size(egui::vec2(if self.sidebar_open { ui.available_width() } else { 36.0 }, 34.0));
-                    let resp = ui.add(btn);
+                    let resp = if self.sidebar_open {
+                        ui.add(
+                            egui::Button::new(rich)
+                                .fill(bg)
+                                .stroke(stroke)
+                                .corner_radius(13)
+                                .min_size(egui::vec2(ui.available_width(), RAIL_BTN)),
+                        )
+                    } else {
+                        let hover_bg = if is_active { bg } else { super::theme::hover_color() };
+                        rail_icon_button(
+                            ui, icon, RAIL_BTN, 18.0, bg, hover_bg, stroke, text_color,
+                        )
+                    };
                     if !self.sidebar_open {
                         resp.clone().on_hover_text(label);
                     }
@@ -338,7 +430,7 @@ impl eframe::App for TigrimOSApp {
                     // Template-style uppercase section header
                     let header_btn = egui::Button::new(
                         egui::RichText::new("CHAT HISTORY").size(11.0).strong().color(
-                            egui::Color32::from_rgb(168, 158, 144) // ink-faint
+                            crate::ui::theme::text_secondary_color() // ink-faint
                         ),
                     )
                     .fill(egui::Color32::TRANSPARENT)
@@ -468,7 +560,7 @@ impl eframe::App for TigrimOSApp {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
                             let local_color = if !self.remote_mode {
-                                egui::Color32::from_rgb(18, 154, 145)
+                                crate::ui::theme::accent_color()
                             } else {
                                 text_dim
                             };
@@ -480,7 +572,7 @@ impl eframe::App for TigrimOSApp {
 
                             if ui.add(egui::Button::new(
                                 egui::RichText::new("Local").size(10.0).color(local_color))
-                                .fill(if !self.remote_mode { egui::Color32::from_rgba_premultiplied(18, 154, 145, 30) } else { egui::Color32::TRANSPARENT })
+                                .fill(if !self.remote_mode { crate::ui::theme::accent_color().gamma_multiply(0.12) } else { egui::Color32::TRANSPARENT })
                                 .corner_radius(4.0)
                                 .min_size(egui::vec2(0.0, 20.0))
                             ).clicked() {
@@ -490,7 +582,7 @@ impl eframe::App for TigrimOSApp {
 
                             if ui.add(egui::Button::new(
                                 egui::RichText::new("Remote").size(10.0).color(remote_color))
-                                .fill(if self.remote_mode { egui::Color32::from_rgba_premultiplied(168, 85, 247, 30) } else { egui::Color32::TRANSPARENT })
+                                .fill(if self.remote_mode { egui::Color32::from_rgb(168, 85, 247).gamma_multiply(0.12) } else { egui::Color32::TRANSPARENT })
                                 .corner_radius(4.0)
                                 .min_size(egui::vec2(0.0, 20.0))
                             ).clicked() {

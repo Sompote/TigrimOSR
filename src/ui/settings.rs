@@ -7,6 +7,7 @@ use crate::server::data::{
     generate_token, get_file_tokens, get_settings, save_file_tokens, save_settings, FileToken,
     LocalFileMount, McpTool, ModelPoolEntry, RemoteInstance,
 };
+use crate::server::services::cli_models::CliProvider;
 use crate::vm::{VmConfig, VmManager, VmState};
 
 // ---------------------------------------------------------------------------
@@ -146,9 +147,17 @@ impl AiProvider {
 
 fn builtin_providers() -> Vec<AiProvider> {
     vec![
-        AiProvider::new("Claude Code (Local)", "claude-code", "claude-sonnet-4-20250514"),
+        // Local CLI backends. Default models are aliases where the CLI offers
+        // one, so they keep resolving to the current model instead of pinning a
+        // version that goes stale; the Model dropdown is populated from live
+        // CLI discovery either way.
+        AiProvider::new("Claude Code (Local)", "claude-code", "sonnet"),
         AiProvider::new("Gemini CLI (Local)", "gemini-cli", "gemini-2.5-pro"),
-        AiProvider::new("Codex (Local)", "codex-cli", "gpt-5.4"),
+        AiProvider::new("Codex (Local)", "codex-cli", "gpt-5.6-sol"),
+        AiProvider::new("Antigravity (Local)", "agy-cli", "gemini-3.6-flash-high"),
+        AiProvider::new("OpenCode (Local)", "opencode-cli", ""),
+        AiProvider::new("Grok (Local)", "grok-cli", "grok-4.5"),
+        AiProvider::new("GitHub Copilot (Local)", "copilot-cli", ""),
         AiProvider::new("OpenRouter", "https://openrouter.ai/api/v1", "openrouter/auto"),
         AiProvider::new("xAI (Grok)", "https://api.x.ai/v1", "grok-3"),
         AiProvider::new("Anthropic (Claude)", "https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
@@ -175,6 +184,13 @@ pub struct SettingsView {
     // --- AI / API ---
     api_key: String,
     api_model: String,
+    /// Reasoning-effort tier for local CLI providers ("" = the CLI's default).
+    reasoning_effort: String,
+    /// Models/effort tiers discovered from the CLIs installed on this machine.
+    /// Filled by a background task — probing spawns processes and takes a few
+    /// seconds cold, which is far too long to block a UI frame on.
+    cli_providers: Arc<Mutex<Option<Vec<CliProvider>>>>,
+    cli_providers_loading: bool,
     api_url: String,
     selected_provider: String,
     custom_providers: Vec<AiProvider>,
@@ -451,6 +467,9 @@ impl Default for SettingsView {
             new_provider_model: String::new(),
             web_search_enabled: false,
             web_search_api_key: String::new(),
+            reasoning_effort: String::new(),
+            cli_providers: Arc::new(Mutex::new(None)),
+            cli_providers_loading: false,
             api_needs_refresh: true,
             api_status_msg: None,
             connection_status: ConnectionStatus::Idle,
@@ -683,13 +702,16 @@ impl SettingsView {
             .show(ctx, |ui| {
                 // Tab bar — plain horizontal wrap, no scroll area (avoids dark hover band)
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(251, 247, 241))
-                    .inner_margin(egui::Margin::symmetric(0, 2))
+                    // Was a hardcoded cream #FBF7F1 — a light-theme panel left
+                    // behind in a dark app, which is why the unselected tab
+                    // labels were pale grey on near-white.
+                    .fill(crate::ui::theme::surface_color())
+                    .inner_margin(egui::Margin::symmetric(6, 6))
                     .show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing.x = 2.0;
                             ui.spacing_mut().item_spacing.y = 2.0;
-                            let accent = egui::Color32::from_rgb(18, 154, 145);
+                            let accent = crate::ui::theme::accent_color();
                             for &section in SettingsSection::ALL {
                                 let is_selected = self.selected_section == section;
                                 let label = section.label();
@@ -701,11 +723,18 @@ impl SettingsView {
                                         .color(if is_selected {
                                             accent
                                         } else {
-                                            egui::Color32::from_rgb(124, 115, 104)
+                                            crate::ui::theme::text_secondary_color()
                                         }),
                                 )
                                 .fill(if is_selected {
-                                    egui::Color32::from_rgba_premultiplied(18, 154, 145, 20)
+                                    // Unmultiplied: the old call passed
+                                    // premultiplied RGB far above its own alpha,
+                                    // which is not a representable colour. Also
+                                    // follows the live accent now, not a frozen
+                                    // pre-rebrand teal.
+                                    egui::Color32::from_rgba_unmultiplied(
+                                        accent.r(), accent.g(), accent.b(), 38,
+                                    )
                                 } else {
                                     egui::Color32::TRANSPARENT
                                 })
@@ -808,6 +837,7 @@ impl SettingsView {
         // Sub-Agent
         self.sub_agent_enabled = settings.sub_agent_enabled.unwrap_or(false);
         self.sub_agent_mode = settings.sub_agent_mode.unwrap_or_else(|| "auto".into());
+        self.reasoning_effort = settings.reasoning_effort.clone().unwrap_or_default();
         self.sub_agent_model = settings.sub_agent_model.unwrap_or_default();
         self.model_pool = settings.model_pool.unwrap_or_default();
         self.router_tier = settings.router_tier.unwrap_or_else(|| "fast".into());
@@ -973,6 +1003,11 @@ impl SettingsView {
         // Sub-Agent
         settings.sub_agent_enabled = Some(self.sub_agent_enabled);
         settings.sub_agent_mode = Some(self.sub_agent_mode.clone());
+        settings.reasoning_effort = if self.reasoning_effort.is_empty() {
+            None
+        } else {
+            Some(self.reasoning_effort.clone())
+        };
         settings.sub_agent_model = if self.sub_agent_model.is_empty() {
             None
         } else {
@@ -1296,8 +1331,8 @@ impl SettingsView {
                 VmState::Running if service_ready => egui::Color32::from_rgb(34, 197, 94),
                 VmState::Running => egui::Color32::from_rgb(250, 204, 21),
                 VmState::Error => egui::Color32::from_rgb(239, 68, 68),
-                VmState::Stopped => egui::Color32::from_rgb(168, 158, 144),
-                _ => egui::Color32::from_rgb(18, 154, 145),
+                VmState::Stopped => crate::ui::theme::text_secondary_color(),
+                _ => crate::ui::theme::accent_color(),
             };
             ui.horizontal(|ui| {
                 let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
@@ -1431,6 +1466,29 @@ impl SettingsView {
     //  2. AI / API
     // ==================================================================
 
+    /// Kick off CLI model discovery on the runtime, if it isn't already loaded.
+    ///
+    /// Probing spawns one process per CLI and takes a few seconds cold, so it
+    /// must never run on the UI thread — the panel renders whatever has landed
+    /// and picks up the rest on a later frame.
+    fn ensure_cli_providers(&mut self, runtime: &tokio::runtime::Handle, force: bool) {
+        if force {
+            self.cli_providers_loading = false;
+        } else if self.cli_providers_loading {
+            return;
+        } else if self.cli_providers.lock().map(|g| g.is_some()).unwrap_or(true) {
+            return;
+        }
+        self.cli_providers_loading = true;
+        let slot = self.cli_providers.clone();
+        runtime.spawn(async move {
+            let providers = crate::server::services::cli_models::get_providers(force).await;
+            if let Ok(mut g) = slot.lock() {
+                *g = Some(providers);
+            }
+        });
+    }
+
     fn section_ai(
         &mut self,
         ui: &mut egui::Ui,
@@ -1489,7 +1547,10 @@ impl SettingsView {
                 });
                 ui.end_row();
 
-                let is_local_cli = self.api_url == "claude-code" || self.api_url == "codex-cli" || self.api_url == "gemini-cli";
+                let is_local_cli = matches!(
+                    self.api_url.as_str(),
+                    "claude-code" | "codex-cli" | "gemini-cli" | "agy-cli" | "opencode-cli" | "grok-cli" | "copilot-cli"
+                );
 
                 if !is_local_cli {
                     // API Key
@@ -1511,14 +1572,109 @@ impl SettingsView {
                     ui.end_row();
                 }
 
-                // Model (auto-filled by provider, but editable)
+                // Model. For a local CLI provider the choices come from probing
+                // that CLI, so the list stays right when a vendor ships a new
+                // model. Hosted APIs keep the free-text box.
+                if is_local_cli {
+                    self.ensure_cli_providers(runtime, false);
+                }
+                let discovered: Option<CliProvider> = if is_local_cli {
+                    let want = match self.api_url.as_str() {
+                        "claude-code" => "claude",
+                        "codex-cli" => "codex",
+                        "gemini-cli" => "gemini",
+                        "agy-cli" => "antigravity",
+                        "opencode-cli" => "opencode",
+                        "grok-cli" => "grok",
+                        "copilot-cli" => "copilot",
+                        _ => "",
+                    };
+                    self.cli_providers
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.as_ref().and_then(|v| v.iter().find(|p| p.id == want).cloned()))
+                } else {
+                    None
+                };
+
                 ui.label("Model:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.api_model)
-                        .desired_width(300.0)
-                        .hint_text(if is_local_cli { "e.g. claude-sonnet-4-20250514 or o4-mini" } else { "e.g. deepseek-chat" }),
-                );
+                match discovered.as_ref().filter(|p| !p.models.is_empty()) {
+                    Some(p) => {
+                        let models = p.models.clone();
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_salt("ai_model_picker")
+                                .selected_text(if self.api_model.is_empty() {
+                                    "Select model…"
+                                } else {
+                                    self.api_model.as_str()
+                                })
+                                .width(250.0)
+                                .show_ui(ui, |ui| {
+                                    for m in &models {
+                                        ui.selectable_value(
+                                            &mut self.api_model,
+                                            m.id.clone(),
+                                            m.label.as_str(),
+                                        );
+                                    }
+                                });
+                            if ui.small_button("Refresh").clicked() {
+                                self.ensure_cli_providers(runtime, true);
+                            }
+                        });
+                    }
+                    None => {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.api_model)
+                                .desired_width(300.0)
+                                .hint_text(if is_local_cli { "e.g. sonnet, opus, gpt-5.6-terra" } else { "e.g. deepseek-chat" }),
+                        );
+                    }
+                }
                 ui.end_row();
+
+                // Reasoning effort, where the selected model supports one.
+                // Codex reports these per model; Claude Code per provider.
+                if let Some(p) = discovered.as_ref() {
+                    let efforts = p
+                        .models
+                        .iter()
+                        .find(|m| m.id == self.api_model)
+                        .map(|m| m.efforts.clone())
+                        .filter(|e| !e.is_empty())
+                        .unwrap_or_else(|| p.efforts.clone());
+                    if !efforts.is_empty() {
+                        ui.label("Effort:");
+                        egui::ComboBox::from_id_salt("ai_effort_picker")
+                            .selected_text(if self.reasoning_effort.is_empty() {
+                                "(CLI default)"
+                            } else {
+                                self.reasoning_effort.as_str()
+                            })
+                            .width(250.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.reasoning_effort, String::new(), "(CLI default)");
+                                for e in &efforts {
+                                    ui.selectable_value(&mut self.reasoning_effort, e.clone(), e.as_str());
+                                }
+                            });
+                        ui.end_row();
+                    }
+
+                    // Say where the list came from, so a curated fallback is
+                    // never mistaken for something the CLI actually reported.
+                    let origin = match p.source.as_str() {
+                        "cache" => format!("{} model(s) from {}'s own cache", p.models.len(), p.name),
+                        "cli" => format!("{} model(s) reported by `{} models`", p.models.len(), p.binary),
+                        _ => p
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "built-in list — this CLI cannot enumerate its models".into()),
+                    };
+                    ui.label("");
+                    ui.label(egui::RichText::new(origin).size(11.0).weak());
+                    ui.end_row();
+                }
             });
 
         // Add custom provider panel
@@ -1814,11 +1970,11 @@ impl SettingsView {
 
             ui.add_space(4.0);
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(239, 231, 218))
+                .fill(crate::ui::theme::border_color())
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
-                    let tc = egui::Color32::from_rgb(52, 48, 42);
+                    let tc = crate::ui::theme::text_primary_color();
                     ui.label(egui::RichText::new("Key Distinction:").strong().size(11.0).color(tc));
                     ui.add_space(4.0);
                     egui::Grid::new("soul_identity_table")
@@ -2029,6 +2185,25 @@ impl SettingsView {
                                 *mode,
                             );
                         }
+                        // Workflow patterns come straight from the executor's
+                        // catalog so this list cannot drift from what actually
+                        // dispatches. Chat routes them through
+                        // run_workflow_turn instead of the sub-agent loop.
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("Workflow patterns")
+                                .size(10.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                        for (id, _desc) in
+                            crate::server::services::workflow::pattern_catalog()
+                        {
+                            ui.selectable_value(
+                                &mut self.sub_agent_mode,
+                                id.to_string(),
+                                id,
+                            );
+                        }
                     });
                 if self.sub_agent_mode == "graph" {
                     ui.label(
@@ -2036,6 +2211,11 @@ impl SettingsView {
                             .size(10.0)
                             .color(egui::Color32::GRAY),
                     );
+                } else if let Some((_, desc)) = crate::server::services::workflow::pattern_catalog()
+                    .into_iter()
+                    .find(|(id, _)| *id == self.sub_agent_mode)
+                {
+                    ui.label(egui::RichText::new(desc).size(10.0).color(egui::Color32::GRAY));
                 }
                 ui.end_row();
 
@@ -2155,6 +2335,28 @@ impl SettingsView {
             );
             ui.add_space(6.0);
 
+            // Union of every effort tier the installed CLIs report, so one
+            // roster row can target whichever provider it names. Read before
+            // the loop borrows the pool mutably.
+            let effort_choices: Vec<String> = {
+                let mut tiers: Vec<String> = Vec::new();
+                if let Ok(guard) = self.cli_providers.lock() {
+                    if let Some(providers) = guard.as_ref() {
+                        for p in providers {
+                            for e in p.efforts.iter().chain(p.models.iter().flat_map(|m| m.efforts.iter())) {
+                                if !tiers.contains(e) {
+                                    tiers.push(e.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                if tiers.is_empty() {
+                    tiers = ["low", "medium", "high", "xhigh", "max"].iter().map(|s| s.to_string()).collect();
+                }
+                tiers
+            };
+
             let mut pool_to_delete: Option<usize> = None;
             for (idx, entry) in self.model_pool.iter_mut().enumerate() {
                 ui.group(|ui| {
@@ -2238,6 +2440,43 @@ impl SettingsView {
                                     .desired_width(280.0)
                                     .hint_text("hint for the designer, e.g. hard reasoning"),
                             );
+                            ui.end_row();
+
+                            // Roles bind this entry to specific swarm/workflow
+                            // roles, so judges can run on a different model
+                            // from workers. Blank = usable for any role.
+                            ui.label("Roles:");
+                            let mut roles_text = entry.roles.join(", ");
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut roles_text)
+                                        .desired_width(280.0)
+                                        .hint_text("blank = any · e.g. judge, verifier"),
+                                )
+                                .changed()
+                            {
+                                entry.roles = roles_text
+                                    .split(',')
+                                    .map(|r| r.trim().to_string())
+                                    .filter(|r| !r.is_empty())
+                                    .collect();
+                            }
+                            ui.end_row();
+
+                            ui.label("Effort:");
+                            egui::ComboBox::from_id_salt(format!("pool_effort_{}", idx))
+                                .selected_text(if entry.effort.is_empty() {
+                                    "(default)"
+                                } else {
+                                    entry.effort.as_str()
+                                })
+                                .width(280.0)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut entry.effort, String::new(), "(default)");
+                                    for t in &effort_choices {
+                                        ui.selectable_value(&mut entry.effort, t.clone(), t.as_str());
+                                    }
+                                });
                             ui.end_row();
                         });
                 });
@@ -3572,7 +3811,7 @@ impl SettingsView {
         ui.label(
             egui::RichText::new("Automatically generates reusable skills from your chat sessions using LLM analysis.")
                 .size(12.0)
-                .color(egui::Color32::from_rgb(168, 158, 144)),
+                .color(crate::ui::theme::text_secondary_color()),
         );
         ui.add_space(8.0);
 
@@ -3727,12 +3966,12 @@ impl SettingsView {
                 let _proposal_name = proposal.name.clone();
 
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgba_premultiplied(18, 154, 145, 12))
+                    .fill(crate::ui::theme::accent_color().gamma_multiply(0.12))
                     .corner_radius(8.0)
                     .inner_margin(egui::Margin::same(10))
                     .stroke(egui::Stroke::new(
                         1.0,
-                        egui::Color32::from_rgb(18, 154, 145),
+                        crate::ui::theme::accent_color(),
                     ))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
@@ -3768,7 +4007,7 @@ impl SettingsView {
                             ui.label(
                                 egui::RichText::new(&proposal.description)
                                     .size(12.0)
-                                    .color(egui::Color32::from_rgb(168, 158, 144)),
+                                    .color(crate::ui::theme::text_secondary_color()),
                             );
 
                             if !proposal.rationale.is_empty() {
@@ -3779,7 +4018,7 @@ impl SettingsView {
                                     ))
                                     .size(11.0)
                                     .italics()
-                                    .color(egui::Color32::from_rgb(168, 158, 144)),
+                                    .color(crate::ui::theme::text_secondary_color()),
                                 );
                             }
 
@@ -3881,7 +4120,7 @@ impl SettingsView {
                     ui.label(
                         egui::RichText::new(&proposal.review_status)
                             .size(11.0)
-                            .color(egui::Color32::from_rgb(168, 158, 144)),
+                            .color(crate::ui::theme::text_secondary_color()),
                     );
                 });
             }
@@ -4034,7 +4273,7 @@ impl SettingsView {
                     .on_hover_text(
                         "Force a real, visible (headful) browser even on a UI-less server. \
                          Trips far fewer bot blocks (Google etc.). On a server with no display, \
-                         run TigrimOS under a virtual one, e.g. `xvfb-run`.",
+                         run AndrewOS under a virtual one, e.g. `xvfb-run`.",
                     )
                     .changed()
                 {
@@ -4060,7 +4299,7 @@ impl SettingsView {
                 "Uses a dedicated browser profile (kept under the app data dir), so your \
                  everyday browsing stays separate. First use downloads the browser on demand. \
                  To beat Google's headless blocking on Ubuntu: pick \"Chrome\" + \"Real browser\" \
-                 and launch the server under `xvfb-run -a ./TigrimOS --headless`."
+                 and launch the server under `xvfb-run -a ./AndrewOS --headless`."
             };
             ui.label(
                 egui::RichText::new(help)
@@ -4146,7 +4385,7 @@ impl SettingsView {
         ui.horizontal(|ui| {
             ui.heading("Plugins");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let accent = egui::Color32::from_rgb(18, 154, 145);
+                let accent = crate::ui::theme::accent_color();
                 let btn = egui::Button::new(
                     egui::RichText::new("Install Plugin")
                         .size(13.0)
@@ -4260,7 +4499,7 @@ impl SettingsView {
                     for p in &plugins_snapshot {
                         let is_selected = selected_id.as_deref() == Some(&p.id);
                         let frame_fill = if is_selected {
-                            egui::Color32::from_rgba_premultiplied(18, 154, 145, 20)
+                            crate::ui::theme::accent_color().gamma_multiply(0.12)
                         } else {
                             egui::Color32::TRANSPARENT
                         };
@@ -4428,7 +4667,7 @@ impl SettingsView {
                     ui.label(
                         egui::RichText::new(&s.name)
                             .size(12.0)
-                            .color(egui::Color32::from_rgb(18, 154, 145)),
+                            .color(crate::ui::theme::accent_color()),
                     );
                     if let Some(ref desc) = s.description {
                         ui.label(
@@ -4699,16 +4938,16 @@ impl SettingsView {
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 let c = &mut self.theme.colors;
-                changed |= Self::theme_color_row(ui, "Surface (panels/windows):", &mut c.surface, egui::Color32::from_rgb(251, 247, 241));
-                changed |= Self::theme_color_row(ui, "Canvas (inputs/fields):", &mut c.canvas, egui::Color32::from_rgb(244, 238, 229));
+                changed |= Self::theme_color_row(ui, "Surface (panels/windows):", &mut c.surface, crate::ui::theme::surface_color());
+                changed |= Self::theme_color_row(ui, "Canvas (inputs/fields):", &mut c.canvas, crate::ui::theme::surface_color());
                 changed |= Self::theme_color_row(ui, "Card fill:", &mut c.card, egui::Color32::WHITE);
-                changed |= Self::theme_color_row(ui, "Hover background:", &mut c.hover, egui::Color32::from_rgb(239, 231, 218));
-                changed |= Self::theme_color_row(ui, "Border / separators:", &mut c.border, egui::Color32::from_rgb(230, 220, 204));
-                changed |= Self::theme_color_row(ui, "Primary text:", &mut c.text_primary, egui::Color32::from_rgb(52, 48, 42));
-                changed |= Self::theme_color_row(ui, "Secondary text:", &mut c.text_secondary, egui::Color32::from_rgb(124, 115, 104));
-                changed |= Self::theme_color_row(ui, "Accent:", &mut c.accent, egui::Color32::from_rgb(18, 154, 145));
+                changed |= Self::theme_color_row(ui, "Hover background:", &mut c.hover, crate::ui::theme::border_color());
+                changed |= Self::theme_color_row(ui, "Border / separators:", &mut c.border, crate::ui::theme::border_color());
+                changed |= Self::theme_color_row(ui, "Primary text:", &mut c.text_primary, crate::ui::theme::text_primary_color());
+                changed |= Self::theme_color_row(ui, "Secondary text:", &mut c.text_secondary, crate::ui::theme::text_secondary_color());
+                changed |= Self::theme_color_row(ui, "Accent:", &mut c.accent, crate::ui::theme::accent_color());
                 changed |= Self::theme_color_row(ui, "Accent (pressed):", &mut c.accent_hover, egui::Color32::from_rgb(12, 129, 122));
-                let accent_fb = crate::ui::theme::hex_to_color(&c.accent, egui::Color32::from_rgb(18, 154, 145));
+                let accent_fb = crate::ui::theme::hex_to_color(&c.accent, crate::ui::theme::accent_color());
                 let card_fb = crate::ui::theme::hex_to_color(&c.card, egui::Color32::WHITE);
                 changed |= Self::theme_color_row(ui, "User bubble:", &mut c.user_bubble, accent_fb);
                 changed |= Self::theme_color_row(ui, "AI bubble:", &mut c.ai_bubble, card_fb);
@@ -4926,7 +5165,7 @@ impl SettingsView {
                     .corner_radius(12.0),
             );
             ui.add_space(8.0);
-            ui.label(egui::RichText::new("TigrimOS").size(28.0).strong());
+            ui.label(egui::RichText::new("AndrewOS").size(28.0).strong());
             ui.label(
                 egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
                     .size(14.0)
@@ -4937,7 +5176,7 @@ impl SettingsView {
             ui.separator();
             ui.add_space(12.0);
             for line in [
-                concat!("TigrimOS v", env!("CARGO_PKG_VERSION"), " (Rust/egui edition)"),
+                concat!("AndrewOS v", env!("CARGO_PKG_VERSION"), " (Rust/egui edition)"),
                 "Ubuntu 22.04 VM via QEMU",
                 "Node.js 20 + Python 3 + Fastify",
             ] {
@@ -5281,7 +5520,7 @@ impl SettingsView {
     /// Per-tool config editor (tools.config in the profile YAML): approval
     /// override, enable/disable, description, param defaults/pins, limits.
     fn per_tool_config_editor(&mut self, ui: &mut egui::Ui) {
-        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let dim = crate::ui::theme::text_secondary_color();
         let red = egui::Color32::from_rgb(200, 80, 70);
 
         ui.add_space(6.0);
@@ -5896,7 +6135,7 @@ impl SettingsView {
             let (tag, color) = if self.graph_gate_enabled {
                 ("● GATE ON", egui::Color32::from_rgb(34, 197, 94))
             } else {
-                ("○ GATE OFF", egui::Color32::from_rgb(124, 115, 104))
+                ("○ GATE OFF", crate::ui::theme::text_secondary_color())
             };
             ui.label(egui::RichText::new(tag).size(12.0).strong().color(color));
         });
@@ -5909,7 +6148,7 @@ impl SettingsView {
                  data/graph/rules/).",
             )
             .size(12.0)
-            .color(egui::Color32::from_rgb(124, 115, 104)),
+            .color(crate::ui::theme::text_secondary_color()),
         );
         ui.add_space(8.0);
         if ui
@@ -6573,7 +6812,7 @@ impl SettingsView {
         if self.loop_tool_catalog.is_empty() {
             self.loop_tool_catalog = crate::server::services::toolbox::tool_catalog();
         }
-        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let dim = crate::ui::theme::text_secondary_color();
 
         ui.add_space(8.0);
         ui.heading("Tools");
@@ -6607,7 +6846,7 @@ impl SettingsView {
     /// Sub-tab 1: read-only catalog of every tool with status chips and a
     /// jump-to-config / edit action.
     fn tools_catalog_view(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
-        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let dim = crate::ui::theme::text_secondary_color();
         let green = egui::Color32::from_rgb(34, 197, 94);
         let amber = egui::Color32::from_rgb(214, 158, 46);
 
@@ -6756,7 +6995,7 @@ impl SettingsView {
 
     /// Sub-tab 2: create / edit / delete / test custom YAML tools.
     fn tools_custom_view(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
-        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let dim = crate::ui::theme::text_secondary_color();
         let red = egui::Color32::from_rgb(200, 80, 70);
 
         ui.add_space(6.0);
@@ -6898,7 +7137,7 @@ impl SettingsView {
             )
         } else {
             format!(
-                "name: {name}\ndescription: Describe what this tool does.\nkind: http\nenabled: true\nparameters:\n  - name: query\n    type: string\n    required: true\n  - name: limit\n    type: integer\n    default: 10\nrequest:\n  method: GET\n  url: \"https://api.example.com/search?q={{{{query}}}}&n={{{{limit}}}}\"\n  headers:\n    User-Agent: \"TigrimOS/1.0\"\n  timeout_secs: 20\nresponse:\n  format: auto\n  max_len: 4000\n"
+                "name: {name}\ndescription: Describe what this tool does.\nkind: http\nenabled: true\nparameters:\n  - name: query\n    type: string\n    required: true\n  - name: limit\n    type: integer\n    default: 10\nrequest:\n  method: GET\n  url: \"https://api.example.com/search?q={{{{query}}}}&n={{{{limit}}}}\"\n  headers:\n    User-Agent: \"AndrewOS/1.0\"\n  timeout_secs: 20\nresponse:\n  format: auto\n  max_len: 4000\n"
             )
         };
         self.custom_tool_selected = format!("{name}.yaml");
@@ -6948,7 +7187,7 @@ impl SettingsView {
     }
 
     fn tool_config_editor(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
-        let dim = egui::Color32::from_rgb(124, 115, 104);
+        let dim = crate::ui::theme::text_secondary_color();
         let red = egui::Color32::from_rgb(200, 80, 70);
         let tool = self.tool_cfg_editing.clone().unwrap_or_default();
         egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -7057,7 +7296,7 @@ impl SettingsView {
                  Omitted sections inherit the built-in behavior; approval prompts always apply.",
             )
             .size(12.0)
-            .color(egui::Color32::from_rgb(124, 115, 104)),
+            .color(crate::ui::theme::text_secondary_color()),
         );
         ui.add_space(8.0);
 
@@ -7275,7 +7514,7 @@ impl SettingsView {
                             "Checked tools are BLOCKED. Coordination tools are always kept while sub-agents are enabled."
                         })
                         .size(11.0)
-                        .color(egui::Color32::from_rgb(124, 115, 104)),
+                        .color(crate::ui::theme::text_secondary_color()),
                     );
                     let catalog = self.loop_tool_catalog.clone();
                     egui::ScrollArea::vertical()
@@ -7371,7 +7610,7 @@ impl SettingsView {
                 ui.label(
                     egui::RichText::new("Empty fields inherit the main AI settings.")
                         .size(11.0)
-                        .color(egui::Color32::from_rgb(124, 115, 104)),
+                        .color(crate::ui::theme::text_secondary_color()),
                 );
                 ui.horizontal(|ui| {
                     ui.label("Model:");
@@ -7431,7 +7670,7 @@ impl SettingsView {
                 ui.label(
                     egui::RichText::new("Note: Kimi/thinking/MiniMax models always run at temperature 1.0 (provider requirement).")
                         .size(11.0)
-                        .color(egui::Color32::from_rgb(124, 115, 104)),
+                        .color(crate::ui::theme::text_secondary_color()),
                 );
                 ui.add_space(6.0);
                 ui.checkbox(
@@ -7518,7 +7757,7 @@ impl SettingsView {
                          (default off).",
                     )
                     .size(11.0)
-                    .color(egui::Color32::from_rgb(124, 115, 104)),
+                    .color(crate::ui::theme::text_secondary_color()),
                 );
                 ui.horizontal(|ui| {
                     ui.label("Gate:");

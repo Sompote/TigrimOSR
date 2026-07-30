@@ -198,9 +198,9 @@ impl AgentsView {
             Color32::WHITE,
         );
 
-        let text_normal = Color32::from_rgb(52, 48, 42);
-        let text_dim = Color32::from_rgb(124, 115, 104);
-        let _accent = Color32::from_rgb(18, 154, 145);
+        let text_normal = crate::ui::theme::text_primary_color();
+        let text_dim = crate::ui::theme::text_secondary_color();
+        let _accent = crate::ui::theme::accent_color();
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -257,7 +257,7 @@ impl AgentsView {
                 ui.set_max_width(sidebar_w);
                 ui.set_min_height(available.y - 10.0);
                 let sidebar_rect = egui::Rect::from_min_size(ui.min_rect().min, egui::Vec2::new(sidebar_w, available.y - 10.0));
-                ui.painter().rect_filled(sidebar_rect, 0.0, Color32::from_rgb(244, 238, 229));
+                ui.painter().rect_filled(sidebar_rect, 0.0, crate::ui::theme::surface_color());
                 ui.add_space(4.0);
 
                 // File list header
@@ -331,7 +331,7 @@ impl AgentsView {
                 let gen_enabled = !self.auto_arch_loading && !self.auto_arch_description.is_empty();
                 if ui.add_enabled(gen_enabled,
                     egui::Button::new(RichText::new(if self.auto_arch_loading { "Generating..." } else { "Generate" }).size(12.0).color(Color32::WHITE))
-                        .fill(Color32::from_rgb(18, 154, 145)).corner_radius(6.0),
+                        .fill(crate::ui::theme::accent_color()).corner_radius(6.0),
                 ).clicked() {
                     self.run_auto_architecture(rt);
                 }
@@ -358,7 +358,7 @@ impl AgentsView {
                     let settings = rt.block_on(crate::server::data::get_settings());
                     let current_mode = settings.sub_agent_mode.clone().unwrap_or_default();
                     let is_manual = current_mode == "manual";
-                    let fill = if is_manual { Color32::from_rgb(18, 154, 145) } else { Color32::from_rgb(180, 180, 185) };
+                    let fill = if is_manual { crate::ui::theme::accent_color() } else { Color32::from_rgb(180, 180, 185) };
                     let apply_resp = ui.add_enabled(is_manual,
                         egui::Button::new(RichText::new("Apply to Chat").size(11.0).color(Color32::WHITE)).fill(fill).corner_radius(6.0),
                     );
@@ -410,7 +410,7 @@ impl AgentsView {
                         ui.label(
                             RichText::new("Click target node to connect (Esc to cancel)")
                                 .size(11.0)
-                                .color(Color32::from_rgb(18, 154, 145)),
+                                .color(crate::ui::theme::accent_color()),
                         );
                     }
                 });
@@ -427,18 +427,18 @@ impl AgentsView {
                 painter.rect_filled(
                     canvas_rect,
                     CornerRadius::same(8),
-                    Color32::from_rgb(244, 238, 229),
+                    crate::ui::theme::surface_color(),
                 );
                 painter.rect_stroke(
                     canvas_rect,
                     CornerRadius::same(8),
-                    Stroke::new(1.0, Color32::from_rgb(230, 220, 204)),
+                    Stroke::new(1.0, crate::ui::theme::border_color()),
                     StrokeKind::Outside,
                 );
 
                 // Grid — subtle dots pattern
                 let grid_size = 24.0;
-                let grid_color = Color32::from_rgba_premultiplied(200, 192, 178, 50);
+                let grid_color = crate::ui::theme::border_color().gamma_multiply(0.2);
                 let min = canvas_rect.min;
                 let max = canvas_rect.max;
                 let mut x = min.x;
@@ -481,7 +481,7 @@ impl AgentsView {
                     if let (Some(from), Some(to)) = (from_pos, to_pos) {
                         let is_selected_conn = self.selected_connection_idx == Some(ci);
                         let color = match conn.protocol.as_str() {
-                            "tcp" => Color32::from_rgb(18, 154, 145),
+                            "tcp" => crate::ui::theme::accent_color(),
                             "queue" => Color32::from_rgb(245, 158, 11),
                             "bus" => Color32::from_rgb(168, 85, 247),
                             "blackboard" => Color32::from_rgb(34, 197, 94),
@@ -512,9 +512,9 @@ impl AgentsView {
                             &label,
                             FontId::proportional(10.0),
                             if is_selected_conn {
-                                Color32::from_rgb(52, 48, 42)
+                                crate::ui::theme::text_primary_color()
                             } else {
-                                Color32::from_rgb(168, 158, 144)
+                                crate::ui::theme::text_secondary_color()
                             },
                         );
 
@@ -535,7 +535,7 @@ impl AgentsView {
                         if let Some(pointer) = ui.ctx().pointer_latest_pos() {
                             painter.line_segment(
                                 [from, pointer],
-                                Stroke::new(2.0, Color32::from_rgb(18, 154, 145).linear_multiply(0.6)),
+                                Stroke::new(2.0, crate::ui::theme::accent_color().linear_multiply(0.6)),
                             );
                         }
                         ui.ctx().request_repaint();
@@ -565,12 +565,12 @@ impl AgentsView {
                         painter.rect_filled(
                             node_rect.expand(4.0),
                             CornerRadius::same(12),
-                            Color32::from_rgba_premultiplied(18, 154, 145, 30),
+                            crate::ui::theme::accent_color().gamma_multiply(0.12),
                         );
                         painter.rect_stroke(
                             node_rect.expand(2.0),
                             CornerRadius::same(10),
-                            Stroke::new(1.5, Color32::from_rgba_premultiplied(18, 154, 145, 100)),
+                            Stroke::new(1.5, crate::ui::theme::accent_color().gamma_multiply(0.12)),
                             StrokeKind::Outside,
                         );
                     }
@@ -587,7 +587,7 @@ impl AgentsView {
                         painter.rect_stroke(
                             node_rect.expand(2.0),
                             CornerRadius::same(12),
-                            Stroke::new(3.0, Color32::from_rgb(18, 154, 145)),
+                            Stroke::new(3.0, crate::ui::theme::accent_color()),
                             StrokeKind::Outside,
                         );
                     }
@@ -607,7 +607,7 @@ impl AgentsView {
                         egui::Align2::CENTER_CENTER,
                         &node.role,
                         FontId::proportional(10.0),
-                        Color32::from_rgb(230, 220, 204),
+                        crate::ui::theme::border_color(),
                     );
 
                     // Live status indicator (working = pulsing green, idle = gray dot)
@@ -624,7 +624,7 @@ impl AgentsView {
                                 // Pulsing ring for working agents
                                 painter.circle_stroke(
                                     dot_center, 7.0,
-                                    Stroke::new(1.5, Color32::from_rgba_premultiplied(34, 197, 94, 120)),
+                                    Stroke::new(1.5, Color32::from_rgba_unmultiplied(34, 197, 94, 120)),
                                     // StrokeKind not needed for circle_stroke
                                 );
                             }
@@ -672,15 +672,15 @@ impl AgentsView {
                         painter.rect_filled(tip_rect.expand(2.0), CornerRadius::same(10), Color32::from_rgba_premultiplied(0, 0, 0, 20));
                         // Card background
                         painter.rect_filled(tip_rect, CornerRadius::same(8), Color32::WHITE);
-                        painter.rect_stroke(tip_rect, CornerRadius::same(8), Stroke::new(0.5, Color32::from_rgb(230, 220, 204)), StrokeKind::Outside);
+                        painter.rect_stroke(tip_rect, CornerRadius::same(8), Stroke::new(0.5, crate::ui::theme::border_color()), StrokeKind::Outside);
 
                         let mut ty = tip_y + 10.0;
-                        painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &node.name, FontId::proportional(12.0), Color32::from_rgb(52, 48, 42));
+                        painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &node.name, FontId::proportional(12.0), crate::ui::theme::text_primary_color());
                         ty += 16.0;
-                        painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &format!("Role: {}", node.role), FontId::proportional(10.0), Color32::from_rgb(124, 115, 104));
+                        painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &format!("Role: {}", node.role), FontId::proportional(10.0), crate::ui::theme::text_secondary_color());
                         ty += 16.0;
                         if !persona_preview.is_empty() {
-                            painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &persona_preview, FontId::proportional(10.0), Color32::from_rgb(168, 158, 144));
+                            painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &persona_preview, FontId::proportional(10.0), crate::ui::theme::text_secondary_color());
                             // ty += 16.0;
                         }
 
@@ -839,8 +839,8 @@ impl AgentsView {
     }
 
     fn show_node_properties(&mut self, ui: &mut egui::Ui, idx: usize) {
-        let text_normal = Color32::from_rgb(52, 48, 42);
-        let text_dim = Color32::from_rgb(124, 115, 104);
+        let text_normal = crate::ui::theme::text_primary_color();
+        let text_dim = crate::ui::theme::text_secondary_color();
         ui.label(RichText::new("Node Properties").size(14.0).strong().color(text_normal));
         ui.add_space(4.0);
 
@@ -949,7 +949,7 @@ impl AgentsView {
                         conn_to_select = Some(ci);
                     }
                     let proto_color = match conn.protocol.as_str() {
-                        "tcp" => Color32::from_rgb(18, 154, 145),
+                        "tcp" => crate::ui::theme::accent_color(),
                         "queue" => Color32::from_rgb(245, 158, 11),
                         "bus" => Color32::from_rgb(168, 85, 247),
                         "blackboard" => Color32::from_rgb(34, 197, 94),
@@ -979,8 +979,8 @@ impl AgentsView {
     }
 
     fn show_connection_properties(&mut self, ui: &mut egui::Ui, ci: usize) {
-        let text_normal = Color32::from_rgb(52, 48, 42);
-        let _text_dim = Color32::from_rgb(124, 115, 104);
+        let text_normal = crate::ui::theme::text_primary_color();
+        let _text_dim = crate::ui::theme::text_secondary_color();
         ui.label(RichText::new("Connection Properties").size(14.0).strong().color(text_normal));
         ui.add_space(4.0);
 
@@ -1007,7 +1007,7 @@ impl AgentsView {
         // Protocol selector
         ui.label(RichText::new("Protocol:").strong());
         let protocol_color = match conn.protocol.as_str() {
-            "tcp" => Color32::from_rgb(18, 154, 145),
+            "tcp" => crate::ui::theme::accent_color(),
             "queue" => Color32::from_rgb(245, 158, 11),
             "bus" => Color32::from_rgb(168, 85, 247),
             "blackboard" => Color32::from_rgb(34, 197, 94),
@@ -1020,7 +1020,7 @@ impl AgentsView {
                 ui.selectable_value(
                     &mut conn.protocol,
                     "tcp".to_string(),
-                    RichText::new("tcp").color(Color32::from_rgb(18, 154, 145)),
+                    RichText::new("tcp").color(crate::ui::theme::accent_color()),
                 );
                 ui.selectable_value(
                     &mut conn.protocol,
@@ -1645,7 +1645,7 @@ Rules:
 fn role_color(role: &str) -> Color32 {
     match role {
         "human" => Color32::from_rgb(107, 114, 128),    // gray
-        "orchestrator" => Color32::from_rgb(18, 154, 145), // blue
+        "orchestrator" => crate::ui::theme::accent_color(), // blue
         "worker" => Color32::from_rgb(34, 197, 94),      // green
         "checker" => Color32::from_rgb(245, 158, 11),    // amber
         "reporter" => Color32::from_rgb(168, 85, 247),   // purple

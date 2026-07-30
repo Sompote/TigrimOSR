@@ -278,7 +278,7 @@ fn dispatch_update(
                 &token,
                 chat_id,
                 &format!(
-                    "Unauthorized. Your Telegram user id is {} — add it to telegramAllowedUserIds in TigrimOS Settings.",
+                    "Unauthorized. Your Telegram user id is {} — add it to telegramAllowedUserIds in AndrewOS Settings.",
                     from_id
                 ),
             )

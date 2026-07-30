@@ -1,7 +1,7 @@
 //! User-customizable UI theme (colors + font sizes), persisted as YAML.
 //!
 //! The theme is stored in `data/theme.yaml` (see [`Theme::path`]). It is loaded
-//! once at startup in [`crate::ui::app::TigrimOSApp::new`] and can be edited live
+//! once at startup in [`crate::ui::app::AndrewOSApp::new`] and can be edited live
 //! from Settings → Theme, which re-applies it to the running egui context and
 //! writes it back to disk.
 
@@ -52,18 +52,21 @@ fn load_color(slot: &AtomicU32, fallback: Color32) -> Color32 {
 }
 
 /// Fill color for the user's chat bubble (theme accent).
+// Fallback tracks `ThemeColors::default().accent` (#35D6C4). It was left on the
+// pre-theme accent (#1FB9A8, now only `accent_hover`), so any frame rendered
+// before `Theme::apply` ran showed the old teal.
 pub fn chat_user_bubble() -> Color32 {
-    load_color(&CHAT_USER_BUBBLE, Color32::from_rgb(18, 154, 145))
+    load_color(&CHAT_USER_BUBBLE, Color32::from_rgb(53, 214, 196))
 }
 
 /// Fill color for the AI's chat bubble (theme card color).
 pub fn chat_ai_bubble() -> Color32 {
-    load_color(&CHAT_AI_BUBBLE, Color32::WHITE)
+    load_color(&CHAT_AI_BUBBLE, Color32::from_rgb(26, 31, 41))
 }
 
 /// Text color for the AI's chat bubble (theme primary text).
 pub fn chat_ai_text() -> Color32 {
-    load_color(&CHAT_AI_TEXT, Color32::from_rgb(52, 48, 42))
+    load_color(&CHAT_AI_TEXT, Color32::from_rgb(236, 239, 244))
 }
 
 /// Readable text color for the user's chat bubble (auto-contrasted to the
@@ -84,21 +87,21 @@ static T_TEXT_SECONDARY: AtomicU32 = AtomicU32::new(0);
 static T_ACCENT: AtomicU32 = AtomicU32::new(0);
 
 /// Surface color (main window / panel background).
-pub fn surface_color() -> Color32 { load_color(&T_SURFACE, Color32::from_rgb(251, 247, 241)) }
+pub fn surface_color() -> Color32 { load_color(&T_SURFACE, Color32::from_rgb(17, 21, 28)) }
 /// Canvas color (inputs / recessed areas).
-pub fn canvas_color() -> Color32 { load_color(&T_CANVAS, Color32::from_rgb(244, 238, 229)) }
+pub fn canvas_color() -> Color32 { load_color(&T_CANVAS, Color32::from_rgb(11, 13, 18)) }
 /// Card color (cards / input bar).
-pub fn card_color() -> Color32 { load_color(&T_CARD, Color32::WHITE) }
+pub fn card_color() -> Color32 { load_color(&T_CARD, Color32::from_rgb(26, 31, 41)) }
 /// Hover / rail color (sidebar background).
-pub fn hover_color() -> Color32 { load_color(&T_HOVER, Color32::from_rgb(239, 231, 218)) }
+pub fn hover_color() -> Color32 { load_color(&T_HOVER, Color32::from_rgb(33, 39, 50)) }
 /// Border / hairline color.
-pub fn border_color() -> Color32 { load_color(&T_BORDER, Color32::from_rgb(230, 220, 204)) }
+pub fn border_color() -> Color32 { load_color(&T_BORDER, Color32::from_rgb(46, 53, 65)) }
 /// Primary text color.
-pub fn text_primary_color() -> Color32 { load_color(&T_TEXT_PRIMARY, Color32::from_rgb(52, 48, 42)) }
+pub fn text_primary_color() -> Color32 { load_color(&T_TEXT_PRIMARY, Color32::from_rgb(236, 239, 244)) }
 /// Secondary / muted text color.
-pub fn text_secondary_color() -> Color32 { load_color(&T_TEXT_SECONDARY, Color32::from_rgb(124, 115, 104)) }
+pub fn text_secondary_color() -> Color32 { load_color(&T_TEXT_SECONDARY, Color32::from_rgb(166, 174, 188)) }
 /// Accent color.
-pub fn accent_color() -> Color32 { load_color(&T_ACCENT, Color32::from_rgb(18, 154, 145)) }
+pub fn accent_color() -> Color32 { load_color(&T_ACCENT, Color32::from_rgb(53, 214, 196)) }
 
 // How AI output files (graphs/pictures) are presented: false = side output
 // panel (default), true = embedded inline in chat with click-to-zoom.
@@ -183,18 +186,19 @@ pub struct ThemeFonts {
 
 impl Default for ThemeColors {
     fn default() -> Self {
-        // Warm neutral surfaces with a teal accent — matches the original
-        // hardcoded palette so existing installs look identical.
+        // AndrewOS dark glass. Surfaces step up in luminance the closer they
+        // sit to the user (canvas → surface → card), which is what reads as
+        // depth once the accent is the only saturated thing on screen.
         Self {
-            surface: "#FBF7F1".to_string(),
-            canvas: "#F4EEE5".to_string(),
-            card: "#FFFFFF".to_string(),
-            hover: "#EFE7DA".to_string(),
-            border: "#E6DCCC".to_string(),
-            text_primary: "#34302A".to_string(),
-            text_secondary: "#7C7368".to_string(),
-            accent: "#129A91".to_string(),
-            accent_hover: "#0C817A".to_string(),
+            surface: "#11151C".to_string(),
+            canvas: "#0B0D12".to_string(),
+            card: "#1A1F29".to_string(),
+            hover: "#212732".to_string(),
+            border: "#2E3541".to_string(),
+            text_primary: "#ECEFF4".to_string(),
+            text_secondary: "#A6AEBC".to_string(),
+            accent: "#35D6C4".to_string(),
+            accent_hover: "#1FB9A8".to_string(),
             user_bubble: String::new(),
             ai_bubble: String::new(),
         }
@@ -584,30 +588,45 @@ impl Theme {
         visuals.extreme_bg_color = bg_light;
         visuals.faint_bg_color = bg_light;
 
+        // `bg_fill` alone is not enough. egui paints Button/ComboBox/menu_button
+        // backgrounds from `weak_bg_fill`, so leaving it unset left every
+        // default-styled button in the app on egui's stock grey (from_gray(60))
+        // no matter what the theme said. Set both, every state.
         visuals.widgets.noninteractive.bg_fill = bg_card;
+        visuals.widgets.noninteractive.weak_bg_fill = bg_card;
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_secondary);
         visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, border);
-        visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
+        visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(10);
 
         visuals.widgets.inactive.bg_fill = bg_light;
+        // A button at rest reads as a raised card, not the recessed canvas.
+        visuals.widgets.inactive.weak_bg_fill = bg_card;
         visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, text_primary);
         visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.5, border);
-        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
+        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(10);
 
         visuals.widgets.hovered.bg_fill = bg_hover;
+        visuals.widgets.hovered.weak_bg_fill = bg_hover;
         visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, text_primary);
         visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent);
-        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
+        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(10);
 
         visuals.widgets.active.bg_fill = accent;
-        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+        visuals.widgets.active.weak_bg_fill = accent;
+        // The pressed state fills with the accent, so hard-coding white text
+        // makes the label wash out exactly while the user is pressing it — on
+        // the default teal #35D6C4 that is 1.82:1, far below any usable
+        // threshold. `readable_on` picks near-black or white against the actual
+        // fill (8.88:1 here) and keeps working if the user re-themes the accent.
+        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, readable_on(accent));
         visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent_hover);
-        visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+        visuals.widgets.active.corner_radius = egui::CornerRadius::same(10);
 
         visuals.widgets.open.bg_fill = bg_hover;
+        visuals.widgets.open.weak_bg_fill = bg_hover;
         visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, text_primary);
         visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, accent);
-        visuals.widgets.open.corner_radius = egui::CornerRadius::same(6);
+        visuals.widgets.open.corner_radius = egui::CornerRadius::same(10);
 
         visuals.selection.bg_fill =
             egui::Color32::from_rgba_premultiplied(accent.r(), accent.g(), accent.b(), 50);
@@ -648,5 +667,120 @@ impl Theme {
         .into();
 
         ctx.set_style(style);
+    }
+}
+
+#[cfg(test)]
+mod palette_tests {
+    /// Every source file that paints desktop chrome.
+    const UI_SOURCES: &[(&str, &str)] = &[
+        ("chat.rs", include_str!("chat.rs")),
+        ("app.rs", include_str!("app.rs")),
+        ("settings.rs", include_str!("settings.rs")),
+        ("agents_view.rs", include_str!("agents_view.rs")),
+        ("files_view.rs", include_str!("files_view.rs")),
+        ("output_panel.rs", include_str!("output_panel.rs")),
+        ("projects_view.rs", include_str!("projects_view.rs")),
+        ("remote_view.rs", include_str!("remote_view.rs")),
+    ];
+
+    /// The pre-dark-mode warm palette, as it appeared hardcoded in the views.
+    /// These shipped as beige chips and hairlines on a navy UI because the dark
+    /// conversion never reached the desktop widgets.
+    const LIGHT_LEFTOVERS: &[(&str, &str)] = &[
+        ("230, 220, 204", "light --line"),
+        ("239, 231, 218", "light --line-soft"),
+        ("168, 158, 144", "light --ink-faint"),
+        ("124, 115, 104", "warm muted text"),
+        ("200, 192, 178", "warm hairline"),
+        ("52, 48, 42", "light --ink"),
+        ("244, 238, 229", "light --bg"),
+        ("18, 154, 145", "pre-rebrand accent"),
+        // Near-white card/panel fills from the light template.
+        ("251, 247, 241", "cream panel"),
+        ("250, 251, 253", "near-white card"),
+        ("246, 248, 250", "near-white card"),
+        ("250, 250, 252", "near-white card"),
+        ("245, 245, 248", "near-white card"),
+        ("230, 237, 243", "pale blue card"),
+    ];
+
+    /// Colours must come from the theme so they follow the user's palette.
+    /// A literal here is invisible until someone opens that screen.
+    #[test]
+    fn no_light_theme_literals_survive_in_the_desktop_views() {
+        let mut found = Vec::new();
+        for (file, src) in UI_SOURCES {
+            for (rgb, what) in LIGHT_LEFTOVERS {
+                if src.contains(&format!("from_rgb({rgb})")) {
+                    found.push(format!("{file}: from_rgb({rgb}) — {what}"));
+                }
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "hardcoded light-theme colours are back; use crate::ui::theme::* instead:\n  {}",
+            found.join("\n  ")
+        );
+    }
+
+    /// A solid white fill on a dark surface is a light-template leftover, not a
+    /// design decision — it punches a bright hole in the UI.
+    #[test]
+    fn no_solid_white_fills_in_the_desktop_views() {
+        let mut found = Vec::new();
+        for (file, src) in UI_SOURCES {
+            for pat in [".fill(egui::Color32::WHITE)", ".fill(Color32::WHITE)"] {
+                if src.contains(pat) {
+                    found.push(format!("{file}: {pat}"));
+                }
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "solid white fills are back; use crate::ui::theme::card_color():\n  {}",
+            found.join("\n  ")
+        );
+    }
+
+    /// `from_rgba_premultiplied` requires each channel to be <= alpha. Calls
+    /// like `(18, 154, 145, 30)` are not representable and render as garbage.
+    #[test]
+    fn premultiplied_colours_are_actually_premultiplied() {
+        let re_files: Vec<(&str, &str)> = UI_SOURCES.to_vec();
+        let mut bad = Vec::new();
+        for (file, src) in re_files {
+            for (idx, _) in src.match_indices("from_rgba_premultiplied(") {
+                let rest = &src[idx + "from_rgba_premultiplied(".len()..];
+                let Some(end) = rest.find(')') else { continue };
+                let nums: Vec<u32> = rest[..end]
+                    .split(',')
+                    .filter_map(|s| s.trim().parse::<u32>().ok())
+                    .collect();
+                if nums.len() == 4 && nums[..3].iter().any(|&c| c > nums[3]) {
+                    bad.push(format!("{file}: from_rgba_premultiplied({})", &rest[..end]));
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "channel exceeds alpha — use from_rgba_unmultiplied or .gamma_multiply():\n  {}",
+            bad.join("\n  ")
+        );
+    }
+
+    /// egui paints Button/ComboBox/menu_button from `weak_bg_fill`, not
+    /// `bg_fill`. Setting only the latter leaves every plain button on egui's
+    /// stock grey, which is exactly the bug this guards.
+    #[test]
+    fn every_widget_state_sets_weak_bg_fill() {
+        let src = include_str!("theme.rs");
+        for state in ["noninteractive", "inactive", "hovered", "active", "open"] {
+            assert!(
+                src.contains(&format!("visuals.widgets.{state}.weak_bg_fill")),
+                "widgets.{state}.weak_bg_fill is unset — buttons in that state \
+                 will render with egui's default grey instead of the theme"
+            );
+        }
     }
 }

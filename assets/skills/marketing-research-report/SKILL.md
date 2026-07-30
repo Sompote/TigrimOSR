@@ -47,7 +47,7 @@ This skill enables conducting thorough marketing research for brands, products, 
 ```
 
 ## Best Practices
-- Handle typos by searching multiple variations (e.g., "TigrimOS" vs "tigrimos")
+- Handle typos by searching multiple variations (e.g., "AndrewOS" vs "andrewos")
 - Always compile data into tables for readability
 - Include SWOT analysis when applicable
 - Add emoji headers for visual hierarchy

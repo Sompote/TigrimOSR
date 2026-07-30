@@ -142,7 +142,7 @@ async fn spawn_and_init(
     let mut cmd = Command::new(command);
     cmd.args(args)
         .envs(env)
-        // TigrimOS's own web port must not leak into MCP children: servers
+        // AndrewOS's own web port must not leak into MCP children: servers
         // that read a generic PORT (e.g. workspace-mcp's OAuth callback
         // listener) would bind next to OUR port instead of their documented
         // default — seen in the field as a Google login redirecting to
@@ -186,7 +186,7 @@ async fn spawn_and_init(
         json!({
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": { "name": "TigrimOS", "version": "0.5.3" }
+            "clientInfo": { "name": "AndrewOS", "version": "0.5.3" }
         }),
         15,
     )
@@ -684,7 +684,7 @@ async fn connect_http(name: &str, transport: &str, config: &Value) -> Value {
         "params": {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": { "name": "TigrimOS", "version": "0.5.3" }
+            "clientInfo": { "name": "AndrewOS", "version": "0.5.3" }
         }
     });
 
@@ -937,7 +937,7 @@ async fn call_stdio_tool(conn: &McpConnection, tool_name: &str, args: &Value) ->
     }
 }
 
-/// Shape an MCP `tools/call` JSON-RPC response into TigrimOS's tool-result form.
+/// Shape an MCP `tools/call` JSON-RPC response into AndrewOS's tool-result form.
 fn stdio_result(resp: Value) -> Value {
     let content = &resp["result"]["content"];
     if content.is_array() {

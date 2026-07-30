@@ -1,10 +1,10 @@
 #!/bin/bash
-# TigrimOS Installer for Linux
+# AndrewOS Installer for Linux
 # Clones, builds, and creates a .desktop entry
 
-APP_NAME="TigrimOS"
-REPO_URL="https://github.com/Sompote/TigrimOSR.git"
-BINARY_NAME="tigrimos"
+APP_NAME="AndrewOS"
+REPO_URL="https://github.com/Sompote/AndrewOS.git"
+BINARY_NAME="andrewos"
 
 # Ensure we're in a readable directory (curl | bash may inherit a restricted cwd)
 cd "$HOME" 2>/dev/null || cd /tmp 2>/dev/null || true
@@ -47,7 +47,7 @@ fi
 
 echo ""
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  TigrimOS Installer for Linux${NC}"
+echo -e "${BLUE}  AndrewOS Installer for Linux${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
@@ -93,7 +93,7 @@ fi
 
 # ── Select install location ──
 echo ""
-echo -e "${YELLOW}Where would you like to install TigrimOS?${NC}"
+echo -e "${YELLOW}Where would you like to install AndrewOS?${NC}"
 echo ""
 echo "  1) Home directory       (~/$APP_NAME)"
 echo "  2) Opt directory        (/opt/$APP_NAME)"
@@ -125,7 +125,7 @@ else
         echo -e "${YELLOW}Removing existing non-git directory at $INSTALL_DIR...${NC}"
         rm -rf "$INSTALL_DIR"
     fi
-    echo -e "${BLUE}Cloning TigrimOS...${NC}"
+    echo -e "${BLUE}Cloning AndrewOS...${NC}"
     mkdir -p "$(dirname "$INSTALL_DIR")"
     git clone "$REPO_URL" "$INSTALL_DIR" || die "git clone failed"
 fi
@@ -136,7 +136,7 @@ echo -e "${GREEN}[OK]${NC} Source ready at $INSTALL_DIR"
 
 # ── Build ──
 echo ""
-echo -e "${BLUE}Building TigrimOS (release mode)...${NC}"
+echo -e "${BLUE}Building AndrewOS (release mode)...${NC}"
 echo "This may take a few minutes on first build."
 echo ""
 
@@ -174,11 +174,11 @@ if [[ "$create_entry" != "n" && "$create_entry" != "N" ]]; then
     if [ -f "$DIST_DIR/icon.png" ]; then
         ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
         mkdir -p "$ICON_DIR"
-        cp "$DIST_DIR/icon.png" "$ICON_DIR/tigrimos.png"
-        ICON_PATH="tigrimos"
+        cp "$DIST_DIR/icon.png" "$ICON_DIR/andrewos.png"
+        ICON_PATH="andrewos"
     fi
 
-    cat > "$DESKTOP_DIR/tigrimos.desktop" <<DESKTOP
+    cat > "$DESKTOP_DIR/andrewos.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=$APP_NAME
@@ -187,10 +187,10 @@ Exec=$DIST_DIR/$BINARY_NAME
 Icon=${ICON_PATH:-application-default-icon}
 Terminal=false
 Categories=Development;Utility;
-StartupWMClass=tigrimos
+StartupWMClass=andrewos
 DESKTOP
 
-    chmod +x "$DESKTOP_DIR/tigrimos.desktop"
+    chmod +x "$DESKTOP_DIR/andrewos.desktop"
 
     if command -v update-desktop-database &>/dev/null; then
         update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
@@ -201,8 +201,8 @@ DESKTOP
     # Desktop shortcut
     prompt create_shortcut "Create desktop shortcut? [Y/n]: " "y"
     if [[ "$create_shortcut" != "n" && "$create_shortcut" != "N" ]]; then
-        DESKTOP_FILE="$HOME/Desktop/tigrimos.desktop"
-        cp "$DESKTOP_DIR/tigrimos.desktop" "$DESKTOP_FILE"
+        DESKTOP_FILE="$HOME/Desktop/andrewos.desktop"
+        cp "$DESKTOP_DIR/andrewos.desktop" "$DESKTOP_FILE"
         chmod +x "$DESKTOP_FILE"
         if command -v gio &>/dev/null; then
             gio set "$DESKTOP_FILE" metadata::trusted true 2>/dev/null || true
@@ -213,7 +213,7 @@ fi
 
 # ── Add to PATH ──
 echo ""
-prompt add_path "Add tigrimos to PATH (symlink to ~/.local/bin)? [Y/n]: " "y"
+prompt add_path "Add andrewos to PATH (symlink to ~/.local/bin)? [Y/n]: " "y"
 if [[ "$add_path" != "n" && "$add_path" != "N" ]]; then
     mkdir -p "$HOME/.local/bin"
     ln -sf "$DIST_DIR/$BINARY_NAME" "$HOME/.local/bin/$BINARY_NAME"
@@ -227,7 +227,7 @@ fi
 
 # ── Install mode: Desktop or Headless (remote server) ──
 echo ""
-echo -e "${YELLOW}How do you want to run TigrimOS?${NC}"
+echo -e "${YELLOW}How do you want to run AndrewOS?${NC}"
 echo ""
 echo "  1) Desktop mode     (GUI app — requires display)"
 echo "  2) Headless mode    (remote server — no GUI, access via web browser)"
@@ -261,12 +261,12 @@ if $HEADLESS; then
     echo ""
     prompt create_service "Create systemd service (auto-start on boot)? [Y/n]: " "y"
     if [[ "$create_service" != "n" && "$create_service" != "N" ]]; then
-        SERVICE_FILE="/etc/systemd/system/tigrimos.service"
+        SERVICE_FILE="/etc/systemd/system/andrewos.service"
         echo -e "${BLUE}Creating systemd service...${NC}"
 
         $SUDO tee "$SERVICE_FILE" > /dev/null <<SVCEOF
 [Unit]
-Description=TigrimOS Headless Server
+Description=AndrewOS Headless Server
 After=network.target
 
 [Service]
@@ -285,11 +285,11 @@ WantedBy=multi-user.target
 SVCEOF
 
         $SUDO systemctl daemon-reload
-        $SUDO systemctl enable tigrimos
+        $SUDO systemctl enable andrewos
         echo -e "${GREEN}[OK]${NC} systemd service created and enabled"
-        echo "  Start:   sudo systemctl start tigrimos"
-        echo "  Stop:    sudo systemctl stop tigrimos"
-        echo "  Logs:    sudo journalctl -u tigrimos -f"
+        echo "  Start:   sudo systemctl start andrewos"
+        echo "  Stop:    sudo systemctl stop andrewos"
+        echo "  Logs:    sudo journalctl -u andrewos -f"
     fi
 
     # ── Setup nginx reverse proxy ──
@@ -314,8 +314,8 @@ SVCEOF
             prompt server_domain "Server domain or IP (e.g. example.com or _ for any): " "_"
             [ -z "$server_domain" ] && server_domain="_"
 
-            NGINX_CONF="/etc/nginx/sites-available/tigrimos"
-            NGINX_ENABLED="/etc/nginx/sites-enabled/tigrimos"
+            NGINX_CONF="/etc/nginx/sites-available/andrewos"
+            NGINX_ENABLED="/etc/nginx/sites-enabled/andrewos"
 
             $SUDO tee "$NGINX_CONF" > /dev/null <<NGXEOF
 server {
@@ -402,18 +402,18 @@ NGXEOF
     fi
     echo ""
     echo -e "${YELLOW}  Commands:${NC}"
-    echo "    Start:  sudo systemctl start tigrimos"
-    echo "    Stop:   sudo systemctl stop tigrimos"
-    echo "    Logs:   sudo journalctl -u tigrimos -f"
+    echo "    Start:  sudo systemctl start andrewos"
+    echo "    Stop:   sudo systemctl stop andrewos"
+    echo "    Logs:   sudo journalctl -u andrewos -f"
     echo "    Manual: ACCESS_TOKEN=$access_token PORT=$server_port $DIST_DIR/$BINARY_NAME --headless"
     echo ""
 
-    prompt launch_now "Start TigrimOS server now? [Y/n]: " "y"
+    prompt launch_now "Start AndrewOS server now? [Y/n]: " "y"
     if [[ "$launch_now" != "n" && "$launch_now" != "N" ]]; then
-        if [ -f "/etc/systemd/system/tigrimos.service" ]; then
-            $SUDO systemctl start tigrimos
+        if [ -f "/etc/systemd/system/andrewos.service" ]; then
+            $SUDO systemctl start andrewos
             echo -e "${GREEN}Server started via systemd!${NC}"
-            echo "  Check: sudo systemctl status tigrimos"
+            echo "  Check: sudo systemctl status andrewos"
         else
             echo "Starting in background..."
             ACCESS_TOKEN="$access_token" PORT="$server_port" nohup "$DIST_DIR/$BINARY_NAME" --headless &>/dev/null &

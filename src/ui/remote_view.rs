@@ -485,7 +485,7 @@ impl RemoteView {
             self.load_instances(runtime);
         }
 
-        let accent = egui::Color32::from_rgb(18, 154, 145);
+        let accent = crate::ui::theme::accent_color();
         let text_dim = egui::Color32::from_rgb(139, 148, 158);
 
         ui.add_space(12.0);
@@ -588,7 +588,7 @@ impl RemoteView {
                 let is_active = self.tab == tab;
                 let color = if is_active { accent } else { text_dim };
                 let fill = if is_active {
-                    egui::Color32::from_rgba_premultiplied(88, 166, 255, 15)
+                    egui::Color32::from_rgba_unmultiplied(88, 166, 255, 15)
                 } else {
                     egui::Color32::TRANSPARENT
                 };
@@ -717,7 +717,7 @@ impl RemoteView {
 
                 let status_color = match status {
                     "completed" => egui::Color32::from_rgb(74, 222, 128),
-                    "running" => egui::Color32::from_rgb(18, 154, 145),
+                    "running" => crate::ui::theme::accent_color(),
                     "pending" => egui::Color32::from_rgb(250, 204, 21),
                     "failed" => egui::Color32::from_rgb(239, 68, 68),
                     "killed" => egui::Color32::from_rgb(156, 163, 175),
@@ -728,7 +728,7 @@ impl RemoteView {
                     ui.add_space(16.0);
 
                     let frame = egui::Frame::new()
-                        .fill(egui::Color32::from_rgb(246, 248, 250))
+                        .fill(crate::ui::theme::card_color())
                         .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
                         .corner_radius(8.0)
                         .inner_margin(egui::Margin::same(12));
@@ -943,7 +943,7 @@ impl RemoteView {
             ui.horizontal(|ui| {
                 ui.add_space(16.0);
                 let frame = egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(246, 248, 250))
+                    .fill(crate::ui::theme::card_color())
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::same(8));
@@ -1067,7 +1067,7 @@ impl RemoteView {
         // Messages display
         if let Some(messages) = self.chat_messages.take() {
             let frame = egui::Frame::new()
-                .fill(egui::Color32::from_rgb(246, 248, 250))
+                .fill(crate::ui::theme::card_color())
                 .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
                 .corner_radius(6.0)
                 .inner_margin(egui::Margin::same(8));
@@ -1091,7 +1091,7 @@ impl RemoteView {
                                 let role = msg["role"].as_str().unwrap_or("user");
                                 let content = msg["content"].as_str().unwrap_or("");
                                 let color = if role == "assistant" {
-                                    egui::Color32::from_rgb(18, 154, 145)
+                                    crate::ui::theme::accent_color()
                                 } else {
                                     egui::Color32::from_rgb(36, 41, 47)
                                 };
@@ -1495,7 +1495,7 @@ impl RemoteView {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
                     let frame = egui::Frame::new()
-                        .fill(egui::Color32::from_rgb(246, 248, 250))
+                        .fill(crate::ui::theme::card_color())
                         .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
                         .corner_radius(6.0)
                         .inner_margin(egui::Margin::same(10));

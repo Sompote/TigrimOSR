@@ -61,3 +61,16 @@ dist/
 # Local orchestrator persona files
 data/IDENTITY.md
 data/SOUL.md
+
+# Upstream checkouts kept locally as integration reference material. What was
+# worth taking from them lives in src/ and assets/ as first-class code; the
+# checkouts themselves are not part of this product and are not vendored.
+Repos/
+agent-graph/
+
+# Runtime state written by the agent loop and tool editor.
+# NOTE: assets/agents/ is deliberately NOT ignored — those YAML team files are
+# include_str!'d into the binary by src/server/services/agent_library.rs, so the
+# build fails without them.
+data/agent_loops/
+data/tools/

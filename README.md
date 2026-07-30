@@ -1,13 +1,13 @@
-# TigrimOSR v0.7.1
+# AndrewOS v0.7.1
 
-**TigrimOSR** is a native Rust AI agent platform in a single self-contained binary. Orchestrate swarms of specialist agents, and **build your own agent loop** — which tools, models, skills and MCP servers each agent uses — in simple YAML, editable from the desktop app, any browser, or your phone.
+**AndrewOS** is a native Rust AI agent platform in a single self-contained binary. Orchestrate swarms of specialist agents, and **build your own agent loop** — which tools, models, skills and MCP servers each agent uses — in simple YAML, editable from the desktop app, any browser, or your phone.
 
 Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three clicks, search **250M+ scholarly papers** with one tool, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
 
 **⬇️ Install in under a minute — no build needed:**
-[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1.dmg) ·
-[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1-x64.msi) ·
-[all releases](https://github.com/Sompote/TigrimOSR/releases/latest) — or [run in Docker](#install-in-docker).
+[macOS (DMG)](https://github.com/Sompote/AndrewOS/releases/download/v0.7.1/AndrewOS-0.7.1.dmg) ·
+[Windows (MSI)](https://github.com/Sompote/AndrewOS/releases/download/v0.7.1/AndrewOS-0.7.1-x64.msi) ·
+[all releases](https://github.com/Sompote/AndrewOS/releases/latest) — or [run in Docker](#install-in-docker).
 
 **What's new (July 2026):**
 
@@ -18,7 +18,7 @@ Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three cl
 - 🇬 **[Connect Google](#connect-google-gmail--calendar--drive)** — three-click Gmail / Calendar / Drive access with browser login, on desktop *and* the remote web UI.
 - 🔧 **[Per-tool config](#per-tool-config-toolsconfig)** — per tool: hide it, require/waive approval, pin parameters, cap runtime & output — for built-in, MCP, and custom tools.
 
-### Why TigrimOSR?
+### Why AndrewOS?
 
 - **Multi-agent orchestration** — 6 swarm modes (hierarchical, mesh, hybrid, pipeline, P2P, P2P orchestrator) with real inter-agent protocols and a shared blackboard.
 - **Your agent loop, your rules** — YAML profiles control tools, MCP servers, skills, model & prompt, self-verification and compaction — down to [per-tool config](#per-tool-config-toolsconfig) (hide, pin params, approval, caps).
@@ -38,7 +38,7 @@ Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three cl
 
 Install it on your machine and run the UI as a **native Rust app** — a single, fast binary with quick startup and low memory. [Download it prebuilt](#easy-install--download-the-app-easiest) for macOS and Windows — no toolchain needed.
 
-![TigrimOSR native desktop app](assets/screenshot_inline_chart.png)
+![AndrewOS native desktop app](assets/screenshot_inline_chart.png)
 
 *Above: the native desktop app — ask for a plot and the agent runs Python (matplotlib) and embeds the chart inline in its answer.*
 
@@ -49,26 +49,26 @@ App + embedded server + **a live embedded browser** idle at **~270 MB RAM** — 
 <details>
 <summary>📉 Measured numbers & comparison</summary>
 
-Because TigrimOS is native Rust end-to-end — the app **and** its [Obscura](https://github.com/h4ckf0r0day/obscura) browser engine — the whole stack stays remarkably light. On an idle desktop session **with browser control on and a live browser attached**, measured resident memory is:
+Because AndrewOS is native Rust end-to-end — the app **and** its [Obscura](https://github.com/h4ckf0r0day/obscura) browser engine — the whole stack stays remarkably light. On an idle desktop session **with browser control on and a live browser attached**, measured resident memory is:
 
 ```
-TigrimOS (app + embedded server)   ≈ 210 MB
+AndrewOS (app + embedded server)   ≈ 210 MB
 obscura (Rust browser engine)      ≈  60 MB
 ────────────────────────────────────────────
 Total, with a live browser         ≈ 270 MB
 ```
 
-That's roughly where a Chromium browser process *alone* tends to **start**. The reason is structural: most agent stacks pay for **two** heavy layers TigrimOS doesn't — an interpreted runtime (Node.js/Python) **plus** a multi-process Chromium driven by Playwright. TigrimOS replaces both with a single Rust binary and a single-process Rust browser.
+That's roughly where a Chromium browser process *alone* tends to **start**. The reason is structural: most agent stacks pay for **two** heavy layers AndrewOS doesn't — an interpreted runtime (Node.js/Python) **plus** a multi-process Chromium driven by Playwright. AndrewOS replaces both with a single Rust binary and a single-process Rust browser.
 
-For rough context, here's how that compares to two popular open-source browser agents. **Only the TigrimOS figure is our own measurement**; the others are **third-party/community-reported** and vary widely with workload — treat them as ballpark, not benchmarks:
+For rough context, here's how that compares to two popular open-source browser agents. **Only the AndrewOS figure is our own measurement**; the others are **third-party/community-reported** and vary widely with workload — treat them as ballpark, not benchmarks:
 
 | Stack | Runtime + browser | Agent **with a live browser** |
 |---|---|---|
-| **TigrimOS** | Native Rust + Rust **Obscura** engine | **≈ 270 MB** *(measured)* |
+| **AndrewOS** | Native Rust + Rust **Obscura** engine | **≈ 270 MB** *(measured)* |
 | [Hermes](https://github.com/nousresearch/hermes-agent) | Node/Python + Chromium (Playwright) | ~1.2–1.8 GB *(reported)* |
 | [OpenClaw](https://openclaw.ai/) | Node.js + Chromium (Playwright) | 2–4 GB typical; 7.5 GB+ multi-agent *(reported)* |
 
-A single Chromium instance commonly uses [800 MB–2.5 GB](https://www.shopclawmart.com/blog/troubleshoot-memory-usage-openclaw) depending on the page, and per-agent-browser setups multiply that. Chromium/Playwright stacks also have to actively manage renderer-process accumulation and orphaned browsers across restarts (e.g. OpenClaw [#29685](https://github.com/openclaw/openclaw/issues/29685)) — failure modes TigrimOS avoids with per-session process groups and per-agent browsers that shut down with the session.
+A single Chromium instance commonly uses [800 MB–2.5 GB](https://www.shopclawmart.com/blog/troubleshoot-memory-usage-openclaw) depending on the page, and per-agent-browser setups multiply that. Chromium/Playwright stacks also have to actively manage renderer-process accumulation and orphaned browsers across restarts (e.g. OpenClaw [#29685](https://github.com/openclaw/openclaw/issues/29685)) — failure modes AndrewOS avoids with per-session process groups and per-agent browsers that shut down with the session.
 
 > **Not fixed:** ~270 MB is the **idle** baseline with a browser attached. Real usage grows as Obscura renders heavy pages (its V8 heap climbs per page/tab) and as the app holds conversation, session, and swarm state — expect more under load, but still far below a Chromium-based stack.
 
@@ -76,7 +76,7 @@ A single Chromium instance commonly uses [800 MB–2.5 GB](https://www.shopclawm
 
 ### Mobile Remote Connection
 
-Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or in Docker — then connect from any browser or your phone. The screenshots below show a cloud server controlled entirely from a mobile browser: full chat with inline charts, tool execution, and file browsing.
+Run AndrewOS **anywhere** — as a native desktop app, headless on a machine, or in Docker — then connect from any browser or your phone. The screenshots below show a cloud server controlled entirely from a mobile browser: full chat with inline charts, tool execution, and file browsing.
 
 <p align="center">
   <img src="assets/screenshot_mobile_remote_1.jpg" width="300" alt="Mobile Remote Chat">
@@ -86,7 +86,7 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 
 ## Features
 
-Everything TigrimOSR can do — orchestration, tools, remote access, theming — in one list.
+Everything AndrewOS can do — orchestration, tools, remote access, theming — in one list.
 
 <details>
 <summary>📋 Full feature list</summary>
@@ -95,7 +95,7 @@ Everything TigrimOSR can do — orchestration, tools, remote access, theming —
 - **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist plus **per-tool config** (hide a tool, per-tool approval override, parameter defaults & pins, description override, timeout / result caps — built-in and MCP tools alike), MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification), **job evaluation (outer loop, tool-using judge)** and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
 - **Graph mode (judge panel)** — evaluator-optimizer gate: single- or multi-judge panel reviews the final answer against YAML rule files before delivery, returns a structured YAML verdict, and loops the main agent through revisions until it passes (`all_pass` / `majority` / `weighted_average` aggregation). Off by default; toggleable globally, per agent-loop profile, or by selecting the **Graph (judged)** mode — see [Graph mode](#graph-mode-judge-panel)
 - **Local CLI agents** — Use Claude Code, Gemini CLI, or OpenAI Codex as agent backends without API keys
-- **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts TigrimOS, Claude Desktop, Claude Code, and npm MCP formats
+- **Plugin system** — Zip-based plugins with skills, MCP servers, agents, and connectors. Accepts AndrewOS, Claude Desktop, Claude Code, and npm MCP formats
 - **Tool calling** — web search, Python execution, file read/write, shell commands, skill loading, MCP tools
 - **Custom tools in YAML** — define your own tools declaratively in `data/tools/*.yaml`: an HTTP/REST endpoint or a sandboxed shell command, with templated parameters (`{{query}}`), response field-selection and truncation. No code, no rebuild; loaded at runtime and managed via a REST API. See [Custom tools (YAML)](#custom-tools-yaml)
 - **Tool management screen** — **Settings → Tools** (desktop and web/mobile): a Catalog of every built-in and custom tool with live per-tool status chips, plus a Custom Tools editor to create, edit, validate and **test-run** YAML tools without the model. See [Tool management](#tool-management-settings--tools)
@@ -104,7 +104,7 @@ Everything TigrimOSR can do — orchestration, tools, remote access, theming —
 - **Google quick-connect** — three-click Gmail / Calendar / Drive access: paste an OAuth Client ID, auto-install the runtime, and log in with Google in your browser — see [Connect Google](#connect-google-gmail--calendar--drive)
 - **Remote access** — Headless mode + embedded web UI for controlling from any browser or mobile phone
 - **Telegram & LINE bots** — chat with the agent from Telegram or LINE and control it with slash commands (`/agents`, `/model`, `/mode`, `/loop`, `/new`, `/stop`, `/status`), with live progress and approve/deny buttons for tool approvals — see [Telegram & LINE Bots](#telegram--line-bots)
-- **Remote server dashboard** — Connect your Mac app to remote TigrimOS instances
+- **Remote server dashboard** — Connect your Mac app to remote AndrewOS instances
 - **Private VPN access (Tailscale)** — reach a remote host over your own tailnet instead of a public tunnel — see [Remote access over a private VPN](#remote-access-over-a-private-vpn-tailscale)
 - **VM integration** — Built-in Ubuntu VM with SSH terminal and tool routing
 - **Customizable themes** — color presets (Default, Dark, Minimal, Transparent, Colorful), full per-color editing, font selection (Inter, Geist, Roboto, IBM Plex Sans, Plus Jakarta Sans, or your own) and per-style sizes — all saved to `data/theme.yaml`
@@ -122,7 +122,7 @@ Everything TigrimOSR can do — orchestration, tools, remote access, theming —
 
 ## Installation
 
-Three ways to install TigrimOS — pick one:
+Three ways to install AndrewOS — pick one:
 
 | | **[Download the app](#easy-install--download-the-app-easiest)** | **[Install in Docker](#install-in-docker)** | **[Build from source](#install--run-on-your-machine)** |
 |---|---|---|---|
@@ -139,39 +139,39 @@ Three ways to install TigrimOS — pick one:
 ## Easy install — download the app (easiest)
 
 No Rust, no Docker, no build step — grab a prebuilt binary from the
-[**latest release**](https://github.com/Sompote/TigrimOSR/releases/latest) and you're
+[**latest release**](https://github.com/Sompote/AndrewOS/releases/latest) and you're
 running in under a minute.
 
 ### macOS
 
 **Desktop app (DMG):** download
-[`TigrimOS-0.7.1.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1.dmg),
-open it, and drag **TigrimOS** into **Applications**.
+[`AndrewOS-0.7.1.dmg`](https://github.com/Sompote/AndrewOS/releases/download/v0.7.1/AndrewOS-0.7.1.dmg),
+open it, and drag **AndrewOS** into **Applications**.
 
 > **First launch:** the app isn't notarized with Apple yet, so macOS may block it.
-> Right-click **TigrimOS.app** → **Open** → **Open** (needed once), or clear the
+> Right-click **AndrewOS.app** → **Open** → **Open** (needed once), or clear the
 > quarantine flag from Terminal:
 > ```bash
-> xattr -dr com.apple.quarantine /Applications/TigrimOS.app
+> xattr -dr com.apple.quarantine /Applications/AndrewOS.app
 > ```
 
 **Plain binary (Terminal / headless):** one command downloads, unpacks, and runs it:
 
 ```bash
 # Apple Silicon (M1–M4)
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/tigrimos-0.7.1-macos-arm64.tar.gz | tar xz
-./tigrimos
+curl -L https://github.com/Sompote/AndrewOS/releases/download/v0.7.1/andrewos-0.7.1-macos-arm64.tar.gz | tar xz
+./andrewos
 
 # Intel Macs
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/tigrimos-0.7.1-macos-x86_64.tar.gz | tar xz
-./tigrimos
+curl -L https://github.com/Sompote/AndrewOS/releases/download/v0.7.1/andrewos-0.7.1-macos-x86_64.tar.gz | tar xz
+./andrewos
 ```
 
 ### Windows
 
 Download and run
-[`TigrimOS-0.7.1-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1-x64.msi)
-— it installs TigrimOS to Program Files and adds a **Start Menu** shortcut.
+[`AndrewOS-0.7.1-x64.msi`](https://github.com/Sompote/AndrewOS/releases/download/v0.7.1/AndrewOS-0.7.1-x64.msi)
+— it installs AndrewOS to Program Files and adds a **Start Menu** shortcut.
 
 > If **SmartScreen** shows "Windows protected your PC", click **More info** →
 > **Run anyway** (the installer isn't code-signed yet).
@@ -201,7 +201,7 @@ One command gets you a headless web server in a container — no Rust or Python 
 <details>
 <summary>🐳 Step-by-step Docker guide (macOS · Linux · Windows)</summary>
 
-Run TigrimOS as a self-contained web server in a container — **no Rust toolchain,
+Run AndrewOS as a self-contained web server in a container — **no Rust toolchain,
 Python, or system libraries to install on your machine.** You use it from your
 **browser**, and all agent code execution stays sandboxed **inside the container**,
 isolated from your host.
@@ -229,13 +229,13 @@ login token**, builds the container, starts the server, and opens the browser fo
 you — no manual `.env` editing:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.sh | bash
+curl -sSL https://raw.githubusercontent.com/Sompote/AndrewOS/main/docker-start.sh | bash
 ```
 
 Want [Browser Control](#browser-control) too? Add `INSTALL_BROWSER=true` (bakes the
 browser into the image, ~400 MB):
 ```bash
-curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.sh | INSTALL_BROWSER=true bash
+curl -sSL https://raw.githubusercontent.com/Sompote/AndrewOS/main/docker-start.sh | INSTALL_BROWSER=true bash
 ```
 
 Already cloned the repo? Run it in place instead:
@@ -250,8 +250,8 @@ Follow the four steps below.
 
 **1. Get the code**
 ```bash
-git clone https://github.com/Sompote/TigrimOSR.git
-cd TigrimOSR
+git clone https://github.com/Sompote/AndrewOS.git
+cd AndrewOS
 ```
 
 **2. Create your login token.** Copy the example env file and put a strong random
@@ -322,7 +322,7 @@ non-root user, with `no-new-privileges` and CPU/memory/PID limits applied.
 
 ### Network exposure
 
-By default the port is published to **`127.0.0.1` only**, so TigrimOS is reachable
+By default the port is published to **`127.0.0.1` only**, so AndrewOS is reachable
 from your machine alone (the access token is still required). To reach it from
 other devices on your LAN, edit `docker-compose.yml` and change the port mapping
 from `"127.0.0.1:3001:3001"` to `"3001:3001"`, then `docker compose up -d`. Only do
@@ -342,7 +342,7 @@ this on networks you trust.
 > **Settings → Remote Instances**, add `http://localhost:3001` with your token, and
 > toggle **Remote** in the sidebar. Because the desktop app also starts its own
 > server on `3001`, run it on a different port to avoid a clash, e.g.
-> `PORT=3002 ./tigrimos`.
+> `PORT=3002 ./andrewos`.
 
 </details>
 
@@ -353,7 +353,7 @@ this on networks you trust.
 
 The same container runs **headless on Windows** with no Rust, Python, or build
 tools installed on the host — only Docker Desktop. This is the easiest way to run
-TigrimOS on Windows: everything (and all agent code execution) stays inside the
+AndrewOS on Windows: everything (and all agent code execution) stays inside the
 Linux container, and you use the app from your browser. Chat, tools, Python, and
 web/remote UI all work — and [Browser Control](#browser-control) works too when you
 build with `INSTALL_BROWSER=true` (shown below). The built-in **VM/QEMU terminal**
@@ -366,13 +366,13 @@ Docker, **auto-generates your login token**, builds the container, starts the
 server, and opens the browser — no manual `.env` editing:
 
 ```powershell
-irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.ps1 | iex
+irm https://raw.githubusercontent.com/Sompote/AndrewOS/main/docker-start.ps1 | iex
 ```
 
 Want [Browser Control](#browser-control) too? Set `INSTALL_BROWSER=true` first (bakes
 the browser into the image, ~400 MB):
 ```powershell
-$env:INSTALL_BROWSER='true'; irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/docker-start.ps1 | iex
+$env:INSTALL_BROWSER='true'; irm https://raw.githubusercontent.com/Sompote/AndrewOS/main/docker-start.ps1 | iex
 ```
 
 Already cloned the repo? Run it in place instead:
@@ -395,8 +395,8 @@ docker compose version
 
 **2. Get the code** (Git for Windows, or download the ZIP from GitHub):
 ```powershell
-git clone https://github.com/Sompote/TigrimOSR.git
-cd TigrimOSR
+git clone https://github.com/Sompote/AndrewOS.git
+cd AndrewOS
 ```
 
 **3. Create your login token** in `.env` (this is what you type into the web UI):
@@ -454,7 +454,7 @@ Build the native desktop app from source with the Rust toolchain — for the Mac
 <details>
 <summary>🛠 Build-from-source guide (macOS · Linux · Windows)</summary>
 
-Build TigrimOS natively from source for the **desktop app** (and features the
+Build AndrewOS natively from source for the **desktop app** (and features the
 container can't provide, like the VM/QEMU terminal). The one-command installer below
 clones, builds, and sets up the app for you; manual step-by-step guides per OS follow.
 
@@ -466,23 +466,23 @@ source $HOME/.cargo/env
 
 **macOS:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/Sompote/AndrewOS/main/install.sh | bash
 ```
 
 **Linux (Desktop):**
 ```bash
-curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
+curl -sSL https://raw.githubusercontent.com/Sompote/AndrewOS/main/install-linux.sh | bash
 ```
 Select **"Desktop mode"** when prompted.
 
 **Windows (PowerShell — recommended, fully automatic):**
 ```powershell
-irm https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Sompote/AndrewOS/main/install.ps1 | iex
 ```
 This installs **everything** for you — git, the Rust MSVC toolchain, the C++ Build Tools (a UAC prompt appears), Python + libraries — then clones, builds, and creates a shortcut. Run it in a normal PowerShell window; approve the Administrator prompt when the build tools install. Need **~10 GB free** disk space. If a freshly-installed tool isn't picked up, open a **new** terminal and run the command again.
 
 **Windows (Command Prompt):**
-Download and run [`install.bat`](https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install.bat). Unlike the PowerShell installer, the `.bat` **requires git, Rust, and the MSVC C++ Build Tools to already be installed** (see the manual steps below) — it then clones, builds, installs Python libraries, and makes a shortcut.
+Download and run [`install.bat`](https://raw.githubusercontent.com/Sompote/AndrewOS/main/install.bat). Unlike the PowerShell installer, the `.bat` **requires git, Rust, and the MSVC C++ Build Tools to already be installed** (see the manual steps below) — it then clones, builds, installs Python libraries, and makes a shortcut.
 
 The installer will:
 1. Check prerequisites and auto-install what's missing — git, Rust toolchain, and (Windows) the MSVC C++ build tools
@@ -536,10 +536,10 @@ Then enable it later in **Settings → Security → Browser Control**. Full guid
 #### Step 4 — Clone, build, run
 
 ```bash
-git clone https://github.com/Sompote/TigrimOSR.git
-cd TigrimOSR
+git clone https://github.com/Sompote/AndrewOS.git
+cd AndrewOS
 cargo build --release
-./target/release/tigrimos
+./target/release/andrewos
 ```
 
 > First build downloads all Rust dependencies and may take 2-5 minutes.
@@ -609,10 +609,10 @@ Then enable it later in **Settings → Security → Browser Control**. Full guid
 #### Step 5 — Clone, build, run
 
 ```bash
-git clone https://github.com/Sompote/TigrimOSR.git
-cd TigrimOSR
+git clone https://github.com/Sompote/AndrewOS.git
+cd AndrewOS
 cargo build --release
-./target/release/tigrimos
+./target/release/andrewos
 ```
 
 > First build downloads all Rust dependencies and may take 2-5 minutes.
@@ -708,10 +708,10 @@ Or download Node.js from https://nodejs.org. Then enable it later in **Settings 
 #### Step 7 — Clone, build, run
 
 ```powershell
-git clone https://github.com/Sompote/TigrimOSR.git
-cd TigrimOSR
+git clone https://github.com/Sompote/AndrewOS.git
+cd AndrewOS
 cargo build --release
-.\target\release\tigrimos.exe
+.\target\release\andrewos.exe
 ```
 
 > The first release build compiles ~600 crates and can take **10+ minutes**.
@@ -749,7 +749,7 @@ Architecture diagram, the main desktop app, AI provider settings, and the agent 
 
 How the pieces fit together — the Rust core, the agent/tool runtime, the inter-agent protocols (TCP, Bus, Queue, Blackboard), and the desktop/web/remote front-ends that all talk to the same engine.
 
-![TigrimOSR Architecture](assets/architecture.png)
+![AndrewOS Architecture](assets/architecture.png)
 
 *Above: the overall system architecture — one binary serving the native UI, the embedded web UI, and remote/headless access.*
 
@@ -757,7 +757,7 @@ How the pieces fit together — the Rust core, the agent/tool runtime, the inter
 
 The native Rust desktop UI: a chat-centric workspace with the conversation in the middle, sessions/sidebar on the left, and an output area for files and charts the agent produces.
 
-![TigrimOSR Screenshot](assets/screenshot.png)
+![AndrewOS Screenshot](assets/screenshot.png)
 
 *Above: the main chat view where you talk to the agent, watch tool calls stream live, and see generated files render inline.*
 
@@ -839,12 +839,12 @@ On first launch, go to **Settings** to configure:
 
 ## Remote access over a private VPN (Tailscale)
 
-Reach a remote TigrimOS over your own tailnet — devices talk over private `100.x` addresses and nothing is exposed to the public internet.
+Reach a remote AndrewOS over your own tailnet — devices talk over private `100.x` addresses and nothing is exposed to the public internet.
 
 <details>
 <summary>🔒 Tailscale VPN setup</summary>
 
-Connect your desktop/phone to a remote TigrimOS host **privately**, over a
+Connect your desktop/phone to a remote AndrewOS host **privately**, over a
 [Tailscale](https://tailscale.com) VPN, instead of exposing the host to the public
 internet. Both devices join your personal *tailnet* and talk over private `100.x`
 addresses — nothing is published publicly. This is the recommended way to reach a
@@ -854,12 +854,12 @@ home/office machine from elsewhere.
 > methods — pick one. The VPN toggle is **off by default**, so nothing changes
 > unless you opt in.
 
-> **VPN is exclusive.** While the VPN toggle is on, TigrimOS binds **only** to
+> **VPN is exclusive.** While the VPN toggle is on, AndrewOS binds **only** to
 > loopback (`127.0.0.1`) and your tailnet IP (`100.x`). The ordinary LAN/public IP
 > can no longer reach the server, even with a valid token — so "running over VPN"
 > is genuinely private rather than just an extra path. Turn the VPN toggle off to
 > return to the default token-based behavior (reachable on all interfaces). If
-> Tailscale isn't up at startup, TigrimOS falls back to loopback-only and logs a
+> Tailscale isn't up at startup, AndrewOS falls back to loopback-only and logs a
 > warning — start Tailscale, then restart.
 
 ### 1. Install Tailscale (one-time, on **both** devices)
@@ -885,13 +885,13 @@ tailscale status      # should show "Running"
 tailscale ip -4       # your 100.x.y.z address
 ```
 
-### 2. On the HOST (the machine running TigrimOS)
+### 2. On the HOST (the machine running AndrewOS)
 
 In **Settings → Remote**:
 
 1. Enable **Remote agent access** and **Generate** a remote token (copy it).
 2. Check **Use VPN (Tailscale) for remote connect**.
-3. **Save**, then **restart** TigrimOS (the network bind decision happens at startup).
+3. **Save**, then **restart** AndrewOS (the network bind decision happens at startup).
 
 After restart the **Connect address** field shows `http://100.x.y.z:3001`. Click
 **Copy**. If it shows *(not detected)*, click **Start VPN** / **Refresh status** and
@@ -921,7 +921,7 @@ tasks, terminal, and files now run against the host over the private VPN.
   binds **all interfaces** (`0.0.0.0`) so the token works from any IP/LAN/mobile.
   Turn the VPN toggle off to return to this behavior.
 - A token is still required for VPN mode (`remoteToken` set) — without one the server
-  stays on loopback only, since an unauthenticated TigrimOS must never be on a network.
+  stays on loopback only, since an unauthenticated AndrewOS must never be on a network.
 - If Tailscale isn't up at startup, VPN mode **fails closed** to loopback-only and logs
   a warning — start Tailscale, then restart.
 - VPN **start/stop/status** is **owner-only**: a remote-access token cannot control
@@ -952,7 +952,7 @@ tailscale ip -4                                      # note the 100.x.y.z
 #    { "remoteEnabled": true, "remoteToken": "<token>", "vpnEnabled": true }
 
 # 3. Restart — boot log prints: [VPN] Reachable at http://100.x.y.z:3001
-PORT=3001 ./tigrimos --headless
+PORT=3001 ./andrewos --headless
 ```
 
 From another tailnet device, add a Remote Instance pointing at
@@ -1380,7 +1380,7 @@ Drop in zip plugins bundling skills, MCP servers, agents and connectors — Clau
 <details>
 <summary>🧩 Installing plugins & supported formats</summary>
 
-TigrimOS supports a **zip-based plugin system** that bundles skills, MCP servers, agent configs, and service connectors into a single distributable package. Install one zip — get everything registered automatically. From the UI: **Settings → Plugins → Install Plugin**.
+AndrewOS supports a **zip-based plugin system** that bundles skills, MCP servers, agent configs, and service connectors into a single distributable package. Install one zip — get everything registered automatically. From the UI: **Settings → Plugins → Install Plugin**.
 
 <details>
 <summary>Install via API, supported formats & package layout</summary>
@@ -1400,7 +1400,7 @@ curl -X POST http://localhost:3001/api/plugins/upload \
 
 | Format | Detection | Description |
 |--------|-----------|-------------|
-| **TigrimOS native** | `plugin.yaml` | Full plugin manifest with skills, agents, MCP, connectors |
+| **AndrewOS native** | `plugin.yaml` | Full plugin manifest with skills, agents, MCP, connectors |
 | **Claude Desktop Extension (MCPB)** | `manifest.json` with `manifest_version` + `server` | Auto-converts MCP config and `user_config` fields |
 | **Claude Code Plugin** | `.claude-plugin/plugin.json` | Auto-detects skills (`SKILL.md`), `.mcp.json`, and `userConfig` |
 | **Claude Desktop Config** | `claude_desktop_config.json` with `mcpServers` | Imports all MCP server entries directly |
@@ -1436,7 +1436,7 @@ Let the agent drive a real browser — search Google, click, type, screenshot �
 <details>
 <summary>🌐 Setup — Chrome/Chromium & Obscura</summary>
 
-Let the agent drive a **real web browser** — navigate to pages, read content, click, fill forms, take screenshots, manage tabs, and run JavaScript. It's powered by [Playwright MCP](https://github.com/microsoft/playwright-mcp) running through TigrimOS's built-in MCP client, and is **off by default for safety** (once on, the agent can act in the browser — submit forms, click buttons, use logged-in sessions — as you).
+Let the agent drive a **real web browser** — navigate to pages, read content, click, fill forms, take screenshots, manage tabs, and run JavaScript. It's powered by [Playwright MCP](https://github.com/microsoft/playwright-mcp) running through AndrewOS's built-in MCP client, and is **off by default for safety** (once on, the agent can act in the browser — submit forms, click buttons, use logged-in sessions — as you).
 
 ### Setup — step by step
 
@@ -1500,12 +1500,12 @@ Saving the setting **reconnects MCP immediately** — no restart needed. The age
 
 ### Using the Obscura engine
 
-[Obscura](https://github.com/h4ckf0r0day/obscura) is an open-source, **stealthy headless browser written in Rust**. TigrimOS drives it through its `obscura mcp` mode, which exposes the **exact same `browser_*` MCP tools** Playwright does (`browser_navigate`, `browser_evaluate`, `browser_click`, …) — so it's a **drop-in engine**: `web_search`, Google-driven browsing, and every browser tool keep working unchanged, just backed by Obscura.
+[Obscura](https://github.com/h4ckf0r0day/obscura) is an open-source, **stealthy headless browser written in Rust**. AndrewOS drives it through its `obscura mcp` mode, which exposes the **exact same `browser_*` MCP tools** Playwright does (`browser_navigate`, `browser_evaluate`, `browser_click`, …) — so it's a **drop-in engine**: `web_search`, Google-driven browsing, and every browser tool keep working unchanged, just backed by Obscura.
 
 **Why pick it**
 
 - **No Node.js / npx / ~280 MB Playwright download** — one self-contained binary.
-- **Stealth by default** — TigrimOS launches it with `--stealth` (consistent fingerprint, TLS impersonation, tracker blocking), which trips fewer bot walls when scraping.
+- **Stealth by default** — AndrewOS launches it with `--stealth` (consistent fingerprint, TLS impersonation, tracker blocking), which trips fewer bot walls when scraping.
 - **Small & fast** — a native Rust engine, ideal for headless cloud/servers.
 
 **Trade-offs vs. Chrome/Chromium**
@@ -1537,7 +1537,7 @@ obscura --version          # e.g. obscura 0.1.9
 
 Check `uname -m` to know your arch (`arm64`/`aarch64` → the `aarch64` asset; `x86_64` → the `x86_64` asset).
 
-#### Step B — Select it in TigrimOS
+#### Step B — Select it in AndrewOS
 
 - **Settings → Security → Browser Control** (web/mobile: **Settings → AI / API**): tick **Enable browser control**, then set **Engine: Obscura**.
 - If the binary **isn't on your `PATH`**, a **"Obscura binary"** box appears — put the absolute path there (e.g. `/usr/local/bin/obscura`). Left as the default `obscura`, it's resolved from `PATH`.
@@ -1564,7 +1564,7 @@ The boot log should show:
 
 Then in chat: *"Open a browser to example.com and tell me the page title."* — the agent calls `browser_navigate` → `browser_evaluate`. If it fails, the log reads `Browser control failed to start (is the \`obscura\` binary installed and on PATH?)` — fix Step A (binary missing or wrong path).
 
-**How it works:** enabling the toggle with this engine auto-registers a built-in stdio MCP server running `obscura mcp --stealth` (via `browserObscuraPath`). TigrimOS keeps the process alive across calls, so the browser session is stateful — same as the Playwright path, just a different engine binary.
+**How it works:** enabling the toggle with this engine auto-registers a built-in stdio MCP server running `obscura mcp --stealth` (via `browserObscuraPath`). AndrewOS keeps the process alive across calls, so the browser session is stateful — same as the Playwright path, just a different engine binary.
 
 </details>
 
@@ -1604,7 +1604,7 @@ For the **Obscura** engine it instead runs the native binary (no Node needed), w
 <browserObscuraPath> mcp --stealth
 ```
 
-TigrimOS keeps the MCP server process **alive across tool calls**, so the browser session is stateful — a page opened by `browser_navigate` is still there for the next `browser_snapshot`/`browser_click`. (Each call is serialized per server and the process auto-restarts if it dies.)
+AndrewOS keeps the MCP server process **alive across tool calls**, so the browser session is stateful — a page opened by `browser_navigate` is still there for the next `browser_snapshot`/`browser_click`. (Each call is serialized per server and the process auto-restarts if it dies.)
 
 **Headless / cloud servers:** the browser's headless mode is **decoupled** from the server's UI mode via the `browserHeadless` setting:
 
@@ -1614,13 +1614,13 @@ TigrimOS keeps the MCP server process **alive across tool calls**, so the browse
 | `false` | **Headful (a real browser)** even on a UI-less server | Beating Google's headless blocking on a server |
 | `true` | Headless (no window) | Forcing headless regardless of UI |
 
-On an **interactive** headless startup, TigrimOS also **prompts you to install the browser and enable browser control** (`Enable it now? Downloads the Playwright browser (~280 MB) [y/N]`) — answer `y` and it runs the install and flips the setting on for you. Non-interactive startups (systemd / Docker / cron) skip the prompt, so install the browser yourself once (`npx @playwright/mcp@latest install-browser chrome-for-testing`) and set `browserControlEnabled: true`. Either way the server needs Node.js, and Linux needs the runtime libs (`npx playwright install-deps chromium`). Screenshots stream back inline to the web/mobile UI.
+On an **interactive** headless startup, AndrewOS also **prompts you to install the browser and enable browser control** (`Enable it now? Downloads the Playwright browser (~280 MB) [y/N]`) — answer `y` and it runs the install and flips the setting on for you. Non-interactive startups (systemd / Docker / cron) skip the prompt, so install the browser yourself once (`npx @playwright/mcp@latest install-browser chrome-for-testing`) and set `browserControlEnabled: true`. Either way the server needs Node.js, and Linux needs the runtime libs (`npx playwright install-deps chromium`). Screenshots stream back inline to the web/mobile UI.
 
 > ⚠️ **Heads-up: Google blocks headless browsers.** A headless browser (especially from a datacenter/cloud IP) is likely to hit a **CAPTCHA / "are you a robot"** challenge or consent wall instead of results, so `web_search` and Google-driven browsing fail — headless browsers can't solve those. **The fix is to run a real, headful browser on the server:**
 > - Set **engine = Chrome** and **`browserHeadless: false`** (Settings → Browser Control → *Window: Real browser*).
-> - A server has no display, so give it a **virtual** one with [Xvfb](https://en.wikipedia.org/wiki/Xvfb): `sudo apt-get install -y xvfb`, then launch TigrimOS under it:
+> - A server has no display, so give it a **virtual** one with [Xvfb](https://en.wikipedia.org/wiki/Xvfb): `sudo apt-get install -y xvfb`, then launch AndrewOS under it:
 >   ```bash
->   xvfb-run -a ./target/release/tigrimos --headless
+>   xvfb-run -a ./target/release/andrewos --headless
 >   ```
 >   The server stays UI-less, but the browser is now a *real* Chrome window inside the virtual display — Google can't tell it's headless. Clear any first CAPTCHA once in that window (via screenshots/clicks) and the **persistent profile** remembers it.
 > - This defeats **headless detection** but not **IP reputation** — a hardened datacenter IP may still be challenged. For those, use a **residential IP/proxy**, or have the agent fetch results from a non-Google source.
@@ -1688,7 +1688,7 @@ request:
   method: GET                   # GET | POST
   url: "http://export.arxiv.org/api/query?search_query=all:{{query}}&max_results={{limit}}"
   headers:
-    User-Agent: "TigrimOS/1.0"
+    User-Agent: "AndrewOS/1.0"
   timeout_secs: 20              # capped at 120
 response:
   format: auto                  # auto | json | text
@@ -1771,7 +1771,7 @@ A built-in **`search_papers`** tool lets the agent search scholarly literature d
 <details>
 <summary>📚 How paper search works</summary>
 
-TigrimOS ships a first-class research tool backed by [**OpenAlex**](https://openalex.org), a free and open index of **250M+ scholarly works**. When you ask the agent for research literature, it calls `search_papers` instead of a general web search and gets back structured metadata for each paper:
+AndrewOS ships a first-class research tool backed by [**OpenAlex**](https://openalex.org), a free and open index of **250M+ scholarly works**. When you ask the agent for research literature, it calls `search_papers` instead of a general web search and gets back structured metadata for each paper:
 
 - **Title, authors** (first 8 + "et al."), **publication year**, and **venue / journal**
 - **DOI** and a canonical URL
@@ -1781,7 +1781,7 @@ TigrimOS ships a first-class research tool backed by [**OpenAlex**](https://open
 
 ### No setup required
 
-There's nothing to configure — it works the moment you install. OpenAlex is a free public API, and TigrimOS calls it directly with a polite `User-Agent`. Just ask:
+There's nothing to configure — it works the moment you install. OpenAlex is a free public API, and AndrewOS calls it directly with a polite `User-Agent`. Just ask:
 
 > *"Find recent papers on soil liquefaction using machine learning."*
 > *"Search for the most-cited open-access papers on foundation settlement since 2020."*
@@ -1821,11 +1821,11 @@ Google login.
 
 1. **Get credentials** — the button opens the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
    Enable the Gmail, Calendar and Drive APIs, then *Create Credentials → OAuth client ID →*
-   *Application type "Desktop app"*, and paste the **Client ID** (and Secret) into TigrimOS.
+   *Application type "Desktop app"*, and paste the **Client ID** (and Secret) into AndrewOS.
    One-time, ~2 minutes.
 2. **Install uv runtime (automatic)** — if `uvx` isn't found, this button runs the official
    [uv](https://docs.astral.sh/uv/) installer for you (macOS/Linux shell script, Windows PowerShell).
-3. **Connect & Login with Google** — TigrimOS writes the MCP server entry (with your OAuth
+3. **Connect & Login with Google** — AndrewOS writes the MCP server entry (with your OAuth
    client in its `env`), connects it, and triggers the login: **your browser opens
    accounts.google.com**, you approve, done. Tokens are stored locally
    (`~/.google_workspace_mcp/credentials`) and refresh automatically — you won't be asked again.
@@ -1852,10 +1852,10 @@ Notes:
 - **Web / mobile UI too** — the same quick-connect card lives at the top of
   **Settings → MCP Tools** in the remote web UI (`/api/google` endpoints: status,
   owner-only `install-uv`, `connect`). **Remote login just needs one URL edit:** the
-  Google redirect targets `localhost:8000` of the machine running TigrimOS, so a remote
+  Google redirect targets `localhost:8000` of the machine running AndrewOS, so a remote
   browser ends on a *"can't connect to localhost"* page — replace `localhost:8000` in
-  that address bar with your TigrimOS host:port (e.g. `myhost:3001`) and press Enter;
-  TigrimOS **relays** the callback (`/oauth2callback`) to the Google server and the
+  that address bar with your AndrewOS host:port (e.g. `myhost:3001`) and press Enter;
+  AndrewOS **relays** the callback (`/oauth2callback`) to the Google server and the
   login completes. Works for Docker too (only port 3001 needs publishing). On the same
   machine it just works with no edit.
 
@@ -1870,7 +1870,7 @@ The "Get credentials" button opens the console, but Google requires a few one-ti
 clicks on their side. Do them in this order (all inside the same Google Cloud project):
 
 1. **Create/select a project** — [console.cloud.google.com](https://console.cloud.google.com),
-   top-left project picker → *New Project* (any name, e.g. `tigrimos`).
+   top-left project picker → *New Project* (any name, e.g. `andrewos`).
 2. **Enable the APIs** — *APIs & Services → Library*, search and **Enable** each one you
    plan to use: **Gmail API**, **Google Calendar API**, **Google Drive API**.
    (An API you skip will fail later with `accessNotConfigured`.)
@@ -1883,7 +1883,7 @@ clicks on their side. Do them in this order (all inside the same Google Cloud pr
      own Gmail address here, or the Google login will end with **`Error 403: access_denied`**.
 4. **Create the OAuth client** — *APIs & Services → Credentials → Create Credentials →
    OAuth client ID* → Application type **Desktop app** → Create. Copy the **Client ID**
-   (`xxxx.apps.googleusercontent.com`) and **Client secret** into the TigrimOS card.
+   (`xxxx.apps.googleusercontent.com`) and **Client secret** into the AndrewOS card.
    Desktop-app clients need **no redirect URI registration** — the localhost callback
    is allowed automatically.
 
@@ -1893,7 +1893,7 @@ clicks on their side. Do them in this order (all inside the same Google Cloud pr
 > personal use; "unverified app" warnings during login are normal — click *Advanced →
 > Continue*).
 
-#### B. What TigrimOS writes, and where things hide on disk
+#### B. What AndrewOS writes, and where things hide on disk
 
 Pressing **Connect & Login** creates this entry in `data/settings.json` (`mcpTools`) —
 you can write it by hand on any machine, no UI needed:
@@ -1945,7 +1945,7 @@ localhost). If port 8000 is taken, add `"WORKSPACE_MCP_PORT": "8100"` to the `en
 | `accessNotConfigured` / `SERVICE_DISABLED` when using a tool | That API wasn't enabled in the console (step A2) — enable it and retry. |
 | `❌ google — Failed to spawn MCP server` | `uvx` not found: press **Install uv runtime**, or install manually (`brew install uv`) and reconnect. First launch also downloads packages — give it ~30 s. |
 | Browser never opens | Check the status line for a login URL and open it manually; on a headless box use section C instead. |
-| Login ends on *"Safari/Chrome can't connect to localhost:8000"* | You logged in from a **remote** browser — the callback targets the host. In that page's address bar, replace `localhost:8000` with your TigrimOS `host:port` (e.g. `myhost:3001`) and press Enter; the `/oauth2callback` relay completes the login. Then press Connect again if needed. |
+| Login ends on *"Safari/Chrome can't connect to localhost:8000"* | You logged in from a **remote** browser — the callback targets the host. In that page's address bar, replace `localhost:8000` with your AndrewOS `host:port` (e.g. `myhost:3001`) and press Enter; the `/oauth2callback` relay completes the login. Then press Connect again if needed. |
 | Want a different Google account | Delete `~/.google_workspace_mcp/credentials/`, update `USER_GOOGLE_EMAIL`, press **Connect & Login** again. |
 | Read-only safety | Hand-edit the entry's `args` to add `--read-only`, or use `--permissions gmail:readonly drive:readonly calendar:readonly` instead of `--tools`. |
 
@@ -1962,7 +1962,7 @@ Chat with your agent from Telegram or LINE — slash commands, live progress whi
 <details>
 <summary>💬 Bot setup, commands & security</summary>
 
-Chat with your TigrimOS agent from **Telegram** or **LINE** — and control it with slash
+Chat with your AndrewOS agent from **Telegram** or **LINE** — and control it with slash
 commands — from anywhere. Telegram needs no public URL at all (outbound long-polling);
 LINE uses the built-in Cloudflare tunnel for its webhook. Bot conversations run through
 the **same pipeline as web chat**, so they appear in the web UI history, stream progress
@@ -2045,26 +2045,26 @@ state, errors and the LINE webhook URL are reported by `GET /api/messaging/statu
 
 ## Remote / Headless Setup
 
-Run TigrimOS headless on a server and connect from the desktop app, any browser, or your phone — with systemd, nginx/HTTPS, and security guidance.
+Run AndrewOS headless on a server and connect from the desktop app, any browser, or your phone — with systemd, nginx/HTTPS, and security guidance.
 
 <details>
 <summary>📡 Deploy, systemd, nginx, security</summary>
 
-TigrimOS can run on any cloud server (AWS, DigitalOcean, Hetzner, etc.) as a headless AI agent backend. You control it from your Mac desktop app, a mobile browser, or any web browser.
+AndrewOS can run on any cloud server (AWS, DigitalOcean, Hetzner, etc.) as a headless AI agent backend. You control it from your Mac desktop app, a mobile browser, or any web browser.
 
 ### Quick Deploy (recommended)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Sompote/TigrimOSR/main/install-linux.sh | bash
+curl -sSL https://raw.githubusercontent.com/Sompote/AndrewOS/main/install-linux.sh | bash
 ```
 Select **"Headless mode"** — the installer handles systemd, nginx, firewall, and optional HTTPS.
 
 After install:
 ```bash
-sudo systemctl start tigrimos    # start server
-sudo systemctl stop tigrimos     # stop server
-sudo systemctl restart tigrimos  # restart after config change
-sudo journalctl -u tigrimos -f   # view live logs
+sudo systemctl start andrewos    # start server
+sudo systemctl stop andrewos     # stop server
+sudo systemctl restart andrewos  # restart after config change
+sudo journalctl -u andrewos -f   # view live logs
 ```
 
 <details>
@@ -2081,15 +2081,15 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 
 # Clone and build
-git clone https://github.com/Sompote/TigrimOSR.git
-cd TigrimOSR
+git clone https://github.com/Sompote/AndrewOS.git
+cd AndrewOS
 cargo build --release
 
 # Run headless — prompts for a security token
-./target/release/tigrimos --headless
+./target/release/andrewos --headless
 
 # Or set token + port via environment variables
-ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/tigrimos --headless
+ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/andrewos --headless
 ```
 
 ### Headless + VPN (Tailscale)
@@ -2109,7 +2109,7 @@ tailscale ip -4
 
 # 3. (Re)start headless — on boot the log prints the tailnet URL:
 #    [VPN] Reachable at http://100.x.y.z:3001
-ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/tigrimos --headless
+ACCESS_TOKEN=my-secret-token PORT=3001 ./target/release/andrewos --headless
 ```
 
 On a native (non-Docker) headless box, Tailscale and the server share the same machine,
@@ -2132,7 +2132,7 @@ curl -H "Authorization: Bearer my-secret-token" http://127.0.0.1:3001/api/vpn/st
 The server will prompt for a token on first run:
 ```
 ===========================================
-  TigrimOS Headless Mode — Security Setup
+  AndrewOS Headless Mode — Security Setup
 ===========================================
 
 Enter access token (min 8 chars): ********
@@ -2144,25 +2144,25 @@ Token set. Use this to connect from your Mac or browser.
 
 ### systemd Service (production)
 
-Create a systemd unit file so TigrimOS starts on boot and auto-restarts on crash:
+Create a systemd unit file so AndrewOS starts on boot and auto-restarts on crash:
 
 ```bash
-sudo nano /etc/systemd/system/tigrimos.service
+sudo nano /etc/systemd/system/andrewos.service
 ```
 
 ```ini
 [Unit]
-Description=TigrimOS Headless AI Agent Server
+Description=AndrewOS Headless AI Agent Server
 After=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/TigrimOSR
-ExecStart=/root/TigrimOSR/target/release/tigrimos --headless
+WorkingDirectory=/root/AndrewOS
+ExecStart=/root/AndrewOS/target/release/andrewos --headless
 Environment=ACCESS_TOKEN=my-secret-token
 Environment=PORT=3002
-Environment=SANDBOX_DIR=/root/TigrimOS/sandbox
+Environment=SANDBOX_DIR=/root/AndrewOS/sandbox
 Restart=on-failure
 RestartSec=5
 
@@ -2172,14 +2172,14 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable tigrimos   # start on boot
-sudo systemctl start tigrimos    # start now
+sudo systemctl enable andrewos   # start on boot
+sudo systemctl start andrewos    # start now
 ```
 
 Rebuilding after a `git pull`:
 ```bash
-cd TigrimOSR && git pull origin main && cargo build --release
-sudo systemctl restart tigrimos
+cd AndrewOS && git pull origin main && cargo build --release
+sudo systemctl restart andrewos
 ```
 
 ### Configure AI Provider on the Server
@@ -2251,7 +2251,7 @@ sudo ufw allow 443/tcp    # nginx HTTPS
 
 | Method | How to Set | When Auth is Required |
 |--------|-----------|----------------------|
-| `ACCESS_TOKEN` env var | `ACCESS_TOKEN=xxx ./tigrimos` | Always (headless or GUI) |
+| `ACCESS_TOKEN` env var | `ACCESS_TOKEN=xxx ./andrewos` | Always (headless or GUI) |
 | Remote Token (Settings) | Settings → Remote Instances → set token + enable | When "Enable remote agent access" is checked |
 | `--headless` prompt | Interactive prompt on startup | Always in headless mode |
 | No token set | — | No auth (local desktop use only) |
@@ -2404,7 +2404,7 @@ What changed in each release, latest first.
 - **Kimi-style Files browser** — Complete redesign of the Files tab with a left sidebar (Library / Places), white background, colored extension badges (DOCX=blue, XLSX=green, PNG=orange, etc.), breadcrumb navigation, relative dates ("Today", "Yesterday", "3 days ago"), and a selection action bar with Download/Delete buttons.
 - **Agent Swarm light theme** — Agent Swarm view redesigned with white canvas, light sidebar, floating Node Properties and Connection Properties windows, blue selection borders, and hover glow effects with tooltip cards showing agent name/role/persona.
 - **Claude Code identity headers** — All LLM call sites now send full Claude Code identity headers (User-Agent, X-Client-Name, X-Client-Version, HTTP-Referer, X-Traffic-Source) for Kimi API compatibility. Applied across toolbox, skill synthesizer, compact, settings validation, and MCP services.
-- **Logo image in About & Chat** — About section and chat welcome screen now display the TigrimOS logo as a rendered image instead of text emoji.
+- **Logo image in About & Chat** — About section and chat welcome screen now display the AndrewOS logo as a rendered image instead of text emoji.
 - **Zero-lag chat send** — In-memory messages with atomic save on stream complete for instant chat responsiveness.
 - **WebSocket live updates** — Remote tasks now receive live updates via WebSocket, plus UTF-8 crash fix and improved chat input.
 - **Fast remote sync** — Sync cache fast-path with background fetch and pre-warming for snappy remote mode.
@@ -2427,9 +2427,9 @@ What changed in each release, latest first.
 <details>
 <summary>v0.4.0 — Headless mode, remote web UI, remote server dashboard, auth security</summary>
 
-- **Headless mode** — Run TigrimOS on a remote Linux server without GUI: `./tigrimos --headless`. Interactive token prompt ensures security — empty tokens are blocked.
-- **Remote Web UI** — Full embedded web interface at `/web/` for controlling TigrimOS from any browser or mobile phone. Includes Chat, Files, Terminal, Agents, Tasks, and Settings pages. No Node.js or build tools needed — the SPA is compiled into the binary.
-- **Remote Server tab** — Native Mac app can connect to and control remote TigrimOS instances. Browse files, submit tasks, chat, and view settings on the remote server from your local desktop.
+- **Headless mode** — Run AndrewOS on a remote Linux server without GUI: `./andrewos --headless`. Interactive token prompt ensures security — empty tokens are blocked.
+- **Remote Web UI** — Full embedded web interface at `/web/` for controlling AndrewOS from any browser or mobile phone. Includes Chat, Files, Terminal, Agents, Tasks, and Settings pages. No Node.js or build tools needed — the SPA is compiled into the binary.
+- **Remote Server tab** — Native Mac app can connect to and control remote AndrewOS instances. Browse files, submit tasks, chat, and view settings on the remote server from your local desktop.
 - **Remote authentication** — Set a Remote Token in Settings to secure API access. When enabled, all API endpoints require the token. The web UI shows a login page — no data accessible without authentication.
 - **LaTeX math rendering** — Web UI renders LaTeX equations via KaTeX (`\[...\]`, `\(...\)`, `$$...$$`, `$...$`). Supports fractions, subscripts, Greek letters, and display math.
 - **Markdown rendering** — Web UI renders tables, headings, bold/italic, code blocks, lists, and horizontal rules in chat and task results.
@@ -2518,7 +2518,7 @@ Where everything lives in the codebase.
 <summary>🌲 Source tree</summary>
 
 ```
-TigrimOSR/
+AndrewOS/
 ├── src/
 │   ├── main.rs              # Entry point (GUI + headless mode)
 │   ├── ui/

@@ -22,3 +22,7 @@ pub mod messaging;
 pub mod compact;
 pub mod plugin;
 pub mod custom_tools;
+pub mod cli_models;
+pub mod agent_library;
+#[allow(dead_code)]
+pub mod workflow;

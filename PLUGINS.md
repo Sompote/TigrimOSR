@@ -1,6 +1,6 @@
-# TigrimOS Plugin Developer Guide
+# AndrewOS Plugin Developer Guide
 
-This document covers everything you need to build, package, and distribute plugins for TigrimOS. Plugins bundle skills, MCP servers, agent configs, and service connectors into a single `.zip` file.
+This document covers everything you need to build, package, and distribute plugins for AndrewOS. Plugins bundle skills, MCP servers, agent configs, and service connectors into a single `.zip` file.
 
 ---
 
@@ -57,7 +57,7 @@ The `plugin.yaml` (or `plugin.yml`) file is the only required file. It declares 
 id: "gmail-connector"              # REQUIRED — unique slug [a-z0-9][a-z0-9-]*
 name: "Gmail Connector"            # REQUIRED — display name
 version: "1.0.0"                   # REQUIRED — semver
-author: "TigrimOS Community"       # REQUIRED
+author: "AndrewOS Community"       # REQUIRED
 description: "Connect to Gmail, read/send emails, manage calendar"
 
 category: "connector"              # optional — connector | toolkit | swarm | utility
@@ -152,7 +152,7 @@ Skills can include subdirectories with scripts, references, and supporting files
 
 ### Agents
 
-Agent entries point to YAML files in the standard TigrimOS agent config format.
+Agent entries point to YAML files in the standard AndrewOS agent config format.
 
 ```yaml
 components:
@@ -167,7 +167,7 @@ components:
 
 ### MCP Servers
 
-MCP server entries point to JSON config files. The format matches the `McpTool` structure used in TigrimOS settings.
+MCP server entries point to JSON config files. The format matches the `McpTool` structure used in AndrewOS settings.
 
 ```yaml
 components:
@@ -271,7 +271,7 @@ password = gmail_config.get("app_password", "")
 
 ## Claude Format Compatibility
 
-TigrimOS automatically detects and converts four Claude plugin formats. You can install Claude plugins directly — no repackaging needed.
+AndrewOS automatically detects and converts four Claude plugin formats. You can install Claude plugins directly — no repackaging needed.
 
 ### MCPB (Claude Desktop Extension)
 
@@ -406,7 +406,7 @@ my-plugin.zip
 - Entry point from `main` field → stdio MCP config with `node` command
 - Category set to `connector`
 
-> **Note:** For npm packages, you should run `npm install` in the plugin directory after installation to install Node.js dependencies. TigrimOS does not auto-install npm dependencies.
+> **Note:** For npm packages, you should run `npm install` in the plugin directory after installation to install Node.js dependencies. AndrewOS does not auto-install npm dependencies.
 
 ---
 
@@ -416,7 +416,7 @@ my-plugin.zip
 
 1. Upload `.zip` via UI or API
 2. Security validation (no path traversal, max 100 MB, max 500 files)
-3. Manifest detection (TigrimOS → MCPB → Claude Code → Desktop Config → npm)
+3. Manifest detection (AndrewOS → MCPB → Claude Code → Desktop Config → npm)
 4. Plugin ID validation (`^[a-z0-9][a-z0-9-]*$`)
 5. Extract to `data/plugins/{id}/`
 6. Generate MCP config files for Claude formats
@@ -466,7 +466,7 @@ GET /api/plugins
     "id": "gmail-connector",
     "name": "Gmail Connector",
     "version": "1.0.0",
-    "author": "TigrimOS Community",
+    "author": "AndrewOS Community",
     "description": "Connect to Gmail...",
     "category": "connector",
     "enabled": true,

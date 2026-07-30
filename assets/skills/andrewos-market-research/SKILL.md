@@ -1,12 +1,12 @@
 ---
-name: tigrimos-market-research
-description: Multi-agent market research workflow for TigrimOS with brand discovery, data analysis, charts, and compiled report
+name: andrewos-market-research
+description: Multi-agent market research workflow for AndrewOS with brand discovery, data analysis, charts, and compiled report
 ---
 
-# TigrimOS Market Research Pipeline
+# AndrewOS Market Research Pipeline
 
 ## Overview
-This skill orchestrates a multi-agent workflow to perform comprehensive market research for TigrimOS (or similar AI assistant/agent platforms). It handles brand name correction, market data collection, visualization generation, and report compilation.
+This skill orchestrates a multi-agent workflow to perform comprehensive market research for AndrewOS (or similar AI assistant/agent platforms). It handles brand name correction, market data collection, visualization generation, and report compilation.
 
 ## Multi-Agent Topology
 
@@ -43,7 +43,7 @@ This skill orchestrates a multi-agent workflow to perform comprehensive market r
 1. Accept user query (may contain typos)
 2. Load `brand-discovery` skill
 3. Generate spelling variations and search iteratively
-4. Confirm correct brand name (e.g., "TigrimOS")
+4. Confirm correct brand name (e.g., "AndrewOS")
 5. Pass verified name to downstream agents
 
 ### Phase 2: Market Research (Parallel Agents)
@@ -72,7 +72,7 @@ This skill orchestrates a multi-agent workflow to perform comprehensive market r
 ## Implementation
 
 ```python
-def tigrimos_market_research_pipeline(query: str) -> dict:
+def andrewos_market_research_pipeline(query: str) -> dict:
     """Execute multi-agent market research workflow."""
     
     # Phase 1: Brand Discovery
@@ -117,7 +117,7 @@ def tigrimos_market_research_pipeline(query: str) -> dict:
 | Final report | `*_Final_Report.md` | report_compiler |
 
 ## Best Practices
-- Always run brand discovery FIRST to handle typos ("tigrimos" → "TigrimOS")
+- Always run brand discovery FIRST to handle typos ("andrewos" → "AndrewOS")
 - Run market research and data analysis in parallel for efficiency
 - Data analyst should wait for market researcher results before creating charts
 - Report compiler should wait for both research and charts
@@ -133,7 +133,7 @@ def tigrimos_market_research_pipeline(query: str) -> dict:
 ## Output Directory Structure
 ```
 ./sandbox/output_file/
-├── TigrimOS_Marketing_Research_Report.md
+├── AndrewOS_Marketing_Research_Report.md
 ├── market_growth_chart.png
 ├── competitive_landscape.png
 ├── target_audience.png

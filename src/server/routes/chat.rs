@@ -400,6 +400,107 @@ pub struct AgentRunRequest {
 /// built-in log writer. `done_tx` fires with the final assistant text after
 /// it has been persisted. Err(text) means the run could not start; the text
 /// has already been persisted as an assistant message.
+/// Run one chat turn as a workflow DAG instead of the normal sub-agent loop.
+///
+/// Returns the same shape as `call_with_tools` so everything downstream —
+/// history, output files, the completion footer — is untouched.
+#[allow(clippy::too_many_arguments)]
+/// Run one chat turn as a workflow DAG instead of the normal sub-agent loop.
+///
+/// Shared with the desktop UI (`src/ui/chat.rs`) so both front-ends dispatch
+/// the same patterns through the same executor — a pattern reachable from one
+/// UI but not the other is the bug this is guarding against.
+pub(crate) async fn run_workflow_turn(
+    pattern: &str,
+    width: usize,
+    llm_messages: &[serde_json::Value],
+    api_key: &str,
+    api_url: &str,
+    model: &str,
+    sandbox_dir: &str,
+    session_id: &str,
+    model_pool: Vec<crate::server::data::ModelPoolEntry>,
+) -> crate::server::services::toolbox::ToolLoopResult {
+    use crate::server::services::toolbox::{append_session_progress, ToolLoopResult};
+    use crate::server::services::workflow::{self, WorkflowContext};
+
+    // The task is the latest user turn; earlier turns are already summarised
+    // into the session, and a DAG node takes a single prompt.
+    let task = llm_messages
+        .iter()
+        .rev()
+        .find(|m| m["role"] == "user")
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let profile = match workflow::build_pattern(pattern, width) {
+        Ok(p) => p,
+        Err(e) => {
+            return ToolLoopResult {
+                content: format!("⚠️ Could not build the '{pattern}' workflow: {e}"),
+                tool_results: Vec::new(),
+                files: Vec::new(),
+            }
+        }
+    };
+
+    let plan = profile
+        .levels()
+        .map(|ls| {
+            ls.iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let names: Vec<&str> =
+                        l.iter().map(|&n| profile.nodes[n].name.as_str()).collect();
+                    format!("  {}. {}", i + 1, names.join(", "))
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    append_session_progress(
+        session_id,
+        &format!("⬡ **{}** — {} nodes\n{}\n", profile.name, profile.nodes.len(), plan),
+    );
+
+    let sid = session_id.to_string();
+    let sink: workflow::ProgressSink =
+        std::sync::Arc::new(move |line: String| append_session_progress(&sid, &line));
+
+    let ctx = WorkflowContext {
+        api_key: api_key.to_string(),
+        api_url: api_url.to_string(),
+        model: model.to_string(),
+        sandbox_dir: sandbox_dir.to_string(),
+        session_id: session_id.to_string(),
+        model_pool,
+    };
+
+    match workflow::run_with_agent_loop(&profile, &task, &ctx, Some(sink)).await {
+        Ok(run) => {
+            // A partial run is still worth returning — the failed nodes are
+            // named so the answer is not silently short.
+            let failed: Vec<&str> =
+                run.outcomes.iter().filter(|o| !o.ok).map(|o| o.name.as_str()).collect();
+            let mut content = run.final_output;
+            if !failed.is_empty() {
+                content.push_str(&format!(
+                    "\n\n---\n⚠️ {} node(s) failed and were excluded: {}",
+                    failed.len(),
+                    failed.join(", ")
+                ));
+            }
+            ToolLoopResult { content, tool_results: Vec::new(), files: Vec::new() }
+        }
+        Err(e) => ToolLoopResult {
+            content: format!("⚠️ The '{pattern}' workflow could not run: {e}"),
+            tool_results: Vec::new(),
+            files: Vec::new(),
+        },
+    }
+}
+
 pub async fn start_agent_run(
     req: AgentRunRequest,
     extra_on_update: Option<Arc<dyn Fn(ToolUpdate) + Send + Sync>>,
@@ -582,9 +683,7 @@ pub async fn start_agent_run(
         }
         if !m.api_url.trim().is_empty() {
             let raw = m.api_url.trim().to_string();
-            api_url = if raw.starts_with("claude-code")
-                || raw.starts_with("gemini-cli")
-                || raw.starts_with("codex-cli")
+            api_url = if crate::server::services::cli_models::is_local_cli_url(&raw)
                 || raw.ends_with("/chat/completions")
             {
                 raw
@@ -594,7 +693,9 @@ pub async fn start_agent_run(
         }
     }
 
-    if api_key.is_empty() {
+    // Local CLI backends authenticate through their own login, so demanding an
+    // API key here would make them unusable from chat.
+    if api_key.is_empty() && !crate::server::services::cli_models::is_local_cli_url(&api_url) {
         let err = "API key not configured. Set it in Settings > AI Configuration.".to_string();
         // Save error as assistant message
         let mut sessions2 = get_chat_history().await;
@@ -636,8 +737,21 @@ pub async fn start_agent_run(
     // An explicit "graph" request is rewritten to the profile's worker mode —
     // the gate itself rides on SubAgentConfig.graph_profile below.
     let request_mode = req.agent_mode.as_deref().unwrap_or("single");
+
+    // A workflow pattern ("tournament", "fanout_and_synthesize", ...) runs as a
+    // DAG of agent nodes rather than the normal sub-agent loop. Captured here
+    // and dispatched at the run site; like "graph", it must not leak into
+    // SubAgentConfig.mode, which only understands the swarm modes.
+    let workflow_pattern: Option<String> = crate::server::services::workflow::pattern_catalog()
+        .iter()
+        .find(|(id, _)| *id == request_mode)
+        .map(|(id, _)| id.to_string());
+
     let request_mode: &str = if request_mode == "graph" {
         graph_profile_arc.as_deref().map(|p| p.worker_mode()).unwrap_or("single")
+    } else if workflow_pattern.is_some() {
+        // Each node runs as its own single agent; the topology does the work.
+        "single"
     } else {
         request_mode
     };
@@ -705,6 +819,7 @@ pub async fn start_agent_run(
 
     let mut sub_agent = SubAgentConfig {
         enabled: sub_agent_enabled,
+        effort: settings.reasoning_effort.clone().unwrap_or_default(),
         mode: effective_mode.clone(),
         session_id: id.clone(),
         agent_id: "main".to_string(),
@@ -1008,7 +1123,7 @@ An agent team is being created for this task. You are the COORDINATOR.\n\
             )
         } else {
             format!(
-            "You are TigrimOS, an AI assistant with tools for search, code execution, files, and skills.\n\
+            "You are AndrewOS, an AI assistant with tools for search, code execution, files, and skills.\n\
 Rules:\n\
 - Always use tools to produce real results — never just describe what you would do.\n\
 - If a tool call fails, analyze the error, fix it, and retry. Try a different approach after two failures.\n\
@@ -1144,10 +1259,38 @@ You have access to these tools: {}.{}",
         None => (api_key, api_url, model),
     };
 
+    // Workflow-mode inputs, resolved before the task takes ownership of them.
+    // The roster lets a pattern run judges on a different model from workers.
+    let workflow_model_pool = settings.model_pool.clone().unwrap_or_default();
+    // Reuses the existing swarm agent-count knob rather than adding a second
+    // one that means the same thing. build_pattern clamps it to a sane range.
+    let settings_agent_count: Option<usize> = settings
+        .extra
+        .get("autoAgentCount")
+        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .map(|n| n as usize);
+
     tokio::spawn(async move {
         let extra_cb = extra_on_update;
         let mut done_tx = done_tx;
-        let result = call_with_tools(
+        let result = if let Some(pattern) = workflow_pattern {
+            // Width sizes the parallel stage (workers, verifiers, attempts).
+            // Reuses the swarm agent-count setting so one knob governs both.
+            let width = settings_agent_count.unwrap_or(3);
+            run_workflow_turn(
+                &pattern,
+                width,
+                &llm_messages,
+                &api_key,
+                &api_url,
+                &model,
+                &sandbox_dir,
+                &session_id_for_log,
+                workflow_model_pool,
+            )
+            .await
+        } else {
+        call_with_tools(
             &api_key,
             &api_url,
             &model,
@@ -1197,7 +1340,8 @@ You have access to these tools: {}.{}",
                 }
             },
             sub_agent,
-        ).await;
+        ).await
+        };
 
         // Remove from native UI's active tasks and cancel flags
         {

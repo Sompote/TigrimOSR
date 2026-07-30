@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, Mutex};
 
 use chrono::{DateTime, Utc};
@@ -25,7 +25,7 @@ pub fn set_remote_backend(backend: Option<RemoteBackend>) {
     // Pre-warm cache for the new backend
     if let Some(ref rb) = backend {
         eprintln!("[remote] Connecting to remote: {} (token={}...)", rb.url, crate::util::truncate_utf8(&rb.token, 4));
-        let _ = std::fs::write("/tmp/tigrimos_remote.log", format!("CONNECT url={} token={}\n", rb.url, crate::util::truncate_utf8(&rb.token, 8)));
+        let _ = std::fs::write("/tmp/andrewos_remote.log", format!("CONNECT url={} token={}\n", rb.url, crate::util::truncate_utf8(&rb.token, 8)));
         remote_bg_fetch(rb, "/api/chat/sessions/bulk", 10);
         remote_bg_fetch(rb, "/api/settings", 15);
         remote_bg_fetch(rb, "/api/projects", 10);
@@ -155,7 +155,7 @@ async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
 ) -> T {
     let url = format!("{}{}", rb.url, path);
     eprintln!("[remote] GET {}", url);
-    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tigrimos_remote.log")
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/andrewos_remote.log")
         .and_then(|mut f| { use std::io::Write; writeln!(f, "GET {}", url) });
     match remote_client()
         .get(&url)
@@ -167,7 +167,7 @@ async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
         Ok(resp) => {
             let status = resp.status();
             eprintln!("[remote] GET {} → {}", path, status);
-            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tigrimos_remote.log")
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/andrewos_remote.log")
                 .and_then(|mut f| { use std::io::Write; writeln!(f, "RESULT {} → {}", path, status) });
             if !status.is_success() {
                 // Cache a short-lived empty marker to avoid hammering the server
@@ -183,7 +183,7 @@ async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
         }
         Err(e) => {
             eprintln!("[remote] GET {} FAILED: {}", path, e);
-            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tigrimos_remote.log")
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/andrewos_remote.log")
                 .and_then(|mut f| { use std::io::Write; writeln!(f, "FAILED {} → {}", path, e) });
             T::default()
         }
@@ -246,18 +246,60 @@ async fn remote_get_result<T: serde::de::DeserializeOwned>(rb: &RemoteBackend, p
 // JSON file helpers
 // ---------------------------------------------------------------------------
 
+/// Directory name used under the platform data dir.
+pub const APP_DIR_NAME: &str = "AndrewOS";
+// The PRE-REBRAND name. Do not "fix" this to AndrewOS — it is the only thing
+// that finds an existing install's settings, chat history, projects and VM
+// images after the rename.
+const LEGACY_APP_DIR_NAME: &str = "TigrimOS";
+
+/// Root of everything this app persists on the platform data dir:
+/// `~/Library/Application Support/AndrewOS` (macOS), `~/.local/share/AndrewOS`
+/// (Linux), `%APPDATA%\AndrewOS` (Windows) — or the pre-rebrand `TigrimOS`
+/// sibling when that is where this install's state actually lives.
+///
+/// This is the single place allowed to choose between the two names. VM images
+/// (`vm::config`) and app data both hang off it, so they cannot disagree about
+/// which install they belong to. Resolving the name independently in two places
+/// is how you get an app that reads its chat history from one directory while
+/// re-downloading a 700MB VM image into the other.
+pub fn app_root_dir() -> PathBuf {
+    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    resolve_app_root(&base, &|root| root.join("data").exists())
+}
+
+/// Pure core of [`app_root_dir`], split out so the precedence rule is testable
+/// without depending on what happens to be on the machine running the tests.
+///
+/// `has_data` answers "does an install's state live under this root?". Presence
+/// of `data/` — not of the root itself — is the signal, because the root gets
+/// created eagerly by `VmConfig::ensure_directories`. An empty `AndrewOS/` can
+/// therefore sit next to a fully populated `TigrimOS/`, and testing the root
+/// would pick the empty one and strand the user's real state.
+fn resolve_app_root(base: &Path, has_data: &dyn Fn(&Path) -> bool) -> PathBuf {
+    let current = base.join(APP_DIR_NAME);
+    if has_data(&current) {
+        return current;
+    }
+    let legacy = base.join(LEGACY_APP_DIR_NAME);
+    if has_data(&legacy) {
+        return legacy;
+    }
+    current
+}
+
 pub fn data_dir() -> PathBuf {
-    // When running as a .app bundle or from any directory, use a stable location.
-    // If a local "data" folder exists (dev mode), use it. Otherwise use ~/Library/Application Support/TigrimOS/data (macOS)
-    // or ~/.local/share/TigrimOS/data (Linux) or %APPDATA%/TigrimOS/data (Windows).
+    // A local "data" folder means we are running from a source checkout; prefer
+    // it so development never touches the installed app's real state.
     let local = PathBuf::from("data");
     if local.exists() {
         return local;
     }
-    let app_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("TigrimOS")
-        .join("data");
+
+    // Pre-rebrand installs are read in place rather than copied: a partial copy
+    // of settings, chat history and projects is worse than either outcome, and
+    // nothing here is so large that the old path is a burden.
+    let app_dir = app_root_dir().join("data");
     let _ = std::fs::create_dir_all(&app_dir);
     app_dir
 }
@@ -469,6 +511,32 @@ pub struct ModelPoolEntry {
     pub tier: String,      // "fast" | "balanced" | "deep"
     #[serde(default)]
     pub strengths: String, // freeform hint for the designer LLM
+    /// Reasoning effort for CLI providers that support one; "" = CLI default.
+    #[serde(default)]
+    pub effort: String,
+    /// Swarm/workflow roles this entry may serve ("worker", "judge",
+    /// "verifier", "synthesizer", ...). Empty = usable for any role, which is
+    /// how every pre-existing entry behaves.
+    #[serde(default)]
+    pub roles: Vec<String>,
+}
+
+/// Pick the pool entry that should run a given role.
+///
+/// A role-specific entry always wins over a general one, so adding a wildcard
+/// fallback can never quietly override a deliberate per-role choice. Returns
+/// None when the pool is empty or nothing matches, meaning "use the session
+/// model".
+pub fn model_for_role<'a>(pool: &'a [ModelPoolEntry], role: &str) -> Option<&'a ModelPoolEntry> {
+    if !role.is_empty() {
+        if let Some(hit) = pool
+            .iter()
+            .find(|e| e.roles.iter().any(|r| r.eq_ignore_ascii_case(role)))
+        {
+            return Some(hit);
+        }
+    }
+    pool.iter().find(|e| e.roles.is_empty())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -498,6 +566,12 @@ pub struct Settings {
     pub web_search_api_key: Option<String>,
     #[serde(rename = "pythonPath", skip_serializing_if = "Option::is_none")]
     pub python_path: Option<String>,
+    /// Reasoning-effort tier passed to local CLI providers that support one
+    /// (`claude --effort`, `codex -c model_reasoning_effort=`). None = let the
+    /// CLI use its own default. Valid values differ per model; the Settings UI
+    /// populates them from live CLI discovery.
+    #[serde(rename = "reasoningEffort", skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     #[serde(rename = "subAgentEnabled", skip_serializing_if = "Option::is_none")]
     pub sub_agent_enabled: Option<bool>,
     #[serde(rename = "subAgentMode", skip_serializing_if = "Option::is_none")]
@@ -726,7 +800,7 @@ pub fn get_sandbox_dir_sync() -> String {
             }
         }
     }
-    // Default: sandbox dir next to data dir (e.g. ~/Library/Application Support/TigrimOS/sandbox)
+    // Default: sandbox dir next to data dir (e.g. ~/Library/Application Support/AndrewOS/sandbox)
     let sandbox = data_dir()
         .parent()
         .unwrap_or(&std::path::PathBuf::from("."))
@@ -1134,5 +1208,67 @@ pub async fn delete_file_or_dir(sandbox_dir: &str, file_path: &str) -> Result<()
         fs::remove_file(&resolved)
             .await
             .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod app_root_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// Builds a `has_data` predicate over a fixed set of roots that "have data".
+    fn with_data(roots: &[&str]) -> impl Fn(&Path) -> bool {
+        let set: HashSet<PathBuf> = roots.iter().map(PathBuf::from).collect();
+        move |p: &Path| set.contains(p)
+    }
+
+    #[test]
+    fn fresh_install_uses_the_current_name() {
+        let base = Path::new("/base");
+        let root = resolve_app_root(base, &with_data(&[]));
+        assert_eq!(root, base.join("AndrewOS"));
+    }
+
+    #[test]
+    fn pre_rebrand_install_keeps_reading_the_legacy_root() {
+        let base = Path::new("/base");
+        let root = resolve_app_root(base, &with_data(&["/base/TigrimOS"]));
+        assert_eq!(
+            root,
+            base.join("TigrimOS"),
+            "an upgraded install must not be pointed at an empty new directory"
+        );
+    }
+
+    #[test]
+    fn current_root_wins_when_both_have_data() {
+        let base = Path::new("/base");
+        let root = resolve_app_root(base, &with_data(&["/base/AndrewOS", "/base/TigrimOS"]));
+        assert_eq!(root, base.join("AndrewOS"));
+    }
+
+    /// The regression this refactor exists for. `VmConfig::ensure_directories`
+    /// creates the app root eagerly, so a post-rebrand launch can leave an empty
+    /// `AndrewOS/` next to a populated `TigrimOS/`. Keying off the root's mere
+    /// existence would pick the empty one; keying off `data/` does not.
+    #[test]
+    fn an_empty_current_root_does_not_shadow_a_populated_legacy_root() {
+        let base = Path::new("/base");
+        // `AndrewOS/` exists but holds no `data/`; only `TigrimOS/` does.
+        let root = resolve_app_root(base, &with_data(&["/base/TigrimOS"]));
+        assert_eq!(root, base.join("TigrimOS"));
+    }
+
+    /// VM images and app data must agree about which install they belong to.
+    #[test]
+    fn vm_storage_and_app_data_resolve_to_the_same_install_root() {
+        let vm_root = crate::vm::VmConfig::default_app_support_dir();
+        let app_root = app_root_dir();
+        assert_eq!(
+            vm_root, app_root,
+            "VM artefacts and app data must hang off one root, or an upgraded \
+             install reads its chat history from one directory while \
+             re-downloading its VM image into another"
+        );
     }
 }
