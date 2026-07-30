@@ -1,8 +1,4 @@
-mod security;
-mod server;
-mod ui;
-mod util;
-mod vm;
+use tigrimos::{server, ui, vm};
 
 use std::sync::Arc;
 use vm::manager::VmManager;

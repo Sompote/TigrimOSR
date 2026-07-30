@@ -4,6 +4,18 @@ version = "0.7.1"
 edition = "2021"
 license = "Apache-2.0"
 
+[lib]
+name = "tigrimos"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tigrimos"
+path = "src/main.rs"
+
+[[bin]]
+name = "tigrim"
+path = "src/bin/tigrim.rs"
+
 [dependencies]
 eframe = "0.31"
 egui = "0.31"
@@ -18,6 +30,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 dotenvy = "0.15"
+rustyline = "15"
 rfd = "0.15"
 open = "5"
 num_cpus = "1"
