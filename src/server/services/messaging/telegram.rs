@@ -65,7 +65,12 @@ fn poll_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
-async fn tg_call(client: &reqwest::Client, token: &str, method: &str, body: Value) -> Result<Value, String> {
+async fn tg_call(
+    client: &reqwest::Client,
+    token: &str,
+    method: &str,
+    body: Value,
+) -> Result<Value, String> {
     let url = format!("https://api.telegram.org/bot{}/{}", token, method);
     let resp = client
         .post(&url)
@@ -107,7 +112,13 @@ async fn send_text(client: &reqwest::Client, token: &str, chat_id: i64, text: &s
     }
 }
 
-async fn edit_text(client: &reqwest::Client, token: &str, chat_id: i64, message_id: i64, text: &str) {
+async fn edit_text(
+    client: &reqwest::Client,
+    token: &str,
+    chat_id: i64,
+    message_id: i64,
+    text: &str,
+) {
     let r = tg_call(
         client,
         token,
@@ -163,7 +174,10 @@ async fn poll_generation(token: &str) {
                 .get("username")
                 .and_then(|u| u.as_str())
                 .map(|u| format!("@{}", u));
-            tracing::info!("[telegram] connected as {}", username.as_deref().unwrap_or("?"));
+            tracing::info!(
+                "[telegram] connected as {}",
+                username.as_deref().unwrap_or("?")
+            );
             set_status(true, username, None).await;
         }
         Err(e) => {
@@ -226,8 +240,18 @@ async fn poll_generation(token: &str) {
                     return;
                 }
                 if e.contains("HTTP 409") {
-                    tracing::warn!("[telegram] 409 conflict — another poller is running for this bot");
-                    set_status(false, None, Some("409 conflict: another getUpdates poller is active for this bot token".to_string())).await;
+                    tracing::warn!(
+                        "[telegram] 409 conflict — another poller is running for this bot"
+                    );
+                    set_status(
+                        false,
+                        None,
+                        Some(
+                            "409 conflict: another getUpdates poller is active for this bot token"
+                                .to_string(),
+                        ),
+                    )
+                    .await;
                     tokio::time::sleep(Duration::from_secs(60)).await;
                     continue;
                 }
@@ -263,13 +287,20 @@ fn dispatch_update(
     let Some(msg) = upd.get("message").cloned() else {
         return;
     };
-    let Some(text) = msg.pointer("/text").and_then(|t| t.as_str()).map(String::from) else {
+    let Some(text) = msg
+        .pointer("/text")
+        .and_then(|t| t.as_str())
+        .map(String::from)
+    else {
         return; // ignore stickers/photos/etc.
     };
     let Some(chat_id) = msg.pointer("/chat/id").and_then(|v| v.as_i64()) else {
         return;
     };
-    let from_id = msg.pointer("/from/id").and_then(|v| v.as_i64()).unwrap_or(0);
+    let from_id = msg
+        .pointer("/from/id")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     tokio::spawn(async move {
         if !user_allowed(allow.as_ref(), &from_id.to_string()) {
@@ -306,7 +337,13 @@ async fn handle_text_message(client: &reqwest::Client, token: &str, chat_id: i64
 /// Drive one agent run: a single "Working…" message edited in place for
 /// progress (sidesteps the ~1 msg/s per-chat rate limit), approval prompts as
 /// separate messages with inline buttons, final answer as split messages.
-async fn run_and_stream(client: &reqwest::Client, token: &str, chat_id: i64, chat_key: &str, msg: &str) {
+async fn run_and_stream(
+    client: &reqwest::Client,
+    token: &str,
+    chat_id: i64,
+    chat_key: &str,
+    msg: &str,
+) {
     let events = match start_run(chat_key, msg).await {
         Ok(ev) => ev,
         Err(reply) => {
@@ -357,7 +394,13 @@ async fn run_and_stream(client: &reqwest::Client, token: &str, chat_id: i64, cha
 // Approvals (inline keyboard + callback_query)
 // ---------------------------------------------------------------------------
 
-async fn send_approval_prompt(client: &reqwest::Client, token: &str, chat_id: i64, name: &str, preview: &str) {
+async fn send_approval_prompt(
+    client: &reqwest::Client,
+    token: &str,
+    chat_id: i64,
+    name: &str,
+    preview: &str,
+) {
     let body = json!({
         "chat_id": chat_id,
         "text": format!("⚠️ Approve tool {}?\n{}\n\n(Denied automatically after 120s.)", name, preview),
@@ -379,7 +422,11 @@ async fn handle_callback_query(
     allow: Option<&Vec<String>>,
     cq: Value,
 ) {
-    let cq_id = cq.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let cq_id = cq
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let from_id = cq.pointer("/from/id").and_then(|v| v.as_i64()).unwrap_or(0);
     let data = cq.get("data").and_then(|v| v.as_str()).unwrap_or("");
     let chat_id = cq.pointer("/message/chat/id").and_then(|v| v.as_i64());
@@ -413,7 +460,11 @@ async fn handle_callback_query(
                 token,
                 cid,
                 mid,
-                if approved { "✅ Tool approved" } else { "❌ Tool denied" },
+                if approved {
+                    "✅ Tool approved"
+                } else {
+                    "❌ Tool denied"
+                },
             )
             .await;
         }

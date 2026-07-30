@@ -74,3 +74,4 @@ agent-graph/
 # build fails without them.
 data/agent_loops/
 data/tools/
+data/graph/

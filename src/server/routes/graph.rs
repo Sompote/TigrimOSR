@@ -32,7 +32,9 @@ use crate::server::services::graph::{
 use crate::server::AppState;
 
 fn filename_ok(name: &str) -> bool {
-    regex::Regex::new(r"^[\w\-. ]+\.ya?ml$").unwrap().is_match(name)
+    regex::Regex::new(r"^[\w\-. ]+\.ya?ml$")
+        .unwrap()
+        .is_match(name)
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,20 +63,31 @@ async fn list_profiles() -> impl IntoResponse {
         Err(_) => return Json(json!([])),
     };
     while let Ok(Some(entry)) = entries.next_entry().await {
-        if !entry.file_type().await.map(|t| t.is_file()).unwrap_or(false) {
+        if !entry
+            .file_type()
+            .await
+            .map(|t| t.is_file())
+            .unwrap_or(false)
+        {
             continue; // skip the rules/ subdirectory
         }
         let name = entry.file_name().to_string_lossy().to_string();
         if !(name.ends_with(".yaml") || name.ends_with(".yml")) {
             continue;
         }
-        let content = fs::read_to_string(dir.join(&name)).await.unwrap_or_default();
+        let content = fs::read_to_string(dir.join(&name))
+            .await
+            .unwrap_or_default();
         let parsed = serde_yaml::from_str::<GraphProfile>(&content).ok();
         let display_name = parsed
             .as_ref()
             .map(|p| p.name.clone())
             .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| name.trim_end_matches(".yaml").trim_end_matches(".yml").to_string());
+            .unwrap_or_else(|| {
+                name.trim_end_matches(".yaml")
+                    .trim_end_matches(".yml")
+                    .to_string()
+            });
         result.push(json!({
             "filename": name,
             "name": display_name,
@@ -85,7 +98,10 @@ async fn list_profiles() -> impl IntoResponse {
         }));
     }
     result.sort_by(|a, b| {
-        a["filename"].as_str().unwrap_or("").cmp(b["filename"].as_str().unwrap_or(""))
+        a["filename"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["filename"].as_str().unwrap_or(""))
     });
     Json(json!(result))
 }
@@ -111,11 +127,20 @@ async fn list_rules() -> impl IntoResponse {
 /// GET /rules/{filename} — raw rule-file text (rules carry no secrets).
 async fn get_rules(Path(filename): Path<String>) -> impl IntoResponse {
     if !filename_ok(&filename) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid filename"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid filename"})),
+        );
     }
     match fs::read_to_string(rules_dir().join(&filename)).await {
-        Ok(content) => (StatusCode::OK, Json(json!({"filename": filename, "content": content}))),
-        Err(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "File not found"}))),
+        Ok(content) => (
+            StatusCode::OK,
+            Json(json!({"filename": filename, "content": content})),
+        ),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "File not found"})),
+        ),
     }
 }
 
@@ -126,15 +151,24 @@ async fn save_rules(
     Json(body): Json<SaveRulesBody>,
 ) -> impl IntoResponse {
     if !filename_ok(&filename) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid filename"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid filename"})),
+        );
     }
     if let Err(e) = serde_yaml::from_str::<serde_yaml::Value>(&body.content) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("Invalid YAML: {e}")})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("Invalid YAML: {e}")})),
+        );
     }
     let dir = rules_dir();
     let _ = fs::create_dir_all(&dir).await;
     match fs::write(dir.join(&filename), &body.content).await {
-        Ok(()) => (StatusCode::OK, Json(json!({"ok": true, "filename": filename}))),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({"ok": true, "filename": filename})),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("Failed to write file: {e}")})),
@@ -145,7 +179,10 @@ async fn save_rules(
 /// DELETE /rules/{filename}
 async fn delete_rules(Path(filename): Path<String>) -> impl IntoResponse {
     if !filename_ok(&filename) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid filename"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid filename"})),
+        );
     }
     let fp = rules_dir().join(&filename);
     if fp.exists() {
@@ -157,7 +194,10 @@ async fn delete_rules(Path(filename): Path<String>) -> impl IntoResponse {
 /// GET /{filename} — read one profile, api_key values masked.
 async fn get_profile(Path(filename): Path<String>) -> impl IntoResponse {
     if !filename_ok(&filename) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid filename"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid filename"})),
+        );
     }
     match fs::read_to_string(graph_dir().join(&filename)).await {
         Ok(content) => {
@@ -169,7 +209,10 @@ async fn get_profile(Path(filename): Path<String>) -> impl IntoResponse {
                 Json(json!({"filename": filename, "content": masked, "parsed": parsed})),
             )
         }
-        Err(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "File not found"}))),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "File not found"})),
+        ),
     }
 }
 
@@ -277,7 +320,10 @@ async fn reset_default() -> impl IntoResponse {
 /// DELETE /{filename}
 async fn delete_profile(Path(filename): Path<String>) -> impl IntoResponse {
     if !filename_ok(&filename) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid filename"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid filename"})),
+        );
     }
     let fp = graph_dir().join(&filename);
     if fp.exists() {
@@ -291,6 +337,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/", get(list_profiles).post(save_profile))
         .route("/reset-default", post(reset_default))
         .route("/rules", get(list_rules))
-        .route("/rules/{filename}", get(get_rules).post(save_rules).delete(delete_rules))
+        .route(
+            "/rules/{filename}",
+            get(get_rules).post(save_rules).delete(delete_rules),
+        )
         .route("/{filename}", get(get_profile).delete(delete_profile))
 }

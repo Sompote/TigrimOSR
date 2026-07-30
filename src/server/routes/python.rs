@@ -94,12 +94,24 @@ async fn run_python(
     let result = crate::server::services::toolbox::run_python_sandboxed(&code, &sandbox_dir).await;
 
     let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-    let stdout = result.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let mut stderr = result.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let stdout = result
+        .get("stdout")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut stderr = result
+        .get("stderr")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if let Some(err) = result.get("error").and_then(|v| v.as_str()) {
-        if stderr.is_empty() { stderr = err.to_string(); }
+        if stderr.is_empty() {
+            stderr = err.to_string();
+        }
     }
-    let exit_code = result.get("exit_code").and_then(|v| v.as_i64())
+    let exit_code = result
+        .get("exit_code")
+        .and_then(|v| v.as_i64())
         .unwrap_or(if ok { 0 } else { 1 });
 
     (

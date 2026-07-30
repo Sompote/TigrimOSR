@@ -189,7 +189,8 @@ pub fn on_post_compact(hook: CompactHook) {
     compact_state()
         .lock()
         .unwrap()
-        .post_compact_hooks.push(hook);
+        .post_compact_hooks
+        .push(hook);
 }
 
 // ---------------------------------------------------------------------------
@@ -281,8 +282,7 @@ pub fn validate_message_structure(messages: &[Value]) -> ValidateResult {
                                 seen_assistant_tool_ids.insert(id.to_string());
                             }
                         }
-                        let kept_arr: Vec<Value> =
-                            kept_tool_calls.into_iter().cloned().collect();
+                        let kept_arr: Vec<Value> = kept_tool_calls.into_iter().cloned().collect();
                         let mut trimmed = m.clone();
                         trimmed["tool_calls"] = json!(kept_arr);
                         cleaned.push(trimmed);
@@ -409,9 +409,7 @@ pub fn trim_conversation_context(messages: &[Value], max_chars: usize) -> Vec<Va
 
     // Keep system messages from the start
     let mut start_idx = 0;
-    while start_idx < messages.len()
-        && messages[start_idx]["role"].as_str() == Some("system")
-    {
+    while start_idx < messages.len() && messages[start_idx]["role"].as_str() == Some("system") {
         let c = messages[start_idx]["content"]
             .as_str()
             .map(|s| s.len())
@@ -560,7 +558,10 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
                 }
             }
             if lines.len() <= 60 {
-                compact["stdout"] = json!(crate::util::truncate_utf8(stdout, max_len.saturating_sub(200)));
+                compact["stdout"] = json!(crate::util::truncate_utf8(
+                    stdout,
+                    max_len.saturating_sub(200)
+                ));
             } else {
                 let head: String = lines[..30].join("\n");
                 let tail: String = lines[lines.len() - 20..].join("\n");
@@ -607,7 +608,10 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
             let lines: Vec<&str> = content.lines().collect();
             let mut compact = json!({"ok": true, "url": result["url"]});
             if lines.len() <= 50 {
-                compact["content"] = json!(crate::util::truncate_utf8(content, max_len.saturating_sub(200)));
+                compact["content"] = json!(crate::util::truncate_utf8(
+                    content,
+                    max_len.saturating_sub(200)
+                ));
             } else {
                 let head: String = lines[..30].join("\n");
                 let tail: String = lines[lines.len() - 10..].join("\n");
@@ -628,7 +632,10 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
             let lines: Vec<&str> = content.lines().collect();
             let mut compact = json!({"path": result["path"]});
             if lines.len() <= 50 {
-                compact["content"] = json!(crate::util::truncate_utf8(content, max_len.saturating_sub(100)));
+                compact["content"] = json!(crate::util::truncate_utf8(
+                    content,
+                    max_len.saturating_sub(100)
+                ));
             } else {
                 let head: String = lines[..30].join("\n");
                 let tail: String = lines[lines.len() - 10..].join("\n");
@@ -657,7 +664,10 @@ pub fn compress_tool_result(tool_name: &str, result: &Value, max_len: usize) -> 
 
     // Default: truncate with note
     if raw.len() > max_len {
-        format!("{}...(truncated)", crate::util::truncate_utf8(&raw, max_len.saturating_sub(20)))
+        format!(
+            "{}...(truncated)",
+            crate::util::truncate_utf8(&raw, max_len.saturating_sub(20))
+        )
     } else {
         raw
     }
@@ -1173,11 +1183,8 @@ pub async fn compress_older_messages(
     let mut prompt_messages = summary_parts.clone();
 
     for retry in 0..MAX_PROMPT_RETRIES {
-        let compression_prompt = build_summarization_prompt(
-            tool_call_count,
-            &prompt_messages,
-            to_compress.len(),
-        );
+        let compression_prompt =
+            build_summarization_prompt(tool_call_count, &prompt_messages, to_compress.len());
 
         info!(
             "[Compact] Sending summarization request (attempt {}/{}, {} chars)...",
@@ -1208,8 +1215,7 @@ pub async fn compress_older_messages(
                         retry + 1
                     );
 
-                    let keep_count =
-                        stripped.len() - stripped.len() / (retry + 2);
+                    let keep_count = stripped.len() - stripped.len() / (retry + 2);
                     let remaining_messages = &stripped[stripped.len().saturating_sub(keep_count)..];
                     let groups = group_messages_by_round(remaining_messages);
                     let remaining: Vec<Value> = groups.into_iter().flatten().collect();
@@ -1229,17 +1235,14 @@ pub async fn compress_older_messages(
                                 if let Some(text) = msg["content"].as_str() {
                                     if !text.is_empty() {
                                         let truncated: String = text.chars().take(150).collect();
-                                        prompt_messages
-                                            .push(format!("ASSISTANT: {}", truncated));
+                                        prompt_messages.push(format!("ASSISTANT: {}", truncated));
                                     }
                                 }
                                 if let Some(calls) = msg["tool_calls"].as_array() {
                                     for tc in calls {
-                                        let name = tc["function"]["name"]
-                                            .as_str()
-                                            .unwrap_or("unknown");
-                                        prompt_messages
-                                            .push(format!("  -> Called {}", name));
+                                        let name =
+                                            tc["function"]["name"].as_str().unwrap_or("unknown");
+                                        prompt_messages.push(format!("  -> Called {}", name));
                                     }
                                 }
                             }

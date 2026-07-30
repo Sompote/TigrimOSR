@@ -11,16 +11,17 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::server::data::*;
+use crate::server::services::toolbox::{call_with_tools, SubAgentConfig, ToolUpdate};
 use crate::server::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::server::services::toolbox::{call_with_tools, SubAgentConfig, ToolUpdate};
 
 // ---------------------------------------------------------------------------
 // Global cancel flags for running web chat sessions
 // ---------------------------------------------------------------------------
 
-static CANCEL_FLAGS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>> =
-    std::sync::OnceLock::new();
+static CANCEL_FLAGS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
+> = std::sync::OnceLock::new();
 
 fn cancel_flags() -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>> {
     CANCEL_FLAGS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
@@ -45,10 +46,15 @@ fn chat_log_dir() -> std::path::PathBuf {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/sessions", get(list_sessions).post(create_session))
-        .route("/sessions/bulk", get(get_all_sessions).put(put_all_sessions))
+        .route(
+            "/sessions/bulk",
+            get(get_all_sessions).put(put_all_sessions),
+        )
         .route(
             "/sessions/{id}",
-            get(get_session).delete(delete_session).patch(rename_session),
+            get(get_session)
+                .delete(delete_session)
+                .patch(rename_session),
         )
         .route("/sessions/{id}/messages", post(send_message))
         .route(
@@ -114,11 +120,10 @@ async fn get_session(Path(id): Path<String>) -> impl IntoResponse {
             // Include auto-created architecture info if present
             let auto_arch_filename = get_auto_created_architecture(&id);
             if let Some(filename) = auto_arch_filename {
-                let file_path =
-                    crate::server::data::data_dir().join("agents").join(&filename);
-                let system_name = if let Ok(content) =
-                    tokio::fs::read_to_string(&file_path).await
-                {
+                let file_path = crate::server::data::data_dir()
+                    .join("agents")
+                    .join(&filename);
+                let system_name = if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
                     // Try to parse YAML and extract system.name
                     serde_yaml::from_str::<Value>(&content)
                         .ok()
@@ -174,7 +179,8 @@ async fn create_session(Json(body): Json<Value>) -> impl IntoResponse {
         .and_then(|v| v.as_str())
         .unwrap_or("New Chat")
         .to_string();
-    let project_id = body.get("projectId")
+    let project_id = body
+        .get("projectId")
         .or_else(|| body.get("project_id"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
@@ -212,10 +218,7 @@ async fn delete_session(Path(id): Path<String>) -> impl IntoResponse {
 // PATCH /sessions/:id - rename a session
 // ---------------------------------------------------------------------------
 
-async fn rename_session(
-    Path(id): Path<String>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
+async fn rename_session(Path(id): Path<String>, Json(body): Json<Value>) -> impl IntoResponse {
     let mut sessions = get_chat_history().await;
     let session = sessions.iter_mut().find(|s| s.id == id);
     match session {
@@ -225,7 +228,11 @@ async fn rename_session(
             }
             let updated = s.clone();
             save_chat_history(&sessions).await;
-            (StatusCode::OK, Json(serde_json::to_value(&updated).unwrap_or(json!({})))).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(&updated).unwrap_or(json!({}))),
+            )
+                .into_response()
         }
         None => (
             StatusCode::NOT_FOUND,
@@ -284,10 +291,7 @@ async fn message_feedback(
         .get("comment")
         .and_then(|v| v.as_str())
         .map(|s| s.chars().take(4000).collect::<String>());
-    let clear = body
-        .get("clear")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let clear = body.get("clear").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if rating.is_none() && comment.is_none() && !clear {
         return (
@@ -331,10 +335,7 @@ async fn message_feedback(
 // POST /sessions/:id/messages - send a message
 // ---------------------------------------------------------------------------
 
-async fn send_message(
-    Path(id): Path<String>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
+async fn send_message(Path(id): Path<String>, Json(body): Json<Value>) -> impl IntoResponse {
     let req = AgentRunRequest {
         session_id: id.clone(),
         message: body
@@ -391,25 +392,15 @@ pub struct AgentRunRequest {
     pub project_id: Option<String>,
 }
 
-/// Run one agent turn against a chat session, headless. Extracted from the
-/// send_message handler: session persistence, cancel-flag registration,
-/// pre-flight, system prompt, and activity/chat logs all behave exactly as
-/// they do for web chat.
-///
-/// `extra_on_update` is invoked with every ToolUpdate in addition to the
-/// built-in log writer. `done_tx` fires with the final assistant text after
-/// it has been persisted. Err(text) means the run could not start; the text
-/// has already been persisted as an assistant message.
 /// Run one chat turn as a workflow DAG instead of the normal sub-agent loop.
 ///
 /// Returns the same shape as `call_with_tools` so everything downstream —
 /// history, output files, the completion footer — is untouched.
-#[allow(clippy::too_many_arguments)]
-/// Run one chat turn as a workflow DAG instead of the normal sub-agent loop.
 ///
 /// Shared with the desktop UI (`src/ui/chat.rs`) so both front-ends dispatch
 /// the same patterns through the same executor — a pattern reachable from one
 /// UI but not the other is the bug this is guarding against.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_workflow_turn(
     pattern: &str,
     width: usize,
@@ -461,7 +452,12 @@ pub(crate) async fn run_workflow_turn(
         .unwrap_or_default();
     append_session_progress(
         session_id,
-        &format!("⬡ **{}** — {} nodes\n{}\n", profile.name, profile.nodes.len(), plan),
+        &format!(
+            "⬡ **{}** — {} nodes\n{}\n",
+            profile.name,
+            profile.nodes.len(),
+            plan
+        ),
     );
 
     let sid = session_id.to_string();
@@ -481,8 +477,12 @@ pub(crate) async fn run_workflow_turn(
         Ok(run) => {
             // A partial run is still worth returning — the failed nodes are
             // named so the answer is not silently short.
-            let failed: Vec<&str> =
-                run.outcomes.iter().filter(|o| !o.ok).map(|o| o.name.as_str()).collect();
+            let failed: Vec<&str> = run
+                .outcomes
+                .iter()
+                .filter(|o| !o.ok)
+                .map(|o| o.name.as_str())
+                .collect();
             let mut content = run.final_output;
             if !failed.is_empty() {
                 content.push_str(&format!(
@@ -491,7 +491,11 @@ pub(crate) async fn run_workflow_turn(
                     failed.join(", ")
                 ));
             }
-            ToolLoopResult { content, tool_results: Vec::new(), files: Vec::new() }
+            ToolLoopResult {
+                content,
+                tool_results: Vec::new(),
+                files: Vec::new(),
+            }
         }
         Err(e) => ToolLoopResult {
             content: format!("⚠️ The '{pattern}' workflow could not run: {e}"),
@@ -501,6 +505,15 @@ pub(crate) async fn run_workflow_turn(
     }
 }
 
+/// Run one agent turn against a chat session, headless. Extracted from the
+/// send_message handler: session persistence, cancel-flag registration,
+/// pre-flight, system prompt, and activity/chat logs all behave exactly as
+/// they do for web chat.
+///
+/// `extra_on_update` is invoked with every ToolUpdate in addition to the
+/// built-in log writer. `done_tx` fires with the final assistant text after
+/// it has been persisted. Err(text) means the run could not start; the text
+/// has already been persisted as an assistant message.
 pub async fn start_agent_run(
     req: AgentRunRequest,
     extra_on_update: Option<Arc<dyn Fn(ToolUpdate) + Send + Sync>>,
@@ -611,7 +624,9 @@ pub async fn start_agent_run(
             Some(name) => agent_loop::load_profile(name),
             None => agent_loop::resolve_active_profile(
                 settings.agent_loop_profile.as_deref(),
-                project_ctx.as_ref().and_then(|c| c.agent_loop_profile.as_deref()),
+                project_ctx
+                    .as_ref()
+                    .and_then(|c| c.agent_loop_profile.as_deref()),
             ),
         }
         .map(Arc::new)
@@ -644,14 +659,22 @@ pub async fn start_agent_run(
             .filter(|s| !s.trim().is_empty());
         let resolved = graph::resolve_active_profile(
             settings.graph_profile.as_deref(),
-            project_ctx.as_ref().and_then(|c| c.graph_profile.as_deref()),
+            project_ctx
+                .as_ref()
+                .and_then(|c| c.graph_profile.as_deref()),
             knobs_profile.or(req.graph_profile.as_deref()),
         )
         .unwrap_or_else(graph::default_profile);
         tracing::info!(
             "[chat] graph gate ON ({}): profile '{}', worker mode '{}', {} judge(s)",
-            if mode_graph { "graph mode" } else { "toggle/profile" },
-            resolved.name, resolved.worker_mode(), resolved.judges.len()
+            if mode_graph {
+                "graph mode"
+            } else {
+                "toggle/profile"
+            },
+            resolved.name,
+            resolved.worker_mode(),
+            resolved.judges.len()
         );
         Some(Arc::new(resolved))
     } else {
@@ -667,7 +690,12 @@ pub async fn start_agent_run(
             .and_then(|w| w.agent_loop_profile.as_deref())
             .filter(|s| !s.trim().is_empty())
         {
-            if req.agent_loop_profile.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            if req
+                .agent_loop_profile
+                .as_deref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
                 if let Some(p) = crate::server::services::agent_loop::load_profile(worker_profile) {
                     loop_profile = Some(Arc::new(p));
                 }
@@ -718,9 +746,10 @@ pub async fn start_agent_run(
     let session_snap = sessions_snap.iter().find(|s| s.id == id);
     let llm_messages: Vec<Value> = session_snap
         .map(|s| {
-            s.messages.iter().map(|m| {
-                json!({ "role": m.role, "content": m.content })
-            }).collect()
+            s.messages
+                .iter()
+                .map(|m| json!({ "role": m.role, "content": m.content }))
+                .collect()
         })
         .unwrap_or_default();
 
@@ -729,7 +758,11 @@ pub async fn start_agent_run(
         .config_file
         .clone()
         .filter(|s| !s.is_empty())
-        .or_else(|| project_ctx.as_ref().and_then(|c| c.agent_config_file.clone()))
+        .or_else(|| {
+            project_ctx
+                .as_ref()
+                .and_then(|c| c.agent_config_file.clone())
+        })
         .or_else(|| settings.sub_agent_config_file.clone())
         .unwrap_or_default();
     // Per-request agent_mode overrides settings: "single" disables sub-agents,
@@ -748,7 +781,10 @@ pub async fn start_agent_run(
         .map(|(id, _)| id.to_string());
 
     let request_mode: &str = if request_mode == "graph" {
-        graph_profile_arc.as_deref().map(|p| p.worker_mode()).unwrap_or("single")
+        graph_profile_arc
+            .as_deref()
+            .map(|p| p.worker_mode())
+            .unwrap_or("single")
     } else if workflow_pattern.is_some() {
         // Each node runs as its own single agent; the topology does the work.
         "single"
@@ -763,13 +799,21 @@ pub async fn start_agent_run(
                 true
             } else {
                 // No config file → fall back to fully_auto behavior
-                tracing::info!("[chat] mode='{}' but no config file, falling back to fully_auto", request_mode);
+                tracing::info!(
+                    "[chat] mode='{}' but no config file, falling back to fully_auto",
+                    request_mode
+                );
                 true
             }
         }
         _ => !config_file.is_empty(),
     };
-    tracing::info!("[chat] request_mode={}, config_file='{}', sub_agent_enabled={}", request_mode, config_file, sub_agent_enabled);
+    tracing::info!(
+        "[chat] request_mode={}, config_file='{}', sub_agent_enabled={}",
+        request_mode,
+        config_file,
+        sub_agent_enabled
+    );
     let effective_mode = match request_mode {
         // "graph" must never leak into SubAgentConfig.mode — substitute the
         // profile's worker mode (the gate rides on graph_profile instead).
@@ -788,7 +832,11 @@ pub async fn start_agent_run(
 
     // Router is self-contained — ignore any pre-set YAML team; it triages and
     // builds its own LLM-assigned team via create_architecture.
-    let config_file = if effective_mode == "router" { String::new() } else { config_file };
+    let config_file = if effective_mode == "router" {
+        String::new()
+    } else {
+        config_file
+    };
 
     // Load agent IDs from YAML config (same as native UI)
     let agent_ids = if sub_agent_enabled && !config_file.is_empty() {
@@ -799,7 +847,9 @@ pub async fn start_agent_run(
         vec![]
     };
 
-    let sub_agent_model = settings.sub_agent_model.clone()
+    let sub_agent_model = settings
+        .sub_agent_model
+        .clone()
         .unwrap_or_else(|| model.clone());
 
     // Router mode: heterogeneous model pool + tier from settings (empty otherwise).
@@ -811,7 +861,10 @@ pub async fn start_agent_run(
             .iter()
             .filter_map(|e| serde_json::to_value(e).ok())
             .collect::<Vec<_>>();
-        let tier = settings.router_tier.clone().unwrap_or_else(|| "fast".into());
+        let tier = settings
+            .router_tier
+            .clone()
+            .unwrap_or_else(|| "fast".into());
         (pool, tier)
     } else {
         (Vec::new(), String::new())
@@ -853,10 +906,13 @@ pub async fn start_agent_run(
         let cl_dir = chat_log_dir();
         let _ = std::fs::create_dir_all(&cl_dir);
         let cl_path = cl_dir.join(format!("{}.log", id));
-        let _ = std::fs::write(&cl_path, format!(
-            "[{}] === Web Chat Session ===\n",
-            chrono::Utc::now().format("%H:%M:%S"),
-        ));
+        let _ = std::fs::write(
+            &cl_path,
+            format!(
+                "[{}] === Web Chat Session ===\n",
+                chrono::Utc::now().format("%H:%M:%S"),
+            ),
+        );
     }
     let append_chat_log = |id: &str, line: &str| {
         use std::io::Write;
@@ -873,10 +929,11 @@ pub async fn start_agent_run(
     // Fully Auto pre-flight: create architecture + boot realtime session (same as native UI)
     if sub_agent_enabled && effective_mode == "fully_auto" {
         use crate::server::services::toolbox::{
-            get_session_architecture, force_create_architecture, start_realtime_session,
+            force_create_architecture, get_session_architecture, start_realtime_session,
         };
 
-        let user_msg = llm_messages.last()
+        let user_msg = llm_messages
+            .last()
             .and_then(|m| m["content"].as_str())
             .unwrap_or("")
             .to_string();
@@ -885,8 +942,13 @@ pub async fn start_agent_run(
         let config_file = match get_session_architecture(&id).await {
             Some(existing) => Some(existing),
             None => {
-                let (ok, cf, _msg) = force_create_architecture(&user_msg, &sub_agent, &sandbox_dir).await;
-                if ok { cf } else { None }
+                let (ok, cf, _msg) =
+                    force_create_architecture(&user_msg, &sub_agent, &sandbox_dir).await;
+                if ok {
+                    cf
+                } else {
+                    None
+                }
             }
         };
 
@@ -906,12 +968,17 @@ pub async fn start_agent_run(
                 &sub_agent.api_url,
                 &sub_agent.model,
                 &sandbox_dir,
-            ).await;
-            append_chat_log(&id, &format!(
-                "🤖 Agent team '{}' ({} agents) — realtime session {}\n",
-                cf, sub_agent.agent_ids.len(),
-                if booted { "LIVE" } else { "FAILED to boot" }
-            ));
+            )
+            .await;
+            append_chat_log(
+                &id,
+                &format!(
+                    "🤖 Agent team '{}' ({} agents) — realtime session {}\n",
+                    cf,
+                    sub_agent.agent_ids.len(),
+                    if booted { "LIVE" } else { "FAILED to boot" }
+                ),
+            );
         } else {
             append_chat_log(&id, "❌ Failed to create agent architecture — continuing WITHOUT sub-agents (single-agent mode).\n");
         }
@@ -927,12 +994,21 @@ pub async fn start_agent_run(
             &sub_agent.api_url,
             &sub_agent.model,
             &sandbox_dir,
-        ).await;
-        append_chat_log(&id, &format!(
-            "🤖 Agent config '{}' ({} agents) — realtime session {}\n",
-            sub_agent.config_file, sub_agent.agent_ids.len(),
-            if booted { "LIVE" } else { "FAILED to boot (check the YAML file exists on this server)" }
-        ));
+        )
+        .await;
+        append_chat_log(
+            &id,
+            &format!(
+                "🤖 Agent config '{}' ({} agents) — realtime session {}\n",
+                sub_agent.config_file,
+                sub_agent.agent_ids.len(),
+                if booted {
+                    "LIVE"
+                } else {
+                    "FAILED to boot (check the YAML file exists on this server)"
+                }
+            ),
+        );
     }
 
     // Build system prompt — same as native UI (identity, soul, skills, tools)
@@ -952,48 +1028,74 @@ pub async fn start_agent_run(
         let agents_list = sub_agent.agent_ids.join(", ");
 
         // Build detailed agent roster and extract orchestration metadata from YAML
-        let (yaml_orch_mode, agent_roster, orchestrator_id) = if sub_agent_enabled && !sub_agent.config_file.is_empty() {
-            if let Some((yaml, _)) = crate::server::services::toolbox::load_agent_yaml(&sub_agent.config_file) {
-                let orch_mode = yaml.get("system")
-                    .and_then(|s| s.get("orchestration_mode"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let agents_arr = yaml.get("agents").and_then(|a| a.as_array()).cloned().unwrap_or_default();
-                let mut orch_id = String::new();
-                let roster: Vec<String> = agents_arr.iter()
-                    .filter(|a| a.get("role").and_then(|r| r.as_str()) != Some("human"))
-                    .map(|a| {
-                        let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-                        let name = a.get("name").and_then(|v| v.as_str()).unwrap_or(id);
-                        let role = a.get("role").and_then(|v| v.as_str()).unwrap_or("worker");
-                        if role == "orchestrator" { orch_id = id.to_string(); }
-                        let resp = a.get("responsibilities").and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("; "))
-                            .unwrap_or_default();
-                        if resp.is_empty() {
-                            format!("  - {} (name: \"{}\", role: {})", id, name, role)
-                        } else {
-                            format!("  - {} (name: \"{}\", role: {}, tasks: {})", id, name, role, resp)
-                        }
-                    }).collect();
-                (orch_mode, roster.join("\n"), orch_id)
+        let (yaml_orch_mode, agent_roster, orchestrator_id) =
+            if sub_agent_enabled && !sub_agent.config_file.is_empty() {
+                if let Some((yaml, _)) =
+                    crate::server::services::toolbox::load_agent_yaml(&sub_agent.config_file)
+                {
+                    let orch_mode = yaml
+                        .get("system")
+                        .and_then(|s| s.get("orchestration_mode"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let agents_arr = yaml
+                        .get("agents")
+                        .and_then(|a| a.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut orch_id = String::new();
+                    let roster: Vec<String> = agents_arr
+                        .iter()
+                        .filter(|a| a.get("role").and_then(|r| r.as_str()) != Some("human"))
+                        .map(|a| {
+                            let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                            let name = a.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                            let role = a.get("role").and_then(|v| v.as_str()).unwrap_or("worker");
+                            if role == "orchestrator" {
+                                orch_id = id.to_string();
+                            }
+                            let resp = a
+                                .get("responsibilities")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("; ")
+                                })
+                                .unwrap_or_default();
+                            if resp.is_empty() {
+                                format!("  - {} (name: \"{}\", role: {})", id, name, role)
+                            } else {
+                                format!(
+                                    "  - {} (name: \"{}\", role: {}, tasks: {})",
+                                    id, name, role, resp
+                                )
+                            }
+                        })
+                        .collect();
+                    (orch_mode, roster.join("\n"), orch_id)
+                } else {
+                    (String::new(), String::new(), String::new())
+                }
             } else {
                 (String::new(), String::new(), String::new())
-            }
-        } else {
-            (String::new(), String::new(), String::new())
-        };
+            };
         let is_pipeline = yaml_orch_mode == "pipeline";
 
         let sub_agent_prompt = if sub_agent_enabled && !agents_list.is_empty() {
-            let routing_rule = if !orchestrator_id.is_empty() && matches!(yaml_orch_mode.as_str(), "hierarchical" | "hybrid") {
+            let routing_rule = if !orchestrator_id.is_empty()
+                && matches!(yaml_orch_mode.as_str(), "hierarchical" | "hybrid")
+            {
                 format!(
                     "\n\n🔴 ROUTING RULE: This is a {} architecture. You MUST send ALL tasks to the orchestrator '{}'. \
 Do NOT send tasks directly to worker agents — the orchestrator will delegate to them.",
                     yaml_orch_mode, orchestrator_id
                 )
-            } else { String::new() };
+            } else {
+                String::new()
+            };
 
             match effective_mode.as_str() {
                 "fully_auto" => {
@@ -1094,7 +1196,8 @@ WHEN IN DOUBT, BUILD A TEAM. Only solo when the task is unmistakably trivial or 
 An agent team is being created for this task. You are the COORDINATOR.\n\
 1. Call create_architecture to design and boot a team if no agents are available yet.\n\
 2. Then use send_task/wait_result to delegate work to agents.\n\
-3. You may also use your own tools to supplement agent work.".to_string()
+3. You may also use your own tools to supplement agent work."
+                .to_string()
         } else {
             String::new()
         };
@@ -1141,7 +1244,10 @@ You have access to these tools: {}.{}",
             )
         };
         if let Some(sp) = profile_prompt.filter(|sp| !sp.replace_base) {
-            base.push_str(&format!("\n\n=== USER INSTRUCTIONS (agent-loop profile) ===\n{}", sp.text.trim()));
+            base.push_str(&format!(
+                "\n\n=== USER INSTRUCTIONS (agent-loop profile) ===\n{}",
+                sp.text.trim()
+            ));
         }
 
         // Graph mode heads-up: the worker responds better to panel rejections
@@ -1164,7 +1270,8 @@ You have access to these tools: {}.{}",
 
         // Append installed skills — filtered to the project's assigned skills
         // if any, further narrowed by the agent-loop profile's skill filter.
-        let project_skills = project_ctx.as_ref()
+        let project_skills = project_ctx
+            .as_ref()
             .map(|c| c.skills.as_slice())
             .filter(|s| !s.is_empty());
         let profile_skill_filter = loop_profile.as_deref().and_then(|p| p.skills.as_ref());
@@ -1173,16 +1280,26 @@ You have access to these tools: {}.{}",
             Some("selected") => {
                 let selected = &profile_skill_filter.unwrap().list;
                 let effective: Vec<String> = match project_skills {
-                    Some(ps) => selected.iter().filter(|s| ps.iter().any(|p| p == *s)).cloned().collect(),
+                    Some(ps) => selected
+                        .iter()
+                        .filter(|s| ps.iter().any(|p| p == *s))
+                        .cloned()
+                        .collect(),
                     None => selected.clone(),
                 };
                 if effective.is_empty() {
                     String::new()
                 } else {
-                    crate::server::services::toolbox::build_enabled_skills_block_pub(Some(&effective)).await
+                    crate::server::services::toolbox::build_enabled_skills_block_pub(Some(
+                        &effective,
+                    ))
+                    .await
                 }
             }
-            _ => crate::server::services::toolbox::build_enabled_skills_block_pub(project_skills).await,
+            _ => {
+                crate::server::services::toolbox::build_enabled_skills_block_pub(project_skills)
+                    .await
+            }
         };
         if !skills_block.is_empty() {
             base.push_str(&skills_block);
@@ -1192,12 +1309,18 @@ You have access to these tools: {}.{}",
         let data_dir = crate::server::data::data_dir();
         if let Ok(soul) = std::fs::read_to_string(data_dir.join("SOUL.md")) {
             if !soul.trim().is_empty() {
-                base.push_str(&format!("\n\n=== SOUL.md (Internal Cognition & Behavioral Prior) ===\n{}", soul));
+                base.push_str(&format!(
+                    "\n\n=== SOUL.md (Internal Cognition & Behavioral Prior) ===\n{}",
+                    soul
+                ));
             }
         }
         if let Ok(identity) = std::fs::read_to_string(data_dir.join("IDENTITY.md")) {
             if !identity.trim().is_empty() {
-                base.push_str(&format!("\n\n=== IDENTITY.md (External Presentation) ===\n{}", identity));
+                base.push_str(&format!(
+                    "\n\n=== IDENTITY.md (External Presentation) ===\n{}",
+                    identity
+                ));
             }
         }
 
@@ -1208,7 +1331,9 @@ You have access to these tools: {}.{}",
     {
         let title = {
             let sessions_snap = get_chat_history().await;
-            sessions_snap.iter().find(|s| s.id == id)
+            sessions_snap
+                .iter()
+                .find(|s| s.id == id)
                 .map(|s| s.title.clone())
                 .unwrap_or_else(|| "Web Chat".to_string())
         };
@@ -1237,20 +1362,34 @@ You have access to these tools: {}.{}",
     // Router: run the ORCHESTRATOR on the user-chosen pool model (worker agents
     // keep their own per-agent models). Empty/unset → main model.
     let (api_key, api_url, model) = match (sub_agent_enabled && effective_mode == "router")
-        .then(|| settings.router_orchestrator_model.as_ref().filter(|s| !s.is_empty()))
+        .then(|| {
+            settings
+                .router_orchestrator_model
+                .as_ref()
+                .filter(|s| !s.is_empty())
+        })
         .flatten()
     {
         Some(want) => {
-            match settings.model_pool.as_ref().and_then(|pool| pool.iter().find(|e| &e.model == want)) {
+            match settings
+                .model_pool
+                .as_ref()
+                .and_then(|pool| pool.iter().find(|e| &e.model == want))
+            {
                 Some(e) => {
                     let u = if e.api_url.trim().is_empty() {
                         api_url.clone()
-                    } else if e.api_url == "claude-code" || e.api_url.ends_with("/chat/completions") {
+                    } else if e.api_url == "claude-code" || e.api_url.ends_with("/chat/completions")
+                    {
                         e.api_url.clone()
                     } else {
                         format!("{}/chat/completions", e.api_url.trim_end_matches('/'))
                     };
-                    let k = if e.api_key.trim().is_empty() { api_key.clone() } else { e.api_key.clone() };
+                    let k = if e.api_key.trim().is_empty() {
+                        api_key.clone()
+                    } else {
+                        e.api_key.clone()
+                    };
                     (k, u, e.model.clone())
                 }
                 None => (api_key, api_url, want.clone()),
@@ -1267,7 +1406,10 @@ You have access to these tools: {}.{}",
     let settings_agent_count: Option<usize> = settings
         .extra
         .get("autoAgentCount")
-        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .map(|n| n as usize);
 
     tokio::spawn(async move {
@@ -1275,7 +1417,6 @@ You have access to these tools: {}.{}",
         let mut done_tx = done_tx;
         let result = if let Some(pattern) = workflow_pattern {
             // Width sizes the parallel stage (workers, verifiers, attempts).
-            // Reuses the swarm agent-count setting so one knob governs both.
             let width = settings_agent_count.unwrap_or(3);
             run_workflow_turn(
                 &pattern,
@@ -1290,57 +1431,59 @@ You have access to these tools: {}.{}",
             )
             .await
         } else {
-        call_with_tools(
-            &api_key,
-            &api_url,
-            &model,
-            llm_messages,
-            system_prompt,
-            &sandbox_dir,
-            move |update: ToolUpdate| {
-                use crate::server::services::toolbox::append_session_progress;
-                if let Some(cb) = &extra_cb {
-                    cb(update.clone());
-                }
-                let line = match &update {
-                    ToolUpdate::ToolCall { name, args } => {
-                        let preview: String = args.to_string().chars().take(120).collect();
-                        format!("🔧 Calling **{}** — {}\n", name, preview)
+            call_with_tools(
+                &api_key,
+                &api_url,
+                &model,
+                llm_messages,
+                system_prompt,
+                &sandbox_dir,
+                move |update: ToolUpdate| {
+                    use crate::server::services::toolbox::append_session_progress;
+                    if let Some(cb) = &extra_cb {
+                        cb(update.clone());
                     }
-                    ToolUpdate::ToolResult { name, result } => {
-                        let preview: String = result.to_string().chars().take(200).collect();
-                        format!("✅ **{}** done — {}\n", name, preview)
-                    }
-                    ToolUpdate::TextChunk(text) => {
-                        if text.starts_with("[reasoning]") {
-                            format!("💭 Reasoning...\n")
-                        } else {
-                            // Log a summary of text-only responses for diagnostics
-                            let preview: String = text.chars().take(200).collect();
-                            if !preview.is_empty() {
-                                format!("💬 Response: {}\n", preview)
+                    let line = match &update {
+                        ToolUpdate::ToolCall { name, args } => {
+                            let preview: String = args.to_string().chars().take(120).collect();
+                            format!("🔧 Calling **{}** — {}\n", name, preview)
+                        }
+                        ToolUpdate::ToolResult { name, result } => {
+                            let preview: String = result.to_string().chars().take(200).collect();
+                            format!("✅ **{}** done — {}\n", name, preview)
+                        }
+                        ToolUpdate::TextChunk(text) => {
+                            if text.starts_with("[reasoning]") {
+                                format!("💭 Reasoning...\n")
                             } else {
-                                String::new()
+                                // Log a summary of text-only responses for diagnostics
+                                let preview: String = text.chars().take(200).collect();
+                                if !preview.is_empty() {
+                                    format!("💬 Response: {}\n", preview)
+                                } else {
+                                    String::new()
+                                }
                             }
                         }
+                        ToolUpdate::Error(err) => format!("❌ {}\n", err),
+                        ToolUpdate::ApprovalRequired { name, .. } => {
+                            format!("⚠️ Approval needed for **{}**\n", name)
+                        }
+                    };
+                    if !line.is_empty() {
+                        append_session_progress(&session_id_for_log, &line);
+                        use std::io::Write;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .append(true)
+                            .open(&chat_log_path_for_cb)
+                        {
+                            let _ = f.write_all(line.as_bytes());
+                        }
                     }
-                    ToolUpdate::Error(err) => format!("❌ {}\n", err),
-                    ToolUpdate::ApprovalRequired { name, .. } => {
-                        format!("⚠️ Approval needed for **{}**\n", name)
-                    }
-                };
-                if !line.is_empty() {
-                    append_session_progress(&session_id_for_log, &line);
-                    use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new()
-                        .append(true).open(&chat_log_path_for_cb)
-                    {
-                        let _ = f.write_all(line.as_bytes());
-                    }
-                }
-            },
-            sub_agent,
-        ).await
+                },
+                sub_agent,
+            )
+            .await
         };
 
         // Remove from native UI's active tasks and cancel flags
@@ -1367,7 +1510,9 @@ You have access to these tools: {}.{}",
             );
             use tokio::io::AsyncWriteExt;
             if let Ok(mut f) = tokio::fs::OpenOptions::new()
-                .append(true).open(&cl_path_bg).await
+                .append(true)
+                .open(&cl_path_bg)
+                .await
             {
                 let _ = f.write_all(footer.as_bytes()).await;
             }
@@ -1377,7 +1522,8 @@ You have access to these tools: {}.{}",
         // assistant message, and an empty one looks like the job never finished.
         let assistant_content = if result.content.trim().is_empty() {
             "⚠️ The run finished without a final answer (the model returned empty content). \
-            Check the activity log for partial results and try again.".to_string()
+            Check the activity log for partial results and try again."
+                .to_string()
         } else {
             result.content
         };
@@ -1390,14 +1536,22 @@ You have access to these tools: {}.{}",
                 role: "assistant".to_string(),
                 content: assistant_content.clone(),
                 timestamp: chrono::Utc::now().to_rfc3339(),
-                files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
+                files: if output_files.is_empty() {
+                    None
+                } else {
+                    Some(output_files.clone())
+                },
                 feedback: None,
             });
             s.updated_at = chrono::Utc::now().to_rfc3339();
             save_chat_history(&sessions3).await;
         }
 
-        tracing::info!("[chat] Session {} completed ({} chars)", session_id_bg, assistant_content.len());
+        tracing::info!(
+            "[chat] Session {} completed ({} chars)",
+            session_id_bg,
+            assistant_content.len()
+        );
 
         if let Some(tx) = done_tx.take() {
             let _ = tx.send(assistant_content);
@@ -1457,13 +1611,16 @@ async fn get_active_tasks() -> impl IntoResponse {
     let sessions = get_chat_history().await;
 
     for session_id in &running_ids {
-        let title = sessions.iter()
+        let title = sessions
+            .iter()
             .find(|s| &s.id == session_id)
             .map(|s| s.title.clone())
             .unwrap_or_else(|| session_id.clone());
 
         let log_path = log_dir.join(format!("{}.log", session_id));
-        let content = tokio::fs::read_to_string(&log_path).await.unwrap_or_default();
+        let content = tokio::fs::read_to_string(&log_path)
+            .await
+            .unwrap_or_default();
 
         active.push(json!({
             "session_id": session_id,
@@ -1477,9 +1634,13 @@ async fn get_active_tasks() -> impl IntoResponse {
     if let Ok(mut entries) = tokio::fs::read_dir(&log_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.ends_with(".log") { continue; }
+            if !name.ends_with(".log") {
+                continue;
+            }
             let session_id = name.trim_end_matches(".log").to_string();
-            if running_ids.contains(&session_id) { continue; } // already added
+            if running_ids.contains(&session_id) {
+                continue;
+            } // already added
 
             if let Ok(meta) = entry.metadata().await {
                 if let Ok(modified) = meta.modified() {
@@ -1488,7 +1649,8 @@ async fn get_active_tasks() -> impl IntoResponse {
                         let content = tokio::fs::read_to_string(entry.path())
                             .await
                             .unwrap_or_default();
-                        let title = sessions.iter()
+                        let title = sessions
+                            .iter()
                             .find(|s| s.id == session_id)
                             .map(|s| s.title.clone())
                             .unwrap_or_else(|| session_id.clone());
@@ -1566,7 +1728,12 @@ pub async fn kill_session_by_id(id: &str) -> bool {
     let log_path = activity_log_dir().join(format!("{}.log", id));
     let _ = tokio::fs::remove_file(&log_path).await;
 
-    tracing::info!("[kill] Session {} killed={} reaped_processes={}", id, killed, reaped);
+    tracing::info!(
+        "[kill] Session {} killed={} reaped_processes={}",
+        id,
+        killed,
+        reaped
+    );
 
     killed
 }

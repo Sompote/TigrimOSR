@@ -1,11 +1,11 @@
+use crate::server::AppState;
 use axum::{
     http::{header, StatusCode},
     response::IntoResponse,
-    Router,
     routing::get,
+    Router,
 };
 use std::sync::Arc;
-use crate::server::AppState;
 
 // Embed the SPA at compile time
 const INDEX_HTML: &str = include_str!("../../../static/index.html");

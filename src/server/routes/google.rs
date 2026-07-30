@@ -119,9 +119,7 @@ async fn connect(Json(body): Json<ConnectBody>) -> impl IntoResponse {
             .find(|t| t.name == google::GOOGLE_MCP_NAME)
             .and_then(|t| t.env.as_ref())
         {
-            if prev.get("GOOGLE_OAUTH_CLIENT_ID").map(|s| s.trim())
-                == Some(body.client_id.trim())
-            {
+            if prev.get("GOOGLE_OAUTH_CLIENT_ID").map(|s| s.trim()) == Some(body.client_id.trim()) {
                 secret = prev
                     .get("GOOGLE_OAUTH_CLIENT_SECRET")
                     .cloned()
@@ -205,8 +203,7 @@ pub async fn oauth_callback_relay(uri: axum::http::Uri) -> axum::response::Respo
         .await
     {
         Ok(resp) => {
-            let status =
-                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
+            let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
             let body = resp.text().await.unwrap_or_default();
             (
                 status,

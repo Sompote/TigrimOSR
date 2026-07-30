@@ -113,8 +113,14 @@ impl GraphProfile {
     }
 }
 
-pub const WORKER_MODES: &[&str] =
-    &["single", "auto", "manual", "fully_auto", "auto_swarm", "router"];
+pub const WORKER_MODES: &[&str] = &[
+    "single",
+    "auto",
+    "manual",
+    "fully_auto",
+    "auto_swarm",
+    "router",
+];
 pub const AGGREGATION_POLICIES: &[&str] = &["all_pass", "majority", "weighted_average"];
 
 // ---------------------------------------------------------------------------
@@ -188,7 +194,10 @@ pub fn default_profile() -> GraphProfile {
         description:
             "Evaluator-optimizer graph — a judge panel reviews the final answer before delivery."
                 .to_string(),
-        worker: Some(WorkerNode { mode: "single".to_string(), agent_loop_profile: None }),
+        worker: Some(WorkerNode {
+            mode: "single".to_string(),
+            agent_loop_profile: None,
+        }),
         judges: vec![JudgeNode {
             name: "quality".to_string(),
             model: String::new(),
@@ -365,13 +374,18 @@ pub fn validate_graph_yaml(content: &str) -> Result<(GraphProfile, Vec<String>),
                     return Err(format!("{label}: unsafe rules_file name '{f}'"));
                 }
                 if !rules_dir().join(normalize_filename(f)).exists() {
-                    warnings.push(format!("{label}: rules_file '{f}' not found in data/graph/rules/"));
+                    warnings.push(format!(
+                        "{label}: rules_file '{f}' not found in data/graph/rules/"
+                    ));
                 }
             }
         }
         if let Some(r) = judge.max_judge_rounds {
             if r > 6 {
-                warnings.push(format!("{label}: max_judge_rounds {} will be clamped to 6", r));
+                warnings.push(format!(
+                    "{label}: max_judge_rounds {} will be clamped to 6",
+                    r
+                ));
             }
         }
     }

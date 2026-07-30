@@ -45,9 +45,14 @@ fn builtin_tool_description(tool: &str) -> String {
 async fn get_tool_config(Path((filename, tool)): Path<(String, String)>) -> impl IntoResponse {
     let re = regex::Regex::new(r"^[\w\-. ]+\.ya?ml$").unwrap();
     if !re.is_match(&filename) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid filename"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid filename"})),
+        );
     }
-    let content = fs::read_to_string(agent_loops_dir().join(&filename)).await.unwrap_or_default();
+    let content = fs::read_to_string(agent_loops_dir().join(&filename))
+        .await
+        .unwrap_or_default();
     let profile: AgentLoopProfile = serde_yaml::from_str(&content).unwrap_or_default();
     let cfg = profile.tools.as_ref().and_then(|t| t.config.get(&tool));
     let desc = builtin_tool_description(&tool);
@@ -61,7 +66,10 @@ async fn get_tool_config(Path((filename, tool)): Path<(String, String)>) -> impl
         default_approval,
         schema.as_ref(),
     );
-    (StatusCode::OK, Json(json!({"content": yaml, "exists": cfg.is_some()})))
+    (
+        StatusCode::OK,
+        Json(json!({"content": yaml, "exists": cfg.is_some()})),
+    )
 }
 
 /// POST /:filename/tool-config/:tool — set (or clear) one tool's per-tool
@@ -72,7 +80,10 @@ async fn save_tool_config(
 ) -> impl IntoResponse {
     let re = regex::Regex::new(r"^[\w\-. ]+\.ya?ml$").unwrap();
     if !re.is_match(&filename) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid filename"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid filename"})),
+        );
     }
     let fp = agent_loops_dir().join(&filename);
     // Refuse to touch a missing or unparseable profile — merging into a
@@ -91,7 +102,9 @@ async fn save_tool_config(
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error": format!("Profile '{filename}' has invalid YAML ({e}) — fix it in the Agent Loop editor first")})),
+                Json(
+                    json!({"error": format!("Profile '{filename}' has invalid YAML ({e}) — fix it in the Agent Loop editor first")}),
+                ),
             )
         }
     };
@@ -109,8 +122,12 @@ async fn save_tool_config(
     );
     let mut tf = profile.tools.take().unwrap_or_else(ToolFilter::default);
     match parsed {
-        Ok(Some(cfg)) => { tf.config.insert(tool.clone(), cfg); }
-        Ok(None) => { tf.config.remove(&tool); }
+        Ok(Some(cfg)) => {
+            tf.config.insert(tool.clone(), cfg);
+        }
+        Ok(None) => {
+            tf.config.remove(&tool);
+        }
         Err(e) => {
             profile.tools = Some(tf);
             return (StatusCode::BAD_REQUEST, Json(json!({"error": e})));
@@ -120,13 +137,24 @@ async fn save_tool_config(
 
     let yaml = match serde_yaml::to_string(&profile) {
         Ok(y) => y,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("serialize: {e}")}))),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("serialize: {e}")})),
+            )
+        }
     };
     let dir = agent_loops_dir();
     let _ = fs::create_dir_all(&dir).await;
     match fs::write(dir.join(&filename), &yaml).await {
-        Ok(()) => (StatusCode::OK, Json(json!({"ok": true, "filename": filename}))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("write: {e}")}))),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({"ok": true, "filename": filename})),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("write: {e}")})),
+        ),
     }
 }
 
@@ -228,14 +256,23 @@ async fn list_profiles() -> impl IntoResponse {
         if !(name.ends_with(".yaml") || name.ends_with(".yml")) {
             continue;
         }
-        let content = fs::read_to_string(dir.join(&name)).await.unwrap_or_default();
+        let content = fs::read_to_string(dir.join(&name))
+            .await
+            .unwrap_or_default();
         let parsed = serde_yaml::from_str::<AgentLoopProfile>(&content).ok();
         let display_name = parsed
             .as_ref()
             .map(|p| p.name.clone())
             .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| name.trim_end_matches(".yaml").trim_end_matches(".yml").to_string());
-        let description = parsed.as_ref().map(|p| p.description.clone()).unwrap_or_default();
+            .unwrap_or_else(|| {
+                name.trim_end_matches(".yaml")
+                    .trim_end_matches(".yml")
+                    .to_string()
+            });
+        let description = parsed
+            .as_ref()
+            .map(|p| p.description.clone())
+            .unwrap_or_default();
         let updated_at = entry
             .metadata()
             .await
@@ -257,7 +294,10 @@ async fn list_profiles() -> impl IntoResponse {
     }
 
     result.sort_by(|a, b| {
-        a["filename"].as_str().unwrap_or("").cmp(b["filename"].as_str().unwrap_or(""))
+        a["filename"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["filename"].as_str().unwrap_or(""))
     });
     Json(json!(result))
 }
@@ -276,7 +316,12 @@ async fn get_catalog() -> impl IntoResponse {
             // lets editors show which tools require_approval actually changes.
             let approval_gated_by_default = matches!(
                 name.as_str(),
-                "run_shell" | "cron_create" | "cron_run_now" | "run_python" | "run_react" | "delete_file"
+                "run_shell"
+                    | "cron_create"
+                    | "cron_run_now"
+                    | "run_python"
+                    | "run_react"
+                    | "delete_file"
             );
             json!({
                 "name": name,
@@ -297,7 +342,11 @@ async fn get_catalog() -> impl IntoResponse {
     let skills: Vec<Value> = crate::server::data::read_json::<Vec<Value>>("skills.json")
         .await
         .into_iter()
-        .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(|n| json!({"name": n})))
+        .filter_map(|s| {
+            s.get("name")
+                .and_then(|n| n.as_str())
+                .map(|n| json!({"name": n}))
+        })
         .collect();
 
     Json(json!({"tools": tools, "mcpServers": mcp_servers, "skills": skills}))
@@ -339,7 +388,10 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
 
     if let Some(tf) = &profile.tools {
         if !matches!(tf.mode.as_str(), "allowlist" | "denylist" | "all" | "") {
-            return Err(format!("tools.mode must be allowlist|denylist|all, got '{}'", tf.mode));
+            return Err(format!(
+                "tools.mode must be allowlist|denylist|all, got '{}'",
+                tf.mode
+            ));
         }
         let known: Vec<String> = crate::server::services::toolbox::tool_catalog()
             .into_iter()
@@ -347,14 +399,21 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
             .collect();
         for t in &tf.list {
             if !known.iter().any(|k| k == t) {
-                warnings.push(format!("Unknown tool name '{}' (not in the base tool catalog)", t));
+                warnings.push(format!(
+                    "Unknown tool name '{}' (not in the base tool catalog)",
+                    t
+                ));
             }
         }
         let is_protected = |name: &str| {
             matches!(
                 name,
-                "send_task" | "wait_result" | "check_agents" | "create_architecture"
-                    | "select_swarm" | "spawn_subagent"
+                "send_task"
+                    | "wait_result"
+                    | "check_agents"
+                    | "create_architecture"
+                    | "select_swarm"
+                    | "spawn_subagent"
             ) || name.starts_with("proto_")
                 || name.starts_with("bb_")
         };
@@ -369,7 +428,11 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
             if cfg.timeout_secs == Some(0) {
                 return Err(format!("tools.config.{}.timeout_secs must be > 0", name));
             }
-            if cfg.max_result_len.map(|m| m > 0 && m < 200).unwrap_or(false) {
+            if cfg
+                .max_result_len
+                .map(|m| m > 0 && m < 200)
+                .unwrap_or(false)
+            {
                 warnings.push(format!(
                     "tools.config.{}.max_result_len below 200 bytes will destroy most tool output",
                     name
@@ -393,7 +456,10 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
                     name
                 ));
             }
-            if cfg.enabled == Some(false) && tf.mode == "allowlist" && tf.list.iter().any(|t| t == name) {
+            if cfg.enabled == Some(false)
+                && tf.mode == "allowlist"
+                && tf.list.iter().any(|t| t == name)
+            {
                 warnings.push(format!(
                     "tools.config.{}: enabled:false contradicts its allowlist entry — disabled wins",
                     name
@@ -404,8 +470,13 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
         // unrecognized keys as warnings instead of silently dropping them.
         if let Ok(raw) = serde_yaml::from_str::<serde_yaml::Value>(content) {
             const KNOWN_KEYS: [&str; 7] = [
-                "enabled", "require_approval", "description",
-                "params", "pinned_params", "max_result_len", "timeout_secs",
+                "enabled",
+                "require_approval",
+                "description",
+                "params",
+                "pinned_params",
+                "max_result_len",
+                "timeout_secs",
             ];
             if let Some(cfg_map) = raw
                 .get("tools")
@@ -419,7 +490,9 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
                             if !KNOWN_KEYS.contains(&key) {
                                 warnings.push(format!(
                                     "tools.config.{}: unknown key '{}' (expected one of {})",
-                                    tool, key, KNOWN_KEYS.join(", ")
+                                    tool,
+                                    key,
+                                    KNOWN_KEYS.join(", ")
                                 ));
                             }
                         }
@@ -430,18 +503,27 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
     }
     if let Some(m) = &profile.mcp {
         if !matches!(m.mode.as_str(), "all" | "selected" | "none" | "") {
-            return Err(format!("mcp.mode must be all|selected|none, got '{}'", m.mode));
+            return Err(format!(
+                "mcp.mode must be all|selected|none, got '{}'",
+                m.mode
+            ));
         }
     }
     if let Some(s) = &profile.skills {
         if !matches!(s.mode.as_str(), "all" | "selected" | "none" | "") {
-            return Err(format!("skills.mode must be all|selected|none, got '{}'", s.mode));
+            return Err(format!(
+                "skills.mode must be all|selected|none, got '{}'",
+                s.mode
+            ));
         }
     }
     if let Some(e) = &profile.evaluation {
         if let Some(t) = e.threshold {
             if !(0.0..=1.0).contains(&t) {
-                return Err(format!("evaluation.threshold must be within 0.0..=1.0, got {}", t));
+                return Err(format!(
+                    "evaluation.threshold must be within 0.0..=1.0, got {}",
+                    t
+                ));
             }
         }
         if e.max_retries.map(|v| v > 5).unwrap_or(false) {
@@ -457,7 +539,12 @@ pub fn validate_profile_yaml(content: &str) -> Result<(AgentLoopProfile, Vec<Str
         }
     }
     if let Some(g) = &profile.graph {
-        if let Some(p) = g.profile.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(p) = g
+            .profile
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             if !crate::server::services::graph::is_safe_filename(p) {
                 return Err(format!("graph.profile: unsafe filename '{}'", p));
             }
@@ -561,7 +648,10 @@ async fn reset_default() -> impl IntoResponse {
         .unwrap_or(Value::Null);
     let profile = default_profile_from_settings(&settings);
     let yaml = match serde_yaml::to_string(&profile) {
-        Ok(y) => format!("{y}\n{}", crate::server::services::agent_loop::TOOL_CONFIG_EXAMPLE),
+        Ok(y) => format!(
+            "{y}\n{}",
+            crate::server::services::agent_loop::TOOL_CONFIG_EXAMPLE
+        ),
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -604,7 +694,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/", get(list_profiles).post(save_profile))
         .route("/catalog", get(get_catalog))
         .route("/reset-default", post(reset_default))
-        .route("/{filename}/tool-config/{tool}", get(get_tool_config).post(save_tool_config))
+        .route(
+            "/{filename}/tool-config/{tool}",
+            get(get_tool_config).post(save_tool_config),
+        )
         .route("/{filename}", get(get_profile).delete(delete_profile))
 }
 
@@ -643,7 +736,10 @@ tools:
         assert!(joined.contains("max_result_len below 200"), "{joined}");
         assert!(joined.contains("both params and pinned_params"), "{joined}");
         assert!(joined.contains("unknown key 'timout_secs'"), "{joined}");
-        assert!(joined.contains("contradicts its allowlist entry"), "{joined}");
+        assert!(
+            joined.contains("contradicts its allowlist entry"),
+            "{joined}"
+        );
         assert!(joined.contains("protected coordination tools"), "{joined}");
         assert!(joined.contains("not_a_real_tool"), "{joined}");
     }

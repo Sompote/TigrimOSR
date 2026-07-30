@@ -6,7 +6,6 @@
 ///  - Bus:        In-process pub/sub event bus (topics) with history
 ///  - Queue:      FIFO message queue with persistence per channel
 ///  - Blackboard: Shared workspace for P2P/Contract-Net task coordination
-
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -34,7 +33,9 @@ impl ProtocolMessage {
             to: to.map(|s| s.to_string()),
             topic: topic.to_string(),
             payload,
-            timestamp: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            timestamp: chrono::Utc::now()
+                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string(),
         }
     }
 }
@@ -81,10 +82,7 @@ pub async fn tcp_open(
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("TCP bind failed: {e}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| e.to_string())?
-        .port();
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
     let (tx, _) = broadcast::channel::<String>(512);
     let tx_clone = tx.clone();
@@ -121,11 +119,7 @@ pub async fn tcp_open(
     Ok((port, key))
 }
 
-async fn handle_tcp_connection(
-    socket: TcpStream,
-    tx: broadcast::Sender<String>,
-    key: String,
-) {
+async fn handle_tcp_connection(socket: TcpStream, tx: broadcast::Sender<String>, key: String) {
     let (reader, mut writer) = socket.into_split();
     let mut lines = BufReader::new(reader).lines();
     let mut rx = tx.subscribe();
@@ -169,12 +163,7 @@ async fn handle_tcp_connection(
 }
 
 /// Send a message via TCP to another agent (connects as client, sends, disconnects).
-pub async fn tcp_send(
-    from: &str,
-    to: &str,
-    topic: &str,
-    payload: Value,
-) -> bool {
+pub async fn tcp_send(from: &str, to: &str, topic: &str, payload: Value) -> bool {
     let key = tcp_channel_key(from, to);
     let port = {
         let channels = tcp_channels().lock().await;
@@ -196,9 +185,7 @@ pub async fn tcp_send(
 
     match TcpStream::connect(format!("127.0.0.1:{port}")).await {
         Ok(mut stream) => {
-            let _ = stream
-                .write_all(format!("{line}\n").as_bytes())
-                .await;
+            let _ = stream.write_all(format!("{line}\n").as_bytes()).await;
             true
         }
         Err(e) => {
@@ -259,7 +246,8 @@ impl AgentBus {
             // Remove oldest: shift consumed_idx
             self.history.remove(0);
             // Adjust consumed indices down by 1
-            self.consumed_idx = self.consumed_idx
+            self.consumed_idx = self
+                .consumed_idx
                 .iter()
                 .filter_map(|&i| if i == 0 { None } else { Some(i - 1) })
                 .collect();
@@ -285,7 +273,12 @@ impl AgentBus {
 
     pub fn get_history(&self, topic: Option<&str>) -> Vec<ProtocolMessage> {
         match topic {
-            Some(t) => self.history.iter().filter(|m| m.topic == t).cloned().collect(),
+            Some(t) => self
+                .history
+                .iter()
+                .filter(|m| m.topic == t)
+                .cloned()
+                .collect(),
             None => self.history.clone(),
         }
     }
@@ -337,10 +330,7 @@ pub async fn bus_history(session_id: &str, topic: Option<&str>) -> Vec<ProtocolM
         .unwrap_or_default()
 }
 
-pub async fn bus_consume_from_history(
-    session_id: &str,
-    topic: &str,
-) -> Option<ProtocolMessage> {
+pub async fn bus_consume_from_history(session_id: &str, topic: &str) -> Option<ProtocolMessage> {
     let mut buses = bus_instances().lock().await;
     buses
         .entry(session_id.to_string())
@@ -495,11 +485,7 @@ pub async fn queue_enqueue(
     depth
 }
 
-pub async fn queue_dequeue(
-    from: &str,
-    to: &str,
-    topic: Option<&str>,
-) -> Option<ProtocolMessage> {
+pub async fn queue_dequeue(from: &str, to: &str, topic: Option<&str>) -> Option<ProtocolMessage> {
     let key = queue_key(from, to, topic);
     let mut qs = queues().lock().await;
     qs.get_mut(&key)?.pop_front()
@@ -520,7 +506,12 @@ pub async fn queue_peek(
 
 pub async fn queue_depth(from: &str, to: &str, topic: Option<&str>) -> usize {
     let key = queue_key(from, to, topic);
-    queues().lock().await.get(&key).map(|q| q.len()).unwrap_or(0)
+    queues()
+        .lock()
+        .await
+        .get(&key)
+        .map(|q| q.len())
+        .unwrap_or(0)
 }
 
 pub async fn queue_drain(from: &str, to: &str, topic: Option<&str>) -> Vec<ProtocolMessage> {
@@ -626,7 +617,10 @@ impl Blackboard {
                     return (existing.clone(), true);
                 }
                 "in_progress" | "awarded" => {
-                    info!("[Blackboard] Task \"{}\" already {} — skipping", id, existing.status);
+                    info!(
+                        "[Blackboard] Task \"{}\" already {} — skipping",
+                        id, existing.status
+                    );
                     return (existing.clone(), true);
                 }
                 "bidding" | "open" => {
@@ -705,9 +699,7 @@ impl Blackboard {
             ));
         }
         if task.bids.iter().any(|b| b.agent_id == agent_id) {
-            return Err(format!(
-                "Agent \"{agent_id}\" already bid on \"{task_id}\""
-            ));
+            return Err(format!("Agent \"{agent_id}\" already bid on \"{task_id}\""));
         }
         let ts = Self::now();
         task.status = "bidding".to_string();
@@ -746,9 +738,7 @@ impl Blackboard {
 
         let winner = if let Some(forced) = award_to {
             if !task.bids.iter().any(|b| b.agent_id == forced) {
-                return Err(format!(
-                    "Agent \"{forced}\" did not bid on \"{task_id}\""
-                ));
+                return Err(format!("Agent \"{forced}\" did not bid on \"{task_id}\""));
             }
             forced.to_string()
         } else {
@@ -800,9 +790,7 @@ impl Blackboard {
             .get_mut(task_id)
             .ok_or_else(|| format!("Task \"{task_id}\" not found"))?;
         if task.awarded_to.as_deref() != Some(agent_id) {
-            return Err(format!(
-                "Task \"{task_id}\" not awarded to \"{agent_id}\""
-            ));
+            return Err(format!("Task \"{task_id}\" not awarded to \"{agent_id}\""));
         }
         task.status = "in_progress".to_string();
         self.append_log(BlackboardEntry {
@@ -938,18 +926,12 @@ pub async fn blackboard_complete_task(
         .complete_task(agent_id, task_id, result)
 }
 
-pub async fn blackboard_get_task(
-    session_id: &str,
-    task_id: &str,
-) -> Option<BlackboardTask> {
+pub async fn blackboard_get_task(session_id: &str, task_id: &str) -> Option<BlackboardTask> {
     let bbs = blackboards().lock().await;
     bbs.get(session_id)?.get_task(task_id).cloned()
 }
 
-pub async fn blackboard_get_tasks(
-    session_id: &str,
-    status: Option<&str>,
-) -> Vec<BlackboardTask> {
+pub async fn blackboard_get_tasks(session_id: &str, status: Option<&str>) -> Vec<BlackboardTask> {
     let bbs = blackboards().lock().await;
     match bbs.get(session_id) {
         Some(bb) => bb.get_tasks(status).into_iter().cloned().collect(),
@@ -957,10 +939,7 @@ pub async fn blackboard_get_tasks(
     }
 }
 
-pub async fn blackboard_get_log(
-    session_id: &str,
-    limit: Option<usize>,
-) -> Vec<BlackboardEntry> {
+pub async fn blackboard_get_log(session_id: &str, limit: Option<usize>) -> Vec<BlackboardEntry> {
     let bbs = blackboards().lock().await;
     match bbs.get(session_id) {
         Some(bb) => bb.get_log(limit).into_iter().cloned().collect(),
@@ -984,7 +963,10 @@ pub async fn blackboard_check_awarded(session_id: &str, agent_id: &str) -> bool 
 
 pub async fn blackboard_destroy(session_id: &str) {
     if blackboards().lock().await.remove(session_id).is_some() {
-        info!("[Protocol:Blackboard] Destroyed blackboard for session {}", session_id);
+        info!(
+            "[Protocol:Blackboard] Destroyed blackboard for session {}",
+            session_id
+        );
     }
 }
 
@@ -1017,18 +999,14 @@ pub async fn get_protocol_status() -> Value {
         let channels = tcp_channels().lock().await;
         channels
             .iter()
-            .map(|(id, ch)| {
-                json!({ "id": id, "port": ch.port, "buffered": ch.buffer.len() })
-            })
+            .map(|(id, ch)| json!({ "id": id, "port": ch.port, "buffered": ch.buffer.len() }))
             .collect()
     };
     let bus_info: Vec<Value> = {
         let buses = bus_instances().lock().await;
         buses
             .iter()
-            .map(|(session, bus)| {
-                json!({ "session": session, "history": bus.history.len() })
-            })
+            .map(|(session, bus)| json!({ "session": session, "history": bus.history.len() }))
             .collect()
     };
     let queue_info: Vec<Value> = {
@@ -1057,7 +1035,9 @@ pub async fn get_protocol_status() -> Value {
 // ─── Agent history persistence helper ────────────────────────────────────────
 
 async fn append_agent_history(session_id: &str, filename: &str, line: &str) -> std::io::Result<()> {
-    let dir = crate::server::data::data_dir().join("agent_history").join(session_id);
+    let dir = crate::server::data::data_dir()
+        .join("agent_history")
+        .join(session_id);
     tokio::fs::create_dir_all(&dir).await?;
     let path = dir.join(filename);
     let mut f = tokio::fs::OpenOptions::new()

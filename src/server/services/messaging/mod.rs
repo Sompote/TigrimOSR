@@ -240,7 +240,9 @@ pub async fn execute_command(chat_key: &str, cmd: BotCommand) -> CommandOutcome 
     match cmd {
         BotCommand::Chat(text) => RunChat(text),
         BotCommand::Help => Reply(help_text()),
-        BotCommand::Unknown(c) => Reply(format!("Unknown command {} — send /help for the list.", c)),
+        BotCommand::Unknown(c) => {
+            Reply(format!("Unknown command {} — send /help for the list.", c))
+        }
         BotCommand::Agents => Reply(list_agents_text().await),
         BotCommand::Model(None) => {
             let s = get_settings().await;
@@ -301,7 +303,9 @@ pub async fn execute_command(chat_key: &str, cmd: BotCommand) -> CommandOutcome 
                     }
                 }
                 persist_chats().await;
-                return Reply("Agent-loop profile cleared — using the settings default.".to_string());
+                return Reply(
+                    "Agent-loop profile cleared — using the settings default.".to_string(),
+                );
             }
             if crate::server::services::agent_loop::load_profile(&name).is_none() {
                 return Reply(format!(
@@ -333,7 +337,10 @@ pub async fn execute_command(chat_key: &str, cmd: BotCommand) -> CommandOutcome 
                 }
             }
             persist_chats().await;
-            Reply("Started a fresh session. Previous conversation is kept in the web UI history.".to_string())
+            Reply(
+                "Started a fresh session. Previous conversation is kept in the web UI history."
+                    .to_string(),
+            )
         }
         BotCommand::Stop => {
             let cs = get_or_create_chat(chat_key).await;
@@ -578,7 +585,10 @@ mod tests {
             parse_command("/model@AndrewBot deepseek-chat"),
             BotCommand::Model(Some("deepseek-chat".to_string()))
         );
-        assert_eq!(parse_command("/MODE router"), BotCommand::Mode(Some("router".to_string())));
+        assert_eq!(
+            parse_command("/MODE router"),
+            BotCommand::Mode(Some("router".to_string()))
+        );
         assert_eq!(parse_command("/start"), BotCommand::Help);
         assert_eq!(
             parse_command("hello there"),

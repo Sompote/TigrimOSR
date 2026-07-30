@@ -28,8 +28,7 @@ pub fn active_chats() -> &'static Arc<Mutex<Vec<ActiveChatSession>>> {
 // Killed chat session IDs (set by TasksView, read by ChatView to cancel streams)
 // ---------------------------------------------------------------------------
 
-static KILLED_CHAT_IDS: std::sync::OnceLock<Arc<Mutex<Vec<String>>>> =
-    std::sync::OnceLock::new();
+static KILLED_CHAT_IDS: std::sync::OnceLock<Arc<Mutex<Vec<String>>>> = std::sync::OnceLock::new();
 
 pub fn take_killed_chat_ids() -> Vec<String> {
     let mut ids = KILLED_CHAT_IDS
@@ -303,8 +302,7 @@ impl TasksView {
             };
 
             // Persist finished task
-            let mut history: Vec<FinishedTask> =
-                data::read_json("finished_tasks.json").await;
+            let mut history: Vec<FinishedTask> = data::read_json("finished_tasks.json").await;
             history.push(finished);
             data::write_json("finished_tasks.json", &history).await;
 
@@ -367,7 +365,9 @@ impl TasksView {
                 self.needs_refresh = true;
             }
 
-            let remote_count = self.remote_tasks.iter()
+            let remote_count = self
+                .remote_tasks
+                .iter()
                 .filter(|t| t["status"].as_str() == Some("running"))
                 .count();
             let remote_label = if remote_count > 0 {
@@ -515,20 +515,12 @@ impl TasksView {
 
                                 // status badge
                                 let (badge_text, badge_color) = if task.enabled {
-                                    (
-                                        "Enabled",
-                                        egui::Color32::from_rgb(34, 197, 94),
-                                    )
+                                    ("Enabled", egui::Color32::from_rgb(34, 197, 94))
                                 } else {
-                                    (
-                                        "Disabled",
-                                        egui::Color32::from_rgb(156, 163, 175),
-                                    )
+                                    ("Disabled", egui::Color32::from_rgb(156, 163, 175))
                                 };
                                 ui.label(
-                                    egui::RichText::new(badge_text)
-                                        .small()
-                                        .color(badge_color),
+                                    egui::RichText::new(badge_text).small().color(badge_color),
                                 );
 
                                 ui.vertical(|ui| {
@@ -562,9 +554,12 @@ impl TasksView {
                                                 egui::Color32::from_rgb(239, 68, 68)
                                             };
                                             ui.label(
-                                                egui::RichText::new(format!("  result: {}", result))
-                                                    .small()
-                                                    .color(color),
+                                                egui::RichText::new(format!(
+                                                    "  result: {}",
+                                                    result
+                                                ))
+                                                .small()
+                                                .color(color),
                                             );
                                         }
                                     });
@@ -598,9 +593,8 @@ impl TasksView {
                                         // Run Now button
                                         if ui
                                             .button(
-                                                egui::RichText::new("Run Now").color(
-                                                    egui::Color32::from_rgb(18, 154, 145),
-                                                ),
+                                                egui::RichText::new("Run Now")
+                                                    .color(egui::Color32::from_rgb(18, 154, 145)),
                                             )
                                             .clicked()
                                         {
@@ -652,7 +646,7 @@ impl TasksView {
                         self.edit_cron = task.cron.clone();
                         self.edit_command = task.command.clone();
                         self.edit_preset = 0; // custom by default
-                        // Check if cron matches a preset
+                                              // Check if cron matches a preset
                         for (i, (_label, expr)) in CRON_PRESETS.iter().enumerate() {
                             if task.cron == *expr {
                                 self.edit_preset = i + 1;
@@ -695,14 +689,8 @@ impl TasksView {
                             egui::ComboBox::from_id_salt("cron_preset_new")
                                 .selected_text(preset_label)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut self.selected_preset,
-                                        0,
-                                        "Custom",
-                                    );
-                                    for (i, (label, expr)) in
-                                        CRON_PRESETS.iter().enumerate()
-                                    {
+                                    ui.selectable_value(&mut self.selected_preset, 0, "Custom");
+                                    for (i, (label, expr)) in CRON_PRESETS.iter().enumerate() {
                                         if ui
                                             .selectable_value(
                                                 &mut self.selected_preset,
@@ -788,14 +776,8 @@ impl TasksView {
                             egui::ComboBox::from_id_salt("cron_preset_edit")
                                 .selected_text(preset_label)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut self.edit_preset,
-                                        0,
-                                        "Custom",
-                                    );
-                                    for (i, (label, expr)) in
-                                        CRON_PRESETS.iter().enumerate()
-                                    {
+                                    ui.selectable_value(&mut self.edit_preset, 0, "Custom");
+                                    for (i, (label, expr)) in CRON_PRESETS.iter().enumerate() {
                                         if ui
                                             .selectable_value(
                                                 &mut self.edit_preset,
@@ -827,9 +809,7 @@ impl TasksView {
                         .clicked()
                     {
                         if let Some(ref edit_id) = self.editing_task_id.clone() {
-                            if let Some(task) =
-                                self.tasks.iter_mut().find(|t| t.id == *edit_id)
-                            {
+                            if let Some(task) = self.tasks.iter_mut().find(|t| t.id == *edit_id) {
                                 task.name = self.edit_name.clone();
                                 task.cron = self.edit_cron.clone();
                                 task.command = self.edit_command.clone();
@@ -854,8 +834,7 @@ impl TasksView {
     // ===================================================================
     fn show_active_tab(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         // Auto-refresh every 2 seconds
-        ui.ctx()
-            .request_repaint_after(Duration::from_secs(2));
+        ui.ctx().request_repaint_after(Duration::from_secs(2));
 
         let now = chrono::Utc::now();
 
@@ -864,8 +843,7 @@ impl TasksView {
             guard
                 .iter()
                 .map(|t| {
-                    let elapsed =
-                        (now - t.started_at).num_milliseconds() as f64 / 1000.0;
+                    let elapsed = (now - t.started_at).num_milliseconds() as f64 / 1000.0;
                     let output = t.output.lock().unwrap().clone();
                     (
                         t.id.clone(),
@@ -893,9 +871,7 @@ impl TasksView {
         ui.add_space(4.0);
 
         // Also show active chat sessions
-        let chat_sessions: Vec<ActiveChatSession> = {
-            active_chats().lock().unwrap().clone()
-        };
+        let chat_sessions: Vec<ActiveChatSession> = { active_chats().lock().unwrap().clone() };
 
         if active_snapshot.is_empty() && chat_sessions.is_empty() {
             ui.centered_and_justified(|ui| {
@@ -923,10 +899,13 @@ impl TasksView {
                     format!("{}m {}s", elapsed / 60, elapsed % 60)
                 };
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgba_premultiplied(250, 204, 21, 15))
+                    .fill(egui::Color32::from_rgba_unmultiplied(250, 204, 21, 38))
                     .inner_margin(egui::Margin::same(10))
                     .corner_radius(6.0)
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(250, 204, 21)))
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgb(250, 204, 21),
+                    ))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             // Pulsing yellow dot
@@ -937,39 +916,46 @@ impl TasksView {
                                 (21.0 * pulse) as u8,
                                 255,
                             );
-                            let (dot_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(10.0, 10.0),
-                                egui::Sense::hover(),
-                            );
+                            let (dot_rect, _) = ui
+                                .allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                             ui.painter().circle_filled(dot_rect.center(), 5.0, yellow);
 
                             ui.vertical(|ui| {
                                 ui.horizontal(|ui| {
                                     ui.strong(&chat.title);
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new("Kill")
-                                                    .color(egui::Color32::WHITE)
-                                                    .small(),
-                                            )
-                                            .fill(egui::Color32::from_rgb(239, 68, 68))
-                                            .corner_radius(4.0),
-                                        ).clicked() {
-                                            kill_chat_id = Some(chat.session_id.clone());
-                                        }
-                                        if ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new("Go to Chat")
-                                                    .color(egui::Color32::WHITE)
-                                                    .small(),
-                                            )
-                                            .fill(egui::Color32::from_rgb(18, 154, 145))
-                                            .corner_radius(4.0),
-                                        ).clicked() {
-                                            goto_chat_id = Some(chat.session_id.clone());
-                                        }
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        egui::RichText::new("Kill")
+                                                            .color(egui::Color32::WHITE)
+                                                            .small(),
+                                                    )
+                                                    .fill(egui::Color32::from_rgb(239, 68, 68))
+                                                    .corner_radius(4.0),
+                                                )
+                                                .clicked()
+                                            {
+                                                kill_chat_id = Some(chat.session_id.clone());
+                                            }
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        egui::RichText::new("Go to Chat")
+                                                            .color(crate::ui::theme::readable_on(crate::ui::theme::accent_color()))
+                                                            .small(),
+                                                    )
+                                                    .fill(crate::ui::theme::accent_color())
+                                                    .corner_radius(4.0),
+                                                )
+                                                .clicked()
+                                            {
+                                                goto_chat_id = Some(chat.session_id.clone());
+                                            }
+                                        },
+                                    );
                                 });
                                 ui.horizontal(|ui| {
                                     ui.label(
@@ -984,23 +970,32 @@ impl TasksView {
                                     );
                                     if chat.agent_count > 0 {
                                         ui.label(
-                                            egui::RichText::new(format!("Agents: {}", chat.agent_count))
-                                                .small()
-                                                .color(egui::Color32::from_rgb(34, 197, 94)),
+                                            egui::RichText::new(format!(
+                                                "Agents: {}",
+                                                chat.agent_count
+                                            ))
+                                            .small()
+                                            .color(egui::Color32::from_rgb(34, 197, 94)),
                                         );
                                     }
                                     if chat.tool_calls > 0 {
                                         ui.label(
-                                            egui::RichText::new(format!("Tools: {}", chat.tool_calls))
-                                                .small()
-                                                .color(egui::Color32::from_rgb(18, 154, 145)),
+                                            egui::RichText::new(format!(
+                                                "Tools: {}",
+                                                chat.tool_calls
+                                            ))
+                                            .small()
+                                            .color(egui::Color32::from_rgb(18, 154, 145)),
                                         );
                                     }
                                 });
                                 ui.label(
-                                    egui::RichText::new(format!("Session: {}", &chat.session_id[..8.min(chat.session_id.len())]))
-                                        .small()
-                                        .weak(),
+                                    egui::RichText::new(format!(
+                                        "Session: {}",
+                                        &chat.session_id[..8.min(chat.session_id.len())]
+                                    ))
+                                    .small()
+                                    .weak(),
                                 );
                             });
                         });
@@ -1022,7 +1017,10 @@ impl TasksView {
                         mark_chat_finished(chat);
                     }
                 }
-                active_chats().lock().unwrap().retain(|c| c.session_id != *kid);
+                active_chats()
+                    .lock()
+                    .unwrap()
+                    .retain(|c| c.session_id != *kid);
                 // Shutdown any realtime session for this chat and SIGKILL every
                 // OS process tree it spawned (so killed tasks leave nothing
                 // running with filesystem/network access).
@@ -1044,9 +1042,7 @@ impl TasksView {
             .show(ui, |ui| {
                 let mut kill_id: Option<String> = None;
 
-                for (id, name, command, status, elapsed, pid, _output) in
-                    &active_snapshot
-                {
+                for (id, name, command, status, elapsed, pid, _output) in &active_snapshot {
                     egui::Frame::new()
                         .fill(ui.visuals().faint_bg_color)
                         .inner_margin(egui::Margin::same(10))
@@ -1054,9 +1050,7 @@ impl TasksView {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 // Pulsing green dot for running
-                                let pulse = (ui.input(|i| i.time) * 3.0).sin() as f32
-                                    * 0.3
-                                    + 0.7;
+                                let pulse = (ui.input(|i| i.time) * 3.0).sin() as f32 * 0.3 + 0.7;
                                 let green = egui::Color32::from_rgba_premultiplied(
                                     (34.0 * pulse) as u8,
                                     (197.0 * pulse) as u8,
@@ -1067,21 +1061,15 @@ impl TasksView {
                                     egui::vec2(10.0, 10.0),
                                     egui::Sense::hover(),
                                 );
-                                ui.painter()
-                                    .circle_filled(dot_rect.center(), 5.0, green);
+                                ui.painter().circle_filled(dot_rect.center(), 5.0, green);
 
                                 ui.vertical(|ui| {
                                     ui.strong(name);
                                     ui.horizontal(|ui| {
                                         ui.label(
-                                            egui::RichText::new(format!(
-                                                "Status: {}",
-                                                status
-                                            ))
-                                            .small()
-                                            .color(egui::Color32::from_rgb(
-                                                34, 197, 94,
-                                            )),
+                                            egui::RichText::new(format!("Status: {}", status))
+                                                .small()
+                                                .color(egui::Color32::from_rgb(34, 197, 94)),
                                         );
                                         ui.label(
                                             egui::RichText::new(format!(
@@ -1093,12 +1081,9 @@ impl TasksView {
                                         );
                                         if let Some(p) = pid {
                                             ui.label(
-                                                egui::RichText::new(format!(
-                                                    "PID: {}",
-                                                    p
-                                                ))
-                                                .small()
-                                                .weak(),
+                                                egui::RichText::new(format!("PID: {}", p))
+                                                    .small()
+                                                    .weak(),
                                             );
                                         }
                                     });
@@ -1115,11 +1100,8 @@ impl TasksView {
                                     |ui| {
                                         if ui
                                             .button(
-                                                egui::RichText::new("Kill").color(
-                                                    egui::Color32::from_rgb(
-                                                        239, 68, 68,
-                                                    ),
-                                                ),
+                                                egui::RichText::new("Kill")
+                                                    .color(egui::Color32::from_rgb(239, 68, 68)),
                                             )
                                             .clicked()
                                         {
@@ -1140,9 +1122,8 @@ impl TasksView {
                     if let Some(pos) = guard.iter().position(|t| t.id == *kid) {
                         let task = guard.remove(pos);
                         let finish_time = chrono::Utc::now();
-                        let duration = (finish_time - task.started_at).num_milliseconds()
-                            as f64
-                            / 1000.0;
+                        let duration =
+                            (finish_time - task.started_at).num_milliseconds() as f64 / 1000.0;
                         let output = task.output.lock().unwrap().clone();
                         let finished = FinishedTask {
                             id: uuid::Uuid::new_v4().to_string(),
@@ -1173,17 +1154,15 @@ impl TasksView {
         // Auto-refresh every frame when tab is active
         if self.remote_needs_refresh {
             self.remote_needs_refresh = false;
-            self.remote_tasks = runtime.block_on(
-                crate::server::routes::remote::get_all_remote_tasks()
-            );
+            self.remote_tasks =
+                runtime.block_on(crate::server::routes::remote::get_all_remote_tasks());
         }
 
         // Auto-refresh periodically
-        ui.ctx().request_repaint_after(std::time::Duration::from_secs(3));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(3));
         // Silently refresh in background
-        self.remote_tasks = runtime.block_on(
-            crate::server::routes::remote::get_all_remote_tasks()
-        );
+        self.remote_tasks = runtime.block_on(crate::server::routes::remote::get_all_remote_tasks());
 
         ui.horizontal(|ui| {
             ui.label(
@@ -1244,11 +1223,14 @@ impl TasksView {
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if status == "running" || status == "pending" {
-                                if ui.button(
-                                    egui::RichText::new("Kill")
-                                        .size(11.0)
-                                        .color(egui::Color32::from_rgb(239, 68, 68)),
-                                ).clicked() {
+                                if ui
+                                    .button(
+                                        egui::RichText::new("Kill")
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(239, 68, 68)),
+                                    )
+                                    .clicked()
+                                {
                                     kill_id = Some(id.to_string());
                                 }
                             }
@@ -1258,10 +1240,14 @@ impl TasksView {
                     // Info line
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("ID: {}  |  {}  |  {} progress entries",
-                                &id[..8.min(id.len())], created, progress_count))
-                                .size(11.0)
-                                .color(egui::Color32::GRAY),
+                            egui::RichText::new(format!(
+                                "ID: {}  |  {}  |  {} progress entries",
+                                &id[..8.min(id.len())],
+                                created,
+                                progress_count
+                            ))
+                            .size(11.0)
+                            .color(egui::Color32::GRAY),
                         );
                     });
 
@@ -1277,11 +1263,7 @@ impl TasksView {
                                 .max_height(200.0)
                                 .id_salt(format!("remote_result_{}", id))
                                 .show(ui, |ui| {
-                                    ui.label(
-                                        egui::RichText::new(result)
-                                            .size(12.0)
-                                            .monospace(),
-                                    );
+                                    ui.label(egui::RichText::new(result).size(12.0).monospace());
                                 });
                         }
 
@@ -1332,19 +1314,15 @@ impl TasksView {
     // FINISHED TAB
     // ===================================================================
     fn show_finished_tab(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
-        let finished_chat_sessions: Vec<FinishedChatSession> = {
-            finished_chats().lock().unwrap().clone()
-        };
+        let finished_chat_sessions: Vec<FinishedChatSession> =
+            { finished_chats().lock().unwrap().clone() };
         let total_finished = self.finished_tasks.len() + finished_chat_sessions.len();
 
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new(format!(
-                    "{} finished tasks",
-                    total_finished
-                ))
-                .weak()
-                .small(),
+                egui::RichText::new(format!("{} finished tasks", total_finished))
+                    .weak()
+                    .small(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Clear History").clicked() {
@@ -1396,44 +1374,63 @@ impl TasksView {
                             ui.vertical(|ui| {
                                 ui.horizontal(|ui| {
                                     ui.strong(&chat.title);
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new("Go to Chat")
-                                                    .color(egui::Color32::WHITE)
-                                                    .small(),
-                                            )
-                                            .fill(egui::Color32::from_rgb(18, 154, 145))
-                                            .corner_radius(4.0),
-                                        ).clicked() {
-                                            self.navigate_to_chat = Some(chat.session_id.clone());
-                                        }
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        egui::RichText::new("Go to Chat")
+                                                            .color(crate::ui::theme::readable_on(crate::ui::theme::accent_color()))
+                                                            .small(),
+                                                    )
+                                                    .fill(crate::ui::theme::accent_color())
+                                                    .corner_radius(4.0),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.navigate_to_chat =
+                                                    Some(chat.session_id.clone());
+                                            }
+                                        },
+                                    );
                                 });
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        egui::RichText::new(format!("Duration: {:.1}s", chat.duration_secs))
-                                            .small()
-                                            .weak(),
+                                        egui::RichText::new(format!(
+                                            "Duration: {:.1}s",
+                                            chat.duration_secs
+                                        ))
+                                        .small()
+                                        .weak(),
                                     );
                                     if chat.agent_count > 0 {
                                         ui.label(
-                                            egui::RichText::new(format!("Agents: {}", chat.agent_count))
-                                                .small()
-                                                .color(egui::Color32::from_rgb(34, 197, 94)),
+                                            egui::RichText::new(format!(
+                                                "Agents: {}",
+                                                chat.agent_count
+                                            ))
+                                            .small()
+                                            .color(egui::Color32::from_rgb(34, 197, 94)),
                                         );
                                     }
                                     if chat.tool_calls > 0 {
                                         ui.label(
-                                            egui::RichText::new(format!("Tools: {}", chat.tool_calls))
-                                                .small()
-                                                .color(egui::Color32::from_rgb(18, 154, 145)),
+                                            egui::RichText::new(format!(
+                                                "Tools: {}",
+                                                chat.tool_calls
+                                            ))
+                                            .small()
+                                            .color(egui::Color32::from_rgb(18, 154, 145)),
                                         );
                                     }
                                     ui.label(
                                         egui::RichText::new(format!(
                                             "Finished: {}",
-                                            &chat.finished_at.get(..19).unwrap_or(&chat.finished_at)
+                                            &chat
+                                                .finished_at
+                                                .get(..19)
+                                                .unwrap_or(&chat.finished_at)
                                         ))
                                         .small()
                                         .weak(),
@@ -1460,18 +1457,9 @@ impl TasksView {
 
                 for task in &tasks_reversed {
                     let (status_color, status_icon) = match task.status.as_str() {
-                        "success" => (
-                            egui::Color32::from_rgb(34, 197, 94),
-                            "OK",
-                        ),
-                        "error" => (
-                            egui::Color32::from_rgb(239, 68, 68),
-                            "ERR",
-                        ),
-                        "cancelled" => (
-                            egui::Color32::from_rgb(250, 204, 21),
-                            "CANCELLED",
-                        ),
+                        "success" => (egui::Color32::from_rgb(34, 197, 94), "OK"),
+                        "error" => (egui::Color32::from_rgb(239, 68, 68), "ERR"),
+                        "cancelled" => (egui::Color32::from_rgb(250, 204, 21), "CANCELLED"),
                         _ => (egui::Color32::GRAY, "?"),
                     };
 
@@ -1508,18 +1496,16 @@ impl TasksView {
                                         );
                                         if let Some(code) = task.exit_code {
                                             ui.label(
-                                                egui::RichText::new(format!(
-                                                    "Exit: {}",
-                                                    code
-                                                ))
-                                                .small()
-                                                .weak(),
+                                                egui::RichText::new(format!("Exit: {}", code))
+                                                    .small()
+                                                    .weak(),
                                             );
                                         }
                                         ui.label(
                                             egui::RichText::new(format!(
                                                 "Finished: {}",
-                                                &task.finished_at
+                                                &task
+                                                    .finished_at
                                                     .get(..19)
                                                     .unwrap_or(&task.finished_at)
                                             ))
@@ -1528,20 +1514,16 @@ impl TasksView {
                                         );
                                     });
                                     ui.label(
-                                        egui::RichText::new(format!(
-                                            "$ {}",
-                                            task.command
-                                        ))
-                                        .monospace()
-                                        .small()
-                                        .color(egui::Color32::GRAY),
+                                        egui::RichText::new(format!("$ {}", task.command))
+                                            .monospace()
+                                            .small()
+                                            .color(egui::Color32::GRAY),
                                     );
 
                                     // Truncated output preview
                                     if !task.output.is_empty() {
                                         let is_expanded =
-                                            self.expanded_finished_id.as_deref()
-                                                == Some(&task.id);
+                                            self.expanded_finished_id.as_deref() == Some(&task.id);
                                         let preview = if is_expanded {
                                             task.output.clone()
                                         } else if task.output.len() > 200 {
@@ -1564,11 +1546,9 @@ impl TasksView {
                                                         egui::RichText::new(&preview)
                                                             .monospace()
                                                             .small()
-                                                            .color(
-                                                                egui::Color32::from_rgb(
-                                                                    180, 180, 180,
-                                                                ),
-                                                            ),
+                                                            .color(egui::Color32::from_rgb(
+                                                                180, 180, 180,
+                                                            )),
                                                     )
                                                     .wrap(),
                                                 );
@@ -1580,10 +1560,7 @@ impl TasksView {
                                             } else {
                                                 "Show full output"
                                             };
-                                            if ui
-                                                .small_button(label)
-                                                .clicked()
-                                            {
+                                            if ui.small_button(label).clicked() {
                                                 if is_expanded {
                                                     self.expanded_finished_id = None;
                                                 } else {

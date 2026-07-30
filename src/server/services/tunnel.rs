@@ -76,7 +76,9 @@ pub async fn start_tunnel(port: u16) -> Value {
                 }
                 match find_cloudflared().await {
                     Some(b) => b,
-                    None => return json!({ "ok": false, "error": "cloudflared installed but still not found in PATH" }),
+                    None => {
+                        return json!({ "ok": false, "error": "cloudflared installed but still not found in PATH" })
+                    }
                 }
             } else {
                 return json!({ "ok": false, "error": "cloudflared not found. Install from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" });
@@ -93,7 +95,9 @@ pub async fn start_tunnel(port: u16) -> Value {
         .spawn()
     {
         Ok(c) => c,
-        Err(e) => return json!({ "ok": false, "error": format!("Failed to start cloudflared: {e}") }),
+        Err(e) => {
+            return json!({ "ok": false, "error": format!("Failed to start cloudflared: {e}") })
+        }
     };
 
     let pid = child.id();
@@ -181,7 +185,11 @@ pub async fn stop_tunnel() -> Value {
 
 /// Auto-start tunnel if enabled in settings
 pub async fn init_tunnel(port: u16) {
-    let settings: Value = match tokio::fs::read_to_string(crate::server::data::data_dir().join("settings.json")).await {
+    let settings: Value = match tokio::fs::read_to_string(
+        crate::server::data::data_dir().join("settings.json"),
+    )
+    .await
+    {
         Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
         Err(_) => return,
     };
@@ -253,7 +261,9 @@ async fn install_cloudflared() -> bool {
 }
 
 async fn save_tunnel_to_settings(url: &str) {
-    if let Ok(content) = tokio::fs::read_to_string(crate::server::data::data_dir().join("settings.json")).await {
+    if let Ok(content) =
+        tokio::fs::read_to_string(crate::server::data::data_dir().join("settings.json")).await
+    {
         if let Ok(mut settings) = serde_json::from_str::<Value>(&content) {
             settings["tunnelUrl"] = json!(url);
             settings["tunnelRunning"] = json!(true);

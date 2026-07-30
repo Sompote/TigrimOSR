@@ -54,13 +54,10 @@ impl SandboxManager {
     /// exists on disk and is still bookmarked.
     pub fn resolve_bookmark(&self, path: &str) -> Option<PathBuf> {
         let store = self.load_store();
-        store.bookmarks.get(path).and_then(|p| {
-            if p.exists() {
-                Some(p.clone())
-            } else {
-                None
-            }
-        })
+        store
+            .bookmarks
+            .get(path)
+            .and_then(|p| if p.exists() { Some(p.clone()) } else { None })
     }
 
     /// Return every bookmarked path (equivalent of macOS
@@ -117,7 +114,8 @@ impl PathValidator {
     /// Returns the canonicalized path string on success, or a
     /// `PathValidationError` if the path escapes the root.
     pub fn validate(path: &str, root: &str) -> Result<String, PathValidationError> {
-        let root_canonical = fs::canonicalize(root).map_err(|_| PathValidationError::OutsideRoot)?;
+        let root_canonical =
+            fs::canonicalize(root).map_err(|_| PathValidationError::OutsideRoot)?;
         let target = Path::new(path);
 
         // Check every component along the way for symlinks that escape root.
@@ -137,8 +135,8 @@ impl PathValidator {
                             .join(&link_target)
                     };
 
-                    let resolved_canonical =
-                        fs::canonicalize(&resolved).map_err(|_| PathValidationError::SymlinkEscape)?;
+                    let resolved_canonical = fs::canonicalize(&resolved)
+                        .map_err(|_| PathValidationError::SymlinkEscape)?;
 
                     if !resolved_canonical.starts_with(&root_canonical) {
                         return Err(PathValidationError::SymlinkEscape);

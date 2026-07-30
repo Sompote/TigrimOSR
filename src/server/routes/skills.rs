@@ -94,9 +94,7 @@ pub(crate) fn parse_frontmatter(content: &str) -> (String, String) {
     }
 
     // Normalize whitespace
-    let normalize = |s: String| -> String {
-        s.split_whitespace().collect::<Vec<_>>().join(" ")
-    };
+    let normalize = |s: String| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
 
     (normalize(name), normalize(description))
 }
@@ -123,7 +121,10 @@ fn find_skill_file(skill: &Skill) -> Option<PathBuf> {
     };
 
     let candidates = [
-        crate::server::data::data_dir().join("skills").join(&slug).join("SKILL.md"),
+        crate::server::data::data_dir()
+            .join("skills")
+            .join(&slug)
+            .join("SKILL.md"),
         PathBuf::from("Tiger_bot")
             .join("skills")
             .join(&slug)
@@ -140,7 +141,10 @@ fn find_skill_file(skill: &Skill) -> Option<PathBuf> {
     let name_slug = slugify(&skill.name);
     if name_slug != slug {
         let candidates2 = [
-            crate::server::data::data_dir().join("skills").join(&name_slug).join("SKILL.md"),
+            crate::server::data::data_dir()
+                .join("skills")
+                .join(&name_slug)
+                .join("SKILL.md"),
             PathBuf::from("Tiger_bot")
                 .join("skills")
                 .join(&name_slug)
@@ -215,7 +219,10 @@ async fn install_skill(Json(body): Json<CreateSkillBody>) -> impl IntoResponse {
     skills.push(skill.clone());
     save_skills(&skills).await;
 
-    (StatusCode::CREATED, Json(serde_json::to_value(&skill).unwrap()))
+    (
+        StatusCode::CREATED,
+        Json(serde_json::to_value(&skill).unwrap()),
+    )
 }
 
 /// PATCH /:id - update / toggle a skill
@@ -228,10 +235,7 @@ async fn update_skill(
     let idx = match skills.iter().position(|s| s.id == id) {
         Some(i) => i,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "Not found"})),
-            );
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"})));
         }
     };
 
@@ -265,7 +269,10 @@ async fn update_skill(
         }
     }
 
-    (StatusCode::OK, Json(serde_json::to_value(&skills[idx]).unwrap()))
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(&skills[idx]).unwrap()),
+    )
 }
 
 /// DELETE /:id - uninstall a skill
@@ -274,8 +281,12 @@ async fn uninstall_skill(Path(id): Path<String>) -> Json<Value> {
     // Remove the on-disk skill folder too, otherwise it lingers and the
     // skills-dir scan resurrects the skill as an unregistered stray.
     if let Some(skill) = skills.iter().find(|s| s.id == id) {
-        let slug: String = skill.name.to_lowercase()
-            .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
+        let slug: String = skill
+            .name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect();
         let dir = data_dir().join("skills").join(slug.trim_matches('-'));
         if dir.is_dir() {
             let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -371,7 +382,9 @@ async fn upload_skill(mut multipart: Multipart) -> impl IntoResponse {
             name = original_name.trim_end_matches(".zip").to_string();
         }
         let sanitized = slugify(&name);
-        let skill_dir = crate::server::data::data_dir().join("skills").join(&sanitized);
+        let skill_dir = crate::server::data::data_dir()
+            .join("skills")
+            .join(&sanitized);
         let _ = tokio::fs::create_dir_all(&skill_dir).await;
 
         // Extract all files from the ZIP into the skill directory
@@ -399,7 +412,10 @@ async fn upload_skill(mut multipart: Multipart) -> impl IntoResponse {
 
         // Register in skills.json
         let mut skills = get_skills().await;
-        if let Some(idx) = skills.iter().position(|s| s.name == name && s.source == "custom") {
+        if let Some(idx) = skills
+            .iter()
+            .position(|s| s.name == name && s.source == "custom")
+        {
             skills[idx].script = name.clone();
             if !description.is_empty() {
                 skills[idx].description = description;
@@ -447,7 +463,9 @@ async fn upload_skill(mut multipart: Multipart) -> impl IntoResponse {
     }
 
     let sanitized = slugify(&name);
-    let skill_dir = crate::server::data::data_dir().join("skills").join(&sanitized);
+    let skill_dir = crate::server::data::data_dir()
+        .join("skills")
+        .join(&sanitized);
     let _ = tokio::fs::create_dir_all(&skill_dir).await;
     let skill_file = skill_dir.join("SKILL.md");
     let _ = tokio::fs::write(&skill_file, &content).await;
@@ -456,7 +474,10 @@ async fn upload_skill(mut multipart: Multipart) -> impl IntoResponse {
     let mut skills = get_skills().await;
 
     // Check if a custom skill with this name already exists
-    if let Some(idx) = skills.iter().position(|s| s.name == name && s.source == "custom") {
+    if let Some(idx) = skills
+        .iter()
+        .position(|s| s.name == name && s.source == "custom")
+    {
         skills[idx].script = name.clone();
         if !description.is_empty() {
             skills[idx].description = description;
@@ -567,10 +588,7 @@ async fn skill_download(Path(id): Path<String>) -> impl IntoResponse {
                         axum::http::header::CONTENT_TYPE,
                         "application/json".to_string(),
                     ),
-                    (
-                        axum::http::header::CONTENT_DISPOSITION,
-                        String::new(),
-                    ),
+                    (axum::http::header::CONTENT_DISPOSITION, String::new()),
                 ],
                 json!({"error": "Skill not found"}).to_string(),
             );
@@ -647,27 +665,21 @@ async fn auto_status() -> Json<Value> {
         .cloned()
         .unwrap_or(Value::Null);
 
-    let last_run_at = synth_status
-        .last_run_at
-        .clone()
-        .or_else(|| {
-            settings
-                .extra
-                .get("skillAutoUpdateLastRunAt")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        });
+    let last_run_at = synth_status.last_run_at.clone().or_else(|| {
+        settings
+            .extra
+            .get("skillAutoUpdateLastRunAt")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    });
 
-    let last_run_summary = synth_status
-        .last_run_summary
-        .clone()
-        .or_else(|| {
-            settings
-                .extra
-                .get("skillAutoUpdateLastRunSummary")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        });
+    let last_run_summary = synth_status.last_run_summary.clone().or_else(|| {
+        settings
+            .extra
+            .get("skillAutoUpdateLastRunSummary")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    });
 
     let pending: Vec<Value> = synth_status
         .proposals

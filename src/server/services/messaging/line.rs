@@ -60,7 +60,11 @@ async fn line_api(access_token: &str, endpoint: &str, body: Value) -> Result<(),
     } else {
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
-        Err(format!("HTTP {}: {}", status, crate::util::truncate_utf8(&text, 300)))
+        Err(format!(
+            "HTTP {}: {}",
+            status,
+            crate::util::truncate_utf8(&text, 300)
+        ))
     }
 }
 
@@ -183,7 +187,9 @@ pub async fn handle_events(payload: Value) {
         }
 
         match ev.get("type").and_then(|v| v.as_str()) {
-            Some("message") if ev.pointer("/message/type").and_then(|v| v.as_str()) == Some("text") => {
+            Some("message")
+                if ev.pointer("/message/type").and_then(|v| v.as_str()) == Some("text") =>
+            {
                 let Some(text) = ev
                     .pointer("/message/text")
                     .and_then(|v| v.as_str())
@@ -208,7 +214,11 @@ pub async fn handle_events(payload: Value) {
                         &access_token,
                         &reply_token,
                         &user_id,
-                        if approved { "✅ Tool approved" } else { "❌ Tool denied" },
+                        if approved {
+                            "✅ Tool approved"
+                        } else {
+                            "❌ Tool denied"
+                        },
                     )
                     .await;
                 }
@@ -233,7 +243,13 @@ async fn handle_text(access_token: &str, user_id: &str, reply_token: &str, text:
 /// Drive one agent run over LINE. The "Working…" ack uses the free reply
 /// token; at most ONE progress push per run (push quota); the final answer is
 /// always pushed.
-async fn run_and_stream(access_token: &str, user_id: &str, reply_token: &str, chat_key: &str, msg: &str) {
+async fn run_and_stream(
+    access_token: &str,
+    user_id: &str,
+    reply_token: &str,
+    chat_key: &str,
+    msg: &str,
+) {
     let events = match start_run(chat_key, msg).await {
         Ok(ev) => ev,
         Err(reply) => {

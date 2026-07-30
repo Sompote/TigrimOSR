@@ -7,11 +7,11 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use tracing::info;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::fs;
+use tracing::info;
 
 use crate::server::data::*;
 use crate::server::AppState;
@@ -196,7 +196,10 @@ async fn save_agent(Json(body): Json<SaveAgentBody>) -> impl IntoResponse {
     let fp = dir.join(&final_name);
 
     match fs::write(&fp, &content).await {
-        Ok(_) => (StatusCode::OK, Json(json!({"ok": true, "filename": final_name}))),
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({"ok": true, "filename": final_name})),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("Failed to write file: {}", e)})),
@@ -315,7 +318,11 @@ async fn generate_system(Json(body): Json<GenerateSystemBody>) -> impl IntoRespo
     let count = body
         .agent_count
         .as_ref()
-        .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+        .and_then(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        })
         .unwrap_or_else(|| "auto".to_string());
 
     let settings = get_settings().await;
@@ -420,7 +427,11 @@ ARCHITECTURE RULES:
 - Generate between 3-8 agents (including human) unless user specifies otherwise"#
     );
 
-    info!("[AutoArch] Generating {} system: {}", arch_type, crate::util::truncate_utf8(&description, 80));
+    info!(
+        "[AutoArch] Generating {} system: {}",
+        arch_type,
+        crate::util::truncate_utf8(&description, 80)
+    );
 
     match call_llm_simple(
         api_key,
@@ -478,7 +489,12 @@ async fn call_llm_simple(
 
     let client = Client::new();
     // Kimi "thinking" / reasoning models reject any temperature but 1.
-    let temperature = if crate::server::services::toolbox::model_requires_default_temperature(model) { 1.0 } else { 0.3 };
+    let temperature = if crate::server::services::toolbox::model_requires_default_temperature(model)
+    {
+        1.0
+    } else {
+        0.3
+    };
     let body = json!({
         "model": model,
         "messages": [

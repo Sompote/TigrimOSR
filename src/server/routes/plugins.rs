@@ -23,11 +23,17 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(list_plugins))
         .route("/upload", post(upload_plugin))
-        .route("/{id}", get(get_plugin).patch(toggle_plugin).delete(delete_plugin))
+        .route(
+            "/{id}",
+            get(get_plugin).patch(toggle_plugin).delete(delete_plugin),
+        )
         .route("/{id}/readme", get(get_readme))
         .route("/{id}/icon", get(get_icon))
         .route("/{id}/connectors", get(list_connectors))
-        .route("/{id}/connectors/{service}/config", get(get_connector_config).put(save_connector_config))
+        .route(
+            "/{id}/connectors/{service}/config",
+            get(get_connector_config).put(save_connector_config),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +78,10 @@ async fn upload_plugin(mut multipart: Multipart) -> impl IntoResponse {
 async fn get_plugin(Path(id): Path<String>) -> impl IntoResponse {
     match plugin::get_plugin(&id).await {
         Some(p) => (StatusCode::OK, Json(json!(p))),
-        None => (StatusCode::NOT_FOUND, Json(json!({"error": "Plugin not found"}))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Plugin not found"})),
+        ),
     }
 }
 
@@ -102,7 +111,10 @@ async fn delete_plugin(Path(id): Path<String>) -> impl IntoResponse {
 async fn get_readme(Path(id): Path<String>) -> impl IntoResponse {
     match plugin::get_plugin_readme(&id).await {
         Some(content) => (StatusCode::OK, Json(json!({"content": content}))),
-        None => (StatusCode::NOT_FOUND, Json(json!({"error": "No README found"}))),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "No README found"})),
+        ),
     }
 }
 
@@ -125,7 +137,12 @@ async fn get_icon(Path(id): Path<String>) -> Response {
 async fn list_connectors(Path(id): Path<String>) -> impl IntoResponse {
     let p = match plugin::get_plugin(&id).await {
         Some(p) => p,
-        None => return (StatusCode::NOT_FOUND, Json(json!({"error": "Plugin not found"}))),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "Plugin not found"})),
+            )
+        }
     };
 
     let mut connectors = Vec::new();

@@ -158,12 +158,28 @@ fn builtin_providers() -> Vec<AiProvider> {
         AiProvider::new("OpenCode (Local)", "opencode-cli", ""),
         AiProvider::new("Grok (Local)", "grok-cli", "grok-4.5"),
         AiProvider::new("GitHub Copilot (Local)", "copilot-cli", ""),
-        AiProvider::new("OpenRouter", "https://openrouter.ai/api/v1", "openrouter/auto"),
+        AiProvider::new(
+            "OpenRouter",
+            "https://openrouter.ai/api/v1",
+            "openrouter/auto",
+        ),
         AiProvider::new("xAI (Grok)", "https://api.x.ai/v1", "grok-3"),
-        AiProvider::new("Anthropic (Claude)", "https://api.anthropic.com/v1", "claude-sonnet-4-20250514"),
+        AiProvider::new(
+            "Anthropic (Claude)",
+            "https://api.anthropic.com/v1",
+            "claude-sonnet-4-20250514",
+        ),
         AiProvider::new("MiniMax", "https://api.minimax.io/v1", "MiniMax-M3"),
-        AiProvider::new("Google AI Studio", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash"),
-        AiProvider::new("Kimi (Moonshot)", "https://api.kimi.com/coding/v1", "kimi-k2-0905-preview"),
+        AiProvider::new(
+            "Google AI Studio",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "gemini-2.5-flash",
+        ),
+        AiProvider::new(
+            "Kimi (Moonshot)",
+            "https://api.kimi.com/coding/v1",
+            "kimi-k2-0905-preview",
+        ),
         AiProvider::new("DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"),
     ]
 }
@@ -702,9 +718,6 @@ impl SettingsView {
             .show(ctx, |ui| {
                 // Tab bar — plain horizontal wrap, no scroll area (avoids dark hover band)
                 egui::Frame::new()
-                    // Was a hardcoded cream #FBF7F1 — a light-theme panel left
-                    // behind in a dark app, which is why the unselected tab
-                    // labels were pale grey on near-white.
                     .fill(crate::ui::theme::surface_color())
                     .inner_margin(egui::Margin::symmetric(6, 6))
                     .show(ui, |ui| {
@@ -717,23 +730,20 @@ impl SettingsView {
                                 let label = section.label();
 
                                 let btn = egui::Button::new(
-                                    egui::RichText::new(label)
-                                        .size(12.0)
-                                        .strong()
-                                        .color(if is_selected {
+                                    egui::RichText::new(label).size(12.0).strong().color(
+                                        if is_selected {
                                             accent
                                         } else {
                                             crate::ui::theme::text_secondary_color()
-                                        }),
+                                        },
+                                    ),
                                 )
                                 .fill(if is_selected {
-                                    // Unmultiplied: the old call passed
-                                    // premultiplied RGB far above its own alpha,
-                                    // which is not a representable colour. Also
-                                    // follows the live accent now, not a frozen
-                                    // pre-rebrand teal.
                                     egui::Color32::from_rgba_unmultiplied(
-                                        accent.r(), accent.g(), accent.b(), 38,
+                                        accent.r(),
+                                        accent.g(),
+                                        accent.b(),
+                                        38,
                                     )
                                 } else {
                                     egui::Color32::TRANSPARENT
@@ -758,27 +768,23 @@ impl SettingsView {
                 egui::ScrollArea::vertical()
                     .id_salt("settings_body")
                     .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        match self.selected_section {
-                            SettingsSection::General => self.section_general(ui, vm_manager, runtime),
-                            SettingsSection::AI => self.section_ai(ui, ctx, runtime),
-                            SettingsSection::SubAgent => self.section_sub_agent(ui, runtime),
-                            SettingsSection::AgentLoop => self.section_agent_loop(ui, runtime),
-                            SettingsSection::Graph => self.section_graph(ui, runtime),
-                            SettingsSection::McpTools => self.section_mcp_tools(ui, runtime),
-                            SettingsSection::Tools => self.section_tools(ui, runtime),
-                            SettingsSection::Plugins => self.section_plugins(ui, ctx, runtime),
-                            SettingsSection::Remote => self.section_remote(ui, runtime),
-                            SettingsSection::Messaging => self.section_messaging(ui, runtime),
-                            SettingsSection::FileTokens => {
-                                self.section_file_tokens(ui, ctx, runtime)
-                            }
-                            SettingsSection::FileMounts => self.section_file_mounts(ui, runtime),
-                            SettingsSection::SkillUpdate => self.section_skill_update(ui, runtime),
-                            SettingsSection::Security => self.section_security(ui, runtime),
-                            SettingsSection::Theme => self.section_theme(ui, ctx),
-                            SettingsSection::About => Self::section_about(ui),
-                        }
+                    .show(ui, |ui| match self.selected_section {
+                        SettingsSection::General => self.section_general(ui, vm_manager, runtime),
+                        SettingsSection::AI => self.section_ai(ui, ctx, runtime),
+                        SettingsSection::SubAgent => self.section_sub_agent(ui, runtime),
+                        SettingsSection::AgentLoop => self.section_agent_loop(ui, runtime),
+                        SettingsSection::Graph => self.section_graph(ui, runtime),
+                        SettingsSection::McpTools => self.section_mcp_tools(ui, runtime),
+                        SettingsSection::Tools => self.section_tools(ui, runtime),
+                        SettingsSection::Plugins => self.section_plugins(ui, ctx, runtime),
+                        SettingsSection::Remote => self.section_remote(ui, runtime),
+                        SettingsSection::Messaging => self.section_messaging(ui, runtime),
+                        SettingsSection::FileTokens => self.section_file_tokens(ui, ctx, runtime),
+                        SettingsSection::FileMounts => self.section_file_mounts(ui, runtime),
+                        SettingsSection::SkillUpdate => self.section_skill_update(ui, runtime),
+                        SettingsSection::Security => self.section_security(ui, runtime),
+                        SettingsSection::Theme => self.section_theme(ui, ctx),
+                        SettingsSection::About => Self::section_about(ui),
                     });
             });
 
@@ -882,8 +888,10 @@ impl SettingsView {
             .join(", ");
         self.line_enabled = settings.line_enabled.unwrap_or(false);
         self.line_channel_secret = settings.line_channel_secret.clone().unwrap_or_default();
-        self.line_channel_access_token =
-            settings.line_channel_access_token.clone().unwrap_or_default();
+        self.line_channel_access_token = settings
+            .line_channel_access_token
+            .clone()
+            .unwrap_or_default();
         self.line_allowed_ids = settings
             .line_allowed_user_ids
             .clone()
@@ -910,46 +918,106 @@ impl SettingsView {
         self.browser_headless = settings.browser_headless;
 
         // Agent Harness (stored in extra map)
-        self.agent_max_turns = settings.extra.get("agentMaxToolRounds")
-            .and_then(|v| v.as_u64()).unwrap_or(15);
-        self.agent_max_tool_calls = settings.extra.get("agentMaxToolCalls")
-            .and_then(|v| v.as_u64()).unwrap_or(25);
-        self.agent_max_tokens = settings.extra.get("agentMaxTokens")
-            .and_then(|v| v.as_u64()).unwrap_or(81920);
-        self.agent_temperature = settings.extra.get("agentTemperature")
-            .and_then(|v| v.as_f64()).unwrap_or(0.7);
-        self.agent_max_context_tokens = settings.extra.get("agentMaxContextTokens")
-            .and_then(|v| v.as_u64()).unwrap_or(100_000);
-        self.agent_max_consecutive_errors = settings.extra.get("agentMaxConsecutiveErrors")
-            .and_then(|v| v.as_u64()).unwrap_or(3);
-        self.agent_compression_interval = settings.extra.get("agentCompressionInterval")
-            .and_then(|v| v.as_u64()).unwrap_or(5);
-        self.agent_reflection_enabled = settings.extra.get("agentReflectionEnabled")
-            .and_then(|v| v.as_bool()).unwrap_or(false);
-        self.agent_reflection_threshold = settings.extra.get("agentReflectionThreshold")
-            .and_then(|v| v.as_f64()).unwrap_or(0.7);
-        self.agent_max_reflection_retries = settings.extra.get("agentMaxReflectionRetries")
-            .and_then(|v| v.as_u64()).unwrap_or(2);
-        self.agent_evaluation_enabled = settings.extra.get("agentEvaluationEnabled")
-            .and_then(|v| v.as_bool()).unwrap_or(false);
-        self.agent_evaluation_threshold = settings.extra.get("agentEvaluationThreshold")
-            .and_then(|v| v.as_f64()).unwrap_or(0.75);
-        self.agent_evaluation_max_retries = settings.extra.get("agentEvaluationMaxRetries")
-            .and_then(|v| v.as_u64()).unwrap_or(2);
-        self.agent_step_verify_enabled = settings.extra.get("agentStepVerifyEnabled")
-            .and_then(|v| v.as_bool()).unwrap_or(true);
-        self.agent_step_verify_threshold = settings.extra.get("agentStepVerifyThreshold")
-            .and_then(|v| v.as_f64()).unwrap_or(0.7);
-        self.agent_step_verify_max_retries = settings.extra.get("agentStepVerifyMaxRetries")
-            .and_then(|v| v.as_u64()).unwrap_or(1);
-        self.agent_tool_result_max_len = settings.extra.get("agentToolResultMaxLen")
-            .and_then(|v| v.as_u64()).unwrap_or(6000);
-        self.agent_wait_result_timeout = settings.extra.get("agentWaitResultTimeout")
-            .and_then(|v| v.as_u64()).unwrap_or(120);
-        self.agent_wait_result_hard_timeout = settings.extra.get("agentWaitResultHardTimeout")
-            .and_then(|v| v.as_u64()).unwrap_or(1800);
-        self.agent_allow_unsandboxed_exec = settings.extra.get("agentAllowUnsandboxedExec")
-            .and_then(|v| v.as_bool()).unwrap_or(false);
+        self.agent_max_turns = settings
+            .extra
+            .get("agentMaxToolRounds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(15);
+        self.agent_max_tool_calls = settings
+            .extra
+            .get("agentMaxToolCalls")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(25);
+        self.agent_max_tokens = settings
+            .extra
+            .get("agentMaxTokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(81920);
+        self.agent_temperature = settings
+            .extra
+            .get("agentTemperature")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.7);
+        self.agent_max_context_tokens = settings
+            .extra
+            .get("agentMaxContextTokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(100_000);
+        self.agent_max_consecutive_errors = settings
+            .extra
+            .get("agentMaxConsecutiveErrors")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3);
+        self.agent_compression_interval = settings
+            .extra
+            .get("agentCompressionInterval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5);
+        self.agent_reflection_enabled = settings
+            .extra
+            .get("agentReflectionEnabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        self.agent_reflection_threshold = settings
+            .extra
+            .get("agentReflectionThreshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.7);
+        self.agent_max_reflection_retries = settings
+            .extra
+            .get("agentMaxReflectionRetries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2);
+        self.agent_evaluation_enabled = settings
+            .extra
+            .get("agentEvaluationEnabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        self.agent_evaluation_threshold = settings
+            .extra
+            .get("agentEvaluationThreshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.75);
+        self.agent_evaluation_max_retries = settings
+            .extra
+            .get("agentEvaluationMaxRetries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2);
+        self.agent_step_verify_enabled = settings
+            .extra
+            .get("agentStepVerifyEnabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        self.agent_step_verify_threshold = settings
+            .extra
+            .get("agentStepVerifyThreshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.7);
+        self.agent_step_verify_max_retries = settings
+            .extra
+            .get("agentStepVerifyMaxRetries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1);
+        self.agent_tool_result_max_len = settings
+            .extra
+            .get("agentToolResultMaxLen")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(6000);
+        self.agent_wait_result_timeout = settings
+            .extra
+            .get("agentWaitResultTimeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(120);
+        self.agent_wait_result_hard_timeout = settings
+            .extra
+            .get("agentWaitResultHardTimeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1800);
+        self.agent_allow_unsandboxed_exec = settings
+            .extra
+            .get("agentAllowUnsandboxedExec")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // Soul & Identity (stored in SOUL.md / IDENTITY.md files).
         // When a remote backend is connected, edit the REMOTE server's persona
@@ -960,8 +1028,10 @@ impl SettingsView {
             self.orchestrator_identity = identity;
         } else {
             let data_dir = crate::server::data::data_dir();
-            self.orchestrator_soul = std::fs::read_to_string(data_dir.join("SOUL.md")).unwrap_or_default();
-            self.orchestrator_identity = std::fs::read_to_string(data_dir.join("IDENTITY.md")).unwrap_or_default();
+            self.orchestrator_soul =
+                std::fs::read_to_string(data_dir.join("SOUL.md")).unwrap_or_default();
+            self.orchestrator_identity =
+                std::fs::read_to_string(data_dir.join("IDENTITY.md")).unwrap_or_default();
         }
 
         // Skill Auto-Update
@@ -1025,7 +1095,11 @@ impl SettingsView {
                 .map(|e| {
                     let mut e = e.clone();
                     if e.id.trim().is_empty() {
-                        let base = if e.label.trim().is_empty() { &e.model } else { &e.label };
+                        let base = if e.label.trim().is_empty() {
+                            &e.model
+                        } else {
+                            &e.label
+                        };
                         e.id = base
                             .to_lowercase()
                             .chars()
@@ -1077,7 +1151,10 @@ impl SettingsView {
                     .await
                 {
                     if let Ok(v) = resp.json::<serde_json::Value>().await {
-                        if let Ok(list) = serde_json::from_value::<Vec<(String, bool, usize, Option<String>)>>(v["status"].clone()) {
+                        if let Ok(list) = serde_json::from_value::<
+                            Vec<(String, bool, usize, Option<String>)>,
+                        >(v["status"].clone())
+                        {
                             *mcp_status.lock().unwrap() = list;
                         }
                     }
@@ -1119,7 +1196,11 @@ impl SettingsView {
                 .map(|t| t.trim().to_string())
                 .filter(|t| !t.is_empty())
                 .collect();
-            if ids.is_empty() { None } else { Some(ids) }
+            if ids.is_empty() {
+                None
+            } else {
+                Some(ids)
+            }
         };
         settings.telegram_enabled = Some(self.telegram_enabled);
         settings.telegram_bot_token = if self.telegram_bot_token.trim().is_empty() {
@@ -1155,26 +1236,86 @@ impl SettingsView {
         settings.browser_headless = self.browser_headless;
 
         // Agent Harness (stored in extra map)
-        settings.extra.insert("agentMaxToolRounds".into(), serde_json::json!(self.agent_max_turns));
-        settings.extra.insert("agentMaxToolCalls".into(), serde_json::json!(self.agent_max_tool_calls));
-        settings.extra.insert("agentMaxTokens".into(), serde_json::json!(self.agent_max_tokens));
-        settings.extra.insert("agentTemperature".into(), serde_json::json!(self.agent_temperature));
-        settings.extra.insert("agentMaxContextTokens".into(), serde_json::json!(self.agent_max_context_tokens));
-        settings.extra.insert("agentMaxConsecutiveErrors".into(), serde_json::json!(self.agent_max_consecutive_errors));
-        settings.extra.insert("agentCompressionInterval".into(), serde_json::json!(self.agent_compression_interval));
-        settings.extra.insert("agentReflectionEnabled".into(), serde_json::json!(self.agent_reflection_enabled));
-        settings.extra.insert("agentReflectionThreshold".into(), serde_json::json!(self.agent_reflection_threshold));
-        settings.extra.insert("agentMaxReflectionRetries".into(), serde_json::json!(self.agent_max_reflection_retries));
-        settings.extra.insert("agentEvaluationEnabled".into(), serde_json::json!(self.agent_evaluation_enabled));
-        settings.extra.insert("agentEvaluationThreshold".into(), serde_json::json!(self.agent_evaluation_threshold));
-        settings.extra.insert("agentEvaluationMaxRetries".into(), serde_json::json!(self.agent_evaluation_max_retries));
-        settings.extra.insert("agentStepVerifyEnabled".into(), serde_json::json!(self.agent_step_verify_enabled));
-        settings.extra.insert("agentStepVerifyThreshold".into(), serde_json::json!(self.agent_step_verify_threshold));
-        settings.extra.insert("agentStepVerifyMaxRetries".into(), serde_json::json!(self.agent_step_verify_max_retries));
-        settings.extra.insert("agentToolResultMaxLen".into(), serde_json::json!(self.agent_tool_result_max_len));
-        settings.extra.insert("agentWaitResultTimeout".into(), serde_json::json!(self.agent_wait_result_timeout));
-        settings.extra.insert("agentWaitResultHardTimeout".into(), serde_json::json!(self.agent_wait_result_hard_timeout));
-        settings.extra.insert("agentAllowUnsandboxedExec".into(), serde_json::json!(self.agent_allow_unsandboxed_exec));
+        settings.extra.insert(
+            "agentMaxToolRounds".into(),
+            serde_json::json!(self.agent_max_turns),
+        );
+        settings.extra.insert(
+            "agentMaxToolCalls".into(),
+            serde_json::json!(self.agent_max_tool_calls),
+        );
+        settings.extra.insert(
+            "agentMaxTokens".into(),
+            serde_json::json!(self.agent_max_tokens),
+        );
+        settings.extra.insert(
+            "agentTemperature".into(),
+            serde_json::json!(self.agent_temperature),
+        );
+        settings.extra.insert(
+            "agentMaxContextTokens".into(),
+            serde_json::json!(self.agent_max_context_tokens),
+        );
+        settings.extra.insert(
+            "agentMaxConsecutiveErrors".into(),
+            serde_json::json!(self.agent_max_consecutive_errors),
+        );
+        settings.extra.insert(
+            "agentCompressionInterval".into(),
+            serde_json::json!(self.agent_compression_interval),
+        );
+        settings.extra.insert(
+            "agentReflectionEnabled".into(),
+            serde_json::json!(self.agent_reflection_enabled),
+        );
+        settings.extra.insert(
+            "agentReflectionThreshold".into(),
+            serde_json::json!(self.agent_reflection_threshold),
+        );
+        settings.extra.insert(
+            "agentMaxReflectionRetries".into(),
+            serde_json::json!(self.agent_max_reflection_retries),
+        );
+        settings.extra.insert(
+            "agentEvaluationEnabled".into(),
+            serde_json::json!(self.agent_evaluation_enabled),
+        );
+        settings.extra.insert(
+            "agentEvaluationThreshold".into(),
+            serde_json::json!(self.agent_evaluation_threshold),
+        );
+        settings.extra.insert(
+            "agentEvaluationMaxRetries".into(),
+            serde_json::json!(self.agent_evaluation_max_retries),
+        );
+        settings.extra.insert(
+            "agentStepVerifyEnabled".into(),
+            serde_json::json!(self.agent_step_verify_enabled),
+        );
+        settings.extra.insert(
+            "agentStepVerifyThreshold".into(),
+            serde_json::json!(self.agent_step_verify_threshold),
+        );
+        settings.extra.insert(
+            "agentStepVerifyMaxRetries".into(),
+            serde_json::json!(self.agent_step_verify_max_retries),
+        );
+        settings.extra.insert(
+            "agentToolResultMaxLen".into(),
+            serde_json::json!(self.agent_tool_result_max_len),
+        );
+        settings.extra.insert(
+            "agentWaitResultTimeout".into(),
+            serde_json::json!(self.agent_wait_result_timeout),
+        );
+        settings.extra.insert(
+            "agentWaitResultHardTimeout".into(),
+            serde_json::json!(self.agent_wait_result_hard_timeout),
+        );
+        settings.extra.insert(
+            "agentAllowUnsandboxedExec".into(),
+            serde_json::json!(self.agent_allow_unsandboxed_exec),
+        );
 
         // Soul & Identity (saved to SOUL.md / IDENTITY.md files — pushed to
         // the remote server when one is connected, since that orchestrator
@@ -1197,12 +1338,9 @@ impl SettingsView {
 
         // Skill Auto-Update
         settings.skill_auto_update_enabled = Some(self.skill_auto_update_enabled);
-        settings.skill_auto_update_interval_minutes =
-            Some(self.skill_auto_update_interval_minutes);
-        settings.skill_auto_update_max_candidates =
-            Some(self.skill_auto_update_max_candidates);
-        settings.skill_auto_update_require_approval =
-            Some(self.skill_auto_update_require_approval);
+        settings.skill_auto_update_interval_minutes = Some(self.skill_auto_update_interval_minutes);
+        settings.skill_auto_update_max_candidates = Some(self.skill_auto_update_max_candidates);
+        settings.skill_auto_update_require_approval = Some(self.skill_auto_update_require_approval);
         settings.skill_auto_update_human_feedback_enabled =
             Some(self.skill_auto_update_human_feedback_enabled);
 
@@ -1251,7 +1389,9 @@ impl SettingsView {
 
     /// Push SOUL.md / IDENTITY.md content to the connected remote server.
     fn push_soul_identity_remote(soul: &str, identity: &str) {
-        let Some(rb) = crate::server::data::get_remote_backend() else { return };
+        let Some(rb) = crate::server::data::get_remote_backend() else {
+            return;
+        };
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
@@ -1276,7 +1416,8 @@ impl SettingsView {
             Ok(resp) => {
                 if let Ok(val) = resp.json::<serde_json::Value>() {
                     if let Some(arr) = val["files"].as_array() {
-                        return arr.iter()
+                        return arr
+                            .iter()
                             .filter_map(|v| v.as_str().map(|s| s.to_string()))
                             .collect();
                     }
@@ -1314,7 +1455,12 @@ impl SettingsView {
     //  1. General
     // ==================================================================
 
-    fn section_general(&mut self, ui: &mut egui::Ui, vm_manager: &Arc<VmManager>, runtime: &tokio::runtime::Handle) {
+    fn section_general(
+        &mut self,
+        ui: &mut egui::Ui,
+        vm_manager: &Arc<VmManager>,
+        runtime: &tokio::runtime::Handle,
+    ) {
         let storage_path = VmConfig::app_support_dir().to_string_lossy().to_string();
         let disk_usage = VmConfig::disk_usage();
         let disk_size_gb = VmConfig::DISK_SIZE_GB;
@@ -1342,35 +1488,62 @@ impl SettingsView {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if state == VmState::Stopped || state == VmState::Error {
-                    let btn = egui::Button::new(egui::RichText::new("\u{25B6} Start VM").color(egui::Color32::WHITE))
-                        .fill(egui::Color32::from_rgb(34, 197, 94)).corner_radius(6.0);
+                    let btn = egui::Button::new(
+                        egui::RichText::new("\u{25B6} Start VM").color(egui::Color32::WHITE),
+                    )
+                    .fill(egui::Color32::from_rgb(34, 197, 94))
+                    .corner_radius(6.0);
                     if ui.add(btn).clicked() {
                         let mgr = vm_manager.clone();
-                        runtime.spawn(async move { let _ = mgr.start_vm().await; });
+                        runtime.spawn(async move {
+                            let _ = mgr.start_vm().await;
+                        });
                     }
                 } else if state == VmState::Running {
-                    let btn = egui::Button::new(egui::RichText::new("\u{25A0} Stop VM").color(egui::Color32::WHITE))
-                        .fill(egui::Color32::from_rgb(239, 68, 68)).corner_radius(6.0);
+                    let btn = egui::Button::new(
+                        egui::RichText::new("\u{25A0} Stop VM").color(egui::Color32::WHITE),
+                    )
+                    .fill(egui::Color32::from_rgb(239, 68, 68))
+                    .corner_radius(6.0);
                     if ui.add(btn).clicked() {
                         let mgr = vm_manager.clone();
-                        runtime.spawn(async move { mgr.stop_vm().await; });
+                        runtime.spawn(async move {
+                            mgr.stop_vm().await;
+                        });
                     }
                 } else {
                     ui.spinner();
-                    ui.label(egui::RichText::new(state.label()).size(12.0).color(egui::Color32::GRAY));
+                    ui.label(
+                        egui::RichText::new(state.label())
+                            .size(12.0)
+                            .color(egui::Color32::GRAY),
+                    );
                 }
                 ui.add_space(8.0);
+                // Danger ghost button: translucent red tint instead of a
+                // light-template pink fill.
                 let reset_btn = egui::Button::new(egui::RichText::new("Reset VM").size(12.0))
-                    .fill(egui::Color32::from_rgb(250, 240, 240)).corner_radius(6.0);
-                if ui.add(reset_btn).on_hover_text("Stop and delete VM disk. Will re-download on next start.").clicked() {
+                    .fill(egui::Color32::from_rgba_unmultiplied(239, 68, 68, 30))
+                    .corner_radius(crate::ui::theme::RADIUS_SMALL);
+                if ui
+                    .add(reset_btn)
+                    .on_hover_text("Stop and delete VM disk. Will re-download on next start.")
+                    .clicked()
+                {
                     let mgr = vm_manager.clone();
-                    runtime.spawn(async move { mgr.reset_vm().await; });
+                    runtime.spawn(async move {
+                        mgr.reset_vm().await;
+                    });
                 }
             });
             if state == VmState::Downloading {
                 ui.add_space(4.0);
                 let progress = runtime.block_on(vm_manager.progress());
-                ui.add(egui::ProgressBar::new(progress as f32).show_percentage().animate(true));
+                ui.add(
+                    egui::ProgressBar::new(progress as f32)
+                        .show_percentage()
+                        .animate(true),
+                );
             }
         }
 
@@ -1476,7 +1649,12 @@ impl SettingsView {
             self.cli_providers_loading = false;
         } else if self.cli_providers_loading {
             return;
-        } else if self.cli_providers.lock().map(|g| g.is_some()).unwrap_or(true) {
+        } else if self
+            .cli_providers
+            .lock()
+            .map(|g| g.is_some())
+            .unwrap_or(true)
+        {
             return;
         }
         self.cli_providers_loading = true;
@@ -1534,8 +1712,12 @@ impl SettingsView {
                         });
 
                     // Auto-fill URL and model when provider changes
-                    if self.selected_provider != prev_provider && !self.selected_provider.is_empty() {
-                        if let Some(p) = all_providers.iter().find(|p| p.name == self.selected_provider) {
+                    if self.selected_provider != prev_provider && !self.selected_provider.is_empty()
+                    {
+                        if let Some(p) = all_providers
+                            .iter()
+                            .find(|p| p.name == self.selected_provider)
+                        {
                             self.api_url = p.api_url.clone();
                             self.api_model = p.default_model.clone();
                         }
@@ -1549,7 +1731,13 @@ impl SettingsView {
 
                 let is_local_cli = matches!(
                     self.api_url.as_str(),
-                    "claude-code" | "codex-cli" | "gemini-cli" | "agy-cli" | "opencode-cli" | "grok-cli" | "copilot-cli"
+                    "claude-code"
+                        | "codex-cli"
+                        | "gemini-cli"
+                        | "agy-cli"
+                        | "opencode-cli"
+                        | "grok-cli"
+                        | "copilot-cli"
                 );
 
                 if !is_local_cli {
@@ -1589,10 +1777,10 @@ impl SettingsView {
                         "copilot-cli" => "copilot",
                         _ => "",
                     };
-                    self.cli_providers
-                        .lock()
-                        .ok()
-                        .and_then(|g| g.as_ref().and_then(|v| v.iter().find(|p| p.id == want).cloned()))
+                    self.cli_providers.lock().ok().and_then(|g| {
+                        g.as_ref()
+                            .and_then(|v| v.iter().find(|p| p.id == want).cloned())
+                    })
                 } else {
                     None
                 };
@@ -1627,7 +1815,11 @@ impl SettingsView {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.api_model)
                                 .desired_width(300.0)
-                                .hint_text(if is_local_cli { "e.g. sonnet, opus, gpt-5.6-terra" } else { "e.g. deepseek-chat" }),
+                                .hint_text(if is_local_cli {
+                                    "e.g. sonnet, opus, gpt-5.6-terra"
+                                } else {
+                                    "e.g. deepseek-chat"
+                                }),
                         );
                     }
                 }
@@ -1653,9 +1845,17 @@ impl SettingsView {
                             })
                             .width(250.0)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.reasoning_effort, String::new(), "(CLI default)");
+                                ui.selectable_value(
+                                    &mut self.reasoning_effort,
+                                    String::new(),
+                                    "(CLI default)",
+                                );
                                 for e in &efforts {
-                                    ui.selectable_value(&mut self.reasoning_effort, e.clone(), e.as_str());
+                                    ui.selectable_value(
+                                        &mut self.reasoning_effort,
+                                        e.clone(),
+                                        e.as_str(),
+                                    );
                                 }
                             });
                         ui.end_row();
@@ -1664,12 +1864,17 @@ impl SettingsView {
                     // Say where the list came from, so a curated fallback is
                     // never mistaken for something the CLI actually reported.
                     let origin = match p.source.as_str() {
-                        "cache" => format!("{} model(s) from {}'s own cache", p.models.len(), p.name),
-                        "cli" => format!("{} model(s) reported by `{} models`", p.models.len(), p.binary),
-                        _ => p
-                            .error
-                            .clone()
-                            .unwrap_or_else(|| "built-in list — this CLI cannot enumerate its models".into()),
+                        "cache" => {
+                            format!("{} model(s) from {}'s own cache", p.models.len(), p.name)
+                        }
+                        "cli" => format!(
+                            "{} model(s) reported by `{} models`",
+                            p.models.len(),
+                            p.binary
+                        ),
+                        _ => p.error.clone().unwrap_or_else(|| {
+                            "built-in list — this CLI cannot enumerate its models".into()
+                        }),
                     };
                     ui.label("");
                     ui.label(egui::RichText::new(origin).size(11.0).weak());
@@ -1740,11 +1945,15 @@ impl SettingsView {
 
         // Remove custom provider button (only for custom ones)
         if !self.selected_provider.is_empty() {
-            let is_custom = self.custom_providers.iter().any(|p| p.name == self.selected_provider);
+            let is_custom = self
+                .custom_providers
+                .iter()
+                .any(|p| p.name == self.selected_provider);
             if is_custom {
                 ui.add_space(4.0);
                 if ui.small_button("Remove custom provider").clicked() {
-                    self.custom_providers.retain(|p| p.name != self.selected_provider);
+                    self.custom_providers
+                        .retain(|p| p.name != self.selected_provider);
                     self.selected_provider.clear();
                 }
             }
@@ -1913,15 +2122,30 @@ impl SettingsView {
         ui.separator();
 
         // --- Soul & Identity ---
-        let soul_header = if !self.orchestrator_soul.is_empty() || !self.orchestrator_identity.is_empty() {
-            "Orchestrator Soul & Identity  (configured)"
-        } else {
-            "Orchestrator Soul & Identity"
-        };
-        if ui.add(egui::Label::new(
-            egui::RichText::new(format!("{} {}", if self.soul_section_open { "\u{25BC}" } else { "\u{25B6}" }, soul_header))
-                .heading()
-        ).sense(egui::Sense::click())).clicked() {
+        let soul_header =
+            if !self.orchestrator_soul.is_empty() || !self.orchestrator_identity.is_empty() {
+                "Orchestrator Soul & Identity  (configured)"
+            } else {
+                "Orchestrator Soul & Identity"
+            };
+        if ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new(format!(
+                        "{} {}",
+                        if self.soul_section_open {
+                            "\u{25BC}"
+                        } else {
+                            "\u{25B6}"
+                        },
+                        soul_header
+                    ))
+                    .heading(),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
+        {
             self.soul_section_open = !self.soul_section_open;
         }
 
@@ -1941,7 +2165,9 @@ impl SettingsView {
                 );
                 ui.add_space(4.0);
             }
-            ui.label(egui::RichText::new("SOUL.md — Internal Cognition, Values & Behavior").strong());
+            ui.label(
+                egui::RichText::new("SOUL.md — Internal Cognition, Values & Behavior").strong(),
+            );
             ui.add(
                 egui::TextEdit::multiline(&mut self.orchestrator_soul)
                     .desired_width(f32::INFINITY)
@@ -1950,8 +2176,12 @@ impl SettingsView {
                     .hint_text("Define the orchestrator's internal cognition:\n- Core values and principles\n- Decision-making heuristics\n- Behavioral priors and communication style\n- Ethical boundaries\n- How to handle ambiguity\n\nThis is injected as a behavioral prior — it directly shapes model outputs."),
             );
             ui.label(
-                egui::RichText::new(format!("{} chars — Directly affects model outputs.", self.orchestrator_soul.len()))
-                    .size(10.0).color(egui::Color32::GRAY),
+                egui::RichText::new(format!(
+                    "{} chars — Directly affects model outputs.",
+                    self.orchestrator_soul.len()
+                ))
+                .size(10.0)
+                .color(egui::Color32::GRAY),
             );
 
             ui.add_space(8.0);
@@ -1964,8 +2194,12 @@ impl SettingsView {
                     .hint_text("Display name, avatar description, external persona.\nTypically static — used for image generation and display."),
             );
             ui.label(
-                egui::RichText::new(format!("{} chars — Affects display name, avatar, image generation.", self.orchestrator_identity.len()))
-                    .size(10.0).color(egui::Color32::GRAY),
+                egui::RichText::new(format!(
+                    "{} chars — Affects display name, avatar, image generation.",
+                    self.orchestrator_identity.len()
+                ))
+                .size(10.0)
+                .color(egui::Color32::GRAY),
             );
 
             ui.add_space(4.0);
@@ -1975,23 +2209,54 @@ impl SettingsView {
                 .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     let tc = crate::ui::theme::text_primary_color();
-                    ui.label(egui::RichText::new("Key Distinction:").strong().size(11.0).color(tc));
+                    ui.label(
+                        egui::RichText::new("Key Distinction:")
+                            .strong()
+                            .size(11.0)
+                            .color(tc),
+                    );
                     ui.add_space(4.0);
                     egui::Grid::new("soul_identity_table")
                         .num_columns(3)
                         .spacing([12.0, 4.0])
                         .show(ui, |ui| {
-                            ui.label(egui::RichText::new("Dimension").strong().size(11.0).color(tc));
+                            ui.label(
+                                egui::RichText::new("Dimension")
+                                    .strong()
+                                    .size(11.0)
+                                    .color(tc),
+                            );
                             ui.label(egui::RichText::new("SOUL.md").strong().size(11.0).color(tc));
-                            ui.label(egui::RichText::new("IDENTITY.md").strong().size(11.0).color(tc));
+                            ui.label(
+                                egui::RichText::new("IDENTITY.md")
+                                    .strong()
+                                    .size(11.0)
+                                    .color(tc),
+                            );
                             ui.end_row();
                             ui.label(egui::RichText::new("Concern").size(11.0).color(tc));
-                            ui.label(egui::RichText::new("Internal cognition, values").size(11.0).color(tc));
-                            ui.label(egui::RichText::new("External name, avatar").size(11.0).color(tc));
+                            ui.label(
+                                egui::RichText::new("Internal cognition, values")
+                                    .size(11.0)
+                                    .color(tc),
+                            );
+                            ui.label(
+                                egui::RichText::new("External name, avatar")
+                                    .size(11.0)
+                                    .color(tc),
+                            );
                             ui.end_row();
                             ui.label(egui::RichText::new("Affects outputs").size(11.0).color(tc));
-                            ui.label(egui::RichText::new("Directly (behavioral prior)").size(11.0).color(tc));
-                            ui.label(egui::RichText::new("Indirectly (display)").size(11.0).color(tc));
+                            ui.label(
+                                egui::RichText::new("Directly (behavioral prior)")
+                                    .size(11.0)
+                                    .color(tc),
+                            );
+                            ui.label(
+                                egui::RichText::new("Indirectly (display)")
+                                    .size(11.0)
+                                    .color(tc),
+                            );
                             ui.end_row();
                         });
                 });
@@ -2057,16 +2322,25 @@ impl SettingsView {
             });
 
         ui.add_space(4.0);
-        ui.checkbox(&mut self.agent_allow_unsandboxed_exec,
-            "Allow UNSANDBOXED execution fallback (not recommended)")
-            .on_hover_text("When the Apple container CLI and sandbox-exec are both unavailable, \
+        ui.checkbox(
+            &mut self.agent_allow_unsandboxed_exec,
+            "Allow UNSANDBOXED execution fallback (not recommended)",
+        )
+        .on_hover_text(
+            "When the Apple container CLI and sandbox-exec are both unavailable, \
                 run agent shell/python commands directly on the host with no sandbox. \
-                Off (default): such commands fail with an error instead of escaping the sandbox.");
+                Off (default): such commands fail with an error instead of escaping the sandbox.",
+        );
 
         ui.add_space(4.0);
-        ui.checkbox(&mut self.agent_reflection_enabled, "Enable self-reflection / evaluation")
-            .on_hover_text("After the agent finishes, a judge scores the answer against the user's objective. \
-                Below the threshold, the agent re-enters the loop to fix the gaps.");
+        ui.checkbox(
+            &mut self.agent_reflection_enabled,
+            "Enable self-reflection / evaluation",
+        )
+        .on_hover_text(
+            "After the agent finishes, a judge scores the answer against the user's objective. \
+                Below the threshold, the agent re-enters the loop to fix the gaps.",
+        );
         if self.agent_reflection_enabled {
             egui::Grid::new("reflection_grid")
                 .num_columns(2)
@@ -2113,26 +2387,39 @@ impl SettingsView {
         }
 
         ui.add_space(4.0);
-        ui.checkbox(&mut self.agent_step_verify_enabled, "Verify each agent step result")
-            .on_hover_text("In multi-agent runs, a judge scores every agent's result against its \
+        ui.checkbox(
+            &mut self.agent_step_verify_enabled,
+            "Verify each agent step result",
+        )
+        .on_hover_text(
+            "In multi-agent runs, a judge scores every agent's result against its \
                 assigned task as soon as it finishes. Failing results are retried with feedback \
-                before being delivered to the orchestrator.");
+                before being delivered to the orchestrator.",
+        );
         if self.agent_step_verify_enabled {
             egui::Grid::new("step_verify_grid")
                 .num_columns(2)
                 .spacing([12.0, 6.0])
                 .show(ui, |ui| {
                     ui.label("Step Verify Threshold:");
-                    ui.add(egui::Slider::new(&mut self.agent_step_verify_threshold, 0.1..=1.0)
-                        .text("score"))
-                        .on_hover_text("Step results scoring below this (0-1) trigger a retry. Higher = stricter.");
+                    ui.add(
+                        egui::Slider::new(&mut self.agent_step_verify_threshold, 0.1..=1.0)
+                            .text("score"),
+                    )
+                    .on_hover_text(
+                        "Step results scoring below this (0-1) trigger a retry. Higher = stricter.",
+                    );
                     ui.end_row();
 
                     ui.label("Max Step Retries:");
-                    ui.add(egui::Slider::new(&mut self.agent_step_verify_max_retries, 0..=3)
-                        .text("retries"))
-                        .on_hover_text("How many times a failing agent retries with the judge's feedback. \
-                            0 = judge only (no retry), verdict still reported to the orchestrator.");
+                    ui.add(
+                        egui::Slider::new(&mut self.agent_step_verify_max_retries, 0..=3)
+                            .text("retries"),
+                    )
+                    .on_hover_text(
+                        "How many times a failing agent retries with the judge's feedback. \
+                            0 = judge only (no retry), verdict still reported to the orchestrator.",
+                    );
                     ui.end_row();
                 });
         }
@@ -2179,11 +2466,7 @@ impl SettingsView {
                             "router",
                             "graph",
                         ] {
-                            ui.selectable_value(
-                                &mut self.sub_agent_mode,
-                                mode.to_string(),
-                                *mode,
-                            );
+                            ui.selectable_value(&mut self.sub_agent_mode, mode.to_string(), *mode);
                         }
                         // Workflow patterns come straight from the executor's
                         // catalog so this list cannot drift from what actually
@@ -2195,27 +2478,27 @@ impl SettingsView {
                                 .size(10.0)
                                 .color(egui::Color32::GRAY),
                         );
-                        for (id, _desc) in
-                            crate::server::services::workflow::pattern_catalog()
-                        {
-                            ui.selectable_value(
-                                &mut self.sub_agent_mode,
-                                id.to_string(),
-                                id,
-                            );
+                        for (id, _desc) in crate::server::services::workflow::pattern_catalog() {
+                            ui.selectable_value(&mut self.sub_agent_mode, id.to_string(), id);
                         }
                     });
                 if self.sub_agent_mode == "graph" {
                     ui.label(
-                        egui::RichText::new("Judge panel gates the final answer — configure in the Graph tab")
-                            .size(10.0)
-                            .color(egui::Color32::GRAY),
+                        egui::RichText::new(
+                            "Judge panel gates the final answer — configure in the Graph tab",
+                        )
+                        .size(10.0)
+                        .color(egui::Color32::GRAY),
                     );
                 } else if let Some((_, desc)) = crate::server::services::workflow::pattern_catalog()
                     .into_iter()
                     .find(|(id, _)| *id == self.sub_agent_mode)
                 {
-                    ui.label(egui::RichText::new(desc).size(10.0).color(egui::Color32::GRAY));
+                    ui.label(
+                        egui::RichText::new(desc)
+                            .size(10.0)
+                            .color(egui::Color32::GRAY),
+                    );
                 }
                 ui.end_row();
 
@@ -2302,7 +2585,11 @@ impl SettingsView {
                     })
                     .width(220.0)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.router_tier, "fast".to_string(), "Router (fast)");
+                        ui.selectable_value(
+                            &mut self.router_tier,
+                            "fast".to_string(),
+                            "Router (fast)",
+                        );
                         ui.selectable_value(
                             &mut self.router_tier,
                             "ultra".to_string(),
@@ -2343,7 +2630,11 @@ impl SettingsView {
                 if let Ok(guard) = self.cli_providers.lock() {
                     if let Some(providers) = guard.as_ref() {
                         for p in providers {
-                            for e in p.efforts.iter().chain(p.models.iter().flat_map(|m| m.efforts.iter())) {
+                            for e in p
+                                .efforts
+                                .iter()
+                                .chain(p.models.iter().flat_map(|m| m.efforts.iter()))
+                            {
                                 if !tiers.contains(e) {
                                     tiers.push(e.clone());
                                 }
@@ -2352,7 +2643,10 @@ impl SettingsView {
                     }
                 }
                 if tiers.is_empty() {
-                    tiers = ["low", "medium", "high", "xhigh", "max"].iter().map(|s| s.to_string()).collect();
+                    tiers = ["low", "medium", "high", "xhigh", "max"]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect();
                 }
                 tiers
             };
@@ -2362,21 +2656,18 @@ impl SettingsView {
                 ui.group(|ui| {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(format!("#{}", idx + 1)).strong());
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if ui
-                                    .add(egui::Button::new(
-                                        egui::RichText::new("Remove")
-                                            .size(11.0)
-                                            .color(egui::Color32::from_rgb(239, 68, 68)),
-                                    ))
-                                    .clicked()
-                                {
-                                    pool_to_delete = Some(idx);
-                                }
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new("Remove")
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(239, 68, 68)),
+                                ))
+                                .clicked()
+                            {
+                                pool_to_delete = Some(idx);
+                            }
+                        });
                     });
                     egui::Grid::new(format!("model_pool_grid_{}", idx))
                         .num_columns(2)
@@ -2425,11 +2716,7 @@ impl SettingsView {
                                 .width(160.0)
                                 .show_ui(ui, |ui| {
                                     for t in &["fast", "balanced", "deep"] {
-                                        ui.selectable_value(
-                                            &mut entry.tier,
-                                            t.to_string(),
-                                            *t,
-                                        );
+                                        ui.selectable_value(&mut entry.tier, t.to_string(), *t);
                                     }
                                 });
                             ui.end_row();
@@ -2472,9 +2759,17 @@ impl SettingsView {
                                 })
                                 .width(280.0)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut entry.effort, String::new(), "(default)");
+                                    ui.selectable_value(
+                                        &mut entry.effort,
+                                        String::new(),
+                                        "(default)",
+                                    );
                                     for t in &effort_choices {
-                                        ui.selectable_value(&mut entry.effort, t.clone(), t.as_str());
+                                        ui.selectable_value(
+                                            &mut entry.effort,
+                                            t.clone(),
+                                            t.as_str(),
+                                        );
                                     }
                                 });
                             ui.end_row();
@@ -2574,9 +2869,14 @@ impl SettingsView {
                 .to_string();
             let tool_type = obj.get("type").and_then(|v| v.as_str()).map(String::from);
             let enabled = obj.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-            let command = obj.get("command").and_then(|v| v.as_str()).map(String::from);
+            let command = obj
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let args = obj.get("args").and_then(|v| v.as_array()).map(|arr| {
-                arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
             });
             let headers = obj.get("headers").and_then(|v| v.as_object()).map(|h| {
                 h.iter()
@@ -2710,7 +3010,8 @@ impl SettingsView {
                     Ok(tools) => {
                         self.mcp_tools = tools;
                         self.mcp_json_error = None;
-                        self.api_status_msg = Some("JSON applied — click Save to persist.".to_string());
+                        self.api_status_msg =
+                            Some("JSON applied — click Save to persist.".to_string());
                     }
                     Err(e) => {
                         self.mcp_json_error = Some(e);
@@ -2741,9 +3042,12 @@ impl SettingsView {
                 for (name, connected, tool_count, error) in &statuses {
                     if *connected {
                         ui.label(
-                            egui::RichText::new(format!("✅ {} — {} tool(s) connected", name, tool_count))
-                                .size(12.0)
-                                .color(egui::Color32::from_rgb(34, 197, 94)),
+                            egui::RichText::new(format!(
+                                "✅ {} — {} tool(s) connected",
+                                name, tool_count
+                            ))
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(34, 197, 94)),
                         );
                     } else {
                         let err_msg = error.as_deref().unwrap_or("unknown error");
@@ -2768,10 +3072,20 @@ impl SettingsView {
         // Prefill from an existing "google" entry once.
         if !self.google_form_loaded {
             self.google_form_loaded = true;
-            if let Some(entry) = self.mcp_tools.iter().find(|t| t.name == google::GOOGLE_MCP_NAME) {
+            if let Some(entry) = self
+                .mcp_tools
+                .iter()
+                .find(|t| t.name == google::GOOGLE_MCP_NAME)
+            {
                 if let Some(env) = &entry.env {
-                    self.google_client_id = env.get("GOOGLE_OAUTH_CLIENT_ID").cloned().unwrap_or_default();
-                    self.google_client_secret = env.get("GOOGLE_OAUTH_CLIENT_SECRET").cloned().unwrap_or_default();
+                    self.google_client_id = env
+                        .get("GOOGLE_OAUTH_CLIENT_ID")
+                        .cloned()
+                        .unwrap_or_default();
+                    self.google_client_secret = env
+                        .get("GOOGLE_OAUTH_CLIENT_SECRET")
+                        .cloned()
+                        .unwrap_or_default();
                     self.google_email = env.get("USER_GOOGLE_EMAIL").cloned().unwrap_or_default();
                 }
                 if let Some(args) = &entry.args {
@@ -2984,9 +3298,7 @@ impl SettingsView {
                 });
                 // Show command/args for stdio servers or URL for HTTP
                 if let Some(cmd) = &tool.command {
-                    let args_str = tool.args.as_ref()
-                        .map(|a| a.join(" "))
-                        .unwrap_or_default();
+                    let args_str = tool.args.as_ref().map(|a| a.join(" ")).unwrap_or_default();
                     ui.label(
                         egui::RichText::new(format!("stdio: {} {}", cmd, args_str))
                             .size(11.0)
@@ -3096,9 +3408,12 @@ impl SettingsView {
             for (name, connected, tool_count, error) in &statuses {
                 if *connected {
                     ui.label(
-                        egui::RichText::new(format!("✅ {} — {} tool(s) connected", name, tool_count))
-                            .size(12.0)
-                            .color(egui::Color32::from_rgb(34, 197, 94)),
+                        egui::RichText::new(format!(
+                            "✅ {} — {} tool(s) connected",
+                            name, tool_count
+                        ))
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(34, 197, 94)),
                     );
                 } else {
                     let err_msg = error.as_deref().unwrap_or("unknown error");
@@ -3137,7 +3452,10 @@ impl SettingsView {
             .size(11.0)
             .color(egui::Color32::GRAY),
         );
-        ui.checkbox(&mut self.vpn_enabled, "Use VPN (Tailscale) for remote connect");
+        ui.checkbox(
+            &mut self.vpn_enabled,
+            "Use VPN (Tailscale) for remote connect",
+        );
 
         // Show the detected tailnet address (cached; populated at boot / Start).
         let vpn = runtime.block_on(crate::server::services::vpn::get_vpn_state());
@@ -3145,9 +3463,13 @@ impl SettingsView {
         ui.horizontal(|ui| {
             ui.label("Connect address:");
             ui.label(
-                egui::RichText::new(if vpn_url.is_empty() { "(not detected)" } else { &vpn_url })
-                    .monospace()
-                    .color(egui::Color32::GRAY),
+                egui::RichText::new(if vpn_url.is_empty() {
+                    "(not detected)"
+                } else {
+                    &vpn_url
+                })
+                .monospace()
+                .color(egui::Color32::GRAY),
             );
             if !vpn_url.is_empty() && ui.button("Copy").clicked() {
                 ui.ctx().copy_text(vpn_url.clone());
@@ -3155,7 +3477,10 @@ impl SettingsView {
         });
         ui.horizontal(|ui| {
             if ui.button("Start VPN").clicked() {
-                let port = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3001u16);
+                let port = std::env::var("PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(3001u16);
                 runtime.block_on(crate::server::services::vpn::start_vpn(port));
             }
             if ui.button("Stop VPN").clicked() {
@@ -3164,7 +3489,9 @@ impl SettingsView {
             if let Some(auth) = vpn["authUrl"].as_str() {
                 ui.hyperlink_to("Authenticate Tailscale", auth);
             } else if vpn["running"].as_bool().unwrap_or(false) {
-                ui.label(egui::RichText::new("● connected").color(egui::Color32::from_rgb(74, 222, 128)));
+                ui.label(
+                    egui::RichText::new("● connected").color(egui::Color32::from_rgb(74, 222, 128)),
+                );
             }
         });
 
@@ -3225,7 +3552,11 @@ impl SettingsView {
                         .color(egui::Color32::GRAY),
                 );
                 let token_masked = if inst.token.len() > 8 {
-                    format!("{}...{}", &inst.token[..4], &inst.token[inst.token.len() - 4..])
+                    format!(
+                        "{}...{}",
+                        &inst.token[..4],
+                        &inst.token[inst.token.len() - 4..]
+                    )
                 } else {
                     "*".repeat(inst.token.len())
                 };
@@ -3367,9 +3698,7 @@ impl SettingsView {
             });
 
         // Live connection status (from the local Telegram supervisor).
-        let tg = runtime.block_on(
-            crate::server::services::messaging::telegram::get_status(),
-        );
+        let tg = runtime.block_on(crate::server::services::messaging::telegram::get_status());
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label("Status:");
@@ -3675,9 +4004,12 @@ impl SettingsView {
         ui.add_space(4.0);
 
         ui.label(
-            egui::RichText::new(format!("{} mount(s) configured", self.local_file_mounts.len()))
-                .size(12.0)
-                .color(egui::Color32::GRAY),
+            egui::RichText::new(format!(
+                "{} mount(s) configured",
+                self.local_file_mounts.len()
+            ))
+            .size(12.0)
+            .color(egui::Color32::GRAY),
         );
         ui.add_space(8.0);
 
@@ -3820,7 +4152,10 @@ impl SettingsView {
             .fill(ui.visuals().faint_bg_color)
             .corner_radius(8.0)
             .inner_margin(egui::Margin::same(12))
-            .stroke(egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color))
+            .stroke(egui::Stroke::new(
+                1.0,
+                ui.visuals().widgets.noninteractive.bg_stroke.color,
+            ))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.checkbox(
@@ -3929,12 +4264,7 @@ impl SettingsView {
                 ui.end_row();
 
                 ui.label(egui::RichText::new("Last Run:").strong());
-                ui.label(
-                    synth_status
-                        .last_run_at
-                        .as_deref()
-                        .unwrap_or("Never"),
-                );
+                ui.label(synth_status.last_run_at.as_deref().unwrap_or("Never"));
                 ui.end_row();
 
                 ui.label(egui::RichText::new("Summary:").strong());
@@ -3989,7 +4319,7 @@ impl SettingsView {
                                 };
 
                                 egui::Frame::new()
-                                    .fill(egui::Color32::from_rgb(17, 24, 39))
+                                    .fill(crate::ui::theme::card_color())
                                     .corner_radius(4.0)
                                     .inner_margin(egui::Margin::symmetric(6, 2))
                                     .show(ui, |ui| {
@@ -4030,7 +4360,7 @@ impl SettingsView {
                                 .id_salt(format!("preview_{}", proposal.id))
                                 .show(ui, |ui| {
                                     egui::Frame::new()
-                                        .fill(egui::Color32::from_rgb(17, 24, 39))
+                                        .fill(crate::ui::theme::card_color())
                                         .corner_radius(4.0)
                                         .inner_margin(egui::Margin::same(8))
                                         .show(ui, |ui| {
@@ -4100,20 +4430,14 @@ impl SettingsView {
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("Recent Decisions")
-                    .size(14.0)
-                    .strong(),
-            );
+            ui.label(egui::RichText::new("Recent Decisions").size(14.0).strong());
 
             for proposal in &recent_completed {
                 ui.horizontal(|ui| {
                     let status_icon = if proposal.review_status == "approved" {
-                        egui::RichText::new("\u{2705}")
-                            .color(egui::Color32::from_rgb(34, 197, 94))
+                        egui::RichText::new("\u{2705}").color(egui::Color32::from_rgb(34, 197, 94))
                     } else {
-                        egui::RichText::new("\u{274C}")
-                            .color(egui::Color32::from_rgb(239, 68, 68))
+                        egui::RichText::new("\u{274C}").color(egui::Color32::from_rgb(239, 68, 68))
                     };
                     ui.label(status_icon);
                     ui.label(&proposal.name);
@@ -4151,31 +4475,46 @@ impl SettingsView {
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 ui.label("Shell commands (run_shell):");
-                if ui.checkbox(&mut self.approval_shell, "Require approval").changed() {
+                if ui
+                    .checkbox(&mut self.approval_shell, "Require approval")
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
 
                 ui.label("Python / React (run_python, run_react):");
-                if ui.checkbox(&mut self.approval_python, "Require approval").changed() {
+                if ui
+                    .checkbox(&mut self.approval_python, "Require approval")
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
 
                 ui.label("Write files (write_file):");
-                if ui.checkbox(&mut self.approval_file_write, "Require approval").changed() {
+                if ui
+                    .checkbox(&mut self.approval_file_write, "Require approval")
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
 
                 ui.label("Delete files (delete_file):");
-                if ui.checkbox(&mut self.approval_file_delete, "Require approval").changed() {
+                if ui
+                    .checkbox(&mut self.approval_file_delete, "Require approval")
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
 
                 ui.label("Spawn sub-agent (claude_code_agent):");
-                if ui.checkbox(&mut self.approval_agent_spawn, "Require approval").changed() {
+                if ui
+                    .checkbox(&mut self.approval_agent_spawn, "Require approval")
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
@@ -4222,7 +4561,9 @@ impl SettingsView {
                 }
                 if ui
                     .radio_value(&mut self.browser_engine, "chrome".to_string(), "Chrome")
-                    .on_hover_text("Your installed Google Chrome — fewer bot blocks, must be installed.")
+                    .on_hover_text(
+                        "Your installed Google Chrome — fewer bot blocks, must be installed.",
+                    )
                     .changed()
                 {
                     browser_changed = true;
@@ -4247,7 +4588,9 @@ impl SettingsView {
                     ui.label("Obscura binary:");
                     if ui
                         .text_edit_singleline(&mut self.browser_obscura_path)
-                        .on_hover_text("Path to the `obscura` binary. Default \"obscura\" resolves from PATH.")
+                        .on_hover_text(
+                            "Path to the `obscura` binary. Default \"obscura\" resolves from PATH.",
+                        )
                         .changed()
                     {
                         browser_changed = true;
@@ -4258,8 +4601,8 @@ impl SettingsView {
             // Window (headless) mode only applies to Playwright's Chromium/Chrome.
             // Obscura is always headless, so hide these controls when it's picked.
             if self.browser_engine != "obscura" {
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
                 ui.label("Window:");
                 if ui
                     .radio_value(&mut self.browser_headless, None, "Auto")
@@ -4333,18 +4676,14 @@ impl SettingsView {
                 ui.end_row();
                 ui.label("File System:");
                 ui.label(
-                    egui::RichText::new(
-                        "Completely isolated. Only shared folders are accessible.",
-                    )
-                    .color(egui::Color32::from_rgb(34, 197, 94)),
+                    egui::RichText::new("Completely isolated. Only shared folders are accessible.")
+                        .color(egui::Color32::from_rgb(34, 197, 94)),
                 );
                 ui.end_row();
                 ui.label("Process Isolation:");
                 ui.label(
-                    egui::RichText::new(
-                        "VM processes cannot see or affect host processes",
-                    )
-                    .color(egui::Color32::from_rgb(34, 197, 94)),
+                    egui::RichText::new("VM processes cannot see or affect host processes")
+                        .color(egui::Color32::from_rgb(34, 197, 94)),
                 );
                 ui.end_row();
             });
@@ -4402,20 +4741,18 @@ impl SettingsView {
                         .pick_file()
                     {
                         match std::fs::read(&path) {
-                            Ok(bytes) => {
-                                match runtime.block_on(plugin::install_plugin(&bytes)) {
-                                    Ok(installed) => {
-                                        self.plugin_status_msg = Some(format!(
-                                            "Installed '{}' v{}",
-                                            installed.name, installed.version
-                                        ));
-                                        self.plugins = runtime.block_on(plugin::list_plugins());
-                                    }
-                                    Err(e) => {
-                                        self.plugin_status_msg = Some(format!("Error: {}", e));
-                                    }
+                            Ok(bytes) => match runtime.block_on(plugin::install_plugin(&bytes)) {
+                                Ok(installed) => {
+                                    self.plugin_status_msg = Some(format!(
+                                        "Installed '{}' v{}",
+                                        installed.name, installed.version
+                                    ));
+                                    self.plugins = runtime.block_on(plugin::list_plugins());
                                 }
-                            }
+                                Err(e) => {
+                                    self.plugin_status_msg = Some(format!("Error: {}", e));
+                                }
+                            },
                             Err(e) => {
                                 self.plugin_status_msg = Some(format!("Read error: {}", e));
                             }
@@ -4456,7 +4793,10 @@ impl SettingsView {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.label(format!("Remove plugin '{}' and all its components?", uninstall_id));
+                    ui.label(format!(
+                        "Remove plugin '{}' and all its components?",
+                        uninstall_id
+                    ));
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
                         if ui.button("Cancel").clicked() {
@@ -4514,9 +4854,7 @@ impl SettingsView {
                                     ui.vertical(|ui| {
                                         ui.horizontal(|ui| {
                                             ui.label(
-                                                egui::RichText::new(&p.name)
-                                                    .size(14.0)
-                                                    .strong(),
+                                                egui::RichText::new(&p.name).size(14.0).strong(),
                                             );
                                             ui.label(
                                                 egui::RichText::new(&format!("v{}", p.version))
@@ -4525,9 +4863,15 @@ impl SettingsView {
                                             );
                                             if let Some(ref cat) = p.category {
                                                 let cat_color = match cat.as_str() {
-                                                    "connector" => egui::Color32::from_rgb(59, 130, 246),
-                                                    "toolkit" => egui::Color32::from_rgb(168, 85, 247),
-                                                    "swarm" => egui::Color32::from_rgb(249, 115, 22),
+                                                    "connector" => {
+                                                        egui::Color32::from_rgb(59, 130, 246)
+                                                    }
+                                                    "toolkit" => {
+                                                        egui::Color32::from_rgb(168, 85, 247)
+                                                    }
+                                                    "swarm" => {
+                                                        egui::Color32::from_rgb(249, 115, 22)
+                                                    }
                                                     _ => egui::Color32::GRAY,
                                                 };
                                                 ui.label(
@@ -4562,11 +4906,8 @@ impl SettingsView {
                             });
 
                         // Click to select
-                        let resp = ui.interact(
-                            ui.min_rect(),
-                            ui.id().with(&p.id),
-                            egui::Sense::click(),
-                        );
+                        let resp =
+                            ui.interact(ui.min_rect(), ui.id().with(&p.id), egui::Sense::click());
                         if resp.clicked() {
                             select_id = Some(p.id.clone());
                         }
@@ -4731,8 +5072,7 @@ impl SettingsView {
 
             for conn in &plugin.components.connectors {
                 egui::CollapsingHeader::new(
-                    egui::RichText::new(&format!("{} ({})", conn.name, conn.service))
-                        .size(12.0),
+                    egui::RichText::new(&format!("{} ({})", conn.name, conn.service)).size(12.0),
                 )
                 .default_open(false)
                 .show(ui, |ui| {
@@ -4760,25 +5100,23 @@ impl SettingsView {
                             .insert(config_key.clone(), map);
                     }
 
-                    let fields_map = self
-                        .plugin_connector_configs
-                        .get_mut(&config_key)
-                        .unwrap();
+                    let fields_map = self.plugin_connector_configs.get_mut(&config_key).unwrap();
 
                     egui::Grid::new(format!("connector_grid_{}", config_key))
                         .num_columns(2)
                         .spacing([12.0, 6.0])
                         .show(ui, |ui| {
                             for field in &conn.config_fields {
-                                let required_marker =
-                                    if field.required == Some(true) { " *" } else { "" };
+                                let required_marker = if field.required == Some(true) {
+                                    " *"
+                                } else {
+                                    ""
+                                };
                                 ui.label(format!("{}{}", field.label, required_marker));
 
                                 let val = fields_map
                                     .entry(field.key.clone())
-                                    .or_insert_with(|| {
-                                        field.default.clone().unwrap_or_default()
-                                    });
+                                    .or_insert_with(|| field.default.clone().unwrap_or_default());
 
                                 if field.field_type == "password" {
                                     ui.add(
@@ -4787,9 +5125,7 @@ impl SettingsView {
                                             .desired_width(200.0),
                                     );
                                 } else {
-                                    ui.add(
-                                        egui::TextEdit::singleline(val).desired_width(200.0),
-                                    );
+                                    ui.add(egui::TextEdit::singleline(val).desired_width(200.0));
                                 }
                                 ui.end_row();
                             }
@@ -4799,18 +5135,14 @@ impl SettingsView {
                     if ui.button("Save Config").clicked() {
                         let mut json_map = serde_json::Map::new();
                         for (k, v) in fields_map.iter() {
-                            json_map.insert(
-                                k.clone(),
-                                serde_json::Value::String(v.clone()),
-                            );
+                            json_map.insert(k.clone(), serde_json::Value::String(v.clone()));
                         }
                         let _ = runtime.block_on(plugin::save_connector_config(
                             &plugin.id,
                             &conn.service,
                             serde_json::Value::Object(json_map),
                         ));
-                        self.plugin_status_msg =
-                            Some(format!("Saved config for {}", conn.service));
+                        self.plugin_status_msg = Some(format!("Saved config for {}", conn.service));
                     }
                 });
             }
@@ -4838,10 +5170,7 @@ impl SettingsView {
                 .size(13.0)
                 .color(egui::Color32::from_rgb(239, 68, 68)),
         )
-        .stroke(egui::Stroke::new(
-            1.0,
-            egui::Color32::from_rgb(239, 68, 68),
-        ))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68)))
         .corner_radius(6.0);
 
         if ui.add(uninstall_btn).clicked() {
@@ -4938,16 +5267,58 @@ impl SettingsView {
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 let c = &mut self.theme.colors;
-                changed |= Self::theme_color_row(ui, "Surface (panels/windows):", &mut c.surface, crate::ui::theme::surface_color());
-                changed |= Self::theme_color_row(ui, "Canvas (inputs/fields):", &mut c.canvas, crate::ui::theme::surface_color());
-                changed |= Self::theme_color_row(ui, "Card fill:", &mut c.card, egui::Color32::WHITE);
-                changed |= Self::theme_color_row(ui, "Hover background:", &mut c.hover, crate::ui::theme::border_color());
-                changed |= Self::theme_color_row(ui, "Border / separators:", &mut c.border, crate::ui::theme::border_color());
-                changed |= Self::theme_color_row(ui, "Primary text:", &mut c.text_primary, crate::ui::theme::text_primary_color());
-                changed |= Self::theme_color_row(ui, "Secondary text:", &mut c.text_secondary, crate::ui::theme::text_secondary_color());
-                changed |= Self::theme_color_row(ui, "Accent:", &mut c.accent, crate::ui::theme::accent_color());
-                changed |= Self::theme_color_row(ui, "Accent (pressed):", &mut c.accent_hover, egui::Color32::from_rgb(12, 129, 122));
-                let accent_fb = crate::ui::theme::hex_to_color(&c.accent, crate::ui::theme::accent_color());
+                changed |= Self::theme_color_row(
+                    ui,
+                    "Surface (panels/windows):",
+                    &mut c.surface,
+                    crate::ui::theme::surface_color(),
+                );
+                changed |= Self::theme_color_row(
+                    ui,
+                    "Canvas (inputs/fields):",
+                    &mut c.canvas,
+                    crate::ui::theme::canvas_color(),
+                );
+                changed |=
+                    Self::theme_color_row(ui, "Card fill:", &mut c.card, egui::Color32::WHITE);
+                changed |= Self::theme_color_row(
+                    ui,
+                    "Hover background:",
+                    &mut c.hover,
+                    crate::ui::theme::hover_color(),
+                );
+                changed |= Self::theme_color_row(
+                    ui,
+                    "Border / separators:",
+                    &mut c.border,
+                    crate::ui::theme::border_color(),
+                );
+                changed |= Self::theme_color_row(
+                    ui,
+                    "Primary text:",
+                    &mut c.text_primary,
+                    crate::ui::theme::text_primary_color(),
+                );
+                changed |= Self::theme_color_row(
+                    ui,
+                    "Secondary text:",
+                    &mut c.text_secondary,
+                    crate::ui::theme::text_secondary_color(),
+                );
+                changed |= Self::theme_color_row(
+                    ui,
+                    "Accent:",
+                    &mut c.accent,
+                    crate::ui::theme::accent_color(),
+                );
+                changed |= Self::theme_color_row(
+                    ui,
+                    "Accent (pressed):",
+                    &mut c.accent_hover,
+                    egui::Color32::from_rgb(12, 129, 122),
+                );
+                let accent_fb =
+                    crate::ui::theme::hex_to_color(&c.accent, crate::ui::theme::accent_color());
                 let card_fb = crate::ui::theme::hex_to_color(&c.card, egui::Color32::WHITE);
                 changed |= Self::theme_color_row(ui, "User bubble:", &mut c.user_bubble, accent_fb);
                 changed |= Self::theme_color_row(ui, "AI bubble:", &mut c.ai_bubble, card_fb);
@@ -4965,32 +5336,50 @@ impl SettingsView {
             .show(ui, |ui| {
                 let f = &mut self.theme.fonts;
                 ui.label("Chat messages:");
-                if ui.add(egui::Slider::new(&mut f.chat, 10.0..=28.0).suffix(" pt")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut f.chat, 10.0..=28.0).suffix(" pt"))
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
                 ui.label("Body:");
-                if ui.add(egui::Slider::new(&mut f.body, 10.0..=24.0).suffix(" pt")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut f.body, 10.0..=24.0).suffix(" pt"))
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
                 ui.label("Small:");
-                if ui.add(egui::Slider::new(&mut f.small, 8.0..=20.0).suffix(" pt")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut f.small, 8.0..=20.0).suffix(" pt"))
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
                 ui.label("Button:");
-                if ui.add(egui::Slider::new(&mut f.button, 10.0..=22.0).suffix(" pt")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut f.button, 10.0..=22.0).suffix(" pt"))
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
                 ui.label("Heading:");
-                if ui.add(egui::Slider::new(&mut f.heading, 14.0..=36.0).suffix(" pt")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut f.heading, 14.0..=36.0).suffix(" pt"))
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
                 ui.label("Monospace:");
-                if ui.add(egui::Slider::new(&mut f.monospace, 9.0..=22.0).suffix(" pt")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut f.monospace, 9.0..=22.0).suffix(" pt"))
+                    .changed()
+                {
                     changed = true;
                 }
                 ui.end_row();
@@ -5140,7 +5529,11 @@ impl SettingsView {
 
         if let Some(msg) = &self.theme_status_msg {
             ui.add_space(6.0);
-            ui.label(egui::RichText::new(msg).size(12.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new(msg)
+                    .size(12.0)
+                    .color(egui::Color32::GRAY),
+            );
         }
 
         ui.add_space(8.0);
@@ -5156,7 +5549,8 @@ impl SettingsView {
         ui.vertical_centered(|ui| {
             ui.add_space(24.0);
             // Logo image
-            let logo_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon.png");
+            let logo_path =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon.png");
             let logo_uri = format!("file://{}", logo_path.display());
             ui.add(
                 egui::Image::new(&logo_uri)
@@ -5176,7 +5570,11 @@ impl SettingsView {
             ui.separator();
             ui.add_space(12.0);
             for line in [
-                concat!("AndrewOS v", env!("CARGO_PKG_VERSION"), " (Rust/egui edition)"),
+                concat!(
+                    "AndrewOS v",
+                    env!("CARGO_PKG_VERSION"),
+                    " (Rust/egui edition)"
+                ),
                 "Ubuntu 22.04 VM via QEMU",
                 "Node.js 20 + Python 3 + Fastify",
             ] {
@@ -5290,18 +5688,17 @@ impl SettingsView {
         self.loop_tool_catalog = crate::server::services::toolbox::tool_catalog();
         // Installed skills for the skills filter checkboxes (local registry;
         // remote backends still allow typing names in YAML mode).
-        self.loop_skill_catalog = std::fs::read_to_string(
-            crate::server::data::data_dir().join("skills.json"),
-        )
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.as_array().cloned())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|e| e["name"].as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
+        self.loop_skill_catalog =
+            std::fs::read_to_string(crate::server::data::data_dir().join("skills.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v.as_array().cloned())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|e| e["name"].as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
         // Open the active profile (or the first available) in the editor.
         if self.loop_selected_file.is_empty()
             || !self.loop_profiles.contains(&self.loop_selected_file)
@@ -5325,7 +5722,9 @@ impl SettingsView {
         self.loop_selected_file = filename.to_string();
         let content = Self::read_loop_profile_content(filename).unwrap_or_default();
         self.loop_yaml_text = content.clone();
-        match serde_yaml::from_str::<crate::server::services::agent_loop::AgentLoopProfile>(&content) {
+        match serde_yaml::from_str::<crate::server::services::agent_loop::AgentLoopProfile>(
+            &content,
+        ) {
             Ok(p) => {
                 self.populate_loop_form(&p);
                 self.loop_status_msg = None;
@@ -5348,7 +5747,11 @@ impl SettingsView {
         self.loop_sp_text = sp.text;
         self.loop_sp_replace_base = sp.replace_base;
         let tf = p.tools.clone().unwrap_or_default();
-        self.loop_tools_mode = if tf.mode.is_empty() { "all".into() } else { tf.mode };
+        self.loop_tools_mode = if tf.mode.is_empty() {
+            "all".into()
+        } else {
+            tf.mode
+        };
         self.loop_tools_checked = tf.list.into_iter().collect();
         self.loop_tools_config = tf.config;
         self.loop_tools_config_new.clear();
@@ -5368,28 +5771,48 @@ impl SettingsView {
             .map(|(n, c)| (n.clone(), json_text(&c.pinned_params)))
             .collect();
         let mf = p.mcp.clone().unwrap_or_default();
-        self.loop_mcp_mode = if mf.mode.is_empty() { "all".into() } else { mf.mode };
+        self.loop_mcp_mode = if mf.mode.is_empty() {
+            "all".into()
+        } else {
+            mf.mode
+        };
         self.loop_mcp_checked = mf.servers.into_iter().collect();
         let sf = p.skills.clone().unwrap_or_default();
-        self.loop_skills_mode = if sf.mode.is_empty() { "all".into() } else { sf.mode };
+        self.loop_skills_mode = if sf.mode.is_empty() {
+            "all".into()
+        } else {
+            sf.mode
+        };
         self.loop_skills_checked = sf.list.into_iter().collect();
         let k = p.loop_.clone().unwrap_or_default();
         self.loop_max_rounds = k.max_rounds.unwrap_or(self.agent_max_turns);
         self.loop_max_tool_calls = k.max_tool_calls.unwrap_or(self.agent_max_tool_calls);
         self.loop_temperature = k.temperature.unwrap_or(self.agent_temperature);
         self.loop_max_tokens = k.max_tokens.unwrap_or(self.agent_max_tokens);
-        self.loop_reflection_enabled = k.reflection_enabled.unwrap_or(self.agent_reflection_enabled);
-        self.loop_reflection_threshold = k.reflection_threshold.unwrap_or(self.agent_reflection_threshold);
-        self.loop_max_reflection_retries = k.max_reflection_retries.unwrap_or(self.agent_max_reflection_retries);
+        self.loop_reflection_enabled = k
+            .reflection_enabled
+            .unwrap_or(self.agent_reflection_enabled);
+        self.loop_reflection_threshold = k
+            .reflection_threshold
+            .unwrap_or(self.agent_reflection_threshold);
+        self.loop_max_reflection_retries = k
+            .max_reflection_retries
+            .unwrap_or(self.agent_max_reflection_retries);
         self.loop_checkpoint_enabled = k.checkpoint_enabled.unwrap_or(true);
         self.loop_max_spawn_depth = k.max_spawn_depth.unwrap_or(3);
-        self.loop_step_verification = k.step_verification.unwrap_or(self.agent_step_verify_enabled);
+        self.loop_step_verification = k
+            .step_verification
+            .unwrap_or(self.agent_step_verify_enabled);
         let c = p.compaction.clone().unwrap_or_default();
         self.loop_compact_enabled = c.enabled.unwrap_or(true);
         self.loop_compact_interval = c.interval.unwrap_or(self.agent_compression_interval);
         self.loop_compact_window = c.window.unwrap_or(10);
-        self.loop_compact_max_context_tokens = c.max_context_tokens.unwrap_or(self.agent_max_context_tokens);
-        self.loop_compact_tool_result_max_len = c.tool_result_max_len.unwrap_or(self.agent_tool_result_max_len);
+        self.loop_compact_max_context_tokens = c
+            .max_context_tokens
+            .unwrap_or(self.agent_max_context_tokens);
+        self.loop_compact_tool_result_max_len = c
+            .tool_result_max_len
+            .unwrap_or(self.agent_tool_result_max_len);
         self.loop_compact_model = c.model.unwrap_or_default();
         let e = p.evaluation.clone().unwrap_or_default();
         self.loop_eval_enabled = e.enabled.unwrap_or(self.agent_evaluation_enabled);
@@ -5441,16 +5864,28 @@ impl SettingsView {
             },
             tools: Some(ToolFilter {
                 mode: self.loop_tools_mode.clone(),
-                list: if self.loop_tools_mode == "all" { Vec::new() } else { sorted(&self.loop_tools_checked) },
+                list: if self.loop_tools_mode == "all" {
+                    Vec::new()
+                } else {
+                    sorted(&self.loop_tools_checked)
+                },
                 config: self.loop_tools_config.clone(),
             }),
             mcp: Some(McpFilter {
                 mode: self.loop_mcp_mode.clone(),
-                servers: if self.loop_mcp_mode == "selected" { sorted(&self.loop_mcp_checked) } else { Vec::new() },
+                servers: if self.loop_mcp_mode == "selected" {
+                    sorted(&self.loop_mcp_checked)
+                } else {
+                    Vec::new()
+                },
             }),
             skills: Some(SkillFilter {
                 mode: self.loop_skills_mode.clone(),
-                list: if self.loop_skills_mode == "selected" { sorted(&self.loop_skills_checked) } else { Vec::new() },
+                list: if self.loop_skills_mode == "selected" {
+                    sorted(&self.loop_skills_checked)
+                } else {
+                    Vec::new()
+                },
             }),
             loop_: Some(LoopKnobs {
                 max_rounds: Some(self.loop_max_rounds),
@@ -5506,8 +5941,8 @@ impl SettingsView {
                     "off" => Some(false),
                     _ => None,
                 };
-                let profile = Some(self.loop_graph_profile.trim().to_string())
-                    .filter(|s| !s.is_empty());
+                let profile =
+                    Some(self.loop_graph_profile.trim().to_string()).filter(|s| !s.is_empty());
                 if enabled.is_none() && profile.is_none() {
                     None
                 } else {
@@ -5546,7 +5981,11 @@ impl SettingsView {
                 .show_ui(ui, |ui| {
                     for (name, _) in &self.loop_tool_catalog {
                         if !self.loop_tools_config.contains_key(name) {
-                            ui.selectable_value(&mut self.loop_tools_config_new, name.clone(), name);
+                            ui.selectable_value(
+                                &mut self.loop_tools_config_new,
+                                name.clone(),
+                                name,
+                            );
                         }
                     }
                 });
@@ -5559,7 +5998,9 @@ impl SettingsView {
                 let name = self.loop_tools_config_new.trim().to_string();
                 if !name.is_empty() {
                     self.loop_tools_config.entry(name.clone()).or_default();
-                    self.loop_tools_config_params_text.entry(name.clone()).or_default();
+                    self.loop_tools_config_params_text
+                        .entry(name.clone())
+                        .or_default();
                     self.loop_tools_config_pins_text.entry(name).or_default();
                     self.loop_tools_config_new.clear();
                 }
@@ -5593,7 +6034,11 @@ impl SettingsView {
                 if cfg.description.is_some() {
                     parts.push("description");
                 }
-                if parts.is_empty() { String::new() } else { format!("  ({})", parts.join(", ")) }
+                if parts.is_empty() {
+                    String::new()
+                } else {
+                    format!("  ({})", parts.join(", "))
+                }
             };
             egui::CollapsingHeader::new(format!("🔧 {}{}", name, summary))
                 .id_salt(format!("loop_tcfg_{name}"))
@@ -5923,7 +6368,11 @@ impl SettingsView {
                 .send()
                 .map_err(|e| e.to_string())
                 .and_then(|r| {
-                    if r.status().is_success() { Ok(()) } else { Err("Save failed".to_string()) }
+                    if r.status().is_success() {
+                        Ok(())
+                    } else {
+                        Err("Save failed".to_string())
+                    }
                 })
         } else {
             let dir = crate::server::services::graph::rules_dir();
@@ -6048,14 +6497,22 @@ impl SettingsView {
                     model: f.model.clone(),
                     api_url: f.api_url.clone(),
                     api_key: f.api_key.clone(),
-                    rules: if f.rules.trim().is_empty() { None } else { Some(f.rules.clone()) },
+                    rules: if f.rules.trim().is_empty() {
+                        None
+                    } else {
+                        Some(f.rules.clone())
+                    },
                     rules_file: if f.rules_file.trim().is_empty() {
                         None
                     } else {
                         Some(f.rules_file.clone())
                     },
                     weight: Some(f.weight),
-                    threshold: if f.threshold < 0.0 { None } else { Some(f.threshold) },
+                    threshold: if f.threshold < 0.0 {
+                        None
+                    } else {
+                        Some(f.threshold)
+                    },
                     use_tools: Some(f.use_tools),
                     allow_execute: Some(f.allow_execute),
                     max_judge_rounds: Some(f.max_judge_rounds),
@@ -6169,8 +6626,10 @@ impl SettingsView {
                 settings.graph_enabled = Some(on);
                 save_settings(&settings).await;
             });
-            self.graph_status_msg =
-                Some(format!("Graph gate {}", if on { "enabled" } else { "disabled" }));
+            self.graph_status_msg = Some(format!(
+                "Graph gate {}",
+                if on { "enabled" } else { "disabled" }
+            ));
         }
         ui.label(
             egui::RichText::new(
@@ -6200,8 +6659,10 @@ impl SettingsView {
                 });
             if changed {
                 self.save_active_graph_profile(runtime);
-                self.graph_status_msg =
-                    Some(format!("Active graph profile set to {}", self.active_graph_profile));
+                self.graph_status_msg = Some(format!(
+                    "Active graph profile set to {}",
+                    self.active_graph_profile
+                ));
             }
         });
         ui.add_space(8.0);
@@ -6213,7 +6674,11 @@ impl SettingsView {
             let prev = self.graph_selected_file.clone();
             let mut pick = self.graph_selected_file.clone();
             egui::ComboBox::from_id_salt("graph_profile_editor_file")
-                .selected_text(if pick.is_empty() { "(none)".to_string() } else { pick.clone() })
+                .selected_text(if pick.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    pick.clone()
+                })
                 .show_ui(ui, |ui| {
                     for f in self.graph_profiles.clone() {
                         ui.selectable_value(&mut pick, f.clone(), f);
@@ -6231,10 +6696,12 @@ impl SettingsView {
                     .desired_width(140.0),
             );
             if ui.button("Create").clicked() && !self.graph_new_name.trim().is_empty() {
-                let file =
-                    crate::server::services::graph::normalize_filename(&self.graph_new_name);
-                self.graph_name =
-                    self.graph_new_name.trim().trim_end_matches(".yaml").to_string();
+                let file = crate::server::services::graph::normalize_filename(&self.graph_new_name);
+                self.graph_name = self
+                    .graph_new_name
+                    .trim()
+                    .trim_end_matches(".yaml")
+                    .to_string();
                 self.graph_new_name.clear();
                 self.graph_selected_file = file;
                 self.graph_yaml_mode = false;
@@ -6483,7 +6950,8 @@ impl SettingsView {
                     );
                     if ui
                         .add(egui::Button::new(
-                            egui::RichText::new("Remove").color(egui::Color32::from_rgb(239, 68, 68)),
+                            egui::RichText::new("Remove")
+                                .color(egui::Color32::from_rgb(239, 68, 68)),
                         ))
                         .clicked()
                     {
@@ -6522,7 +6990,9 @@ impl SettingsView {
                         });
                     ui.label("Weight:");
                     ui.add(
-                        egui::DragValue::new(&mut judge.weight).speed(0.1).range(0.0..=10.0),
+                        egui::DragValue::new(&mut judge.weight)
+                            .speed(0.1)
+                            .range(0.0..=10.0),
                     );
                     ui.checkbox(&mut judge.use_tools, "verify with tools")
                         .on_hover_text("judge may call read_file/list_files to check claims");
@@ -6566,8 +7036,16 @@ impl SettingsView {
                 })
                 .width(180.0)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.graph_agg_policy, "all_pass".to_string(), "All must pass");
-                    ui.selectable_value(&mut self.graph_agg_policy, "majority".to_string(), "Majority vote");
+                    ui.selectable_value(
+                        &mut self.graph_agg_policy,
+                        "all_pass".to_string(),
+                        "All must pass",
+                    );
+                    ui.selectable_value(
+                        &mut self.graph_agg_policy,
+                        "majority".to_string(),
+                        "Majority vote",
+                    );
                     ui.selectable_value(
                         &mut self.graph_agg_policy,
                         "weighted_average".to_string(),
@@ -6626,7 +7104,12 @@ impl SettingsView {
                 }
             }
         }
-        out.sort_by(|a, b| a["filename"].as_str().unwrap_or("").cmp(b["filename"].as_str().unwrap_or("")));
+        out.sort_by(|a, b| {
+            a["filename"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["filename"].as_str().unwrap_or(""))
+        });
         out
     }
 
@@ -6651,7 +7134,10 @@ impl SettingsView {
         };
 
         // Active profile tools.config for chips.
-        let active = runtime.block_on(get_settings()).agent_loop_profile.unwrap_or_default();
+        let active = runtime
+            .block_on(get_settings())
+            .agent_loop_profile
+            .unwrap_or_default();
         self.tools_active_config.clear();
         if !active.is_empty() {
             if let Some(p) = crate::server::services::agent_loop::load_profile(&active) {
@@ -6712,7 +7198,11 @@ impl SettingsView {
                         Some(e) => format!("Error: {e}"),
                         None => {
                             let w = v["warnings"].as_array().map(|a| a.len()).unwrap_or(0);
-                            if w > 0 { format!("Saved (warnings: {w})") } else { "Saved".into() }
+                            if w > 0 {
+                                format!("Saved (warnings: {w})")
+                            } else {
+                                "Saved".into()
+                            }
                         }
                     });
                 }
@@ -6720,7 +7210,9 @@ impl SettingsView {
             }
         } else {
             // Local: parse + validate + write.
-            match serde_yaml::from_str::<crate::server::services::custom_tools::CustomTool>(&content) {
+            match serde_yaml::from_str::<crate::server::services::custom_tools::CustomTool>(
+                &content,
+            ) {
                 Ok(tool) => match crate::server::services::custom_tools::validate(&tool) {
                     Ok(warnings) => {
                         let dir = crate::server::services::custom_tools::tools_dir();
@@ -6769,7 +7261,11 @@ impl SettingsView {
         // Resolve the tool name from the buffer (name: line) or filename.
         let name = serde_yaml::from_str::<serde_json::Value>(&self.custom_tool_yaml)
             .ok()
-            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+            .and_then(|v| {
+                v.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_else(|| {
                 self.custom_tool_selected
                     .trim_end_matches(".yaml")
@@ -6798,7 +7294,9 @@ impl SettingsView {
                 .join("sandbox")
                 .to_string_lossy()
                 .to_string();
-            runtime.block_on(crate::server::services::custom_tools::execute(&name, &args, &sandbox))
+            runtime.block_on(crate::server::services::custom_tools::execute(
+                &name, &args, &sandbox,
+            ))
         };
         self.custom_tool_test_result =
             Some(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()));
@@ -6875,7 +7373,10 @@ impl SettingsView {
             .filter_map(|t| {
                 Some((
                     t["name"].as_str()?.to_string(),
-                    (t["kind"].as_str().unwrap_or("").to_string(), t["enabled"].as_bool().unwrap_or(true)),
+                    (
+                        t["kind"].as_str().unwrap_or("").to_string(),
+                        t["enabled"].as_bool().unwrap_or(true),
+                    ),
                 ))
             })
             .collect();
@@ -6907,7 +7408,10 @@ impl SettingsView {
                         }
                         let is_custom = custom_names.contains_key(name);
                         let source = if is_custom {
-                            custom_names.get(name).map(|(k, _)| format!("custom · {k}")).unwrap_or("custom".into())
+                            custom_names
+                                .get(name)
+                                .map(|(k, _)| format!("custom · {k}"))
+                                .unwrap_or("custom".into())
                         } else {
                             "built-in".to_string()
                         };
@@ -6915,7 +7419,15 @@ impl SettingsView {
                         // Tool name (+ protected marker)
                         let protected = name.starts_with("proto_")
                             || name.starts_with("bb_")
-                            || matches!(name.as_str(), "send_task" | "wait_result" | "check_agents" | "spawn_subagent" | "create_architecture" | "select_swarm");
+                            || matches!(
+                                name.as_str(),
+                                "send_task"
+                                    | "wait_result"
+                                    | "check_agents"
+                                    | "spawn_subagent"
+                                    | "create_architecture"
+                                    | "select_swarm"
+                            );
                         ui.horizontal(|ui| {
                             ui.label(name);
                             if protected {
@@ -6933,15 +7445,36 @@ impl SettingsView {
                             }
                             if let Some(c) = cfg {
                                 match c.require_approval {
-                                    Some(true) => { ui.label(egui::RichText::new("always-ask").color(amber)); any = true; }
-                                    Some(false) => { ui.label(egui::RichText::new("never-ask").color(green)); any = true; }
+                                    Some(true) => {
+                                        ui.label(egui::RichText::new("always-ask").color(amber));
+                                        any = true;
+                                    }
+                                    Some(false) => {
+                                        ui.label(egui::RichText::new("never-ask").color(green));
+                                        any = true;
+                                    }
                                     None => {}
                                 }
-                                if c.pinned_params.is_some() { ui.label("pinned"); any = true; }
-                                if c.params.is_some() { ui.label("defaults"); any = true; }
-                                if c.timeout_secs.is_some() { ui.label("timeout"); any = true; }
-                                if c.max_result_len.is_some() { ui.label("result-cap"); any = true; }
-                                if c.description.is_some() { ui.label("renamed"); any = true; }
+                                if c.pinned_params.is_some() {
+                                    ui.label("pinned");
+                                    any = true;
+                                }
+                                if c.params.is_some() {
+                                    ui.label("defaults");
+                                    any = true;
+                                }
+                                if c.timeout_secs.is_some() {
+                                    ui.label("timeout");
+                                    any = true;
+                                }
+                                if c.max_result_len.is_some() {
+                                    ui.label("result-cap");
+                                    any = true;
+                                }
+                                if c.description.is_some() {
+                                    ui.label("renamed");
+                                    any = true;
+                                }
                             }
                             if !any {
                                 ui.label(egui::RichText::new("on").color(green));
@@ -7063,7 +7596,10 @@ impl SettingsView {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.custom_tool_selected.is_empty() {
                 ui.add_space(20.0);
-                ui.label(egui::RichText::new("Select a tool on the left, or create a new one above.").color(dim));
+                ui.label(
+                    egui::RichText::new("Select a tool on the left, or create a new one above.")
+                        .color(dim),
+                );
                 return;
             }
             ui.label(egui::RichText::new(&self.custom_tool_selected).strong());
@@ -7090,7 +7626,11 @@ impl SettingsView {
                 }
             });
             if let Some(msg) = &self.custom_tool_status {
-                let c = if msg.starts_with("Error") || msg.starts_with("Invalid") { red } else { dim };
+                let c = if msg.starts_with("Error") || msg.starts_with("Invalid") {
+                    red
+                } else {
+                    dim
+                };
                 ui.label(egui::RichText::new(msg).size(11.0).color(c));
             }
 
@@ -7126,7 +7666,10 @@ impl SettingsView {
 
     fn create_custom_tool_template(&mut self, kind: &str) {
         let raw = self.custom_tool_new_name.trim().to_lowercase();
-        let name: String = raw.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+        let name: String = raw
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
         if name.is_empty() {
             self.custom_tool_status = Some("Enter a tool name first".into());
             return;
@@ -7172,9 +7715,8 @@ impl SettingsView {
             // catalog entries), so a saved file can be diffed back to default.
             let desc = crate::server::services::toolbox::builtin_tool_description(tool)
                 .unwrap_or_default();
-            let default_approval = runtime.block_on(
-                crate::server::services::toolbox::tool_default_requires_approval(tool),
-            );
+            let default_approval = runtime
+                .block_on(crate::server::services::toolbox::tool_default_requires_approval(tool));
             let schema = crate::server::services::toolbox::tool_parameter_schema(tool);
             crate::server::services::custom_tools::builtin_editor_yaml(
                 tool,
@@ -7257,9 +7799,8 @@ impl SettingsView {
         } else {
             let desc = crate::server::services::toolbox::builtin_tool_description(&tool)
                 .unwrap_or_default();
-            let default_approval = runtime.block_on(
-                crate::server::services::toolbox::tool_default_requires_approval(&tool),
-            );
+            let default_approval = runtime
+                .block_on(crate::server::services::toolbox::tool_default_requires_approval(&tool));
             let schema = crate::server::services::toolbox::tool_parameter_schema(&tool);
             self.tool_cfg_status = Some(
                 match crate::server::services::custom_tools::save_builtin_doc(
@@ -7312,7 +7853,11 @@ impl SettingsView {
                 })
                 .show_ui(ui, |ui| {
                     changed |= ui
-                        .selectable_value(&mut self.active_loop_profile, String::new(), "(built-in — no profile)")
+                        .selectable_value(
+                            &mut self.active_loop_profile,
+                            String::new(),
+                            "(built-in — no profile)",
+                        )
                         .changed();
                     for f in self.loop_profiles.clone() {
                         changed |= ui
@@ -7324,7 +7869,11 @@ impl SettingsView {
                 self.save_active_loop_profile(runtime);
                 self.loop_status_msg = Some(format!(
                     "Active profile set to {}",
-                    if self.active_loop_profile.is_empty() { "(built-in)" } else { &self.active_loop_profile }
+                    if self.active_loop_profile.is_empty() {
+                        "(built-in)"
+                    } else {
+                        &self.active_loop_profile
+                    }
                 ));
             }
         });
@@ -7337,7 +7886,11 @@ impl SettingsView {
             let prev = self.loop_selected_file.clone();
             let mut pick = self.loop_selected_file.clone();
             egui::ComboBox::from_id_salt("loop_profile_editor_file")
-                .selected_text(if pick.is_empty() { "(none)".to_string() } else { pick.clone() })
+                .selected_text(if pick.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    pick.clone()
+                })
                 .show_ui(ui, |ui| {
                     for f in self.loop_profiles.clone() {
                         ui.selectable_value(&mut pick, f.clone(), f);
@@ -7355,10 +7908,13 @@ impl SettingsView {
                     .desired_width(140.0),
             );
             if ui.button("Create").clicked() && !self.loop_new_name.trim().is_empty() {
-                let file = crate::server::services::agent_loop::normalize_filename(
-                    &self.loop_new_name,
-                );
-                self.loop_name = self.loop_new_name.trim().trim_end_matches(".yaml").to_string();
+                let file =
+                    crate::server::services::agent_loop::normalize_filename(&self.loop_new_name);
+                self.loop_name = self
+                    .loop_new_name
+                    .trim()
+                    .trim_end_matches(".yaml")
+                    .to_string();
                 self.loop_new_name.clear();
                 self.loop_selected_file = file;
                 self.loop_yaml_mode = false;
@@ -7366,7 +7922,8 @@ impl SettingsView {
             }
 
             if !self.loop_selected_file.is_empty()
-                && self.loop_selected_file != crate::server::services::agent_loop::DEFAULT_PROFILE_FILE
+                && self.loop_selected_file
+                    != crate::server::services::agent_loop::DEFAULT_PROFILE_FILE
                 && ui
                     .add(egui::Button::new(
                         egui::RichText::new("Delete").color(egui::Color32::from_rgb(239, 68, 68)),
@@ -7419,7 +7976,10 @@ impl SettingsView {
                     .ok()
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                     .unwrap_or(serde_json::Value::Null);
-                    let profile = crate::server::services::agent_loop::default_profile_from_settings(&settings_json);
+                    let profile =
+                        crate::server::services::agent_loop::default_profile_from_settings(
+                            &settings_json,
+                        );
                     if let Ok(yaml) = serde_yaml::to_string(&profile) {
                         let _ = Self::write_loop_profile_content(
                             crate::server::services::agent_loop::DEFAULT_PROFILE_FILE,
@@ -7427,7 +7987,8 @@ impl SettingsView {
                         );
                     }
                 }
-                self.loop_status_msg = Some("default.yaml regenerated from current settings".to_string());
+                self.loop_status_msg =
+                    Some("default.yaml regenerated from current settings".to_string());
                 self.loop_needs_refresh = true;
             }
         });
@@ -7453,13 +8014,17 @@ impl SettingsView {
                     }
                 } else {
                     // YAML -> form: re-parse; on error stay in YAML mode
-                    match serde_yaml::from_str::<crate::server::services::agent_loop::AgentLoopProfile>(&self.loop_yaml_text) {
+                    match serde_yaml::from_str::<
+                        crate::server::services::agent_loop::AgentLoopProfile,
+                    >(&self.loop_yaml_text)
+                    {
                         Ok(p) => {
                             self.populate_loop_form(&p);
                             self.loop_status_msg = None;
                         }
                         Err(e) => {
-                            self.loop_status_msg = Some(format!("Error: fix YAML before switching to Form: {}", e));
+                            self.loop_status_msg =
+                                Some(format!("Error: fix YAML before switching to Form: {}", e));
                             self.loop_yaml_mode = true;
                         }
                     }
@@ -7549,11 +8114,16 @@ impl SettingsView {
                 ui.horizontal(|ui| {
                     ui.label("Mode:");
                     ui.selectable_value(&mut self.loop_mcp_mode, "all".to_string(), "All servers");
-                    ui.selectable_value(&mut self.loop_mcp_mode, "selected".to_string(), "Selected");
+                    ui.selectable_value(
+                        &mut self.loop_mcp_mode,
+                        "selected".to_string(),
+                        "Selected",
+                    );
                     ui.selectable_value(&mut self.loop_mcp_mode, "none".to_string(), "None");
                 });
                 if self.loop_mcp_mode == "selected" {
-                    let servers: Vec<String> = self.mcp_tools.iter().map(|s| s.name.clone()).collect();
+                    let servers: Vec<String> =
+                        self.mcp_tools.iter().map(|s| s.name.clone()).collect();
                     if servers.is_empty() {
                         ui.label("No MCP servers configured (Settings > MCP Tools).");
                     }
@@ -7576,8 +8146,16 @@ impl SettingsView {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Mode:");
-                    ui.selectable_value(&mut self.loop_skills_mode, "all".to_string(), "All skills");
-                    ui.selectable_value(&mut self.loop_skills_mode, "selected".to_string(), "Selected");
+                    ui.selectable_value(
+                        &mut self.loop_skills_mode,
+                        "all".to_string(),
+                        "All skills",
+                    );
+                    ui.selectable_value(
+                        &mut self.loop_skills_mode,
+                        "selected".to_string(),
+                        "Selected",
+                    );
                     ui.selectable_value(&mut self.loop_skills_mode, "none".to_string(), "None");
                 });
                 if self.loop_skills_mode == "selected" {
@@ -7614,11 +8192,16 @@ impl SettingsView {
                 );
                 ui.horizontal(|ui| {
                     ui.label("Model:");
-                    ui.add(egui::TextEdit::singleline(&mut self.loop_model_model).desired_width(220.0));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.loop_model_model).desired_width(220.0),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label("API URL:");
-                    ui.add(egui::TextEdit::singleline(&mut self.loop_model_api_url).desired_width(320.0));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.loop_model_api_url)
+                            .desired_width(320.0),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label("API Key:");
@@ -7769,9 +8352,17 @@ impl SettingsView {
                         })
                         .width(160.0)
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.loop_graph_gate, "inherit".to_string(), "Inherit (settings)");
+                            ui.selectable_value(
+                                &mut self.loop_graph_gate,
+                                "inherit".to_string(),
+                                "Inherit (settings)",
+                            );
                             ui.selectable_value(&mut self.loop_graph_gate, "on".to_string(), "On");
-                            ui.selectable_value(&mut self.loop_graph_gate, "off".to_string(), "Off");
+                            ui.selectable_value(
+                                &mut self.loop_graph_gate,
+                                "off".to_string(),
+                                "Off",
+                            );
                         });
                     ui.label("Graph profile:");
                     ui.add(
@@ -7791,18 +8382,27 @@ impl SettingsView {
                     &mut self.loop_compact_enabled,
                     "Periodic compression (over-budget and overflow compaction always stay on)",
                 );
-                egui::Grid::new("loop_compact_grid").num_columns(4).spacing([12.0, 6.0]).show(ui, |ui| {
-                    ui.label("Every N rounds:");
-                    ui.add(egui::DragValue::new(&mut self.loop_compact_interval).range(1..=50));
-                    ui.label("Keep last N messages:");
-                    ui.add(egui::DragValue::new(&mut self.loop_compact_window).range(2..=100));
-                    ui.end_row();
-                    ui.label("Max context tokens:");
-                    ui.add(egui::DragValue::new(&mut self.loop_compact_max_context_tokens).range(4_000..=2_000_000));
-                    ui.label("Tool result max chars:");
-                    ui.add(egui::DragValue::new(&mut self.loop_compact_tool_result_max_len).range(500..=100_000));
-                    ui.end_row();
-                });
+                egui::Grid::new("loop_compact_grid")
+                    .num_columns(4)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Every N rounds:");
+                        ui.add(egui::DragValue::new(&mut self.loop_compact_interval).range(1..=50));
+                        ui.label("Keep last N messages:");
+                        ui.add(egui::DragValue::new(&mut self.loop_compact_window).range(2..=100));
+                        ui.end_row();
+                        ui.label("Max context tokens:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.loop_compact_max_context_tokens)
+                                .range(4_000..=2_000_000),
+                        );
+                        ui.label("Tool result max chars:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.loop_compact_tool_result_max_len)
+                                .range(500..=100_000),
+                        );
+                        ui.end_row();
+                    });
                 ui.horizontal(|ui| {
                     ui.label("Summarization model:");
                     ui.add(

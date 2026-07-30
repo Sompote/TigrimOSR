@@ -62,10 +62,9 @@ struct UploadedFile {
 // ---------------------------------------------------------------------------
 
 const ALLOWED_CHAT_EXTENSIONS: &[&str] = &[
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt", ".json", ".xml",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg",
-    ".py", ".js", ".ts", ".html", ".css", ".md", ".yaml", ".yml",
-    ".zip", ".tar", ".gz",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt", ".json", ".xml", ".png", ".jpg",
+    ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".py", ".js", ".ts", ".html", ".css", ".md", ".yaml",
+    ".yml", ".zip", ".tar", ".gz",
 ];
 
 // ---------------------------------------------------------------------------
@@ -111,7 +110,11 @@ async fn read_handler(
     axum::extract::Query(params): axum::extract::Query<PathQuery>,
 ) -> Response {
     if params.path.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "path required"})),
+        )
+            .into_response();
     }
     match read_file_content(&state.sandbox_dir, &params.path).await {
         Ok(content) => Json(json!({"content": content, "path": params.path})).into_response(),
@@ -128,7 +131,11 @@ async fn write_handler(
     Json(body): Json<WriteBody>,
 ) -> Response {
     if body.path.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "path required"})),
+        )
+            .into_response();
     }
     match write_file_content(&state.sandbox_dir, &body.path, &body.content).await {
         Ok(_) => Json(json!({"success": true, "path": body.path})).into_response(),
@@ -145,7 +152,11 @@ async fn delete_handler(
     axum::extract::Query(params): axum::extract::Query<PathQuery>,
 ) -> Response {
     if params.path.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "path required"})),
+        )
+            .into_response();
     }
     match delete_file_or_dir(&state.sandbox_dir, &params.path).await {
         Ok(_) => Json(json!({"success": true})).into_response(),
@@ -162,15 +173,16 @@ async fn mkdir_handler(
     Json(body): Json<MkdirBody>,
 ) -> Response {
     if body.path.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "path required"})),
+        )
+            .into_response();
     }
     match validate_path(&state.sandbox_dir, &body.path) {
         Ok(resolved) => {
             if let Err(e) = fs::create_dir_all(&resolved).await {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(json!({"error": e.to_string()})),
-                )
+                return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()})))
                     .into_response();
             }
             Json(json!({"success": true, "path": body.path})).into_response()
@@ -183,10 +195,7 @@ async fn mkdir_handler(
 // POST /upload -- single file upload
 // ---------------------------------------------------------------------------
 
-async fn upload_handler(
-    State(state): State<Arc<AppState>>,
-    mut multipart: Multipart,
-) -> Response {
+async fn upload_handler(State(state): State<Arc<AppState>>, mut multipart: Multipart) -> Response {
     let mut file_data: Option<(String, Vec<u8>)> = None;
     let mut dest_dir = String::new();
 
@@ -230,11 +239,9 @@ async fn upload_handler(
             }
             match fs::write(&resolved, &bytes).await {
                 Ok(_) => Json(json!({"success": true, "path": dest_path})).into_response(),
-                Err(e) => (
-                    StatusCode::FORBIDDEN,
-                    Json(json!({"error": e.to_string()})),
-                )
-                    .into_response(),
+                Err(e) => {
+                    (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response()
+                }
             }
         }
         Err(e) => (StatusCode::FORBIDDEN, Json(json!({"error": e}))).into_response(),
@@ -265,7 +272,10 @@ async fn chat_upload_handler(
             Some(name) => name.to_string(),
             None => continue,
         };
-        let content_type = field.content_type().unwrap_or("application/octet-stream").to_string();
+        let content_type = field
+            .content_type()
+            .unwrap_or("application/octet-stream")
+            .to_string();
 
         // Check extension
         let ext = Path::new(&filename)
@@ -285,7 +295,13 @@ async fn chat_upload_handler(
         // Sanitize filename
         let safe_name: String = filename
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '.' || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
 
         let timestamp = SystemTime::now()
@@ -323,7 +339,11 @@ async fn preview_handler(
     axum::extract::Query(params): axum::extract::Query<PathQuery>,
 ) -> Response {
     if params.path.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "path required"})),
+        )
+            .into_response();
     }
 
     let resolved = match validate_path(&state.sandbox_dir, &params.path) {
@@ -332,7 +352,11 @@ async fn preview_handler(
     };
 
     if fs::metadata(&resolved).await.is_err() {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "File not found"}))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "File not found"})),
+        )
+            .into_response();
     }
 
     let ext = resolved
@@ -367,16 +391,14 @@ async fn preview_handler(
             }))
             .into_response()
         }
-        "md" => {
-            match fs::read_to_string(&resolved).await {
-                Ok(content) => Json(json!({"type": "markdown", "html": content})).into_response(),
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": e.to_string()})),
-                )
-                    .into_response(),
-            }
-        }
+        "md" => match fs::read_to_string(&resolved).await {
+            Ok(content) => Json(json!({"type": "markdown", "html": content})).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        },
         "js" | "jsx" | "tsx" => {
             // Check if it's a React component (has __REACT_META__ or JSX patterns)
             match fs::read_to_string(&resolved).await {
@@ -387,12 +409,22 @@ async fn preview_handler(
                             let mut t = "React Preview".to_string();
                             let mut rt = "App()".to_string();
                             if let Some(meta_start) = content.find("__REACT_META__=") {
-                                let json_start = content[meta_start..].find('{').map(|i| meta_start + i);
-                                let json_end = json_start.and_then(|s| content[s..].find('}').map(|i| s + i + 1));
+                                let json_start =
+                                    content[meta_start..].find('{').map(|i| meta_start + i);
+                                let json_end = json_start
+                                    .and_then(|s| content[s..].find('}').map(|i| s + i + 1));
                                 if let (Some(s), Some(e)) = (json_start, json_end) {
-                                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content[s..e]) {
-                                        if let Some(s) = v.get("title").and_then(|v| v.as_str()) { t = s.to_string(); }
-                                        if let Some(s) = v.get("renderTarget").and_then(|v| v.as_str()) { rt = s.to_string(); }
+                                    if let Ok(v) =
+                                        serde_json::from_str::<serde_json::Value>(&content[s..e])
+                                    {
+                                        if let Some(s) = v.get("title").and_then(|v| v.as_str()) {
+                                            t = s.to_string();
+                                        }
+                                        if let Some(s) =
+                                            v.get("renderTarget").and_then(|v| v.as_str())
+                                        {
+                                            rt = s.to_string();
+                                        }
                                     }
                                 }
                             }
@@ -405,10 +437,10 @@ async fn preview_handler(
                             .filter(|l| {
                                 let trimmed = l.trim();
                                 !l.contains("__REACT_META__")
-                                && !l.contains("} = React")
-                                && !l.contains("typeof Recharts")
-                                && !l.contains("} = _Recharts")
-                                && !(trimmed.starts_with("return ") && trimmed.ends_with("();"))
+                                    && !l.contains("} = React")
+                                    && !l.contains("typeof Recharts")
+                                    && !l.contains("} = _Recharts")
+                                    && !(trimmed.starts_with("return ") && trimmed.ends_with("();"))
                             })
                             .collect::<Vec<&str>>()
                             .join("\n");
@@ -488,7 +520,11 @@ async fn download_handler(
     axum::extract::Query(params): axum::extract::Query<PathQuery>,
 ) -> Response {
     if params.path.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "path required"})),
+        )
+            .into_response();
     }
 
     let resolved = match validate_path(&state.sandbox_dir, &params.path) {
@@ -499,11 +535,7 @@ async fn download_handler(
     let file = match tokio::fs::File::open(&resolved).await {
         Ok(f) => f,
         Err(e) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response()
+            return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response()
         }
     };
 
@@ -534,7 +566,11 @@ async fn raw_handler(
     axum::extract::Query(params): axum::extract::Query<PathQuery>,
 ) -> Response {
     if params.path.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "path required"})),
+        )
+            .into_response();
     }
 
     // If the path is absolute and within the sandbox, strip the sandbox prefix
@@ -546,7 +582,8 @@ async fn raw_handler(
         if req.is_absolute() {
             let canon = req.canonicalize().unwrap_or_else(|_| req.to_path_buf());
             if canon.starts_with(&sandbox) {
-                canon.strip_prefix(&sandbox)
+                canon
+                    .strip_prefix(&sandbox)
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|_| params.path.clone())
             } else {
@@ -564,7 +601,13 @@ async fn raw_handler(
 
     let file = match tokio::fs::File::open(&resolved).await {
         Ok(f) => f,
-        Err(_) => return (StatusCode::NOT_FOUND, Json(json!({"error": "File not found"}))).into_response(),
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "File not found"})),
+            )
+                .into_response()
+        }
     };
 
     let ext = resolved

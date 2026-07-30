@@ -1,30 +1,30 @@
+pub mod agent_loops;
+pub mod agents;
 pub mod auth;
 pub mod chat;
-pub mod files;
-pub mod tasks;
-pub mod skills;
-pub mod settings;
-pub mod projects;
-pub mod agents;
-pub mod agent_loops;
-pub mod graph;
-pub mod workflows;
-pub mod custom_tools;
-pub mod terminal;
-pub mod local_files;
-pub mod python;
-pub mod tools;
 pub mod clawhub;
+pub mod custom_tools;
+pub mod files;
 pub mod google;
-pub mod remote;
-pub mod vpn;
-pub mod plugins;
+pub mod graph;
+pub mod local_files;
 pub mod messaging;
+pub mod plugins;
+pub mod projects;
+pub mod python;
+pub mod remote;
+pub mod settings;
+pub mod skills;
+pub mod tasks;
+pub mod terminal;
+pub mod tools;
+pub mod vpn;
 pub mod web_ui;
+pub mod workflows;
 
-use std::sync::Arc;
-use axum::Router;
 use crate::server::AppState;
+use axum::Router;
+use std::sync::Arc;
 
 pub fn build_api_routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()

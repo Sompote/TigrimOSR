@@ -1,19 +1,19 @@
+use crate::server::services::compact;
+use crate::server::services::mcp;
+use crate::server::services::proc_registry;
+use crate::server::services::protocols;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::{Mutex as TokioMutex, Notify};
 use tokio::time::{timeout, Duration};
 use tracing::{error, info, warn};
-use crate::server::services::protocols;
-use crate::server::services::compact;
-use crate::server::services::mcp;
-use crate::server::services::proc_registry;
 
 // ---------------------------------------------------------------------------
 // Per-session process execution context
@@ -165,7 +165,11 @@ pub(crate) fn find_python() -> String {
                 #[cfg(not(target_os = "windows"))]
                 {
                     let path = String::from_utf8_lossy(&output.stdout)
-                        .lines().next().unwrap_or("").trim().to_string();
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     if !path.is_empty() {
                         return path;
                     }
@@ -191,7 +195,11 @@ pub(crate) fn find_python() -> String {
 
     #[cfg(target_os = "linux")]
     {
-        for candidate in &["/usr/bin/python3", "/usr/local/bin/python3", "/usr/bin/python"] {
+        for candidate in &[
+            "/usr/bin/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python",
+        ] {
             if std::path::Path::new(candidate).exists() {
                 return candidate.to_string();
             }
@@ -202,7 +210,9 @@ pub(crate) fn find_python() -> String {
     {
         // Check common Windows Python install locations (winget user scope)
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            let programs = std::path::PathBuf::from(&local).join("Programs").join("Python");
+            let programs = std::path::PathBuf::from(&local)
+                .join("Programs")
+                .join("Python");
             if let Ok(entries) = std::fs::read_dir(&programs) {
                 for entry in entries.flatten() {
                     let py = entry.path().join("python.exe");
@@ -224,7 +234,15 @@ pub(crate) fn find_python() -> String {
         }
         bases.push(r"C:\".to_string());
         for base in &bases {
-            for distro in ["miniforge3", "Miniforge3", "miniconda3", "Miniconda3", "anaconda3", "Anaconda3", "mambaforge"] {
+            for distro in [
+                "miniforge3",
+                "Miniforge3",
+                "miniconda3",
+                "Miniconda3",
+                "anaconda3",
+                "Anaconda3",
+                "mambaforge",
+            ] {
                 let py = std::path::Path::new(base).join(distro).join("python.exe");
                 if py.exists() && python_candidate_works(&py.to_string_lossy()) {
                     return py.to_string_lossy().to_string();
@@ -280,7 +298,9 @@ fn ensure_full_path() {
         // Ensure common Windows Python/tool paths are on PATH
         let mut extra = Vec::new();
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            let programs = std::path::PathBuf::from(&local).join("Programs").join("Python");
+            let programs = std::path::PathBuf::from(&local)
+                .join("Programs")
+                .join("Python");
             if let Ok(entries) = std::fs::read_dir(&programs) {
                 for entry in entries.flatten() {
                     let dir = entry.path();
@@ -350,18 +370,23 @@ async fn run_in_vm(cmd: &str, timeout_secs: u64) -> Result<(String, String, bool
     // Guard the local ssh client so a chat-kill SIGKILLs it (the remote command
     // still runs on the VM, but the local SSH session is reaped, not orphaned).
     let result = run_guarded(
-        Command::new("sshpass")
-            .args([
-                "-p", "tigris",
-                "ssh",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "ConnectTimeout=5",
-                "-o", "LogLevel=ERROR",
-                "-p", &port,
-                "tigris@localhost",
-                cmd,
-            ]),
+        Command::new("sshpass").args([
+            "-p",
+            "tigris",
+            "ssh",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "LogLevel=ERROR",
+            "-p",
+            &port,
+            "tigris@localhost",
+            cmd,
+        ]),
         timeout_secs,
     )
     .await;
@@ -398,13 +423,22 @@ fn shell_command() -> Command {
 
 #[derive(Debug, Clone)]
 pub enum ToolUpdate {
-    ToolCall { name: String, args: Value },
-    ToolResult { name: String, result: Value },
+    ToolCall {
+        name: String,
+        args: Value,
+    },
+    ToolResult {
+        name: String,
+        result: Value,
+    },
     TextChunk(String),
     Error(String),
     /// Request user approval before executing a dangerous tool.
     /// The UI must call `respond_tool_approval(true/false)` to continue.
-    ApprovalRequired { name: String, args: Value },
+    ApprovalRequired {
+        name: String,
+        args: Value,
+    },
 }
 
 /// Strip `<think>...</think>` blocks from LLM output (reasoning tags).
@@ -674,7 +708,7 @@ pub struct ToolCallRecord {
 pub struct SubAgentConfig {
     pub enabled: bool,
     pub config_file: String,
-    pub agent_ids: Vec<String>,       // available agent IDs from YAML
+    pub agent_ids: Vec<String>, // available agent IDs from YAML
     pub api_key: String,
     pub api_url: String,
     pub model: String,
@@ -686,11 +720,11 @@ pub struct SubAgentConfig {
     pub session_id: String,           // for JSONL history logging
     pub agent_id: String,             // current agent's own ID (for protocol tools)
     pub mode: String,                 // "fully_auto", "auto", "auto_swarm", "manual", "router"
-    pub agent_role: String,            // "orchestrator", "worker", etc. — used for tool filtering
-    pub cancel_flag: Arc<AtomicBool>,  // set to true to abort the tool loop (saves checkpoint)
+    pub agent_role: String,           // "orchestrator", "worker", etc. — used for tool filtering
+    pub cancel_flag: Arc<AtomicBool>, // set to true to abort the tool loop (saves checkpoint)
     // --- Router mode only (empty/ignored in every other mode) ---
-    pub model_pool: Vec<Value>,        // serialized ModelPoolEntry list (id/label/model/api_url/api_key/tier/strengths)
-    pub router_tier: String,           // "fast" | "ultra"; "" outside router mode
+    pub model_pool: Vec<Value>, // serialized ModelPoolEntry list (id/label/model/api_url/api_key/tier/strengths)
+    pub router_tier: String,    // "fast" | "ultra"; "" outside router mode
     // --- User agent-loop profile (None = built-in behavior) ---
     pub loop_profile: Option<Arc<crate::server::services::agent_loop::AgentLoopProfile>>,
     // --- Graph mode: judge panel gating the final answer (None = no gate) ---
@@ -740,7 +774,12 @@ pub fn is_protected_tool(name: &str, sub_agent: &SubAgentConfig) -> bool {
     }
     matches!(
         name,
-        "send_task" | "wait_result" | "check_agents" | "create_architecture" | "select_swarm" | "spawn_subagent"
+        "send_task"
+            | "wait_result"
+            | "check_agents"
+            | "create_architecture"
+            | "select_swarm"
+            | "spawn_subagent"
     ) || name.starts_with("proto_")
         || name.starts_with("bb_")
 }
@@ -752,7 +791,11 @@ pub fn is_protected_tool(name: &str, sub_agent: &SubAgentConfig) -> bool {
 /// Runs after MCP tools are appended, so it covers built-in and MCP specs
 /// uniformly (both are OpenAI-format {"type":"function","function":{...}}).
 pub fn apply_profile_tool_overrides(tools: &mut Vec<Value>, sub_agent: &SubAgentConfig) {
-    let Some(tf) = sub_agent.loop_profile.as_deref().and_then(|p| p.tools.as_ref()) else {
+    let Some(tf) = sub_agent
+        .loop_profile
+        .as_deref()
+        .and_then(|p| p.tools.as_ref())
+    else {
         return;
     };
     if tf.config.is_empty() {
@@ -806,7 +849,7 @@ pub(crate) struct AgentTask {
 #[allow(dead_code)]
 pub struct RealtimeAgentHandle {
     pub agent_def: Value,
-    pub status: Arc<TokioMutex<String>>,          // "idle" | "working"
+    pub status: Arc<TokioMutex<String>>, // "idle" | "working"
     pub task_tx: tokio::sync::mpsc::Sender<AgentTask>,
     /// Who sent the task this agent is currently working on (empty when idle).
     /// Used to reject an agent waiting on its own delegator (guaranteed deadlock).
@@ -842,8 +885,9 @@ pub struct RealtimeSession {
 }
 
 // Global store: session_id -> RealtimeSession
-static REALTIME_SESSIONS: std::sync::OnceLock<TokioMutex<HashMap<String, Arc<TokioMutex<RealtimeSession>>>>> =
-    std::sync::OnceLock::new();
+static REALTIME_SESSIONS: std::sync::OnceLock<
+    TokioMutex<HashMap<String, Arc<TokioMutex<RealtimeSession>>>>,
+> = std::sync::OnceLock::new();
 
 fn realtime_sessions() -> &'static TokioMutex<HashMap<String, Arc<TokioMutex<RealtimeSession>>>> {
     REALTIME_SESSIONS.get_or_init(|| TokioMutex::new(HashMap::new()))
@@ -867,8 +911,9 @@ fn auto_created_architectures() -> &'static TokioMutex<HashMap<String, String>> 
 
 // Global broadcast channel for subagent activity visible in the UI chat log.
 // Each message: (session_id, agent_id, line)
-static SUBAGENT_LOG_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<(String, String, String)>> =
-    std::sync::OnceLock::new();
+static SUBAGENT_LOG_TX: std::sync::OnceLock<
+    tokio::sync::broadcast::Sender<(String, String, String)>,
+> = std::sync::OnceLock::new();
 
 fn subagent_log_tx() -> &'static tokio::sync::broadcast::Sender<(String, String, String)> {
     SUBAGENT_LOG_TX.get_or_init(|| {
@@ -891,7 +936,9 @@ pub fn append_session_progress(session_id: &str, text: &str) {
     // Disk-fill guard: a looping agent can append forever — cap each session's
     // activity log at 20MB and stop appending past that.
     if let Ok(meta) = std::fs::metadata(&log_path) {
-        if meta.len() > 20 * 1024 * 1024 { return; }
+        if meta.len() > 20 * 1024 * 1024 {
+            return;
+        }
     }
     let _ = std::fs::OpenOptions::new()
         .create(true)
@@ -902,24 +949,40 @@ pub fn append_session_progress(session_id: &str, text: &str) {
 
 /// Log agent tool call to the Activity panel (mirrors TS socket.ts onToolCall).
 fn log_agent_tool_call(session_id: &str, agent_id: &str, name: &str, args: &Value) {
-    let label = if agent_id.is_empty() || agent_id == "main" { "Orchestrator".to_string() } else { agent_id.to_string() };
+    let label = if agent_id.is_empty() || agent_id == "main" {
+        "Orchestrator".to_string()
+    } else {
+        agent_id.to_string()
+    };
     if name.starts_with("proto_") {
-        let proto_name = name.replace("proto_", "").split('_').next().unwrap_or("").to_uppercase();
-        append_session_progress(session_id,
-            &format!("> **{}** **{}** → `{}`\n", proto_name, label, name));
+        let proto_name = name
+            .replace("proto_", "")
+            .split('_')
+            .next()
+            .unwrap_or("")
+            .to_uppercase();
+        append_session_progress(
+            session_id,
+            &format!("> **{}** **{}** → `{}`\n", proto_name, label, name),
+        );
     } else if name == "send_task" {
-        let to = args.get("to").and_then(|v| v.as_str())
+        let to = args
+            .get("to")
+            .and_then(|v| v.as_str())
             .or_else(|| args.get("agent_name").and_then(|v| v.as_str()))
             .unwrap_or("agent");
-        append_session_progress(session_id,
-            &format!("> **{}** delegating task to {}\n", label, to));
+        append_session_progress(
+            session_id,
+            &format!("> **{}** delegating task to {}\n", label, to),
+        );
     } else if name == "wait_result" {
         let from = args.get("from").and_then(|v| v.as_str()).unwrap_or("agent");
-        append_session_progress(session_id,
-            &format!("> **{}** waiting for {}\n", label, from));
+        append_session_progress(
+            session_id,
+            &format!("> **{}** waiting for {}\n", label, from),
+        );
     } else {
-        append_session_progress(session_id,
-            &format!("> **{}** → `{}`\n", label, name));
+        append_session_progress(session_id, &format!("> **{}** → `{}`\n", label, name));
     }
 }
 
@@ -961,12 +1024,23 @@ pub async fn get_all_agent_statuses() -> HashMap<String, String> {
 /// Fire-and-forget helper to boot a realtime session without blocking the caller.
 /// Uses a oneshot to wait for the session to be ready before returning.
 fn boot_realtime_session_deferred(
-    session_id: String, config_file: String,
-    api_key: String, api_url: String, model: String,
+    session_id: String,
+    config_file: String,
+    api_key: String,
+    api_url: String,
+    model: String,
     sandbox_dir: String,
 ) {
     tokio::spawn(async move {
-        start_realtime_session(&session_id, &config_file, &api_key, &api_url, &model, &sandbox_dir).await;
+        start_realtime_session(
+            &session_id,
+            &config_file,
+            &api_key,
+            &api_url,
+            &model,
+            &sandbox_dir,
+        )
+        .await;
     });
 }
 
@@ -987,18 +1061,32 @@ pub async fn force_create_architecture(
     let ok = result["ok"].as_bool().unwrap_or(false);
     if ok {
         let filename = result["filename"].as_str().unwrap_or("").to_string();
-        let message = result["message"].as_str().unwrap_or("Architecture created.").to_string();
+        let message = result["message"]
+            .as_str()
+            .unwrap_or("Architecture created.")
+            .to_string();
         // NOTE: realtime session boot is handled by the caller (chat.rs)
         (true, Some(filename), message)
     } else {
-        let err = result["error"].as_str().unwrap_or("Unknown error").to_string();
-        (false, None, format!("Failed to create architecture: {}", err))
+        let err = result["error"]
+            .as_str()
+            .unwrap_or("Unknown error")
+            .to_string();
+        (
+            false,
+            None,
+            format!("Failed to create architecture: {}", err),
+        )
     }
 }
 
 /// Check if this session already has an auto-created architecture.
 pub async fn get_session_architecture(session_id: &str) -> Option<String> {
-    auto_created_architectures().lock().await.get(session_id).cloned()
+    auto_created_architectures()
+        .lock()
+        .await
+        .get(session_id)
+        .cloned()
 }
 
 pub async fn start_realtime_session(
@@ -1039,7 +1127,10 @@ pub async fn start_realtime_session(
             Some(id) => id.to_string(),
             None => continue,
         };
-        let role = agent_def.get("role").and_then(|v| v.as_str()).unwrap_or("worker");
+        let role = agent_def
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("worker");
 
         let (task_tx, task_rx) = tokio::sync::mpsc::channel::<AgentTask>(8);
         let status = Arc::new(TokioMutex::new("idle".to_string()));
@@ -1066,34 +1157,55 @@ pub async fn start_realtime_session(
             ));
         }
 
-        agent_handles.insert(agent_id.clone(), RealtimeAgentHandle {
-            agent_def: agent_def.clone(),
-            status,
-            task_tx,
-            current_task_from,
-        });
+        agent_handles.insert(
+            agent_id.clone(),
+            RealtimeAgentHandle {
+                agent_def: agent_def.clone(),
+                status,
+                task_tx,
+                current_task_from,
+            },
+        );
 
         // Write SUBAGENT_SPAWN to agent history so the graphic view can show this agent
         if role != "human" {
-            let name = agent_def.get("name").and_then(|v| v.as_str()).unwrap_or(&agent_id);
-            write_agent_history(session_id, "SUBAGENT_SPAWN", json!({
-                "agent_name": agent_id,
-                "display_name": name,
-                "role": role,
-                "parent": "main",
-            })).await;
+            let name = agent_def
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&agent_id);
+            write_agent_history(
+                session_id,
+                "SUBAGENT_SPAWN",
+                json!({
+                    "agent_name": agent_id,
+                    "display_name": name,
+                    "role": role,
+                    "parent": "main",
+                }),
+            )
+            .await;
         }
 
-        info!("[Realtime] Agent {} ({}) booted and listening", agent_id, role);
+        info!(
+            "[Realtime] Agent {} ({}) booted and listening",
+            agent_id, role
+        );
     }
 
     // Write SESSION_CONFIG so the graphic view knows the orchestration mode and YAML connections
-    let orch_mode = yaml_val["system"]["orchestration_mode"].as_str().unwrap_or("hierarchical");
-    write_agent_history(session_id, "SESSION_CONFIG", json!({
-        "orchestration_mode": orch_mode,
-        "connections": yaml_val.get("connections").cloned().unwrap_or(json!([])),
-        "workflow": yaml_val.get("workflow").cloned().unwrap_or(json!({})),
-    })).await;
+    let orch_mode = yaml_val["system"]["orchestration_mode"]
+        .as_str()
+        .unwrap_or("hierarchical");
+    write_agent_history(
+        session_id,
+        "SESSION_CONFIG",
+        json!({
+            "orchestration_mode": orch_mode,
+            "connections": yaml_val.get("connections").cloned().unwrap_or(json!([])),
+            "workflow": yaml_val.get("workflow").cloned().unwrap_or(json!({})),
+        }),
+    )
+    .await;
 
     let session = Arc::new(TokioMutex::new(RealtimeSession {
         session_id: session_id.to_string(),
@@ -1107,8 +1219,15 @@ pub async fn start_realtime_session(
         wait_hard_timeouts: Arc::new(TokioMutex::new(HashMap::new())),
     }));
 
-    realtime_sessions().lock().await.insert(session_id.to_string(), session);
-    info!("[Realtime] Session {} started with {} agents", session_id, agents_arr.len());
+    realtime_sessions()
+        .lock()
+        .await
+        .insert(session_id.to_string(), session);
+    info!(
+        "[Realtime] Session {} started with {} agents",
+        session_id,
+        agents_arr.len()
+    );
     true
 }
 
@@ -1131,40 +1250,60 @@ pub async fn shutdown_realtime_session(session_id: &str) {
 
 /// Get all non-human agent IDs from the system config.
 fn all_non_human_ids(system_config: &Value) -> Vec<String> {
-    system_config["agents"].as_array()
-        .map(|arr| arr.iter()
-            .filter_map(|a| a["id"].as_str().map(|s| s.to_string()))
-            .filter(|id| id != "human")
-            .collect())
+    system_config["agents"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| a["id"].as_str().map(|s| s.to_string()))
+                .filter(|id| id != "human")
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 /// Get downstream targets for an agent from workflow + connections.
 fn get_downstream(agent_id: &str, system_config: &Value) -> Vec<String> {
     let workflow_outputs: Vec<String> = system_config
-        .get("workflow").and_then(|w| w.get("sequence")).and_then(|s| s.as_array())
-        .and_then(|arr| arr.iter().find(|s| s.get("agent").and_then(|v| v.as_str()) == Some(agent_id)))
+        .get("workflow")
+        .and_then(|w| w.get("sequence"))
+        .and_then(|s| s.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|s| s.get("agent").and_then(|v| v.as_str()) == Some(agent_id))
+        })
         .and_then(|step| step.get("outputs_to").and_then(|v| v.as_array()))
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default();
 
     let conn_targets: Vec<String> = system_config
-        .get("connections").and_then(|v| v.as_array())
-        .map(|arr| arr.iter()
-            .filter(|c| c.get("from").and_then(|v| v.as_str()) == Some(agent_id))
-            .filter_map(|c| c.get("to").and_then(|v| v.as_str()).map(|s| s.to_string()))
-            .collect())
+        .get("connections")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|c| c.get("from").and_then(|v| v.as_str()) == Some(agent_id))
+                .filter_map(|c| c.get("to").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut d = workflow_outputs;
-    for t in conn_targets { if !d.contains(&t) { d.push(t); } }
+    for t in conn_targets {
+        if !d.contains(&t) {
+            d.push(t);
+        }
+    }
     d.retain(|id| id != "human");
     d
 }
 
 /// Check if an agent has mesh.enabled in its YAML definition.
 fn agent_has_mesh(agent_def: &Value) -> bool {
-    agent_def.get("mesh")
+    agent_def
+        .get("mesh")
         .and_then(|m| m.get("enabled"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
@@ -1172,11 +1311,14 @@ fn agent_has_mesh(agent_def: &Value) -> bool {
 
 /// Get mesh-enabled agent IDs from system config.
 fn mesh_agent_ids(system_config: &Value) -> Vec<String> {
-    system_config["agents"].as_array()
-        .map(|arr| arr.iter()
-            .filter(|a| agent_has_mesh(a) && a["role"].as_str() != Some("human"))
-            .filter_map(|a| a["id"].as_str().map(|s| s.to_string()))
-            .collect())
+    system_config["agents"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter(|a| agent_has_mesh(a) && a["role"].as_str() != Some("human"))
+                .filter_map(|a| a["id"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -1193,7 +1335,10 @@ const SUBAGENT_SKILLS_PERSONA: &str =
 /// Build the `=== INSTALLED SKILLS ===` block that is injected into sub-agent
 /// and realtime-agent prompts so they can discover available skills without
 /// having to call `list_skills` first.  Mirrors TS `buildEnabledSkillsBlock`.
-async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Option<&[String]>) -> String {
+async fn build_enabled_skills_block(
+    persona: Option<&str>,
+    project_skills: Option<&[String]>,
+) -> String {
     let data = crate::server::data::data_dir();
     let skills_path = data.join("skills.json");
     let registry: Vec<Value> = match tokio::fs::read_to_string(&skills_path).await {
@@ -1204,15 +1349,13 @@ async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Optio
     let enabled: Vec<&Value> = registry
         .iter()
         .filter(|s| s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true))
-        .filter(|s| {
-            match project_skills {
-                Some(allowed) => {
-                    let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                    let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    allowed.iter().any(|a| a == id || a == name)
-                }
-                None => true,
+        .filter(|s| match project_skills {
+            Some(allowed) => {
+                let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                allowed.iter().any(|a| a == id || a == name)
             }
+            None => true,
         })
         .collect();
 
@@ -1230,26 +1373,39 @@ async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Optio
                         let sn = s.get("name").and_then(|n| n.as_str()).unwrap_or("");
                         sn == name || slugify_skill_name(sn) == slugify_skill_name(&name)
                     });
-                    if already { continue; }
+                    if already {
+                        continue;
+                    }
                     // Skip custom skills not in the project's allowed list
                     if let Some(allowed) = project_skills {
-                        if !allowed.iter().any(|a| a == &name || slugify_skill_name(a) == slugify_skill_name(&name)) {
+                        if !allowed.iter().any(|a| {
+                            a == &name || slugify_skill_name(a) == slugify_skill_name(&name)
+                        }) {
                             continue;
                         }
                     }
                     // Read description from SKILL.md frontmatter
                     let desc = if let Ok(content) = tokio::fs::read_to_string(&skill_md).await {
-                        content.lines()
+                        content
+                            .lines()
                             .find(|l| l.starts_with("description:"))
-                            .map(|l| l.trim_start_matches("description:").trim().trim_matches('"').to_string())
+                            .map(|l| {
+                                l.trim_start_matches("description:")
+                                    .trim()
+                                    .trim_matches('"')
+                                    .to_string()
+                            })
                             .unwrap_or_default()
-                    } else { String::new() };
+                    } else {
+                        String::new()
+                    };
                     // List supporting files
                     let mut files = Vec::new();
                     if let Ok(mut fentries) = tokio::fs::read_dir(entry.path()).await {
                         while let Ok(Some(f)) = fentries.next_entry().await {
                             let fname = f.file_name().to_string_lossy().to_string();
-                            if fname != "SKILL.md" && !fname.starts_with('.') && fname != "__MACOSX" {
+                            if fname != "SKILL.md" && !fname.starts_with('.') && fname != "__MACOSX"
+                            {
                                 files.push(fname);
                             }
                         }
@@ -1277,7 +1433,11 @@ async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Optio
     if !custom_skills.is_empty() {
         block.push_str("\n\nCustom skills (priority — always prefer these):");
         for (name, desc, files) in &custom_skills {
-            let files_str = if files.is_empty() { String::new() } else { format!(" [files: {}]", files.join(", ")) };
+            let files_str = if files.is_empty() {
+                String::new()
+            } else {
+                format!(" [files: {}]", files.join(", "))
+            };
             if desc.is_empty() {
                 block.push_str(&format!("\n  - \"{}\"{}", name, files_str));
             } else {
@@ -1291,7 +1451,10 @@ async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Optio
         for s in &enabled {
             let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("?");
             let desc = s.get("description").and_then(|d| d.as_str()).unwrap_or("");
-            let source = s.get("source").and_then(|n| n.as_str()).unwrap_or("unknown");
+            let source = s
+                .get("source")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
             // Check if this skill has files on disk
             let has_files = resolve_skill_dir(name, Some(s)).is_some();
             let files_flag = if has_files { " [has SKILL.md]" } else { "" };
@@ -1299,14 +1462,19 @@ async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Optio
                 block.push_str(&format!("\n  - {} ({}){}", name, source, files_flag));
             } else {
                 let short_desc = crate::util::truncate_utf8(desc, 150);
-                block.push_str(&format!("\n  - {} ({}) — {}{}", name, source, short_desc, files_flag));
+                block.push_str(&format!(
+                    "\n  - {} ({}) — {}{}",
+                    name, source, short_desc, files_flag
+                ));
             }
         }
     }
 
-    block.push_str("\n\nSkill usage workflow: 1) call load_skill(\"<name>\") to read SKILL.md \
+    block.push_str(
+        "\n\nSkill usage workflow: 1) call load_skill(\"<name>\") to read SKILL.md \
         and see supporting files, 2) if the skill has supporting .py files, use read_file to \
-        load them, 3) use run_python or run_shell to execute following the skill instructions.");
+        load them, 3) use run_python or run_shell to execute following the skill instructions.",
+    );
 
     block
 }
@@ -1322,24 +1490,32 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
     let agent_id = agent_def["id"].as_str().unwrap_or("agent");
     let name = agent_def["name"].as_str().unwrap_or("Agent");
     let role = agent_def["role"].as_str().unwrap_or("worker");
-    let persona = agent_def.get("persona").and_then(|v| v.as_str()).unwrap_or("");
+    let persona = agent_def
+        .get("persona")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let responsibilities = agent_def
         .get("responsibilities")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter()
-            .filter_map(|v| v.as_str())
-            .map(|s| format!("  - {s}"))
-            .collect::<Vec<_>>()
-            .join("\n"))
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| format!("  - {s}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
         .unwrap_or_default();
 
     let orch_mode = system_config["system"]["orchestration_mode"]
-        .as_str().unwrap_or("hierarchical");
+        .as_str()
+        .unwrap_or("hierarchical");
 
     let all_agents = all_non_human_ids(system_config);
-    let others: Vec<&str> = all_agents.iter()
+    let others: Vec<&str> = all_agents
+        .iter()
         .filter(|id| id.as_str() != agent_id)
-        .map(|s| s.as_str()).collect();
+        .map(|s| s.as_str())
+        .collect();
     let downstream = get_downstream(agent_id, system_config);
 
     // Base prompt
@@ -1355,27 +1531,35 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
             if role == "orchestrator" {
                 // Build worker roster with responsibilities for the orchestrator
                 let agents_arr = system_config["agents"].as_array();
-                let worker_roster: String = agents_arr.map(|arr| {
-                    arr.iter()
-                        .filter(|a| {
-                            let r = a["role"].as_str().unwrap_or("worker");
-                            r == "worker" && a["id"].as_str().unwrap_or("") != agent_id
-                        })
-                        .map(|a| {
-                            let wid = a["id"].as_str().unwrap_or("?");
-                            let wname = a["name"].as_str().unwrap_or(wid);
-                            let resp = a["responsibilities"].as_array()
-                                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("; "))
-                                .unwrap_or_default();
-                            if resp.is_empty() {
-                                format!("  - {} (\"{}\")", wid, wname)
-                            } else {
-                                format!("  - {} (\"{}\") — {}", wid, wname, resp)
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                }).unwrap_or_default();
+                let worker_roster: String = agents_arr
+                    .map(|arr| {
+                        arr.iter()
+                            .filter(|a| {
+                                let r = a["role"].as_str().unwrap_or("worker");
+                                r == "worker" && a["id"].as_str().unwrap_or("") != agent_id
+                            })
+                            .map(|a| {
+                                let wid = a["id"].as_str().unwrap_or("?");
+                                let wname = a["name"].as_str().unwrap_or(wid);
+                                let resp = a["responsibilities"]
+                                    .as_array()
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join("; ")
+                                    })
+                                    .unwrap_or_default();
+                                if resp.is_empty() {
+                                    format!("  - {} (\"{}\")", wid, wname)
+                                } else {
+                                    format!("  - {} (\"{}\") — {}", wid, wname, resp)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default();
 
                 prompt += &format!(
                     "\n\n═══ HIERARCHICAL MODE — YOU ARE THE ORCHESTRATOR ═══\n\
@@ -1447,7 +1631,8 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
         }
         "pipeline" => {
             if downstream.is_empty() {
-                prompt += "\n\nPIPELINE MODE (FINAL STAGE): You are the last agent in the pipeline.\n\
+                prompt +=
+                    "\n\nPIPELINE MODE (FINAL STAGE): You are the last agent in the pipeline.\n\
                     Process the input you receive and provide your final result.\n\
                     Synthesize all upstream work into a comprehensive response.";
             } else {
@@ -1492,7 +1677,8 @@ fn build_realtime_agent_prompt(agent_def: &Value, system_config: &Value) -> Stri
         }
         _ => {
             // Fallback: generic realtime agent
-            prompt += "\n\nComplete tasks using your available tools. Provide clear text responses.";
+            prompt +=
+                "\n\nComplete tasks using your available tools. Provide clear text responses.";
             if !downstream.is_empty() {
                 prompt += &format!(
                     "\nYou can delegate sub-tasks to: [{}]",
@@ -1537,20 +1723,36 @@ async fn realtime_agent_loop(
     // Per-agent model resolution (router mode). Each agent may carry its own
     // model/api_url/api_key from the generated YAML; fall back to the shared
     // session values when absent, so every other mode is unchanged.
-    let agent_model = agent_def.get("model").and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| model.clone());
-    let agent_api_url = agent_def.get("api_url").and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| api_url.clone());
-    let agent_api_key = agent_def.get("api_key").and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| api_key.clone());
+    let agent_model = agent_def
+        .get("model")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| model.clone());
+    let agent_api_url = agent_def
+        .get("api_url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| api_url.clone());
+    let agent_api_key = agent_def
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| api_key.clone());
 
     // Per-agent loop profile from optional YAML fields (tools/mcp_servers/
     // skills/loop/compaction/system_prompt). Realtime agents get ONLY their own
     // YAML fields — the main session's profile governs the orchestrator.
-    let agent_profile = crate::server::services::agent_loop::profile_from_agent_def(&agent_def).map(Arc::new);
+    let agent_profile =
+        crate::server::services::agent_loop::profile_from_agent_def(&agent_def).map(Arc::new);
 
     let mut system_prompt = build_realtime_agent_prompt(&agent_def, &system_config);
-    if let Some(sp) = agent_profile.as_deref().and_then(|p| p.system_prompt.as_ref()) {
+    if let Some(sp) = agent_profile
+        .as_deref()
+        .and_then(|p| p.system_prompt.as_ref())
+    {
         if !sp.text.trim().is_empty() {
             system_prompt.push_str("\n\n");
             system_prompt.push_str(&sp.text);
@@ -1591,13 +1793,19 @@ async fn realtime_agent_loop(
 
         *status.lock().await = "working".to_string();
         *current_task_from.lock().await = task.from.clone();
-        info!("[Realtime] Agent {} received task from {}: {:.80}", agent_id, task.from, task.task);
+        info!(
+            "[Realtime] Agent {} received task from {}: {:.80}",
+            agent_id, task.from, task.task
+        );
 
         // ── P2P bid request handling ──────────────────────────────────────
         // If this is a bid request (from bb_propose in P2P mode), evaluate
         // with a constrained tool set (bb_read + bb_bid only) and continue.
         if task.from.starts_with("bid_request:") {
-            info!("[Realtime] Agent {} evaluating bid request: {:.80}", agent_id, task.task);
+            info!(
+                "[Realtime] Agent {} evaluating bid request: {:.80}",
+                agent_id, task.task
+            );
             let bid_messages = vec![json!({"role": "user", "content": task.task})];
             let bid_system = format!(
                 "{}\n\nYou are evaluating a bid request. Read the task details, \
@@ -1623,30 +1831,47 @@ async fn realtime_agent_loop(
                         log_agent_tool_call(&bid_progress_sid, &bid_log_aid, name, args);
                         let a = serde_json::to_string(args).unwrap_or_default();
                         let a_short = crate::util::truncate_utf8_ellipsis(&a, 300);
-                        format!("[{}] [{}] BID TOOL CALL: {}\n  args: {}", ts, bid_log_aid, name, a_short)
+                        format!(
+                            "[{}] [{}] BID TOOL CALL: {}\n  args: {}",
+                            ts, bid_log_aid, name, a_short
+                        )
                     }
                     ToolUpdate::ToolResult { name, result } => {
                         let r = serde_json::to_string(result).unwrap_or_default();
                         let r_short = crate::util::truncate_utf8_ellipsis(&r, 500);
-                        format!("[{}] [{}] BID TOOL RESULT: {}\n  {}", ts, bid_log_aid, name, r_short)
+                        format!(
+                            "[{}] [{}] BID TOOL RESULT: {}\n  {}",
+                            ts, bid_log_aid, name, r_short
+                        )
                     }
                     ToolUpdate::TextChunk(t) => {
                         let clean = strip_think_blocks(t);
-                        if clean.is_empty() { return; }
+                        if clean.is_empty() {
+                            return;
+                        }
                         let display = crate::util::truncate_utf8_ellipsis(&clean, 100);
                         format!("[{}] [{}] BID TEXT: {}", ts, bid_log_aid, display)
                     }
                     ToolUpdate::Error(e) => format!("[{}] [{}] BID ERROR: {}", ts, bid_log_aid, e),
-                    ToolUpdate::ApprovalRequired { name, .. } => format!("[{}] [{}] BID APPROVAL: {}", ts, bid_log_aid, name),
+                    ToolUpdate::ApprovalRequired { name, .. } => {
+                        format!("[{}] [{}] BID APPROVAL: {}", ts, bid_log_aid, name)
+                    }
                 };
                 let _ = bid_log_tx.send((bid_log_sid.clone(), bid_log_aid.clone(), line));
             };
             // Use the standard call_with_tools (non-realtime, no delegation) —
             // the dispatcher already routes bb_bid / bb_read to the correct handlers.
             let _ = call_with_tools(
-                &api_key, &api_url, &model, bid_messages,
-                Some(bid_system), &sandbox_dir, bid_on_update, bid_sub,
-            ).await;
+                &api_key,
+                &api_url,
+                &model,
+                bid_messages,
+                Some(bid_system),
+                &sandbox_dir,
+                bid_on_update,
+                bid_sub,
+            )
+            .await;
             *current_task_from.lock().await = String::new();
             *status.lock().await = "idle".to_string();
             continue;
@@ -1666,7 +1891,8 @@ async fn realtime_agent_loop(
         // Sub-agent config: who gets send_task/wait_result depends on orchestration mode
         let role = agent_def["role"].as_str().unwrap_or("worker");
         let orch_mode = system_config["system"]["orchestration_mode"]
-            .as_str().unwrap_or("hierarchical");
+            .as_str()
+            .unwrap_or("hierarchical");
         let is_orchestrator = role == "orchestrator";
         let has_mesh = agent_has_mesh(&agent_def);
         let downstream = get_downstream(&agent_id, &system_config);
@@ -1675,9 +1901,9 @@ async fn realtime_agent_loop(
         let can_delegate = match orch_mode {
             "hierarchical" => is_orchestrator || !downstream.is_empty(),
             "hybrid" => is_orchestrator || has_mesh || !downstream.is_empty(),
-            "mesh" => true,           // all agents can send to any other
+            "mesh" => true,                       // all agents can send to any other
             "pipeline" => !downstream.is_empty(), // only if has next stage
-            "p2p" | "p2p_orchestrator" => true, // all peers can delegate
+            "p2p" | "p2p_orchestrator" => true,   // all peers can delegate
             // Flat fan-out (router): workers are LEAF nodes. Only the top-level
             // caller orchestrates — workers must not delegate to each other or to
             // a stray sub-orchestrator, which otherwise tangles into queued loops.
@@ -1689,13 +1915,15 @@ async fn realtime_agent_loop(
         let reachable_ids: Vec<String> = match orch_mode {
             "mesh" | "p2p" | "p2p_orchestrator" => {
                 // Can reach ANY non-human agent
-                all_non_human_ids(&system_config).into_iter()
+                all_non_human_ids(&system_config)
+                    .into_iter()
                     .filter(|id| id != &agent_id)
                     .collect()
             }
             "hybrid" if has_mesh => {
                 // Mesh agents can reach any other agent
-                all_non_human_ids(&system_config).into_iter()
+                all_non_human_ids(&system_config)
+                    .into_iter()
                     .filter(|id| id != &agent_id)
                     .collect()
             }
@@ -1707,7 +1935,11 @@ async fn realtime_agent_loop(
 
         let sub_agent = SubAgentConfig {
             enabled: can_delegate,
-            mode: if can_delegate { "manual".to_string() } else { String::new() },
+            mode: if can_delegate {
+                "manual".to_string()
+            } else {
+                String::new()
+            },
             agent_ids: reachable_ids,
             session_id: session_id.clone(),
             agent_id: agent_id.clone(),
@@ -1738,16 +1970,24 @@ async fn realtime_agent_loop(
 
                     let args_str = serde_json::to_string(args).unwrap_or_default();
                     let args_short = crate::util::truncate_utf8_ellipsis(&args_str, 300);
-                    format!("[{}] [{}] TOOL CALL: {}\n  args: {}", ts, log_aid, name, args_short)
+                    format!(
+                        "[{}] [{}] TOOL CALL: {}\n  args: {}",
+                        ts, log_aid, name, args_short
+                    )
                 }
                 ToolUpdate::ToolResult { name, result } => {
                     let r_str = serde_json::to_string(result).unwrap_or_default();
                     let r_short = crate::util::truncate_utf8_ellipsis(&r_str, 500);
-                    format!("[{}] [{}] TOOL RESULT: {}\n  {}", ts, log_aid, name, r_short)
+                    format!(
+                        "[{}] [{}] TOOL RESULT: {}\n  {}",
+                        ts, log_aid, name, r_short
+                    )
                 }
                 ToolUpdate::TextChunk(t) => {
                     let clean = strip_think_blocks(t);
-                    if clean.is_empty() { return; }
+                    if clean.is_empty() {
+                        return;
+                    }
                     let display = crate::util::truncate_utf8_ellipsis(&clean, 100);
                     format!("[{}] [{}] TEXT: {}", ts, log_aid, display)
                 }
@@ -1761,7 +2001,10 @@ async fn realtime_agent_loop(
             let _ = log_tx.send((log_sid.clone(), log_aid.clone(), line));
         };
         // Check agent type: "remote", "cli", or default "llm"
-        let agent_type = agent_def.get("type").and_then(|v| v.as_str()).unwrap_or("llm");
+        let agent_type = agent_def
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("llm");
 
         // The on_update closure is consumed by each call_with_tools invocation;
         // step-verification retries need it again, so share it via Arc.
@@ -1775,9 +2018,16 @@ async fn realtime_agent_loop(
             .as_deref()
             .and_then(|p| p.loop_.as_ref())
             .and_then(|l| l.step_verification)
-            .unwrap_or_else(|| vsettings["agentStepVerifyEnabled"].as_bool().unwrap_or(true));
-        let verify_threshold = vsettings["agentStepVerifyThreshold"].as_f64().unwrap_or(0.7);
-        let verify_max_retries = vsettings["agentStepVerifyMaxRetries"].as_u64().unwrap_or(1) as usize;
+            .unwrap_or_else(|| {
+                vsettings["agentStepVerifyEnabled"]
+                    .as_bool()
+                    .unwrap_or(true)
+            });
+        let verify_threshold = vsettings["agentStepVerifyThreshold"]
+            .as_f64()
+            .unwrap_or(0.7);
+        let verify_max_retries =
+            vsettings["agentStepVerifyMaxRetries"].as_u64().unwrap_or(1) as usize;
 
         let mut attempt_messages = vec![json!({"role": "user", "content": user_content})];
         let mut effective_task = user_content.clone(); // retry carrier for remote/cli agents
@@ -1790,11 +2040,13 @@ async fn realtime_agent_loop(
             let result = match agent_type {
                 "remote" => {
                     // Delegate to a remote AndrewOS instance
-                    let remote_url = agent_def.get("remote_url")
+                    let remote_url = agent_def
+                        .get("remote_url")
                         .or_else(|| agent_def.get("url"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    let remote_token = agent_def.get("remote_token")
+                    let remote_token = agent_def
+                        .get("remote_token")
                         .or_else(|| agent_def.get("token"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
@@ -1806,15 +2058,21 @@ async fn realtime_agent_loop(
                             files: vec![],
                         }
                     } else {
-                        info!("[Realtime] Agent {} delegating to remote: {}", agent_id, remote_url);
+                        info!(
+                            "[Realtime] Agent {} delegating to remote: {}",
+                            agent_id, remote_url
+                        );
                         let result = exec_remote_task(&json!({
                             "instance": json!({"url": remote_url, "token": remote_token}).to_string(),
                             "task": effective_task,
                         })).await;
                         ToolLoopResult {
-                            content: result["result"].as_str().unwrap_or(
-                                result["error"].as_str().unwrap_or("Remote task completed")
-                            ).to_string(),
+                            content: result["result"]
+                                .as_str()
+                                .unwrap_or(
+                                    result["error"].as_str().unwrap_or("Remote task completed"),
+                                )
+                                .to_string(),
                             tool_results: vec![],
                             files: vec![],
                         }
@@ -1822,11 +2080,15 @@ async fn realtime_agent_loop(
                 }
                 "cli" => {
                     // Route to a CLI agent (claude_code or codex)
-                    let cli_provider = agent_def.get("provider")
+                    let cli_provider = agent_def
+                        .get("provider")
                         .and_then(|v| v.as_str())
                         .unwrap_or("claude_code");
 
-                    info!("[Realtime] Agent {} running via CLI provider: {}", agent_id, cli_provider);
+                    info!(
+                        "[Realtime] Agent {} running via CLI provider: {}",
+                        agent_id, cli_provider
+                    );
                     let cli_result = match cli_provider {
                         "codex" => {
                             exec_run_shell(&json!({
@@ -1841,9 +2103,11 @@ async fn realtime_agent_loop(
                         }
                     };
                     ToolLoopResult {
-                        content: cli_result["stdout"].as_str()
+                        content: cli_result["stdout"]
+                            .as_str()
                             .or(cli_result["output"].as_str())
-                            .unwrap_or("CLI agent completed").to_string(),
+                            .unwrap_or("CLI agent completed")
+                            .to_string(),
                         tool_results: vec![],
                         files: vec![],
                     }
@@ -1854,26 +2118,43 @@ async fn realtime_agent_loop(
                     // Outside router mode the candidate list is just [self], so
                     // this loop runs exactly once (identical to before).
                     let candidates = build_failover_candidates(
-                        &agent_def, &system_config,
-                        &agent_model, &agent_api_url, &agent_api_key,
+                        &agent_def,
+                        &system_config,
+                        &agent_model,
+                        &agent_api_url,
+                        &agent_api_key,
                     );
                     let mut llm_result = ToolLoopResult {
-                        content: String::new(), tool_results: vec![], files: vec![],
+                        content: String::new(),
+                        tool_results: vec![],
+                        files: vec![],
                     };
                     for (i, (m, u, k)) in candidates.iter().take(3).enumerate() {
                         let cb = on_update_arc.clone();
                         llm_result = if can_delegate {
                             call_with_tools_realtime(
-                                k, u, m, attempt_messages.clone(),
-                                Some(system_prompt.clone()), &sandbox_dir,
-                                move |x| cb(x), sub_agent.clone(),
-                            ).await
+                                k,
+                                u,
+                                m,
+                                attempt_messages.clone(),
+                                Some(system_prompt.clone()),
+                                &sandbox_dir,
+                                move |x| cb(x),
+                                sub_agent.clone(),
+                            )
+                            .await
                         } else {
                             call_with_tools(
-                                k, u, m, attempt_messages.clone(),
-                                Some(system_prompt.clone()), &sandbox_dir,
-                                move |x| cb(x), sub_agent.clone(),
-                            ).await
+                                k,
+                                u,
+                                m,
+                                attempt_messages.clone(),
+                                Some(system_prompt.clone()),
+                                &sandbox_dir,
+                                move |x| cb(x),
+                                sub_agent.clone(),
+                            )
+                            .await
                         };
                         if !is_terminal_llm_error(&llm_result.content) {
                             break;
@@ -1904,7 +2185,11 @@ async fn realtime_agent_loop(
             let mut evidence = summarize_tool_records(&result.tool_results);
             evidence.push_str(&format!(
                 "FILES GENERATED: {}",
-                if result.files.is_empty() { "(none)".to_string() } else { result.files.join(", ") }
+                if result.files.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    result.files.join(", ")
+                }
             ));
             let objective = match &task.context {
                 Some(ctx) => format!("{}\n\nContext: {}", task.task, ctx),
@@ -1912,48 +2197,108 @@ async fn realtime_agent_loop(
             };
 
             match judge_task_result(
-                &judge_client, &api_key, &api_url, &model,
-                &objective, &evidence, &result.content,
+                &judge_client,
+                &api_key,
+                &api_url,
+                &model,
+                &objective,
+                &evidence,
+                &result.content,
                 "its assigned task",
-            ).await {
+            )
+            .await
+            {
                 None => break result, // judge call/parse failed → fail open
                 Some(v) if v.satisfied || v.score >= verify_threshold => {
-                    info!("[StepVerify] Agent {} passed (score {:.2})", agent_id, v.score);
-                    append_session_progress(&session_id,
-                        &format!("> ✓ **{}** step verified (score {:.2})\n", agent_id, v.score));
-                    let _ = verify_log_tx.send((session_id.clone(), agent_id.clone(),
-                        format!("[{}] [{}] STEP VERIFIED: score {:.2}",
-                            chrono::Utc::now().format("%H:%M:%S"), agent_id, v.score)));
+                    info!(
+                        "[StepVerify] Agent {} passed (score {:.2})",
+                        agent_id, v.score
+                    );
+                    append_session_progress(
+                        &session_id,
+                        &format!(
+                            "> ✓ **{}** step verified (score {:.2})\n",
+                            agent_id, v.score
+                        ),
+                    );
+                    let _ = verify_log_tx.send((
+                        session_id.clone(),
+                        agent_id.clone(),
+                        format!(
+                            "[{}] [{}] STEP VERIFIED: score {:.2}",
+                            chrono::Utc::now().format("%H:%M:%S"),
+                            agent_id,
+                            v.score
+                        ),
+                    ));
                     verified = Some(true);
                     verdict = Some(v);
                     break result;
                 }
                 Some(v) if attempt >= verify_max_retries => {
-                    warn!("[StepVerify] Agent {} UNVERIFIED after {} retries (score {:.2}): {}",
-                        agent_id, attempt, v.score, crate::util::truncate_utf8(&v.missing, 200));
-                    append_session_progress(&session_id,
-                        &format!("> ✗ **{}** delivered UNVERIFIED (score {:.2})\n", agent_id, v.score));
-                    let _ = verify_log_tx.send((session_id.clone(), agent_id.clone(),
-                        format!("[{}] [{}] STEP UNVERIFIED: score {:.2} — {}",
-                            chrono::Utc::now().format("%H:%M:%S"), agent_id, v.score,
-                            crate::util::truncate_utf8(&v.missing, 200))));
+                    warn!(
+                        "[StepVerify] Agent {} UNVERIFIED after {} retries (score {:.2}): {}",
+                        agent_id,
+                        attempt,
+                        v.score,
+                        crate::util::truncate_utf8(&v.missing, 200)
+                    );
+                    append_session_progress(
+                        &session_id,
+                        &format!(
+                            "> ✗ **{}** delivered UNVERIFIED (score {:.2})\n",
+                            agent_id, v.score
+                        ),
+                    );
+                    let _ = verify_log_tx.send((
+                        session_id.clone(),
+                        agent_id.clone(),
+                        format!(
+                            "[{}] [{}] STEP UNVERIFIED: score {:.2} — {}",
+                            chrono::Utc::now().format("%H:%M:%S"),
+                            agent_id,
+                            v.score,
+                            crate::util::truncate_utf8(&v.missing, 200)
+                        ),
+                    ));
                     verified = Some(false);
                     verdict = Some(v);
                     break result;
                 }
                 Some(v) => {
                     attempt += 1;
-                    info!("[StepVerify] Agent {} retry {}/{} (score {:.2}): {}",
-                        agent_id, attempt, verify_max_retries, v.score,
-                        crate::util::truncate_utf8(&v.missing, 200));
-                    append_session_progress(&session_id,
-                        &format!("> ↻ **{}** step verify retry {}/{} (score {:.2}): {}\n",
-                            agent_id, attempt, verify_max_retries, v.score,
-                            crate::util::truncate_utf8(&v.missing, 160)));
-                    let _ = verify_log_tx.send((session_id.clone(), agent_id.clone(),
-                        format!("[{}] [{}] STEP VERIFY RETRY {}/{}: score {:.2} — {}",
-                            chrono::Utc::now().format("%H:%M:%S"), agent_id, attempt,
-                            verify_max_retries, v.score, crate::util::truncate_utf8(&v.missing, 200))));
+                    info!(
+                        "[StepVerify] Agent {} retry {}/{} (score {:.2}): {}",
+                        agent_id,
+                        attempt,
+                        verify_max_retries,
+                        v.score,
+                        crate::util::truncate_utf8(&v.missing, 200)
+                    );
+                    append_session_progress(
+                        &session_id,
+                        &format!(
+                            "> ↻ **{}** step verify retry {}/{} (score {:.2}): {}\n",
+                            agent_id,
+                            attempt,
+                            verify_max_retries,
+                            v.score,
+                            crate::util::truncate_utf8(&v.missing, 160)
+                        ),
+                    );
+                    let _ = verify_log_tx.send((
+                        session_id.clone(),
+                        agent_id.clone(),
+                        format!(
+                            "[{}] [{}] STEP VERIFY RETRY {}/{}: score {:.2} — {}",
+                            chrono::Utc::now().format("%H:%M:%S"),
+                            agent_id,
+                            attempt,
+                            verify_max_retries,
+                            v.score,
+                            crate::util::truncate_utf8(&v.missing, 200)
+                        ),
+                    ));
 
                     let feedback = format!(
                         "⚠️ STEP VERIFICATION: your result scored {:.1}/1.0 (threshold {:.1}). Gaps found:\n{}\n\n\
@@ -1964,7 +2309,9 @@ async fn realtime_agent_loop(
                     attempt_messages.push(json!({"role": "user", "content": feedback}));
                     effective_task = format!(
                         "{}\n\nYOUR PREVIOUS ATTEMPT:\n{}\n\n{}",
-                        user_content, crate::util::truncate_utf8(&result.content, 4000), feedback
+                        user_content,
+                        crate::util::truncate_utf8(&result.content, 4000),
+                        feedback
                     );
                     verdict = Some(v);
                     // continue loop → re-run agent
@@ -1984,20 +2331,32 @@ async fn realtime_agent_loop(
             verified,
             verify_score: verdict.as_ref().map(|v| v.score),
             verify_gaps: verdict.as_ref().and_then(|v| {
-                if v.missing.trim().is_empty() { None } else { Some(v.missing.clone()) }
+                if v.missing.trim().is_empty() {
+                    None
+                } else {
+                    Some(v.missing.clone())
+                }
             }),
         };
 
-        info!("[Realtime] Agent {} finished. Result length: {}", agent_id, agent_result.result.len());
+        info!(
+            "[Realtime] Agent {} finished. Result length: {}",
+            agent_id,
+            agent_result.result.len()
+        );
 
         // Pipeline auto-forwarding: if this agent has a downstream target in pipeline mode,
         // automatically send_task to the next agent in the chain.
         let orch_mode = system_config["system"]["orchestration_mode"]
-            .as_str().unwrap_or("hierarchical");
+            .as_str()
+            .unwrap_or("hierarchical");
         if orch_mode == "pipeline" {
             let downstream = get_downstream(&agent_id, &system_config);
             if let Some(next_agent) = downstream.first() {
-                info!("[Realtime] Pipeline auto-forward: {} → {}", agent_id, next_agent);
+                info!(
+                    "[Realtime] Pipeline auto-forward: {} → {}",
+                    agent_id, next_agent
+                );
                 let forward_task = format!(
                     "Previous pipeline stage ({}) produced the following result. Continue processing:\n\n{}",
                     agent_id, loop_result.content
@@ -2007,15 +2366,30 @@ async fn realtime_agent_loop(
                     "task": forward_task,
                 });
                 let fwd_result = exec_send_task_from(&forward_args, &session_id, &agent_id).await;
-                let fwd_ok = fwd_result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                let fwd_ok = fwd_result
+                    .get("ok")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if fwd_ok {
-                    info!("[Realtime] Pipeline auto-forward {} → {} succeeded", agent_id, next_agent);
+                    info!(
+                        "[Realtime] Pipeline auto-forward {} → {} succeeded",
+                        agent_id, next_agent
+                    );
                     let _ = fwd_log_tx.send((
-                        session_id.clone(), agent_id.clone(),
-                        format!("[{}] [{}] PIPELINE FORWARD → {}", chrono::Utc::now().format("%H:%M:%S"), agent_id, next_agent),
+                        session_id.clone(),
+                        agent_id.clone(),
+                        format!(
+                            "[{}] [{}] PIPELINE FORWARD → {}",
+                            chrono::Utc::now().format("%H:%M:%S"),
+                            agent_id,
+                            next_agent
+                        ),
                     ));
                 } else {
-                    warn!("[Realtime] Pipeline auto-forward {} → {} failed: {:?}", agent_id, next_agent, fwd_result);
+                    warn!(
+                        "[Realtime] Pipeline auto-forward {} → {} failed: {:?}",
+                        agent_id, next_agent, fwd_result
+                    );
                 }
             }
         }
@@ -2041,33 +2415,45 @@ pub async fn exec_send_task(args: &Value, session_id: &str) -> Value {
 
 /// send_task with caller ID for access control
 pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str) -> Value {
-    let to = match args.get("to").and_then(|v| v.as_str())
+    let to = match args
+        .get("to")
+        .and_then(|v| v.as_str())
         .or_else(|| args.get("agent_name").and_then(|v| v.as_str()))
         .or_else(|| args.get("agentId").and_then(|v| v.as_str()))
-        .or_else(|| args.get("agent_id").and_then(|v| v.as_str())) {
+        .or_else(|| args.get("agent_id").and_then(|v| v.as_str()))
+    {
         Some(s) => s.to_string(),
         None => return json!({"ok": false, "error": "Missing 'to' parameter"}),
     };
-    let task = match args.get("task").and_then(|v| v.as_str())
+    let task = match args
+        .get("task")
+        .and_then(|v| v.as_str())
         .or_else(|| args.get("task_description").and_then(|v| v.as_str()))
-        .or_else(|| args.get("message").and_then(|v| v.as_str())) {
+        .or_else(|| args.get("message").and_then(|v| v.as_str()))
+    {
         Some(s) => s.to_string(),
         None => return json!({"ok": false, "error": "Missing 'task' parameter"}),
     };
-    let context = args.get("context").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let context = args
+        .get("context")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     let session_arc = {
         let map = realtime_sessions().lock().await;
         match map.get(session_id) {
             Some(s) => s.clone(),
-            None => return json!({"ok": false, "error": "No realtime session active. Ensure sub-agent mode is 'realtime'."}),
+            None => {
+                return json!({"ok": false, "error": "No realtime session active. Ensure sub-agent mode is 'realtime'."})
+            }
         }
     };
     let session = session_arc.lock().await;
 
     // Access control based on orchestration mode
     let orch_mode = session.system_config["system"]["orchestration_mode"]
-        .as_str().unwrap_or("hierarchical");
+        .as_str()
+        .unwrap_or("hierarchical");
 
     let handle = match session.agents.get(&to) {
         Some(h) => h,
@@ -2081,15 +2467,20 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
     // The main LLM must delegate through the orchestrator, not directly to workers.
     if caller_id == "main" && matches!(orch_mode, "hierarchical" | "hybrid") {
         // Find if there's an orchestrator agent in the session
-        let has_orchestrator = session.agents.iter().any(|(_, h)| {
-            h.agent_def.get("role").and_then(|r| r.as_str()) == Some("orchestrator")
-        });
+        let has_orchestrator = session
+            .agents
+            .iter()
+            .any(|(_, h)| h.agent_def.get("role").and_then(|r| r.as_str()) == Some("orchestrator"));
         if has_orchestrator {
             let target_role = handle.agent_def["role"].as_str().unwrap_or("");
             if target_role != "orchestrator" {
                 // Find the orchestrator's ID for the error message
-                let orch_id = session.agents.iter()
-                    .find(|(_, h)| h.agent_def.get("role").and_then(|r| r.as_str()) == Some("orchestrator"))
+                let orch_id = session
+                    .agents
+                    .iter()
+                    .find(|(_, h)| {
+                        h.agent_def.get("role").and_then(|r| r.as_str()) == Some("orchestrator")
+                    })
                     .map(|(id, _)| id.as_str())
                     .unwrap_or("orchestrator");
                 return json!({
@@ -2102,12 +2493,17 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
 
     // Hierarchical/pipeline: enforce connection-based access control
     if matches!(orch_mode, "hierarchical" | "pipeline") && caller_id != "main" {
-        let caller_def = session.system_config["agents"].as_array()
+        let caller_def = session.system_config["agents"]
+            .as_array()
             .and_then(|arr| arr.iter().find(|a| a["id"].as_str() == Some(caller_id)));
 
         // Block non-orchestrators from sending to orchestrator (circular delegation)
         let target_role = handle.agent_def["role"].as_str().unwrap_or("");
-        if target_role == "orchestrator" && caller_def.map(|d| d["role"].as_str() != Some("orchestrator")).unwrap_or(true) {
+        if target_role == "orchestrator"
+            && caller_def
+                .map(|d| d["role"].as_str() != Some("orchestrator"))
+                .unwrap_or(true)
+        {
             return json!({"ok": false, "error": format!("Agent '{}' cannot send tasks to orchestrator (circular delegation)", caller_id)});
         }
 
@@ -2119,13 +2515,17 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
     }
     // hybrid: mesh agents bypass, others check connections
     else if orch_mode == "hybrid" && caller_id != "main" {
-        let caller_def = session.system_config["agents"].as_array()
+        let caller_def = session.system_config["agents"]
+            .as_array()
             .and_then(|arr| arr.iter().find(|a| a["id"].as_str() == Some(caller_id)));
 
         // Block non-orchestrators from sending to orchestrator (circular delegation)
         let target_role = handle.agent_def["role"].as_str().unwrap_or("");
         if target_role == "orchestrator" {
-            if caller_def.map(|d| d["role"].as_str() != Some("orchestrator")).unwrap_or(true) {
+            if caller_def
+                .map(|d| d["role"].as_str() != Some("orchestrator"))
+                .unwrap_or(true)
+            {
                 return json!({"ok": false, "error": format!("Agent '{}' cannot send tasks to orchestrator (circular delegation)", caller_id)});
             }
         }
@@ -2140,7 +2540,8 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
     }
     // p2p_orchestrator: bidder-only agents must be awarded on blackboard first
     else if orch_mode == "p2p_orchestrator" && caller_id != "main" {
-        let caller_def = session.system_config["agents"].as_array()
+        let caller_def = session.system_config["agents"]
+            .as_array()
             .and_then(|arr| arr.iter().find(|a| a["id"].as_str() == Some(caller_id)));
         let is_caller_orchestrator = caller_def
             .map(|d| d["role"].as_str() == Some("orchestrator"))
@@ -2181,10 +2582,17 @@ pub async fn exec_send_task_from(args: &Value, session_id: &str, caller_id: &str
     // that so the caller doesn't expect an instant turnaround or flood the queue.
     let queued_ahead = task_tx.max_capacity().saturating_sub(task_tx.capacity());
 
-    let agent_task = AgentTask { from: caller_id.to_string(), task: task.clone(), context };
+    let agent_task = AgentTask {
+        from: caller_id.to_string(),
+        task: task.clone(),
+        context,
+    };
     match task_tx.send(agent_task).await {
         Ok(_) => {
-            let mut note = format!("Task sent to {}. Use wait_result({{\"from\": \"{}\"}}) to collect the result.", to, to);
+            let mut note = format!(
+                "Task sent to {}. Use wait_result({{\"from\": \"{}\"}}) to collect the result.",
+                to, to
+            );
             if target_busy || queued_ahead > 0 {
                 note.push_str(&format!(
                     " NOTE: {} is currently busy{} — your task is queued and will run after the current work. \
@@ -2237,9 +2645,14 @@ fn wait_result_json(from: &str, result: &AgentResult) -> Value {
 /// Pop the oldest pending result for `from` (FIFO). Removes the key when empty.
 fn pop_result(map: &mut HashMap<String, Vec<AgentResult>>, from: &str) -> Option<AgentResult> {
     let queue = map.get_mut(from)?;
-    if queue.is_empty() { map.remove(from); return None; }
+    if queue.is_empty() {
+        map.remove(from);
+        return None;
+    }
     let result = queue.remove(0);
-    if queue.is_empty() { map.remove(from); }
+    if queue.is_empty() {
+        map.remove(from);
+    }
     Some(result)
 }
 
@@ -2273,10 +2686,17 @@ pub async fn exec_wait_result_from(args: &Value, session_id: &str, caller_id: &s
 
     let settings = load_agent_settings();
     let default_timeout = settings["agentWaitResultTimeout"].as_u64().unwrap_or(300);
-    let timeout_secs = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(default_timeout).max(5);
+    let timeout_secs = args
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(default_timeout)
+        .max(5);
     // Hard limit per wait_result call — auto-retry internally up to this long.
     // Configurable; the coordinator can always call wait_result again.
-    let hard_limit_secs: u64 = settings["agentWaitResultHardTimeout"].as_u64().unwrap_or(1800).max(60);
+    let hard_limit_secs: u64 = settings["agentWaitResultHardTimeout"]
+        .as_u64()
+        .unwrap_or(1800)
+        .max(60);
 
     let (results, result_notify, waiting_on, wait_hard_timeouts) = {
         let map = realtime_sessions().lock().await;
@@ -2305,8 +2725,12 @@ pub async fn exec_wait_result_from(args: &Value, session_id: &str, caller_id: &s
                         });
                     }
                 }
-                (session.results.clone(), session.result_notify.clone(),
-                 session.waiting_on.clone(), session.wait_hard_timeouts.clone())
+                (
+                    session.results.clone(),
+                    session.result_notify.clone(),
+                    session.waiting_on.clone(),
+                    session.wait_hard_timeouts.clone(),
+                )
             }
             None => return json!({"ok": false, "error": "No realtime session active."}),
         }
@@ -2316,7 +2740,13 @@ pub async fn exec_wait_result_from(args: &Value, session_id: &str, caller_id: &s
     // waiting on; if it leads back to the caller, this wait can never finish.
     // Skip when a result is already pending — then the wait returns instantly.
     {
-        let pending = { results.lock().await.get(&from).map_or(false, |q| !q.is_empty()) };
+        let pending = {
+            results
+                .lock()
+                .await
+                .get(&from)
+                .map_or(false, |q| !q.is_empty())
+        };
         if !pending {
             let waits = waiting_on.lock().await;
             let mut current = from.clone();
@@ -2326,7 +2756,11 @@ pub async fn exec_wait_result_from(args: &Value, session_id: &str, caller_id: &s
                     Some(next) => {
                         chain.push(next.clone());
                         if next == caller_id {
-                            warn!("[wait_result] Deadlock detected: {} → {}", caller_id, chain.join(" → "));
+                            warn!(
+                                "[wait_result] Deadlock detected: {} → {}",
+                                caller_id,
+                                chain.join(" → ")
+                            );
                             return json!({
                                 "ok": false,
                                 "error": format!(
@@ -2349,12 +2783,27 @@ pub async fn exec_wait_result_from(args: &Value, session_id: &str, caller_id: &s
 
     // Register this wait edge for cycle detection by other agents,
     // and make sure it is removed on every exit path below.
-    { waiting_on.lock().await.insert(caller_id.to_string(), from.clone()); }
+    {
+        waiting_on
+            .lock()
+            .await
+            .insert(caller_id.to_string(), from.clone());
+    }
     let out = wait_result_inner(
-        session_id, caller_id, &from, timeout_secs, hard_limit_secs,
-        &results, &result_notify, &waiting_on, &wait_hard_timeouts,
-    ).await;
-    { waiting_on.lock().await.remove(caller_id); }
+        session_id,
+        caller_id,
+        &from,
+        timeout_secs,
+        hard_limit_secs,
+        &results,
+        &result_notify,
+        &waiting_on,
+        &wait_hard_timeouts,
+    )
+    .await;
+    {
+        waiting_on.lock().await.remove(caller_id);
+    }
     out
 }
 
@@ -2382,14 +2831,19 @@ async fn wait_result_inner(
             {
                 let mut map = results.lock().await;
                 if let Some(result) = pop_result(&mut map, from) {
-                    info!("[wait_result] Got result from '{}' after ~{}s", from, total_waited);
+                    info!(
+                        "[wait_result] Got result from '{}' after ~{}s",
+                        from, total_waited
+                    );
                     wait_hard_timeouts.lock().await.remove(&edge_key);
                     return wait_result_json(from, &result);
                 }
             }
 
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() { break; } // inner timeout → check if agent still working
+            if remaining.is_zero() {
+                break;
+            } // inner timeout → check if agent still working
 
             tokio::select! {
                 _ = result_notify.notified() => continue,
@@ -2409,8 +2863,12 @@ async fn wait_result_inner(
                 if let Some(handle) = session.agents.get(from) {
                     let status = handle.status.lock().await;
                     (status.as_str() == "working", handle.task_tx.is_closed())
-                } else { (false, false) }
-            } else { (false, false) }
+                } else {
+                    (false, false)
+                }
+            } else {
+                (false, false)
+            }
         };
 
         if agent_dead {
@@ -2430,7 +2888,10 @@ async fn wait_result_inner(
             for _ in 0..waits.len() + 1 {
                 match waits.get(&current) {
                     Some(next) if next == caller_id => {
-                        warn!("[wait_result] Deadlock formed while waiting: {} ↔ {}", caller_id, from);
+                        warn!(
+                            "[wait_result] Deadlock formed while waiting: {} ↔ {}",
+                            caller_id, from
+                        );
                         return json!({
                             "ok": false,
                             "error": format!(
@@ -2447,7 +2908,10 @@ async fn wait_result_inner(
         }
 
         if still_working && tokio::time::Instant::now() < hard_deadline {
-            info!("[wait_result] Agent '{}' still working after {}s — auto-retrying wait", from, total_waited);
+            info!(
+                "[wait_result] Agent '{}' still working after {}s — auto-retrying wait",
+                from, total_waited
+            );
             continue; // auto-retry
         }
 
@@ -2472,7 +2936,9 @@ async fn wait_result_inner(
                      Use list_files + read_file to inspect the work files produced so far, \
                      assemble the best possible final answer from them, and respond. \
                      Do NOT call wait_result for '{}' again.",
-                    strikes, strikes as u64 * hard_limit_secs, from
+                    strikes,
+                    strikes as u64 * hard_limit_secs,
+                    from
                 )
             } else {
                 "Call wait_result again to continue waiting. Do NOT resend the task.".to_string()
@@ -2493,7 +2959,10 @@ async fn wait_result_inner(
                 }
                 let mut map = results.lock().await;
                 if let Some(result) = pop_result(&mut map, from) {
-                    info!("[wait_result] Got result from '{}' on idle-retry {}", from, retry);
+                    info!(
+                        "[wait_result] Got result from '{}' on idle-retry {}",
+                        from, retry
+                    );
                     wait_hard_timeouts.lock().await.remove(&edge_key);
                     return wait_result_json(from, &result);
                 }
@@ -2550,11 +3019,24 @@ pub fn load_agent_yaml(filename: &str) -> Option<(Value, Vec<String>)> {
 }
 
 /// Build a system prompt for a specific agent from the YAML config
-fn build_agent_system_prompt(agent_def: &Value, system_config: &Value, available_targets: &[String]) -> String {
+fn build_agent_system_prompt(
+    agent_def: &Value,
+    system_config: &Value,
+    available_targets: &[String],
+) -> String {
     let agent_id = agent_def.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let name = agent_def.get("name").and_then(|v| v.as_str()).unwrap_or("Agent");
-    let role = agent_def.get("role").and_then(|v| v.as_str()).unwrap_or("worker");
-    let persona = agent_def.get("persona").and_then(|v| v.as_str()).unwrap_or("");
+    let name = agent_def
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Agent");
+    let role = agent_def
+        .get("role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("worker");
+    let persona = agent_def
+        .get("persona")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let responsibilities = agent_def
         .get("responsibilities")
         .and_then(|v| v.as_array())
@@ -2585,9 +3067,9 @@ fn build_agent_system_prompt(agent_def: &Value, system_config: &Value, available
         .and_then(|w| w.get("sequence"))
         .and_then(|s| s.as_array())
         .and_then(|steps| {
-            steps.iter().find(|s| {
-                s.get("agent").and_then(|a| a.as_str()) == Some(agent_id)
-            })
+            steps
+                .iter()
+                .find(|s| s.get("agent").and_then(|a| a.as_str()) == Some(agent_id))
         })
         .cloned();
 
@@ -2621,7 +3103,8 @@ fn build_agent_system_prompt(agent_def: &Value, system_config: &Value, available
         .get("connections")
         .and_then(|c| c.as_array())
         .map(|conns| {
-            conns.iter()
+            conns
+                .iter()
                 .filter(|c| c.get("to").and_then(|v| v.as_str()) == Some(agent_id))
                 .filter_map(|c| {
                     let from = c.get("from").and_then(|v| v.as_str())?;
@@ -2671,23 +3154,32 @@ fn build_agent_system_prompt(agent_def: &Value, system_config: &Value, available
         String::new()
     } else {
         // Look up names for available targets
-        let target_descs: Vec<String> = available_targets.iter().map(|tid| {
-            let tname = system_config
-                .get("agents")
-                .and_then(|a| a.as_array())
-                .and_then(|arr| arr.iter().find(|a| a.get("id").and_then(|v| v.as_str()) == Some(tid.as_str())))
-                .and_then(|a| a.get("name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(tid.as_str());
-            let trole = system_config
-                .get("agents")
-                .and_then(|a| a.as_array())
-                .and_then(|arr| arr.iter().find(|a| a.get("id").and_then(|v| v.as_str()) == Some(tid.as_str())))
-                .and_then(|a| a.get("role"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("worker");
-            format!("  - {} ({}): {}", tid, trole, tname)
-        }).collect();
+        let target_descs: Vec<String> = available_targets
+            .iter()
+            .map(|tid| {
+                let tname = system_config
+                    .get("agents")
+                    .and_then(|a| a.as_array())
+                    .and_then(|arr| {
+                        arr.iter()
+                            .find(|a| a.get("id").and_then(|v| v.as_str()) == Some(tid.as_str()))
+                    })
+                    .and_then(|a| a.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(tid.as_str());
+                let trole = system_config
+                    .get("agents")
+                    .and_then(|a| a.as_array())
+                    .and_then(|arr| {
+                        arr.iter()
+                            .find(|a| a.get("id").and_then(|v| v.as_str()) == Some(tid.as_str()))
+                    })
+                    .and_then(|a| a.get("role"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("worker");
+                format!("  - {} ({}): {}", tid, trole, tname)
+            })
+            .collect();
         format!(
             "\n\nAvailable agents to delegate to (use spawn_subagent tool):\n{}",
             target_descs.join("\n")
@@ -2695,11 +3187,12 @@ fn build_agent_system_prompt(agent_def: &Value, system_config: &Value, available
     };
 
     let workflow_info = if my_step_num > 0 {
-        let action_info = if !my_action.is_empty() && my_action != "Analyze and process assigned tasks" {
-            format!("\nYour primary action: {}", my_action)
-        } else {
-            String::new()
-        };
+        let action_info =
+            if !my_action.is_empty() && my_action != "Analyze and process assigned tasks" {
+                format!("\nYour primary action: {}", my_action)
+            } else {
+                String::new()
+            };
         format!("\nWorkflow step: {}{}", my_step_num, action_info)
     } else {
         String::new()
@@ -2738,7 +3231,10 @@ pub fn tool_catalog() -> Vec<(String, String)> {
             let f = t.get("function")?;
             Some((
                 f.get("name")?.as_str()?.to_string(),
-                f.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                f.get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
+                    .to_string(),
             ))
         })
         .collect();
@@ -2979,7 +3475,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "remote_task",
-                "description": "Delegate a task to a AndrewOS instance on another machine.",
+                "description": "Delegate a task to an AndrewOS instance on another machine.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -3468,7 +3964,11 @@ fn spawn_subagent_tool(agent_list: &str) -> Value {
 }
 
 /// Build tool list dynamically based on mode and whether a session has been activated.
-pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, session_activated: bool) -> Vec<Value> {
+pub fn tool_definitions_for_mode(
+    sub_agent: &SubAgentConfig,
+    realtime: bool,
+    session_activated: bool,
+) -> Vec<Value> {
     let mut tools = tool_definitions();
     if !sub_agent.enabled || sub_agent.depth >= effective_max_spawn_depth(sub_agent) {
         return tools;
@@ -3482,7 +3982,10 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
     // For fully_auto/auto_swarm, agent_ids might be empty before architecture is created
     // — that's OK, the mode logic handles it
     if sub_agent.agent_ids.is_empty()
-        && !matches!(sub_agent.mode.as_str(), "fully_auto" | "auto_swarm" | "router")
+        && !matches!(
+            sub_agent.mode.as_str(),
+            "fully_auto" | "auto_swarm" | "router"
+        )
     {
         return tools;
     }
@@ -3497,7 +4000,7 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
                 // Only keep write_file + run_python for formatting final output.
                 let mut rt_tools = realtime_tools(&agent_list);
                 rt_tools.push(create_architecture_tool()); // allow recreation
-                // Add write_file and run_python for output formatting only
+                                                           // Add write_file and run_python for output formatting only
                 for t in &tools {
                     let name = t["function"]["name"].as_str().unwrap_or("");
                     if matches!(name, "write_file" | "run_python") {
@@ -3527,7 +4030,10 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
             let mut rt_tools = realtime_tools(&agent_list);
             for t in &tools {
                 let name = t["function"]["name"].as_str().unwrap_or("");
-                if matches!(name, "write_file" | "run_python" | "read_file" | "list_files") {
+                if matches!(
+                    name,
+                    "write_file" | "run_python" | "read_file" | "list_files"
+                ) {
                     rt_tools.push(t.clone());
                 }
             }
@@ -3546,7 +4052,10 @@ pub fn tool_definitions_for_mode(sub_agent: &SubAgentConfig, realtime: bool, ses
                 rt_tools.push(create_architecture_tool()); // allow re-architecting
                 for t in &tools {
                     let name = t["function"]["name"].as_str().unwrap_or("");
-                    if matches!(name, "write_file" | "run_python" | "read_file" | "list_files") {
+                    if matches!(
+                        name,
+                        "write_file" | "run_python" | "read_file" | "list_files"
+                    ) {
                         rt_tools.push(t.clone());
                     }
                 }
@@ -3584,12 +4093,16 @@ async fn write_agent_history(session_id: &str, event: &str, data: serde_json::Va
     if session_id.is_empty() {
         return;
     }
-    let dir = crate::server::data::data_dir().join("agent_history").join(session_id);
+    let dir = crate::server::data::data_dir()
+        .join("agent_history")
+        .join(session_id);
     if tokio::fs::create_dir_all(&dir).await.is_err() {
         return;
     }
     let path = dir.join("spawn.jsonl");
-    let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let ts = chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string();
     let entry = match serde_json::to_string(&json!({
         "timestamp": ts,
         "event": event,
@@ -3631,7 +4144,12 @@ fn truncate(s: &str, max: usize) -> String {
 /// fields (arrays like output_files, numbers, nested objects) are untouched so
 /// file collection and structured data keep working.
 fn truncate_result_value(result: &mut Value, max_len: usize) {
-    let cap = |s: &str| format!("{}...[truncated by profile]", crate::util::truncate_utf8(s, max_len));
+    let cap = |s: &str| {
+        format!(
+            "{}...[truncated by profile]",
+            crate::util::truncate_utf8(s, max_len)
+        )
+    };
     match result {
         Value::String(s) if s.len() > max_len => *s = cap(s),
         Value::Object(map) => {
@@ -3650,8 +4168,11 @@ fn truncate_result_value(result: &mut Value, max_len: usize) {
 /// Resolve a path relative to the sandbox directory. If the path is absolute
 /// it is used as-is; otherwise it is joined with `sandbox_dir`.
 fn resolve_path(sandbox_dir: &str, path: &str) -> PathBuf {
-    let sandbox = std::fs::canonicalize(sandbox_dir)
-        .unwrap_or_else(|_| PathBuf::from(sandbox_dir).canonicalize().unwrap_or_else(|_| PathBuf::from(sandbox_dir)));
+    let sandbox = std::fs::canonicalize(sandbox_dir).unwrap_or_else(|_| {
+        PathBuf::from(sandbox_dir)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(sandbox_dir))
+    });
 
     let candidate = if PathBuf::from(path).is_absolute() {
         PathBuf::from(path)
@@ -3699,7 +4220,9 @@ fn resolve_path(sandbox_dir: &str, path: &str) -> PathBuf {
 /// the sentinel otherwise produces ("cannot find the path", "directory name is
 /// invalid") send the model chasing phantom filesystem problems for rounds.
 fn is_blocked_path(p: &std::path::Path) -> bool {
-    p.file_name().map(|f| f == ".blocked_path_traversal").unwrap_or(false)
+    p.file_name()
+        .map(|f| f == ".blocked_path_traversal")
+        .unwrap_or(false)
 }
 
 /// Standard error result for a sandbox-escape attempt.
@@ -3729,13 +4252,19 @@ async fn google_search_via_browser(query: &str) -> Option<Vec<Value>> {
     // (and any accepted consent on the persistent profile) survives.
     let nav = mcp::call_mcp_tool("mcp_browser_browser_navigate", &json!({ "url": url })).await;
     if nav["ok"].as_bool() != Some(true) {
-        warn!("[web_search] browser navigate failed: {}", nav["error"].as_str().unwrap_or("?"));
+        warn!(
+            "[web_search] browser navigate failed: {}",
+            nav["error"].as_str().unwrap_or("?")
+        );
         return None;
     }
     // Playwright MCP reports tool-level failures as "### Error" text with ok=true.
     if let Some(r) = nav["result"].as_str() {
         if r.contains("### Error") {
-            warn!("[web_search] browser navigate error: {}", r.chars().take(160).collect::<String>());
+            warn!(
+                "[web_search] browser navigate error: {}",
+                r.chars().take(160).collect::<String>()
+            );
             return None;
         }
     }
@@ -3763,11 +4292,7 @@ async fn google_search_via_browser(query: &str) -> Option<Vec<Value>> {
   if (out.length) return out.slice(0, 8);
   return 'TEXT:' + document.body.innerText.slice(0, 4000);
 }"#;
-    let eval = mcp::call_mcp_tool(
-        "mcp_browser_browser_evaluate",
-        &json!({ "function": js }),
-    )
-    .await;
+    let eval = mcp::call_mcp_tool("mcp_browser_browser_evaluate", &json!({ "function": js })).await;
 
     // Pull the JS return value out of the MCP result text. Playwright MCP wraps
     // it in surrounding prose, so scan for our JSON array or TEXT: marker.
@@ -3829,11 +4354,7 @@ fn openalex_reconstruct_abstract(inverted: &Value) -> String {
         }
     }
     words.sort_by_key(|(i, _)| *i);
-    words
-        .iter()
-        .map(|(_, w)| *w)
-        .collect::<Vec<_>>()
-        .join(" ")
+    words.iter().map(|(_, w)| *w).collect::<Vec<_>>().join(" ")
 }
 
 async fn exec_search_papers(args: &Value) -> Value {
@@ -3875,7 +4396,9 @@ async fn exec_search_papers(args: &Value) -> Value {
     .await
     {
         Ok(Ok(r)) => r,
-        Ok(Err(e)) => return json!({ "ok": false, "error": format!("OpenAlex request failed: {e}") }),
+        Ok(Err(e)) => {
+            return json!({ "ok": false, "error": format!("OpenAlex request failed: {e}") })
+        }
         Err(_) => return json!({ "ok": false, "error": "OpenAlex request timed out (20s)" }),
     };
     let status = resp.status();
@@ -3978,10 +4501,7 @@ except Exception as e:
 
     let py_result = timeout(
         Duration::from_secs(30),
-        python_command()
-            .arg("-c")
-            .arg(&py_script)
-            .output(),
+        python_command().arg("-c").arg(&py_script).output(),
     )
     .await;
 
@@ -4003,7 +4523,10 @@ except Exception as e:
         }
         Ok(Ok(output)) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("[web_search] Python DDG failed: {}", stderr.chars().take(200).collect::<String>());
+            warn!(
+                "[web_search] Python DDG failed: {}",
+                stderr.chars().take(200).collect::<String>()
+            );
         }
         Ok(Err(e)) => {
             warn!("[web_search] Failed to spawn python3: {e}");
@@ -4059,7 +4582,9 @@ except Exception as e:
                 if engine == "google" && !api_key.is_empty() {
                     let google_url = format!(
                         "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}",
-                        api_key, cx, urlencoding::encode(query)
+                        api_key,
+                        cx,
+                        urlencoding::encode(query)
                     );
                     if let Ok(resp) = client.get(&google_url).send().await {
                         if let Ok(data) = resp.json::<Value>().await {
@@ -4134,12 +4659,15 @@ except Exception as e:
                         }
                     }
                     // Add summarized text as top result
-                    all_results.insert(0, json!({
-                        "source": "web_summary",
-                        "title": "AI-Summarized Web Results",
-                        "text": crate::util::truncate_utf8(&text, 3000),
-                        "url": ""
-                    }));
+                    all_results.insert(
+                        0,
+                        json!({
+                            "source": "web_summary",
+                            "title": "AI-Summarized Web Results",
+                            "text": crate::util::truncate_utf8(&text, 3000),
+                            "url": ""
+                        }),
+                    );
                 }
             }
         }
@@ -4201,13 +4729,16 @@ async fn exec_fetch_url(args: &Value) -> Value {
 /// Validate that a URL does not target private/internal addresses.
 /// Returns `Ok(())` if the URL is safe, or `Err(reason)` if it should be blocked.
 pub(crate) fn validate_url_no_ssrf(url_str: &str) -> Result<(), String> {
-    let parsed = url::Url::parse(url_str)
-        .map_err(|e| format!("Invalid URL: {e}"))?;
+    let parsed = url::Url::parse(url_str).map_err(|e| format!("Invalid URL: {e}"))?;
 
     // 1. Only allow http and https schemes
     match parsed.scheme() {
         "http" | "https" => {}
-        other => return Err(format!("URL blocked: scheme '{other}' is not allowed (only http/https)")),
+        other => {
+            return Err(format!(
+                "URL blocked: scheme '{other}' is not allowed (only http/https)"
+            ))
+        }
     }
 
     let host_str = parsed.host_str().unwrap_or("");
@@ -4228,11 +4759,11 @@ pub(crate) fn validate_url_no_ssrf(url_str: &str) -> Result<(), String> {
                     && (v4.octets()[1] >= 16 && v4.octets()[1] <= 31))
                 || (v4.octets()[0] == 192 && v4.octets()[1] == 168) // 192.168.0.0/16
                 || (v4.octets()[0] == 169 && v4.octets()[1] == 254) // 169.254.0.0/16 (link-local / AWS metadata)
-                || v4.is_unspecified()                     // 0.0.0.0
+                || v4.is_unspecified() // 0.0.0.0
             }
             IpAddr::V6(v6) => {
                 v6.is_loopback()                           // ::1
-                || v6.is_unspecified()                     // ::
+                || v6.is_unspecified() // ::
             }
         };
         if blocked {
@@ -4242,9 +4773,7 @@ pub(crate) fn validate_url_no_ssrf(url_str: &str) -> Result<(), String> {
 
     // 4. Also block well-known cloud metadata hostnames
     let lower = host_str.to_ascii_lowercase();
-    if lower == "metadata.google.internal"
-        || lower == "metadata.google.internal."
-    {
+    if lower == "metadata.google.internal" || lower == "metadata.google.internal." {
         return Err("URL blocked: cannot fetch private/internal addresses".into());
     }
 
@@ -4258,27 +4787,52 @@ pub(crate) fn validate_url_no_ssrf(url_str: &str) -> Result<(), String> {
 /// Patterns that indicate potentially dangerous code/commands
 const DANGEROUS_PATTERNS: &[&str] = &[
     // Destructive file operations
-    "rm -rf /", "rm -rf ~", "rm -rf $HOME", "rmdir /",
-    "shutil.rmtree('/')", "shutil.rmtree(\"/\")",
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf $HOME",
+    "rmdir /",
+    "shutil.rmtree('/')",
+    "shutil.rmtree(\"/\")",
     // Privilege escalation
-    "sudo ", "su -", "doas ",
+    "sudo ",
+    "su -",
+    "doas ",
     // Credential/key theft
-    ".ssh/", "id_rsa", "id_ed25519", ".aws/credentials", ".netrc",
-    "keychain", "login.keychain",
+    ".ssh/",
+    "id_rsa",
+    "id_ed25519",
+    ".aws/credentials",
+    ".netrc",
+    "keychain",
+    "login.keychain",
     // System modification
-    "chmod 777 /", "chown root", "/etc/passwd", "/etc/shadow",
-    "launchctl", "crontab",
+    "chmod 777 /",
+    "chown root",
+    "/etc/passwd",
+    "/etc/shadow",
+    "launchctl",
+    "crontab",
     // Network exfiltration with credentials
-    "curl.*-d.*password", "wget.*password",
+    "curl.*-d.*password",
+    "wget.*password",
     // Reverse shells
-    "bash -i >& /dev/tcp", "nc -e /bin", "python.*socket.*connect",
-    "/dev/tcp/", "mkfifo",
+    "bash -i >& /dev/tcp",
+    "nc -e /bin",
+    "python.*socket.*connect",
+    "/dev/tcp/",
+    "mkfifo",
     // Code injection / download-and-execute
-    "curl.*|.*sh", "curl.*|.*bash", "wget.*|.*sh", "wget.*|.*bash",
-    "eval(requests", "exec(requests",
+    "curl.*|.*sh",
+    "curl.*|.*bash",
+    "wget.*|.*sh",
+    "wget.*|.*bash",
+    "eval(requests",
+    "exec(requests",
     // macOS specific
-    "osascript.*administrator", "security find-generic-password",
-    "defaults write", "csrutil",
+    "osascript.*administrator",
+    "security find-generic-password",
+    "defaults write",
+    "csrutil",
 ];
 
 /// Unsandboxed direct execution is opt-in: only when the user explicitly sets
@@ -4286,7 +4840,9 @@ const DANGEROUS_PATTERNS: &[&str] = &[
 /// sandbox is available rather than silently running on the bare host.
 #[cfg(target_os = "macos")]
 fn allow_unsandboxed_exec() -> bool {
-    load_agent_settings()["agentAllowUnsandboxedExec"].as_bool().unwrap_or(false)
+    load_agent_settings()["agentAllowUnsandboxedExec"]
+        .as_bool()
+        .unwrap_or(false)
 }
 
 /// SBPL deny rules for secret-bearing paths. sandbox-exec allows file-read*
@@ -4323,18 +4879,32 @@ fn check_dangerous(code: &str) -> Option<String> {
 
     // Block .env file access — but allow os.environ, os.getenv, printenv, etc.
     // Match ".env" only when it looks like a file reference, not a Python API call
-    if lower.contains(".env") && !lower.contains(".environ") && !lower.contains(".getenv")
-        && !lower.contains("printenv") && !lower.contains(".env_")
+    if lower.contains(".env")
+        && !lower.contains(".environ")
+        && !lower.contains(".getenv")
+        && !lower.contains("printenv")
+        && !lower.contains(".env_")
     {
         return Some("Blocked dangerous pattern: .env".to_string());
     }
 
     // Block access to paths outside sandbox (absolute paths to sensitive dirs)
     // But allow the app's own data/sandbox paths (e.g. ~/Library/Application Support/AndrewOS/)
-    let app_data_path = crate::server::data::data_dir().display().to_string().to_lowercase();
+    let app_data_path = crate::server::data::data_dir()
+        .display()
+        .to_string()
+        .to_lowercase();
     let app_support_path = app_data_path.replace("/data", "");
-    let sensitive_dirs = ["/etc/", "/var/", "/usr/", "/System/", "/Library/",
-                          "/Applications/", "/Users/*/.", "/private/"];
+    let sensitive_dirs = [
+        "/etc/",
+        "/var/",
+        "/usr/",
+        "/System/",
+        "/Library/",
+        "/Applications/",
+        "/Users/*/.",
+        "/private/",
+    ];
     for dir in &sensitive_dirs {
         if lower.contains(&dir.to_lowercase()) {
             // Allow /tmp/, the sandbox itself, and app's own data directory
@@ -4361,13 +4931,34 @@ async fn scan_output_files(sandbox_dir: &str) -> Vec<String> {
         if let Ok(mut entries) = tokio::fs::read_dir(scan_dir).await {
             while let Ok(Some(entry)) = entries.next_entry().await {
                 if let Ok(meta) = entry.metadata().await {
-                    if !meta.is_file() { continue; }
+                    if !meta.is_file() {
+                        continue;
+                    }
                     if let Ok(modified) = meta.modified() {
                         let name = entry.file_name().to_string_lossy().to_string();
                         let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-                        if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf"
-                            | "html" | "csv" | "md" | "txt" | "json" | "xlsx" | "docx"
-                            | "py" | "rs" | "js" | "ts" | "yaml" | "yml") {
+                        if matches!(
+                            ext.as_str(),
+                            "png"
+                                | "jpg"
+                                | "jpeg"
+                                | "gif"
+                                | "svg"
+                                | "pdf"
+                                | "html"
+                                | "csv"
+                                | "md"
+                                | "txt"
+                                | "json"
+                                | "xlsx"
+                                | "docx"
+                                | "py"
+                                | "rs"
+                                | "js"
+                                | "ts"
+                                | "yaml"
+                                | "yml"
+                        ) {
                             if modified.elapsed().unwrap_or_default().as_secs() < 120 {
                                 let rel = format!("{}/{}", scan_dir.display(), name);
                                 if !output_files.contains(&rel) {
@@ -4394,12 +4985,14 @@ async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
     // script and return ok=true, wasting tool rounds and misleading the model.
     let code = match args.get("code").and_then(|v| v.as_str()) {
         Some(c) if !c.trim().is_empty() => c,
-        _ => return json!({
-            "ok": false,
-            "error": "Parameter 'code' must be a non-empty STRING of Python source code. \
-                      To run a script file with arguments, use run_shell instead, e.g. \
-                      {\"command\": \"python3 script.py arg1\"}."
-        }),
+        _ => {
+            return json!({
+                "ok": false,
+                "error": "Parameter 'code' must be a non-empty STRING of Python source code. \
+                          To run a script file with arguments, use run_shell instead, e.g. \
+                          {\"command\": \"python3 script.py arg1\"}."
+            })
+        }
     };
 
     // Security check
@@ -4414,7 +5007,8 @@ async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
     let _ = std::fs::create_dir_all(&mpl_config_dir);
     let output_sub = std::path::Path::new(sandbox_dir).join("output_file");
     let _ = std::fs::create_dir_all(&output_sub);
-    let matplotlib_prelude = format!(r#"
+    let matplotlib_prelude = format!(
+        r#"
 import sys, os, uuid
 os.environ['MPLCONFIGDIR'] = '{mpl_dir}'
 os.environ['HOME'] = os.getcwd()
@@ -4443,9 +5037,13 @@ def save_output(filename, content=None, mode='w'):
         with open(path, mode) as f:
             f.write(content)
     return path
-"#, mpl_dir = mpl_config_dir.display());
-    let code = &format!("{matplotlib_prelude}
-{code}");
+"#,
+        mpl_dir = mpl_config_dir.display()
+    );
+    let code = &format!(
+        "{matplotlib_prelude}
+{code}"
+    );
 
     // Try VM execution first if VM is running
     if is_vm_running().await {
@@ -4482,14 +5080,18 @@ def save_output(filename, content=None, mode='w'):
     let result = {
         // Primary: Apple container CLI (macOS containerization)
         let r = run_guarded(
-            Command::new("/usr/bin/container")
-                .args([
-                    "run", "--rm",
-                    "-v", &format!("{}:/sandbox", abs_sandbox.display()),
-                    "-w", "/sandbox",
-                    "python:3.11-slim",
-                    "python3", "-c", code,
-                ]),
+            Command::new("/usr/bin/container").args([
+                "run",
+                "--rm",
+                "-v",
+                &format!("{}:/sandbox", abs_sandbox.display()),
+                "-w",
+                "/sandbox",
+                "python:3.11-slim",
+                "python3",
+                "-c",
+                code,
+            ]),
             60,
         )
         .await;
@@ -4616,10 +5218,12 @@ pub(crate) async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
     // return ok=true (exit 0), wasting tool rounds and misleading the model.
     let command = match args.get("command").and_then(|v| v.as_str()) {
         Some(c) if !c.trim().is_empty() => c,
-        _ => return json!({
-            "ok": false,
-            "error": "Parameter 'command' must be a non-empty STRING shell command."
-        }),
+        _ => {
+            return json!({
+                "ok": false,
+                "error": "Parameter 'command' must be a non-empty STRING shell command."
+            })
+        }
     };
 
     // Security check
@@ -4690,14 +5294,18 @@ pub(crate) async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
     let result = {
         // Primary: Apple container CLI
         let r = run_guarded(
-            Command::new("/usr/bin/container")
-                .args([
-                    "run", "--rm",
-                    "-v", &format!("{}:/sandbox", abs_sandbox.display()),
-                    "-w", "/sandbox",
-                    "alpine:latest",
-                    "sh", "-c", command,
-                ]),
+            Command::new("/usr/bin/container").args([
+                "run",
+                "--rm",
+                "-v",
+                &format!("{}:/sandbox", abs_sandbox.display()),
+                "-w",
+                "/sandbox",
+                "alpine:latest",
+                "sh",
+                "-c",
+                command,
+            ]),
             30,
         )
         .await;
@@ -4744,14 +5352,7 @@ pub(crate) async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
                 Ok(Err(_)) if allow_unsandboxed_exec() => {
                     // Fallback 2 (opt-in): direct unsandboxed execution
                     warn!("[sandbox] sandbox-exec unavailable — direct execution (agentAllowUnsandboxedExec=true)");
-                    run_guarded(
-                        shell_command()
-                            .arg("-c")
-                            .arg(command)
-                            .current_dir(&cwd),
-                        30,
-                    )
-                    .await
+                    run_guarded(shell_command().arg("-c").arg(command).current_dir(&cwd), 30).await
                 }
                 Ok(Err(_)) => {
                     return json!({
@@ -4831,7 +5432,12 @@ async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
     }
 
     // Handle PDF files — extract text, return in large chunks (cached)
-    if resolved.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("pdf")).unwrap_or(false) {
+    if resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false)
+    {
         let key = resolved.display().to_string();
         let offset = args["offset"].as_u64().unwrap_or(0) as usize;
 
@@ -4844,21 +5450,27 @@ async fn exec_read_file(args: &Value, sandbox_dir: &str) -> Value {
             t
         } else {
             let resolved_clone = resolved.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                pdf_extract::extract_text(&resolved_clone)
-            }).await;
+            let result =
+                tokio::task::spawn_blocking(move || pdf_extract::extract_text(&resolved_clone))
+                    .await;
             match result {
                 Ok(Ok(t)) => {
                     compact::track_file_read(&key, &t);
                     let mut cache = pdf_cache().lock().unwrap_or_else(|e| e.into_inner());
                     // Memory guard: extracted PDF text accumulates forever in a
                     // long-running server — reset the cache past 24 entries.
-                    if cache.len() >= 24 { cache.clear(); }
+                    if cache.len() >= 24 {
+                        cache.clear();
+                    }
                     cache.insert(key.clone(), t.clone());
                     t
                 }
-                Ok(Err(e)) => return json!({ "ok": false, "error": format!("Failed to extract PDF text: {e}") }),
-                Err(e) => return json!({ "ok": false, "error": format!("PDF extraction task failed: {e}") }),
+                Ok(Err(e)) => {
+                    return json!({ "ok": false, "error": format!("Failed to extract PDF text: {e}") })
+                }
+                Err(e) => {
+                    return json!({ "ok": false, "error": format!("PDF extraction task failed: {e}") })
+                }
             }
         };
 
@@ -4988,12 +5600,12 @@ async fn exec_list_files(args: &Value, sandbox_dir: &str) -> Value {
                         break;
                     }
                     let name = entry.file_name().to_string_lossy().to_string();
-                    let is_dir = entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false);
-                    entries.push(if is_dir {
-                        format!("{}/", name)
-                    } else {
-                        name
-                    });
+                    let is_dir = entry
+                        .file_type()
+                        .await
+                        .map(|ft| ft.is_dir())
+                        .unwrap_or(false);
+                    entries.push(if is_dir { format!("{}/", name) } else { name });
                 }
             }
             Err(e) => {
@@ -5027,7 +5639,11 @@ async fn walk_dir_recursive(
             }
             let path = entry.path();
             let display = path.display().to_string();
-            let is_dir = entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false);
+            let is_dir = entry
+                .file_type()
+                .await
+                .map(|ft| ft.is_dir())
+                .unwrap_or(false);
 
             if is_dir {
                 entries.push(format!("{}/", display));
@@ -5095,7 +5711,10 @@ fn read_skills_registry() -> Vec<Value> {
     }
 }
 
-fn resolve_skill_dir(skill_name: &str, registry_entry: Option<&Value>) -> Option<(std::path::PathBuf, String)> {
+fn resolve_skill_dir(
+    skill_name: &str,
+    registry_entry: Option<&Value>,
+) -> Option<(std::path::PathBuf, String)> {
     for cand in skill_candidates(skill_name, registry_entry) {
         for (dir, label) in skills_search_dirs() {
             let base = dir.join(&cand);
@@ -5115,7 +5734,10 @@ async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
         .iter()
         .map(|s| {
             let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            let source = s.get("source").and_then(|n| n.as_str()).unwrap_or("unknown");
+            let source = s
+                .get("source")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
             let enabled = s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
             let resolved = resolve_skill_dir(name, Some(s));
             json!({
@@ -5138,12 +5760,7 @@ async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
     let skills_scan_dir = crate::server::data::data_dir().join("skills");
     if let Ok(mut entries) = tokio::fs::read_dir(&skills_scan_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry
-                .file_type()
-                .await
-                .map(|t| t.is_dir())
-                .unwrap_or(false)
-            {
+            if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
                 let skill_md = entry.path().join("SKILL.md");
                 if tokio::fs::metadata(&skill_md).await.is_ok() {
                     dir_skills.push(entry.file_name().to_string_lossy().to_string());
@@ -5174,7 +5791,9 @@ async fn exec_save_skill(args: &Value) -> Value {
                 "error": "skill_md must start with '---' YAML frontmatter containing 'name:' and 'description:'."
             })
         }
-        None => return json!({ "ok": false, "error": "Parameter 'skill_md' (full SKILL.md content) is required." }),
+        None => {
+            return json!({ "ok": false, "error": "Parameter 'skill_md' (full SKILL.md content) is required." })
+        }
     };
 
     let (fm_name, fm_description) = crate::server::routes::skills::parse_frontmatter(skill_md);
@@ -5210,7 +5829,10 @@ async fn exec_save_skill(args: &Value) -> Value {
             let escapes = rel.is_empty()
                 || rel_path.is_absolute()
                 || rel_path.components().any(|c| {
-                    matches!(c, std::path::Component::ParentDir | std::path::Component::Prefix(_))
+                    matches!(
+                        c,
+                        std::path::Component::ParentDir | std::path::Component::Prefix(_)
+                    )
                 });
             if escapes {
                 return json!({
@@ -5258,7 +5880,12 @@ async fn exec_save_skill(args: &Value) -> Value {
     }
     crate::server::data::save_skills(&skills).await;
 
-    info!("[save_skill] Saved skill '{}' to {:?} ({} file(s))", name, skill_dir, written.len());
+    info!(
+        "[save_skill] Saved skill '{}' to {:?} ({} file(s))",
+        name,
+        skill_dir,
+        written.len()
+    );
     json!({
         "ok": true,
         "name": name,
@@ -5270,7 +5897,9 @@ async fn exec_save_skill(args: &Value) -> Value {
 }
 
 async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
-    let skill_name = args.get("skill").and_then(|s| s.as_str())
+    let skill_name = args
+        .get("skill")
+        .and_then(|s| s.as_str())
         .or_else(|| args.get("name").and_then(|s| s.as_str()))
         .or_else(|| args.get("skill-name").and_then(|s| s.as_str()))
         .or_else(|| args.get("skill_name").and_then(|s| s.as_str()))
@@ -5280,13 +5909,17 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
     }
 
     let registry = read_skills_registry();
-    let registry_entry = registry.iter()
+    let registry_entry = registry
+        .iter()
         .find(|s| s.get("name").and_then(|n| n.as_str()) == Some(skill_name))
-        .or_else(|| registry.iter().find(|s| {
-            s.get("name").and_then(|n| n.as_str())
-                .map(|n| slugify_skill_name(n) == slugify_skill_name(skill_name))
-                .unwrap_or(false)
-        }));
+        .or_else(|| {
+            registry.iter().find(|s| {
+                s.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|n| slugify_skill_name(n) == slugify_skill_name(skill_name))
+                    .unwrap_or(false)
+            })
+        });
 
     if let Some((skill_base_dir, source)) = resolve_skill_dir(skill_name, registry_entry) {
         let skill_file = skill_base_dir.join("SKILL.md");
@@ -5298,7 +5931,8 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
                 let content = crate::util::truncate_utf8(&content, 15000).to_string();
 
                 // Read _meta.json if present
-                let meta = match tokio::fs::read_to_string(skill_base_dir.join("_meta.json")).await {
+                let meta = match tokio::fs::read_to_string(skill_base_dir.join("_meta.json")).await
+                {
                     Ok(m) => serde_json::from_str::<Value>(&m).unwrap_or(json!({})),
                     Err(_) => json!({}),
                 };
@@ -5309,8 +5943,14 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
                     if let Ok(entries) = std::fs::read_dir(d) {
                         for entry in entries.flatten() {
                             let name = entry.file_name().to_string_lossy().to_string();
-                            if name.starts_with('.') || name == "__MACOSX" { continue; }
-                            let rel = if prefix.is_empty() { name.clone() } else { format!("{}/{}", prefix, name) };
+                            if name.starts_with('.') || name == "__MACOSX" {
+                                continue;
+                            }
+                            let rel = if prefix.is_empty() {
+                                name.clone()
+                            } else {
+                                format!("{}/{}", prefix, name)
+                            };
                             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                                 walk_skill_dir(&entry.path(), &rel, out);
                             } else if name != "SKILL.md" && name != "_meta.json" {
@@ -5344,7 +5984,9 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
                     "truncated": truncated,
                 });
             }
-            Err(e) => return json!({"ok": false, "error": format!("Failed to read SKILL.md: {}", e)}),
+            Err(e) => {
+                return json!({"ok": false, "error": format!("Failed to read SKILL.md: {}", e)})
+            }
         }
     }
 
@@ -5358,7 +6000,11 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
                 let _ = std::fs::create_dir_all(&skill_dir);
                 let skill_file = skill_dir.join("SKILL.md");
                 if std::fs::write(&skill_file, script).is_ok() {
-                    info!("[Skills] Self-healed: wrote SKILL.md for {} to {}", skill_name, skill_file.display());
+                    info!(
+                        "[Skills] Self-healed: wrote SKILL.md for {} to {}",
+                        skill_name,
+                        skill_file.display()
+                    );
                     // Retry the load now that the file exists
                     let content = script.replace("{baseDir}", &skill_dir.display().to_string());
                     let truncated = content.len() > 15000;
@@ -5377,7 +6023,11 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
 
     // Not found — provide helpful error
     let tried = skill_candidates(skill_name, registry_entry);
-    let dirs_str = skills_search_dirs().iter().map(|(d, _)| d.display().to_string()).collect::<Vec<_>>().join(" and ");
+    let dirs_str = skills_search_dirs()
+        .iter()
+        .map(|(d, _)| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" and ");
     if registry_entry.is_some() {
         return json!({
             "ok": false,
@@ -5439,12 +6089,14 @@ async fn exec_list_local_mounts(_args: &Value) -> Value {
     let enabled: Vec<Value> = mounts
         .iter()
         .filter(|m| m.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false))
-        .map(|m| json!({
-            "id": m.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-            "label": m.get("label").and_then(|v| v.as_str()).unwrap_or(""),
-            "path": m.get("path").and_then(|v| v.as_str()).unwrap_or(""),
-            "permissions": m.get("permissions").and_then(|v| v.as_str()).unwrap_or("readonly"),
-        }))
+        .map(|m| {
+            json!({
+                "id": m.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                "label": m.get("label").and_then(|v| v.as_str()).unwrap_or(""),
+                "path": m.get("path").and_then(|v| v.as_str()).unwrap_or(""),
+                "permissions": m.get("permissions").and_then(|v| v.as_str()).unwrap_or("readonly"),
+            })
+        })
         .collect();
     if enabled.is_empty() {
         return json!({
@@ -5482,7 +6134,12 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
                 name = t.split_whitespace().nth(3).unwrap_or("").to_string();
                 break;
             } else if t.starts_with("export default ") {
-                name = t.split_whitespace().nth(2).unwrap_or("").trim_end_matches(';').to_string();
+                name = t
+                    .split_whitespace()
+                    .nth(2)
+                    .unwrap_or("")
+                    .trim_end_matches(';')
+                    .to_string();
                 break;
             }
         }
@@ -5496,7 +6153,13 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
         .replace("export default ", "");
     let cleaned: String = cleaned
         .lines()
-        .map(|l| if l.trim().starts_with("export ") { l.replacen("export ", "", 1) } else { l.to_string() })
+        .map(|l| {
+            if l.trim().starts_with("export ") {
+                l.replacen("export ", "", 1)
+            } else {
+                l.to_string()
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -5508,8 +6171,16 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
             for prefix in &["function ", "const ", "class "] {
                 if t.starts_with(prefix) {
                     let rest = &t[prefix.len()..];
-                    let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    let name: String = rest
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                    {
                         return Some(name);
                     }
                 }
@@ -5521,7 +6192,9 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
     let render_target = if !exported_component.is_empty() {
         exported_component
     } else {
-        component_names.iter().find(|n| n.as_str() == "App")
+        component_names
+            .iter()
+            .find(|n| n.as_str() == "App")
             .cloned()
             .or_else(|| component_names.last().cloned())
             .unwrap_or_default()
@@ -5544,7 +6217,10 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
 
     // Try compile via npx esbuild
     ensure_full_path();
-    let jsx_tmp = std::env::temp_dir().join(format!("react_{}.jsx", chrono::Utc::now().timestamp_millis()));
+    let jsx_tmp = std::env::temp_dir().join(format!(
+        "react_{}.jsx",
+        chrono::Utc::now().timestamp_millis()
+    ));
     if tokio::fs::write(&jsx_tmp, &wrapped).await.is_ok() {
         // Find npx: check PATH, then common locations
         let npx_bin = {
@@ -5552,9 +6228,17 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
             let which_cmd = "where";
             #[cfg(not(target_os = "windows"))]
             let which_cmd = "/usr/bin/which";
-            let found = std::process::Command::new(which_cmd).arg("npx").output().ok()
+            let found = std::process::Command::new(which_cmd)
+                .arg("npx")
+                .output()
+                .ok()
                 .filter(|o| o.status.success())
-                .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next().map(|s| s.trim().to_string()));
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .next()
+                        .map(|s| s.trim().to_string())
+                });
             if let Some(p) = found {
                 p
             } else {
@@ -5567,14 +6251,22 @@ async fn exec_run_react(args: &Value, sandbox_dir: &str) -> Value {
                         .unwrap_or_else(|| "npx".to_string())
                 }
                 #[cfg(not(target_os = "macos"))]
-                { "npx".to_string() }
+                {
+                    "npx".to_string()
+                }
             }
         };
         let compiled = run_guarded(
-            Command::new(&npx_bin)
-                .args(["--yes", "esbuild", jsx_tmp.to_str().unwrap_or(""), "--bundle=false", "--loader=jsx"]),
+            Command::new(&npx_bin).args([
+                "--yes",
+                "esbuild",
+                jsx_tmp.to_str().unwrap_or(""),
+                "--bundle=false",
+                "--loader=jsx",
+            ]),
             30,
-        ).await;
+        )
+        .await;
         let _ = tokio::fs::remove_file(&jsx_tmp).await;
         if let Ok(Ok(out)) = compiled {
             if out.status.success() {
@@ -5609,7 +6301,11 @@ async fn exec_remote_task(args: &Value) -> Value {
         return json!({ "ok": false, "error": "task is required" });
     }
 
-    let settings: Value = match tokio::fs::read_to_string(crate::server::data::data_dir().join("settings.json")).await {
+    let settings: Value = match tokio::fs::read_to_string(
+        crate::server::data::data_dir().join("settings.json"),
+    )
+    .await
+    {
         Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
         Err(_) => json!({}),
     };
@@ -5622,14 +6318,30 @@ async fn exec_remote_task(args: &Value) -> Value {
                 i.get("id").and_then(|v| v.as_str()) == Some(instance_arg)
                     || i.get("name").and_then(|v| v.as_str()) == Some(instance_arg)
             }) {
-                found_url = inst.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                found_token = inst.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                found_url = inst
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                found_token = inst
+                    .get("token")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
             }
         }
         if found_url.is_empty() {
             if let Ok(parsed) = serde_json::from_str::<Value>(instance_arg) {
-                found_url = parsed.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                found_token = parsed.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                found_url = parsed
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                found_token = parsed
+                    .get("token")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
             }
         }
         (found_url, found_token)
@@ -5646,7 +6358,8 @@ async fn exec_remote_task(args: &Value) -> Value {
         .post(format!("{}/api/remote/task", base_url))
         .header("Authorization", format!("Bearer {}", token))
         .json(&json!({ "task": task }))
-        .send().await
+        .send()
+        .await
     {
         Ok(r) => r,
         Err(e) => return json!({ "ok": false, "error": format!("Network error: {e}") }),
@@ -5683,20 +6396,34 @@ async fn exec_remote_task(args: &Value) -> Value {
         let poll = match client
             .get(format!("{}/api/remote/task/{}", base_url, task_id))
             .header("Authorization", format!("Bearer {}", token))
-            .send().await
+            .send()
+            .await
         {
             Ok(r) => r,
             Err(_) => continue,
         };
-        let data: Value = match poll.json().await { Ok(v) => v, Err(_) => continue };
-        let seq = data.get("progressSeq").and_then(|v| v.as_u64()).unwrap_or(0);
-        if seq > last_seq { last_seq = seq; last_activity = tokio::time::Instant::now(); }
+        let data: Value = match poll.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let seq = data
+            .get("progressSeq")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        if seq > last_seq {
+            last_seq = seq;
+            last_activity = tokio::time::Instant::now();
+        }
         if tokio::time::Instant::now().duration_since(last_activity) > idle_duration {
             return json!({ "ok": false, "error": format!("Idle timeout after {}s", idle_timeout_secs) });
         }
         match data.get("status").and_then(|v| v.as_str()) {
-            Some("completed") => return json!({ "ok": true, "result": data.get("result").cloned().unwrap_or(json!(null)) }),
-            Some("error") => return json!({ "ok": false, "error": data.get("error").and_then(|v| v.as_str()).unwrap_or("Remote task failed") }),
+            Some("completed") => {
+                return json!({ "ok": true, "result": data.get("result").cloned().unwrap_or(json!(null)) })
+            }
+            Some("error") => {
+                return json!({ "ok": false, "error": data.get("error").and_then(|v| v.as_str()).unwrap_or("Remote task failed") })
+            }
             _ => continue,
         }
     }
@@ -5721,10 +6448,14 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
     };
 
     let mut cli_args = vec![
-        "-p".to_string(), full_prompt,
-        "--output-format".to_string(), "stream-json".to_string(),
-        "--max-turns".to_string(), max_turns.to_string(),
-        "--allowedTools".to_string(), "Read,Edit,Write,Bash,Glob,Grep".to_string(),
+        "-p".to_string(),
+        full_prompt,
+        "--output-format".to_string(),
+        "stream-json".to_string(),
+        "--max-turns".to_string(),
+        max_turns.to_string(),
+        "--allowedTools".to_string(),
+        "Read,Edit,Write,Bash,Glob,Grep".to_string(),
         "--verbose".to_string(),
     ];
     if !model.is_empty() {
@@ -5732,9 +6463,19 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
         cli_args.push(model.to_string());
     }
 
-    info!("[ClaudeCode] Spawning in {} (timeout: {}s, maxTurns: {})", sandbox_dir, timeout_secs, max_turns);
+    info!(
+        "[ClaudeCode] Spawning in {} (timeout: {}s, maxTurns: {})",
+        sandbox_dir, timeout_secs, max_turns
+    );
 
-    match run_guarded(Command::new("claude").args(&cli_args).current_dir(sandbox_dir), timeout_secs).await {
+    match run_guarded(
+        Command::new("claude")
+            .args(&cli_args)
+            .current_dir(sandbox_dir),
+        timeout_secs,
+    )
+    .await
+    {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut result_text = String::new();
@@ -5744,12 +6485,20 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
                     if event["type"] == "assistant" {
                         if let Some(content) = event["message"]["content"].as_array() {
                             for block in content {
-                                if block["type"] == "text" { result_text.push_str(block["text"].as_str().unwrap_or("")); }
-                                if block["type"] == "tool_use" { if let Some(n) = block["name"].as_str() { tool_calls.push(n.to_string()); } }
+                                if block["type"] == "text" {
+                                    result_text.push_str(block["text"].as_str().unwrap_or(""));
+                                }
+                                if block["type"] == "tool_use" {
+                                    if let Some(n) = block["name"].as_str() {
+                                        tool_calls.push(n.to_string());
+                                    }
+                                }
                             }
                         }
                     } else if event["type"] == "result" {
-                        if let Some(r) = event["result"].as_str() { result_text = r.to_string(); }
+                        if let Some(r) = event["result"].as_str() {
+                            result_text = r.to_string();
+                        }
                     }
                 }
             }
@@ -5760,7 +6509,9 @@ async fn exec_claude_code_agent(args: &Value, sandbox_dir: &str) -> Value {
             let output_files = scan_output_files(sandbox_dir).await;
             json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls, "output_files": output_files })
         }
-        Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn claude: {e}. Is 'claude' in PATH?") }),
+        Ok(Err(e)) => {
+            json!({ "ok": false, "error": format!("Failed to spawn claude: {e}. Is 'claude' in PATH?") })
+        }
         Err(_) => json!({ "ok": false, "error": interrupted_reason(timeout_secs) }),
     }
 }
@@ -5783,8 +6534,10 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
     };
 
     let mut cli_args = vec![
-        "-p".to_string(), full_prompt,
-        "-o".to_string(), "stream-json".to_string(),
+        "-p".to_string(),
+        full_prompt,
+        "-o".to_string(),
+        "stream-json".to_string(),
         "--yolo".to_string(),
     ];
     if !model.is_empty() {
@@ -5793,7 +6546,10 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
     }
 
     let home = resolve_home();
-    info!("[GeminiCLI] Spawning agent in {} (timeout: {}s)", sandbox_dir, timeout_secs);
+    info!(
+        "[GeminiCLI] Spawning agent in {} (timeout: {}s)",
+        sandbox_dir, timeout_secs
+    );
 
     match run_guarded(
         Command::new("gemini")
@@ -5802,7 +6558,9 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
             .env("PATH", cli_env_path())
             .env("HOME", &home),
         timeout_secs,
-    ).await {
+    )
+    .await
+    {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut result_text = String::new();
@@ -5812,21 +6570,29 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
                     // Gemini CLI stream-json events
                     let etype = event["type"].as_str().unwrap_or("");
                     if etype == "message" || etype == "assistant" {
-                        if let Some(content) = event["message"]["content"].as_array()
-                            .or_else(|| event["content"].as_array()) {
+                        if let Some(content) = event["message"]["content"]
+                            .as_array()
+                            .or_else(|| event["content"].as_array())
+                        {
                             for block in content {
                                 if block["type"] == "text" {
                                     result_text.push_str(block["text"].as_str().unwrap_or(""));
                                 }
                                 if block["type"] == "tool_use" || block["type"] == "functionCall" {
-                                    if let Some(n) = block["name"].as_str() { tool_calls.push(n.to_string()); }
+                                    if let Some(n) = block["name"].as_str() {
+                                        tool_calls.push(n.to_string());
+                                    }
                                 }
                             }
                         }
                     } else if etype == "result" {
-                        if let Some(r) = event["result"].as_str() { result_text = r.to_string(); }
+                        if let Some(r) = event["result"].as_str() {
+                            result_text = r.to_string();
+                        }
                     } else if etype == "text" {
-                        if let Some(t) = event["text"].as_str() { result_text.push_str(t); }
+                        if let Some(t) = event["text"].as_str() {
+                            result_text.push_str(t);
+                        }
                     }
                 }
             }
@@ -5841,7 +6607,9 @@ async fn exec_gemini_cli_agent(args: &Value, sandbox_dir: &str) -> Value {
             let output_files = scan_output_files(sandbox_dir).await;
             json!({ "ok": true, "content": if result_text.is_empty() { "(no output)".to_string() } else { result_text }, "tool_calls": tool_calls, "output_files": output_files })
         }
-        Ok(Err(e)) => json!({ "ok": false, "error": format!("Failed to spawn gemini: {e}. Is 'gemini' in PATH?") }),
+        Ok(Err(e)) => {
+            json!({ "ok": false, "error": format!("Failed to spawn gemini: {e}. Is 'gemini' in PATH?") })
+        }
         Err(_) => json!({ "ok": false, "error": interrupted_reason(timeout_secs) }),
     }
 }
@@ -5862,7 +6630,10 @@ async fn exec_proto_tcp_send(args: &Value, session_id: &str, agent_id: &str) -> 
 async fn exec_proto_tcp_read(args: &Value, agent_id: &str) -> Value {
     let peer = args["peer"].as_str().unwrap_or("");
     let messages = protocols::tcp_read(agent_id, peer).await;
-    let msgs: Vec<Value> = messages.iter().map(|m| serde_json::to_value(m).unwrap_or(json!({}))).collect();
+    let msgs: Vec<Value> = messages
+        .iter()
+        .map(|m| serde_json::to_value(m).unwrap_or(json!({})))
+        .collect();
     json!({ "ok": true, "protocol": "tcp", "peer": peer, "messages": msgs, "count": msgs.len() })
 }
 
@@ -5876,7 +6647,10 @@ async fn exec_proto_bus_publish(args: &Value, session_id: &str, agent_id: &str) 
 async fn exec_proto_bus_history(args: &Value, session_id: &str) -> Value {
     let topic = args["topic"].as_str();
     let messages = protocols::bus_history(session_id, topic).await;
-    let msgs: Vec<Value> = messages.iter().map(|m| serde_json::to_value(m).unwrap_or(json!({}))).collect();
+    let msgs: Vec<Value> = messages
+        .iter()
+        .map(|m| serde_json::to_value(m).unwrap_or(json!({})))
+        .collect();
     json!({ "ok": true, "protocol": "bus", "topic": topic.unwrap_or("all"), "messages": msgs, "count": msgs.len() })
 }
 
@@ -5892,7 +6666,9 @@ async fn exec_proto_queue_receive(args: &Value, agent_id: &str) -> Value {
     let from = args["from"].as_str().unwrap_or("");
     let topic = args["topic"].as_str();
     match protocols::queue_dequeue(from, agent_id, topic).await {
-        Some(msg) => json!({ "ok": true, "protocol": "queue", "message": serde_json::to_value(&msg).unwrap_or(json!({})) }),
+        Some(msg) => {
+            json!({ "ok": true, "protocol": "queue", "message": serde_json::to_value(&msg).unwrap_or(json!({})) })
+        }
         None => json!({ "ok": true, "protocol": "queue", "message": null, "note": "Queue empty" }),
     }
 }
@@ -5902,19 +6678,32 @@ async fn exec_proto_queue_peek(args: &Value, agent_id: &str) -> Value {
     let topic = args["topic"].as_str();
     let count = args["count"].as_u64().unwrap_or(5) as usize;
     let msgs = protocols::queue_peek(from, agent_id, topic, count).await;
-    let msgs: Vec<Value> = msgs.iter().map(|m| serde_json::to_value(m).unwrap_or(json!({}))).collect();
+    let msgs: Vec<Value> = msgs
+        .iter()
+        .map(|m| serde_json::to_value(m).unwrap_or(json!({})))
+        .collect();
     json!({ "ok": true, "protocol": "queue", "messages": msgs, "count": msgs.len() })
 }
 
 async fn exec_bb_propose(args: &Value, session_id: &str, agent_id: &str) -> Value {
     let description = args["description"].as_str().unwrap_or("");
-    if description.is_empty() { return json!({ "ok": false, "error": "description is required" }); }
-    let (task, skipped) = protocols::blackboard_propose(session_id, agent_id, description, args["task_id"].as_str()).await;
+    if description.is_empty() {
+        return json!({ "ok": false, "error": "description is required" });
+    }
+    let (task, skipped) =
+        protocols::blackboard_propose(session_id, agent_id, description, args["task_id"].as_str())
+            .await;
     let task_json = serde_json::to_value(&task).unwrap_or(json!({}));
     if skipped {
         return json!({ "ok": true, "protocol": "blackboard", "action": "propose", "task": task_json, "skipped": true });
     }
-    protocols::bus_publish(session_id, agent_id, "bb:proposal", json!({ "task_id": task.task_id, "description": description, "proposed_by": agent_id })).await;
+    protocols::bus_publish(
+        session_id,
+        agent_id,
+        "bb:proposal",
+        json!({ "task_id": task.task_id, "description": description, "proposed_by": agent_id }),
+    )
+    .await;
 
     // In P2P modes, send bid request tasks to all eligible agents via their task channels
     // so the realtime_agent_loop can evaluate and bid automatically.
@@ -5923,24 +6712,36 @@ async fn exec_bb_propose(args: &Value, session_id: &str, agent_id: &str) -> Valu
         if let Some(session_arc) = map.get(session_id) {
             let session = session_arc.lock().await;
             let orch_mode = session.system_config["system"]["orchestration_mode"]
-                .as_str().unwrap_or("hierarchical");
+                .as_str()
+                .unwrap_or("hierarchical");
             if matches!(orch_mode, "p2p" | "p2p_orchestrator") {
                 let task_id = &task.task_id;
                 for (aid, handle) in &session.agents {
-                    if aid == agent_id { continue; } // don't bid on own task
-                    let role = handle.agent_def.get("role").and_then(|r| r.as_str()).unwrap_or("");
-                    if role == "human" || role == "orchestrator" { continue; }
-                    let _ = handle.task_tx.send(AgentTask {
-                        from: format!("bid_request:{}", task_id),
-                        task: format!(
-                            "BID REQUEST: Evaluate this task and decide if you should bid.\n\
+                    if aid == agent_id {
+                        continue;
+                    } // don't bid on own task
+                    let role = handle
+                        .agent_def
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("");
+                    if role == "human" || role == "orchestrator" {
+                        continue;
+                    }
+                    let _ = handle
+                        .task_tx
+                        .send(AgentTask {
+                            from: format!("bid_request:{}", task_id),
+                            task: format!(
+                                "BID REQUEST: Evaluate this task and decide if you should bid.\n\
                              Task ID: {}\nDescription: {}\n\
                              Use bb_bid tool with your confidence score if you want to bid, \
                              or do nothing if this task is outside your expertise.",
-                            task_id, description
-                        ),
-                        context: None,
-                    }).await;
+                                task_id, description
+                            ),
+                            context: None,
+                        })
+                        .await;
                 }
             }
         }
@@ -5952,9 +6753,24 @@ async fn exec_bb_propose(args: &Value, session_id: &str, agent_id: &str) -> Valu
 async fn exec_bb_bid(args: &Value, session_id: &str, agent_id: &str) -> Value {
     let task_id = args["task_id"].as_str().unwrap_or("");
     let confidence = args["confidence"].as_f64().unwrap_or(0.5);
-    match protocols::blackboard_bid(session_id, agent_id, task_id, confidence, args["cost"].as_f64(), args["reasoning"].as_str()).await {
+    match protocols::blackboard_bid(
+        session_id,
+        agent_id,
+        task_id,
+        confidence,
+        args["cost"].as_f64(),
+        args["reasoning"].as_str(),
+    )
+    .await
+    {
         Ok(_) => {
-            protocols::bus_publish(session_id, agent_id, "bb:bid_received", json!({ "task_id": task_id, "bidder": agent_id, "confidence": confidence })).await;
+            protocols::bus_publish(
+                session_id,
+                agent_id,
+                "bb:bid_received",
+                json!({ "task_id": task_id, "bidder": agent_id, "confidence": confidence }),
+            )
+            .await;
             json!({ "ok": true, "protocol": "blackboard", "action": "bid" })
         }
         Err(e) => json!({ "ok": false, "protocol": "blackboard", "action": "bid", "error": e }),
@@ -5967,19 +6783,38 @@ async fn exec_bb_award(args: &Value, session_id: &str, agent_id: &str) -> Value 
     let computed = if award_to.is_none() {
         if let Some(scores) = args["orchestrator_scores"].as_array() {
             if let Some(task) = protocols::blackboard_get_task(session_id, task_id).await {
-                let best = task.bids.iter().map(|bid| {
-                    let orch = scores.iter().find(|s| s["agent_id"].as_str() == Some(&bid.agent_id))
-                        .and_then(|s| s["score"].as_f64()).unwrap_or(0.5);
-                    (bid.agent_id.clone(), bid.confidence * 0.5 + orch * 0.5)
-                }).max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                let best = task
+                    .bids
+                    .iter()
+                    .map(|bid| {
+                        let orch = scores
+                            .iter()
+                            .find(|s| s["agent_id"].as_str() == Some(&bid.agent_id))
+                            .and_then(|s| s["score"].as_f64())
+                            .unwrap_or(0.5);
+                        (bid.agent_id.clone(), bid.confidence * 0.5 + orch * 0.5)
+                    })
+                    .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
                 best.map(|(id, _)| id)
-            } else { None }
-        } else { None }
-    } else { award_to.map(|s| s.to_string()) };
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        award_to.map(|s| s.to_string())
+    };
     match protocols::blackboard_award(session_id, task_id, computed.as_deref(), None).await {
         Ok(winner) => {
             let _ = protocols::blackboard_start_task(session_id, &winner, task_id).await;
-            protocols::bus_publish(session_id, agent_id, "bb:task_awarded", json!({ "task_id": task_id, "awarded_to": winner })).await;
+            protocols::bus_publish(
+                session_id,
+                agent_id,
+                "bb:task_awarded",
+                json!({ "task_id": task_id, "awarded_to": winner }),
+            )
+            .await;
             json!({ "ok": true, "protocol": "blackboard", "action": "award", "awarded_to": winner, "next_step": format!("Task awarded to \"{winner}\". Use wait_result({{\"from\": \"{winner}\"}}) to collect result.") })
         }
         Err(e) => json!({ "ok": false, "protocol": "blackboard", "action": "award", "error": e }),
@@ -5991,7 +6826,9 @@ async fn exec_bb_complete(args: &Value, session_id: &str, agent_id: &str) -> Val
     let result = args["result"].clone();
     match protocols::blackboard_complete_task(session_id, agent_id, task_id, result).await {
         Ok(_) => json!({ "ok": true, "protocol": "blackboard", "action": "complete" }),
-        Err(e) => json!({ "ok": false, "protocol": "blackboard", "action": "complete", "error": e }),
+        Err(e) => {
+            json!({ "ok": false, "protocol": "blackboard", "action": "complete", "error": e })
+        }
     }
 }
 
@@ -6001,7 +6838,10 @@ async fn exec_bb_read(args: &Value, session_id: &str) -> Value {
         json!({ "ok": true, "protocol": "blackboard", "action": "read", "task": task.map(|t| serde_json::to_value(&t).unwrap_or(json!(null))) })
     } else {
         let tasks = protocols::blackboard_get_tasks(session_id, args["status"].as_str()).await;
-        let tasks: Vec<Value> = tasks.iter().map(|t| serde_json::to_value(t).unwrap_or(json!({}))).collect();
+        let tasks: Vec<Value> = tasks
+            .iter()
+            .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
+            .collect();
         json!({ "ok": true, "protocol": "blackboard", "action": "read", "tasks": tasks, "count": tasks.len() })
     }
 }
@@ -6009,7 +6849,10 @@ async fn exec_bb_read(args: &Value, session_id: &str) -> Value {
 async fn exec_bb_log(args: &Value, session_id: &str) -> Value {
     let limit = args["limit"].as_u64().map(|n| n as usize).or(Some(50));
     let log = protocols::blackboard_get_log(session_id, limit).await;
-    let log: Vec<Value> = log.iter().map(|e| serde_json::to_value(e).unwrap_or(json!({}))).collect();
+    let log: Vec<Value> = log
+        .iter()
+        .map(|e| serde_json::to_value(e).unwrap_or(json!({})))
+        .collect();
     json!({ "ok": true, "protocol": "blackboard", "action": "log", "entries": log, "count": log.len() })
 }
 
@@ -6046,11 +6889,15 @@ async fn exec_clawhub_search(args: &Value) -> Value {
 
     match Command::new(&bin)
         .args([
-            "search", query,
-            "--limit", &limit.to_string(),
+            "search",
+            query,
+            "--limit",
+            &limit.to_string(),
             "--no-input",
-            "--workdir", &workdir.display().to_string(),
-            "--dir", "skills",
+            "--workdir",
+            &workdir.display().to_string(),
+            "--dir",
+            "skills",
         ])
         .output()
         .await
@@ -6069,7 +6916,10 @@ async fn exec_clawhub_install(args: &Value) -> Value {
     let force = args["force"].as_bool().unwrap_or(false);
 
     // Validate slug format
-    if !regex::Regex::new(r"^[a-z0-9][a-z0-9-]*$").unwrap().is_match(slug) {
+    if !regex::Regex::new(r"^[a-z0-9][a-z0-9-]*$")
+        .unwrap()
+        .is_match(slug)
+    {
         return json!({ "ok": false, "error": "Invalid slug format" });
     }
 
@@ -6097,9 +6947,13 @@ async fn exec_clawhub_install(args: &Value) -> Value {
     let workdir_str = workdir.display().to_string();
 
     let mut argv = vec![
-        "install", slug, "--no-input",
-        "--workdir", &workdir_str,
-        "--dir", "skills",
+        "install",
+        slug,
+        "--no-input",
+        "--workdir",
+        &workdir_str,
+        "--dir",
+        "skills",
     ];
     if force {
         argv.push("--force");
@@ -6235,10 +7089,7 @@ async fn exec_openrouter_web_search(args: &Value) -> Value {
 // create_architecture — generate multi-agent YAML via LLM
 // ---------------------------------------------------------------------------
 
-async fn exec_create_architecture(
-    args: &Value,
-    sub_agent: &SubAgentConfig,
-) -> Value {
+async fn exec_create_architecture(args: &Value, sub_agent: &SubAgentConfig) -> Value {
     let description = args["description"].as_str().unwrap_or("");
     if description.is_empty() {
         return json!({ "ok": false, "error": "description is required" });
@@ -6254,10 +7105,7 @@ async fn exec_create_architecture(
     if sub_agent.mode == "router" && arch_type == "pipeline" {
         arch_type = "flat".to_string();
     }
-    let count = args["agentCount"]
-        .as_str()
-        .unwrap_or("auto")
-        .to_string();
+    let count = args["agentCount"].as_str().unwrap_or("auto").to_string();
     let session_id = if sub_agent.session_id.is_empty() {
         "default".to_string()
     } else {
@@ -6269,14 +7117,22 @@ async fn exec_create_architecture(
     if !sub_agent.config_file.is_empty() {
         if let Some((cfg, _)) = load_agent_yaml(&sub_agent.config_file) {
             if let Some(agents) = cfg["agents"].as_array() {
-                let non_human: Vec<&Value> = agents.iter()
+                let non_human: Vec<&Value> = agents
+                    .iter()
                     .filter(|a| a["role"].as_str() != Some("human"))
                     .collect();
-                let agent_lines: Vec<String> = non_human.iter()
-                    .map(|a| format!("- {} ({}): {}",
-                        a["id"].as_str().unwrap_or("?"),
-                        a["role"].as_str().unwrap_or("?"),
-                        a["persona"].as_str().unwrap_or(a["name"].as_str().unwrap_or("?"))))
+                let agent_lines: Vec<String> = non_human
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "- {} ({}): {}",
+                            a["id"].as_str().unwrap_or("?"),
+                            a["role"].as_str().unwrap_or("?"),
+                            a["persona"]
+                                .as_str()
+                                .unwrap_or(a["name"].as_str().unwrap_or("?"))
+                        )
+                    })
                     .collect();
                 base_template_prompt = format!(
                     "\n\nBASE TEMPLATE (from \"{}\"):\nSystem: {}, Mode: {}\nAgents:\n{}\n\nUse this as a starting point.",
@@ -6293,12 +7149,18 @@ async fn exec_create_architecture(
     // each agent a best-fit model. Empty in every other mode (no behavior change).
     let is_router = sub_agent.mode == "router";
     let pool_block = if is_router && !sub_agent.model_pool.is_empty() {
-        let lines: Vec<String> = sub_agent.model_pool.iter().map(|e| format!(
-            "- model \"{}\" [{} tier]: {}",
-            e["model"].as_str().unwrap_or("?"),
-            e["tier"].as_str().unwrap_or("balanced"),
-            e["strengths"].as_str().unwrap_or(""),
-        )).collect();
+        let lines: Vec<String> = sub_agent
+            .model_pool
+            .iter()
+            .map(|e| {
+                format!(
+                    "- model \"{}\" [{} tier]: {}",
+                    e["model"].as_str().unwrap_or("?"),
+                    e["tier"].as_str().unwrap_or("balanced"),
+                    e["strengths"].as_str().unwrap_or(""),
+                )
+            })
+            .collect();
         format!(
             "\n\nAVAILABLE MODEL POOL — assign each non-human agent a best-fit \"model\" from this list (match the agent's role to the model's tier/strengths):\n{}",
             lines.join("\n"),
@@ -6386,10 +7248,18 @@ RULES:
     ];
 
     let resp_body = match llm_call(
-        &client, &sub_agent.api_key, &sub_agent.api_url, &sub_agent.model,
-        &messages, None, 0.7, 16384,
+        &client,
+        &sub_agent.api_key,
+        &sub_agent.api_url,
+        &sub_agent.model,
+        &messages,
+        None,
+        0.7,
+        16384,
         Some(sub_agent.effort.as_str()),
-    ).await {
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => return json!({ "ok": false, "error": format!("API request failed: {e}") }),
     };
@@ -6399,7 +7269,9 @@ RULES:
         .and_then(|arr| arr.first())
         .and_then(|c| {
             let msg = &c["message"];
-            msg["content"].as_str().filter(|s| !s.is_empty())
+            msg["content"]
+                .as_str()
+                .filter(|s| !s.is_empty())
                 .or_else(|| msg["reasoning_content"].as_str())
         })
         .unwrap_or("");
@@ -6409,7 +7281,10 @@ RULES:
     }
 
     // Extract JSON from response
-    let json_str = if let Some(m) = regex::Regex::new(r"\{[\s\S]*\}").unwrap().find(content_text) {
+    let json_str = if let Some(m) = regex::Regex::new(r"\{[\s\S]*\}")
+        .unwrap()
+        .find(content_text)
+    {
         m.as_str()
     } else {
         content_text
@@ -6433,14 +7308,20 @@ RULES:
         parsed["system"]["model_pool"] = json!(sub_agent.model_pool);
         if let Some(agents) = parsed["agents"].as_array_mut() {
             for agent in agents.iter_mut() {
-                let chosen = agent.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let chosen = agent
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if chosen.is_empty() {
                     continue; // no per-agent model → falls back to session model
                 }
                 // Find the pool entry whose model id matches and graft its
                 // non-empty api_url/api_key onto the agent so the agent loop can
                 // reach a different provider.
-                if let Some(entry) = sub_agent.model_pool.iter()
+                if let Some(entry) = sub_agent
+                    .model_pool
+                    .iter()
                     .find(|e| e["model"].as_str() == Some(chosen.as_str()))
                 {
                     if let Some(u) = entry["api_url"].as_str().filter(|s| !s.is_empty()) {
@@ -6480,8 +7361,14 @@ RULES:
     }
 
     // Track creation
-    auto_created_architectures().lock().await.insert(session_id.clone(), filename.clone());
-    auto_swarm_selections().lock().await.insert(session_id.clone(), filename.clone());
+    auto_created_architectures()
+        .lock()
+        .await
+        .insert(session_id.clone(), filename.clone());
+    auto_swarm_selections()
+        .lock()
+        .await
+        .insert(session_id.clone(), filename.clone());
 
     // NOTE: realtime session boot is handled by the caller (chat.rs)
     // to avoid double-booting and race conditions.
@@ -6491,26 +7378,32 @@ RULES:
         .unwrap_or(&vec![])
         .iter()
         .filter(|a| a["role"].as_str() != Some("human"))
-        .map(|a| json!({
-            "id": a["id"], "name": a["name"], "role": a["role"],
-            "persona": a["persona"], "responsibilities": a["responsibilities"],
-        }))
+        .map(|a| {
+            json!({
+                "id": a["id"], "name": a["name"], "role": a["role"],
+                "persona": a["persona"], "responsibilities": a["responsibilities"],
+            })
+        })
         .collect();
 
     let mode = parsed["system"]["orchestration_mode"]
         .as_str()
         .unwrap_or(&arch_type);
 
-    let orchestrator = parsed["agents"]
-        .as_array()
-        .and_then(|arr| arr.iter().find(|a| a["role"].as_str() == Some("orchestrator")));
+    let orchestrator = parsed["agents"].as_array().and_then(|arr| {
+        arr.iter()
+            .find(|a| a["role"].as_str() == Some("orchestrator"))
+    });
 
     let delegation = if let Some(orch) = orchestrator {
         let orch_id = orch["id"].as_str().unwrap_or("orchestrator");
         format!("Orchestrator \"{}\" manages the team. Use send_task({{to: \"{}\", task: \"...\"}}) then wait_result.", orch_id, orch_id)
     } else {
         let ids: Vec<&str> = all_agents.iter().filter_map(|a| a["id"].as_str()).collect();
-        format!("Send tasks directly to agents. Available: {}.", ids.join(", "))
+        format!(
+            "Send tasks directly to agents. Available: {}.",
+            ids.join(", ")
+        )
     };
 
     json!({
@@ -6531,11 +7424,7 @@ RULES:
 // select_swarm — pick an existing agent YAML and boot it
 // ---------------------------------------------------------------------------
 
-async fn exec_select_swarm(
-    args: &Value,
-    sub_agent: &SubAgentConfig,
-    sandbox_dir: &str,
-) -> Value {
+async fn exec_select_swarm(args: &Value, sub_agent: &SubAgentConfig, sandbox_dir: &str) -> Value {
     let filename = args["filename"].as_str().unwrap_or("");
     let reason = args["reason"].as_str().unwrap_or("");
     if filename.is_empty() {
@@ -6544,7 +7433,9 @@ async fn exec_select_swarm(
 
     let (config, _ids) = match load_agent_yaml(filename) {
         Some(v) => v,
-        None => return json!({ "ok": false, "error": format!("Config file \"{}\" not found or invalid", filename) }),
+        None => {
+            return json!({ "ok": false, "error": format!("Config file \"{}\" not found or invalid", filename) })
+        }
     };
 
     let all_agents: Vec<Value> = config["agents"]
@@ -6554,10 +7445,12 @@ async fn exec_select_swarm(
         .filter(|a| a["role"].as_str() != Some("human"))
         .collect::<Vec<_>>()
         .iter()
-        .map(|a| json!({
-            "id": a["id"], "name": a["name"], "role": a["role"],
-            "persona": a["persona"], "responsibilities": a["responsibilities"],
-        }))
+        .map(|a| {
+            json!({
+                "id": a["id"], "name": a["name"], "role": a["role"],
+                "persona": a["persona"], "responsibilities": a["responsibilities"],
+            })
+        })
         .collect();
 
     if all_agents.is_empty() {
@@ -6570,12 +7463,17 @@ async fn exec_select_swarm(
         sub_agent.session_id.clone()
     };
 
-    auto_swarm_selections().lock().await.insert(session_id.clone(), filename.to_string());
+    auto_swarm_selections()
+        .lock()
+        .await
+        .insert(session_id.clone(), filename.to_string());
 
     // Boot the realtime session (fire-and-forget to avoid recursive type cycle)
     boot_realtime_session_deferred(
-        session_id.clone(), filename.to_string(),
-        sub_agent.api_key.clone(), sub_agent.api_url.clone(),
+        session_id.clone(),
+        filename.to_string(),
+        sub_agent.api_key.clone(),
+        sub_agent.api_url.clone(),
         sub_agent.model.clone(),
         sandbox_dir.to_string(),
     );
@@ -6584,9 +7482,10 @@ async fn exec_select_swarm(
         .as_str()
         .unwrap_or("hierarchical");
 
-    let orchestrator = config["agents"]
-        .as_array()
-        .and_then(|arr| arr.iter().find(|a| a["role"].as_str() == Some("orchestrator")));
+    let orchestrator = config["agents"].as_array().and_then(|arr| {
+        arr.iter()
+            .find(|a| a["role"].as_str() == Some("orchestrator"))
+    });
 
     let delegation = if let Some(orch) = orchestrator {
         let orch_id = orch["id"].as_str().unwrap_or("orchestrator");
@@ -6625,187 +7524,227 @@ fn exec_spawn_subagent(
     let sandbox_dir = sandbox_dir.to_string();
 
     Box::pin(async move {
-    let args = &args;
-    let sub_agent = &sub_agent;
-    let sandbox_dir = &sandbox_dir;
-    let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
-    let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-    let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
+        let args = &args;
+        let sub_agent = &sub_agent;
+        let sandbox_dir = &sandbox_dir;
+        let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("");
+        let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+        let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
 
-    if agent_id.is_empty() || task.is_empty() {
-        return json!({"ok": false, "error": "agent_id and task are required"});
-    }
-
-    if !sub_agent.agent_ids.contains(&agent_id.to_string()) {
-        return json!({"ok": false, "error": format!("Unknown agent: {}. Available: {:?}", agent_id, sub_agent.agent_ids)});
-    }
-
-    let max_spawn_depth = effective_max_spawn_depth(sub_agent);
-    if sub_agent.depth >= max_spawn_depth {
-        return json!({"ok": false, "error": format!("Max sub-agent recursion depth reached ({})", max_spawn_depth)});
-    }
-
-    info!("[SubAgent] Spawning agent '{}' (depth={}) for task: {}", agent_id, sub_agent.depth, crate::util::truncate_utf8(&task, 80));
-
-    // Load YAML config
-    let (yaml_val, _) = match load_agent_yaml(&sub_agent.config_file) {
-        Some(v) => v,
-        None => return json!({"ok": false, "error": "Failed to load agent config"}),
-    };
-
-    // Find agent definition
-    let agent_def = yaml_val
-        .get("agents")
-        .and_then(|a| a.as_array())
-        .and_then(|arr| arr.iter().find(|a| a.get("id").and_then(|v| v.as_str()) == Some(agent_id)));
-
-    let agent_def = match agent_def {
-        Some(d) => d.clone(),
-        None => return json!({"ok": false, "error": format!("Agent '{}' not found in config", agent_id)}),
-    };
-
-    let agent_name = agent_def.get("name").and_then(|v| v.as_str()).unwrap_or(agent_id);
-    let agent_role = agent_def.get("role").and_then(|v| v.as_str()).unwrap_or("worker");
-
-    // Log SUBAGENT_SPAWN to history JSONL
-    write_agent_history(&sub_agent.session_id, "SUBAGENT_SPAWN", json!({
-        "agent_id": agent_id,
-        "agent_name": agent_name,
-        "role": agent_role,
-        "depth": sub_agent.depth,
-        "task": task,
-        "context": context,
-        "config_file": sub_agent.config_file,
-    })).await;
-
-    // Find which agents this agent can delegate to (from connections)
-    let targets: Vec<String> = yaml_val
-        .get("connections")
-        .and_then(|c| c.as_array())
-        .map(|conns| {
-            conns
-                .iter()
-                .filter(|c| c.get("from").and_then(|v| v.as_str()) == Some(agent_id))
-                .filter_map(|c| c.get("to").and_then(|v| v.as_str()).map(|s| s.to_string()))
-                .filter(|id| id != "human")
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Check if mesh mode — all agents accessible
-    let orch_mode = yaml_val
-        .get("system")
-        .and_then(|s| s.get("orchestration_mode"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let agent_mesh = agent_def
-        .get("mesh")
-        .and_then(|m| m.get("enabled"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let available_targets = if orch_mode == "mesh" || agent_mesh {
-        sub_agent.agent_ids.iter().filter(|id| id.as_str() != agent_id).cloned().collect()
-    } else {
-        targets
-    };
-
-    // Build system prompt for this agent
-    let mut system_prompt = build_agent_system_prompt(&agent_def, &yaml_val, &available_targets);
-
-    // Per-agent loop profile from the YAML definition (tools/mcp_servers/loop/
-    // system_prompt); falls back to inheriting the parent's profile.
-    let agent_profile = crate::server::services::agent_loop::profile_from_agent_def(&agent_def);
-    if let Some(sp) = agent_profile.as_ref().and_then(|p| p.system_prompt.as_ref()) {
-        if !sp.text.trim().is_empty() {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&sp.text);
+        if agent_id.is_empty() || task.is_empty() {
+            return json!({"ok": false, "error": "agent_id and task are required"});
         }
-    }
-    let child_profile = agent_profile.map(Arc::new).or_else(|| sub_agent.loop_profile.clone());
 
-    // Advertise enabled skills so sub-agents can discover them without calling list_skills.
-    match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA), None).await {
-        block if !block.is_empty() => system_prompt.push_str(&block),
-        _ => {}
-    }
+        if !sub_agent.agent_ids.contains(&agent_id.to_string()) {
+            return json!({"ok": false, "error": format!("Unknown agent: {}. Available: {:?}", agent_id, sub_agent.agent_ids)});
+        }
 
-    // Build message with task
-    let user_msg = if context.is_empty() {
-        format!("Task: {}", task)
-    } else {
-        format!("Task: {}\n\nContext:\n{}", task, context)
-    };
+        let max_spawn_depth = effective_max_spawn_depth(sub_agent);
+        if sub_agent.depth >= max_spawn_depth {
+            return json!({"ok": false, "error": format!("Max sub-agent recursion depth reached ({})", max_spawn_depth)});
+        }
 
-    let messages = vec![json!({"role": "user", "content": user_msg})];
+        info!(
+            "[SubAgent] Spawning agent '{}' (depth={}) for task: {}",
+            agent_id,
+            sub_agent.depth,
+            crate::util::truncate_utf8(&task, 80)
+        );
 
-    // Create sub-agent config with incremented depth
-    let child_config = SubAgentConfig {
-        enabled: !available_targets.is_empty(),
-        config_file: sub_agent.config_file.clone(),
-        agent_ids: available_targets,
-        // A spawned child inherits its parent's reasoning depth.
-        effort: sub_agent.effort.clone(),
-        api_key: sub_agent.api_key.clone(),
-        api_url: sub_agent.api_url.clone(),
-        model: sub_agent.model.clone(),
-        depth: sub_agent.depth + 1,
-        session_id: sub_agent.session_id.clone(),
-        agent_id: agent_id.to_string(),
-        mode: sub_agent.mode.clone(),
-        agent_role: agent_role.to_string(),
-        cancel_flag: sub_agent.cancel_flag.clone(),
-        model_pool: sub_agent.model_pool.clone(),
-        router_tier: sub_agent.router_tier.clone(),
-        loop_profile: child_profile,
-        // The graph gate only fires at top level (depth 0, agent "main");
-        // children never carry it.
-        graph_profile: None,
-    };
+        // Load YAML config
+        let (yaml_val, _) = match load_agent_yaml(&sub_agent.config_file) {
+            Some(v) => v,
+            None => return json!({"ok": false, "error": "Failed to load agent config"}),
+        };
 
-    // Recursive call — propagate ToolCall/ToolResult to parent UI (drop TextChunk to avoid mangling main text)
-    let on_update_child = on_update.clone();
-    let result = call_with_tools(
-        &sub_agent.api_key,
-        &sub_agent.api_url,
-        &sub_agent.model,
-        messages,
-        Some(system_prompt),
-        sandbox_dir,
-        move |update| {
-            match &update {
-                ToolUpdate::TextChunk(_) => {}, // don't merge sub-agent text into parent stream
-                _ => on_update_child(update),
+        // Find agent definition
+        let agent_def = yaml_val
+            .get("agents")
+            .and_then(|a| a.as_array())
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|a| a.get("id").and_then(|v| v.as_str()) == Some(agent_id))
+            });
+
+        let agent_def = match agent_def {
+            Some(d) => d.clone(),
+            None => {
+                return json!({"ok": false, "error": format!("Agent '{}' not found in config", agent_id)})
             }
-        },
-        child_config,
-    )
-    .await;
+        };
 
-    let result_preview = crate::util::truncate_utf8_ellipsis(&result.content, 200);
+        let agent_name = agent_def
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(agent_id);
+        let agent_role = agent_def
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("worker");
 
-    info!("[SubAgent] Agent '{}' completed. Result length: {} chars", agent_id, result.content.len());
+        // Log SUBAGENT_SPAWN to history JSONL
+        write_agent_history(
+            &sub_agent.session_id,
+            "SUBAGENT_SPAWN",
+            json!({
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "role": agent_role,
+                "depth": sub_agent.depth,
+                "task": task,
+                "context": context,
+                "config_file": sub_agent.config_file,
+            }),
+        )
+        .await;
 
-    // Log SUBAGENT_DONE to history JSONL
-    write_agent_history(&sub_agent.session_id, "SUBAGENT_DONE", json!({
-        "agent_id": agent_id,
-        "agent_name": agent_name,
-        "depth": sub_agent.depth,
-        "result_length": result.content.len(),
-        "tool_calls": result.tool_results.len(),
-        "files_generated": result.files.len(),
-        "result_preview": result_preview,
-    })).await;
+        // Find which agents this agent can delegate to (from connections)
+        let targets: Vec<String> = yaml_val
+            .get("connections")
+            .and_then(|c| c.as_array())
+            .map(|conns| {
+                conns
+                    .iter()
+                    .filter(|c| c.get("from").and_then(|v| v.as_str()) == Some(agent_id))
+                    .filter_map(|c| c.get("to").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                    .filter(|id| id != "human")
+                    .collect()
+            })
+            .unwrap_or_default();
 
-    json!({
-        "ok": true,
-        "agent_id": agent_id,
-        "agent_name": agent_name,
-        "role": agent_role,
-        "result": result.content,
-        "tool_calls_count": result.tool_results.len(),
-        "output_files": result.files,
-    })
+        // Check if mesh mode — all agents accessible
+        let orch_mode = yaml_val
+            .get("system")
+            .and_then(|s| s.get("orchestration_mode"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let agent_mesh = agent_def
+            .get("mesh")
+            .and_then(|m| m.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let available_targets = if orch_mode == "mesh" || agent_mesh {
+            sub_agent
+                .agent_ids
+                .iter()
+                .filter(|id| id.as_str() != agent_id)
+                .cloned()
+                .collect()
+        } else {
+            targets
+        };
+
+        // Build system prompt for this agent
+        let mut system_prompt =
+            build_agent_system_prompt(&agent_def, &yaml_val, &available_targets);
+
+        // Per-agent loop profile from the YAML definition (tools/mcp_servers/loop/
+        // system_prompt); falls back to inheriting the parent's profile.
+        let agent_profile = crate::server::services::agent_loop::profile_from_agent_def(&agent_def);
+        if let Some(sp) = agent_profile
+            .as_ref()
+            .and_then(|p| p.system_prompt.as_ref())
+        {
+            if !sp.text.trim().is_empty() {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&sp.text);
+            }
+        }
+        let child_profile = agent_profile
+            .map(Arc::new)
+            .or_else(|| sub_agent.loop_profile.clone());
+
+        // Advertise enabled skills so sub-agents can discover them without calling list_skills.
+        match build_enabled_skills_block(Some(SUBAGENT_SKILLS_PERSONA), None).await {
+            block if !block.is_empty() => system_prompt.push_str(&block),
+            _ => {}
+        }
+
+        // Build message with task
+        let user_msg = if context.is_empty() {
+            format!("Task: {}", task)
+        } else {
+            format!("Task: {}\n\nContext:\n{}", task, context)
+        };
+
+        let messages = vec![json!({"role": "user", "content": user_msg})];
+
+        // Create sub-agent config with incremented depth
+        let child_config = SubAgentConfig {
+            enabled: !available_targets.is_empty(),
+            config_file: sub_agent.config_file.clone(),
+            agent_ids: available_targets,
+            effort: sub_agent.effort.clone(),
+            api_key: sub_agent.api_key.clone(),
+            api_url: sub_agent.api_url.clone(),
+            model: sub_agent.model.clone(),
+            depth: sub_agent.depth + 1,
+            session_id: sub_agent.session_id.clone(),
+            agent_id: agent_id.to_string(),
+            mode: sub_agent.mode.clone(),
+            agent_role: agent_role.to_string(),
+            cancel_flag: sub_agent.cancel_flag.clone(),
+            model_pool: sub_agent.model_pool.clone(),
+            router_tier: sub_agent.router_tier.clone(),
+            loop_profile: child_profile,
+            // The graph gate only fires at top level (depth 0, agent "main");
+            // children never carry it.
+            graph_profile: None,
+        };
+
+        // Recursive call — propagate ToolCall/ToolResult to parent UI (drop TextChunk to avoid mangling main text)
+        let on_update_child = on_update.clone();
+        let result = call_with_tools(
+            &sub_agent.api_key,
+            &sub_agent.api_url,
+            &sub_agent.model,
+            messages,
+            Some(system_prompt),
+            sandbox_dir,
+            move |update| {
+                match &update {
+                    ToolUpdate::TextChunk(_) => {} // don't merge sub-agent text into parent stream
+                    _ => on_update_child(update),
+                }
+            },
+            child_config,
+        )
+        .await;
+
+        let result_preview = crate::util::truncate_utf8_ellipsis(&result.content, 200);
+
+        info!(
+            "[SubAgent] Agent '{}' completed. Result length: {} chars",
+            agent_id,
+            result.content.len()
+        );
+
+        // Log SUBAGENT_DONE to history JSONL
+        write_agent_history(
+            &sub_agent.session_id,
+            "SUBAGENT_DONE",
+            json!({
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "depth": sub_agent.depth,
+                "result_length": result.content.len(),
+                "tool_calls": result.tool_results.len(),
+                "files_generated": result.files.len(),
+                "result_preview": result_preview,
+            }),
+        )
+        .await;
+
+        json!({
+            "ok": true,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "role": agent_role,
+            "result": result.content,
+            "tool_calls_count": result.tool_results.len(),
+            "output_files": result.files,
+        })
     }) // end Box::pin(async move)
 }
 
@@ -6833,9 +7772,14 @@ async fn exec_cron_create(args: &Value) -> Value {
     };
     let command = match args.get("command").and_then(|v| v.as_str()) {
         Some(c) if !c.trim().is_empty() => c.trim().to_string(),
-        _ => return json!({ "ok": false, "error": "Parameter 'command' must be a non-empty string." }),
+        _ => {
+            return json!({ "ok": false, "error": "Parameter 'command' must be a non-empty string." })
+        }
     };
-    let enabled = args.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    let enabled = args
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
     if let Some(reason) = check_dangerous(&command) {
         warn!("[SECURITY] cron_create command blocked: {}", reason);
@@ -6854,7 +7798,11 @@ async fn exec_cron_create(args: &Value) -> Value {
     }
 
     let task = crate::server::data::ScheduledTask {
-        id: format!("{:x}-{:04x}", chrono::Utc::now().timestamp_millis(), rand::random::<u16>()),
+        id: format!(
+            "{:x}-{:04x}",
+            chrono::Utc::now().timestamp_millis(),
+            rand::random::<u16>()
+        ),
         name: name.clone(),
         cron: cron_expr.clone(),
         command,
@@ -6901,7 +7849,9 @@ async fn exec_cron_list(_args: &Value) -> Value {
 async fn exec_cron_toggle(args: &Value) -> Value {
     let id_or_name = match args.get("id_or_name").and_then(|v| v.as_str()) {
         Some(s) if !s.trim().is_empty() => s.trim(),
-        _ => return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." }),
+        _ => {
+            return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." })
+        }
     };
     let enabled = match args.get("enabled").and_then(|v| v.as_bool()) {
         Some(e) => e,
@@ -6921,7 +7871,9 @@ async fn exec_cron_toggle(args: &Value) -> Value {
 async fn exec_cron_delete(args: &Value) -> Value {
     let id_or_name = match args.get("id_or_name").and_then(|v| v.as_str()) {
         Some(s) if !s.trim().is_empty() => s.trim(),
-        _ => return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." }),
+        _ => {
+            return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." })
+        }
     };
 
     let tasks = crate::server::data::get_tasks().await;
@@ -6940,7 +7892,9 @@ async fn exec_cron_delete(args: &Value) -> Value {
 async fn exec_cron_run_now(args: &Value) -> Value {
     let id_or_name = match args.get("id_or_name").and_then(|v| v.as_str()) {
         Some(s) if !s.trim().is_empty() => s.trim(),
-        _ => return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." }),
+        _ => {
+            return json!({ "ok": false, "error": "Parameter 'id_or_name' must be a non-empty string." })
+        }
     };
 
     let mut tasks = crate::server::data::get_tasks().await;
@@ -7015,7 +7969,10 @@ async fn execute_tool_with_context(
             // window so concurrent agents don't clobber a shared Chrome page.
             // The main orchestrator keeps the shared browser.
             if name.starts_with("mcp_browser_") && agent_id != "main" && !session_id.is_empty() {
-                info!("[execute_tool] Routing browser call to agent '{}' own window: {name}", agent_id);
+                info!(
+                    "[execute_tool] Routing browser call to agent '{}' own window: {name}",
+                    agent_id
+                );
                 mcp::call_browser_tool_for_agent(session_id, agent_id, name, args).await
             } else {
                 info!("[execute_tool] Routing MCP tool call: {name}");
@@ -7088,11 +8045,26 @@ pub async fn call_with_tools(
     // Bind the session exec context for the WHOLE loop so that even processes
     // spawned outside tool dispatch — CLI model backends in llm_call
     // (claude-code/gemini-cli/codex-cli) — are tracked and killed on cancel.
-    let ctx = ExecCtx { session_id: sub_agent.session_id.clone(), cancel: sub_agent.cancel_flag.clone() };
-    EXEC_CTX.scope(
-        ctx,
-        call_with_tools_inner(api_key, api_url, model, messages, system_prompt, sandbox_dir, on_update, sub_agent, false),
-    ).await
+    let ctx = ExecCtx {
+        session_id: sub_agent.session_id.clone(),
+        cancel: sub_agent.cancel_flag.clone(),
+    };
+    EXEC_CTX
+        .scope(
+            ctx,
+            call_with_tools_inner(
+                api_key,
+                api_url,
+                model,
+                messages,
+                system_prompt,
+                sandbox_dir,
+                on_update,
+                sub_agent,
+                false,
+            ),
+        )
+        .await
 }
 
 pub async fn call_with_tools_realtime(
@@ -7105,11 +8077,26 @@ pub async fn call_with_tools_realtime(
     on_update: impl Fn(ToolUpdate) + Send + Sync + 'static,
     sub_agent: SubAgentConfig,
 ) -> ToolLoopResult {
-    let ctx = ExecCtx { session_id: sub_agent.session_id.clone(), cancel: sub_agent.cancel_flag.clone() };
-    EXEC_CTX.scope(
-        ctx,
-        call_with_tools_inner(api_key, api_url, model, messages, system_prompt, sandbox_dir, on_update, sub_agent, true),
-    ).await
+    let ctx = ExecCtx {
+        session_id: sub_agent.session_id.clone(),
+        cancel: sub_agent.cancel_flag.clone(),
+    };
+    EXEC_CTX
+        .scope(
+            ctx,
+            call_with_tools_inner(
+                api_key,
+                api_url,
+                model,
+                messages,
+                system_prompt,
+                sandbox_dir,
+                on_update,
+                sub_agent,
+                true,
+            ),
+        )
+        .await
 }
 
 // ---------------------------------------------------------------------------
@@ -7230,7 +8217,9 @@ fn build_image_content(text: &str, sandbox_dir: &str) -> Option<Value> {
         }
         // Dedupe by resolved path so the bare name and the full path of the
         // same upload don't get inlined twice.
-        let key = resolve_path(sandbox_dir, &path).to_string_lossy().to_string();
+        let key = resolve_path(sandbox_dir, &path)
+            .to_string_lossy()
+            .to_string();
         if !seen_resolved.insert(key) {
             continue;
         }
@@ -7285,7 +8274,11 @@ fn extract_attachment_paths(text: &str) -> Vec<String> {
     }
     // Fallback: bare whitespace-free tokens (paths typed directly with no note).
     for raw in text.split(|c: char| {
-        c.is_whitespace() || matches!(c, '(' | ')' | ',' | '"' | '\'' | '`' | '[' | ']' | '<' | '>')
+        c.is_whitespace()
+            || matches!(
+                c,
+                '(' | ')' | ',' | '"' | '\'' | '`' | '[' | ']' | '<' | '>'
+            )
     }) {
         let tok = raw.trim().trim_matches('-');
         if !tok.is_empty() {
@@ -7404,7 +8397,9 @@ fn to_anthropic_messages(messages: &[Value]) -> (Option<String>, Vec<Value>) {
                 }));
             }
             "user" => {
-                anthropic_msgs.push(json!({"role": "user", "content": openai_content_to_anthropic(&m["content"])}));
+                anthropic_msgs.push(
+                    json!({"role": "user", "content": openai_content_to_anthropic(&m["content"])}),
+                );
             }
             _ => {
                 anthropic_msgs.push(m.clone());
@@ -7412,20 +8407,27 @@ fn to_anthropic_messages(messages: &[Value]) -> (Option<String>, Vec<Value>) {
         }
     }
 
-    let system = if system_parts.is_empty() { None } else { Some(system_parts.join("\n\n")) };
+    let system = if system_parts.is_empty() {
+        None
+    } else {
+        Some(system_parts.join("\n\n"))
+    };
     (system, anthropic_msgs)
 }
 
 /// Convert OpenAI tool definitions to Anthropic format
 fn to_anthropic_tools(tools: &[Value]) -> Vec<Value> {
-    tools.iter().filter_map(|t| {
-        let func = t.get("function")?;
-        Some(json!({
-            "name": func["name"],
-            "description": func["description"],
-            "input_schema": func["parameters"],
-        }))
-    }).collect()
+    tools
+        .iter()
+        .filter_map(|t| {
+            let func = t.get("function")?;
+            Some(json!({
+                "name": func["name"],
+                "description": func["description"],
+                "input_schema": func["parameters"],
+            }))
+        })
+        .collect()
 }
 
 /// Recursively rewrite a JSON Schema node so it satisfies strict validators
@@ -7459,8 +8461,14 @@ fn sanitize_schema_for_moonshot(schema: &mut Value) {
             // Keep only the combinator(s) and annotation keywords; every
             // validation keyword must live inside the branches, not the parent.
             const KEEP: [&str; 8] = [
-                "anyOf", "oneOf", "allOf",
-                "description", "title", "default", "examples", "deprecated",
+                "anyOf",
+                "oneOf",
+                "allOf",
+                "description",
+                "title",
+                "default",
+                "examples",
+                "deprecated",
             ];
             obj.retain(|k, _| KEEP.contains(&k.as_str()));
         }
@@ -7497,13 +8505,16 @@ fn sanitize_schema_for_moonshot(schema: &mut Value) {
 /// Sanitize OpenAI-format tool definitions in place for strict validators
 /// (Moonshot/Kimi). Rewrites each tool's `function.parameters` schema.
 fn sanitize_tools_for_openai(tools: &[Value]) -> Vec<Value> {
-    tools.iter().map(|t| {
-        let mut t = t.clone();
-        if let Some(params) = t.pointer_mut("/function/parameters") {
-            sanitize_schema_for_moonshot(params);
-        }
-        t
-    }).collect()
+    tools
+        .iter()
+        .map(|t| {
+            let mut t = t.clone();
+            if let Some(params) = t.pointer_mut("/function/parameters") {
+                sanitize_schema_for_moonshot(params);
+            }
+            t
+        })
+        .collect()
 }
 
 /// Unified LLM call supporting both Anthropic and OpenAI formats
@@ -7523,7 +8534,8 @@ pub fn cli_env_path() -> String {
         "/opt/homebrew/bin".to_string(),
         "/usr/local/bin".to_string(),
     ];
-    let system_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
+    let system_path =
+        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".to_string());
     let mut parts: Vec<String> = Vec::new();
     for d in &extra_dirs {
         if std::path::Path::new(d).is_dir() && !system_path.contains(d.as_str()) {
@@ -7540,14 +8552,20 @@ pub fn resolve_home() -> String {
     // $HOME on macOS/Linux.
     if let Some(h) = dirs::home_dir() {
         let s = h.to_string_lossy().to_string();
-        if !s.is_empty() { return s; }
+        if !s.is_empty() {
+            return s;
+        }
     }
     if let Ok(h) = std::env::var("HOME") {
-        if !h.is_empty() { return h; }
+        if !h.is_empty() {
+            return h;
+        }
     }
     #[cfg(target_os = "windows")]
     if let Ok(h) = std::env::var("USERPROFILE") {
-        if !h.is_empty() { return h; }
+        if !h.is_empty() {
+            return h;
+        }
     }
     ".".to_string()
 }
@@ -7559,10 +8577,22 @@ fn find_node() -> String {
     let which_cmd = "where";
     #[cfg(not(target_os = "windows"))]
     let which_cmd = "which";
-    let node_name = if cfg!(target_os = "windows") { "node.exe" } else { "node" };
-    if let Ok(out) = std::process::Command::new(which_cmd).arg(node_name).output() {
+    let node_name = if cfg!(target_os = "windows") {
+        "node.exe"
+    } else {
+        "node"
+    };
+    if let Ok(out) = std::process::Command::new(which_cmd)
+        .arg(node_name)
+        .output()
+    {
         if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
+            let path = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if !path.is_empty() && std::path::Path::new(&path).exists() {
                 return path;
             }
@@ -7599,7 +8629,9 @@ fn find_node() -> String {
 /// Resolve a symlink to its real JS script path.
 fn resolve_script(symlink: &str) -> Option<String> {
     let p = std::path::Path::new(symlink);
-    if !p.exists() { return None; }
+    if !p.exists() {
+        return None;
+    }
     // Try to canonicalize (follows symlinks AND resolves ..)
     if let Ok(canon) = p.canonicalize() {
         return Some(canon.to_string_lossy().to_string());
@@ -7607,7 +8639,9 @@ fn resolve_script(symlink: &str) -> Option<String> {
     // Fallback: manual symlink resolve
     if let Ok(target) = std::fs::read_link(p) {
         let resolved = if target.is_relative() {
-            p.parent().unwrap_or(std::path::Path::new("/")).join(&target)
+            p.parent()
+                .unwrap_or(std::path::Path::new("/"))
+                .join(&target)
         } else {
             target
         };
@@ -7637,7 +8671,7 @@ fn is_native_magic(bytes: &[u8]) -> bool {
             [bytes[0], bytes[1], bytes[2], bytes[3]],
             [0xFE, 0xED, 0xFA, 0xCE] | [0xCE, 0xFA, 0xED, 0xFE] | // Mach-O 32-bit
             [0xFE, 0xED, 0xFA, 0xCF] | [0xCF, 0xFA, 0xED, 0xFE] | // Mach-O 64-bit
-            [0xCA, 0xFE, 0xBA, 0xBE] | [0xBE, 0xBA, 0xFE, 0xCA]   // universal/fat
+            [0xCA, 0xFE, 0xBA, 0xBE] | [0xBE, 0xBA, 0xFE, 0xCA] // universal/fat
         );
     }
     false
@@ -7732,7 +8766,10 @@ async fn llm_call_claude_code(
         } else if role == "assistant" {
             // Include assistant context
             if !content.is_empty() {
-                prompt_parts.push(format!("[Previous assistant response: {}]", crate::util::truncate_utf8(&content, 500)));
+                prompt_parts.push(format!(
+                    "[Previous assistant response: {}]",
+                    crate::util::truncate_utf8(&content, 500)
+                ));
             }
         }
     }
@@ -7778,7 +8815,12 @@ async fn llm_call_claude_code(
     } else {
         format!("node: {}, script: {}", node_bin, script_path)
     };
-    info!("[ClaudeCode] LLM call via CLI ({}, model: {}, prompt: {}chars)", invocation, model, full_prompt.len());
+    info!(
+        "[ClaudeCode] LLM call via CLI ({}, model: {}, prompt: {}chars)",
+        invocation,
+        model,
+        full_prompt.len()
+    );
 
     // Build args: if we have a script path, run `node script.js <args>`, else run `claude <args>`
     let mut cli_args: Vec<String> = Vec::new();
@@ -7786,8 +8828,10 @@ async fn llm_call_claude_code(
         cli_args.push(script_path);
     }
     cli_args.extend_from_slice(&[
-        "-p".to_string(), full_prompt,
-        "--output-format".to_string(), "text".to_string(),
+        "-p".to_string(),
+        full_prompt,
+        "--output-format".to_string(),
+        "text".to_string(),
     ]);
     if !model.is_empty() {
         cli_args.push("--model".to_string());
@@ -7806,7 +8850,8 @@ async fn llm_call_claude_code(
             .env("HOME", &home)
             .env("CLAUDE_MAX_OUTPUT_TOKENS", max_tokens.to_string()),
         120,
-    ).await;
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {
@@ -7814,17 +8859,27 @@ async fn llm_call_claude_code(
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             if !output.status.success() && stdout.is_empty() {
-                return Err(format!("Claude Code CLI failed: {}", crate::util::truncate_utf8(&stderr, 500)));
+                return Err(format!(
+                    "Claude Code CLI failed: {}",
+                    crate::util::truncate_utf8(&stderr, 500)
+                ));
             }
 
             // Try to extract tool calls from the response
             // Look for {"tool_call": ...} pattern anywhere in the text
             for line in stdout.lines() {
-                let trimmed = line.trim().trim_start_matches("```json").trim_start_matches("```").trim();
+                let trimmed = line
+                    .trim()
+                    .trim_start_matches("```json")
+                    .trim_start_matches("```")
+                    .trim();
                 if trimmed.contains("\"tool_call\"") {
                     // Try to parse as JSON
                     if let Ok(tc_val) = serde_json::from_str::<Value>(trimmed) {
-                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                        if let (Some(name), Some(args)) = (
+                            tc_val["tool_call"]["name"].as_str(),
+                            tc_val["tool_call"].get("arguments"),
+                        ) {
                             info!("[ClaudeCode] Extracted tool call: {}", name);
                             return Ok(json!({
                                 "choices": [{
@@ -7858,7 +8913,10 @@ async fn llm_call_claude_code(
                         '{' => depth += 1,
                         '}' => {
                             depth -= 1;
-                            if depth == 0 { end_idx = i + 1; break; }
+                            if depth == 0 {
+                                end_idx = i + 1;
+                                break;
+                            }
                         }
                         _ => {}
                     }
@@ -7866,7 +8924,10 @@ async fn llm_call_claude_code(
                 if end_idx > 0 {
                     let tc_json = &remaining[..end_idx];
                     if let Ok(tc_val) = serde_json::from_str::<Value>(tc_json) {
-                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                        if let (Some(name), Some(args)) = (
+                            tc_val["tool_call"]["name"].as_str(),
+                            tc_val["tool_call"].get("arguments"),
+                        ) {
                             info!("[ClaudeCode] Extracted embedded tool call: {}", name);
                             return Ok(json!({
                                 "choices": [{
@@ -7901,7 +8962,9 @@ async fn llm_call_claude_code(
                 }]
             }))
         }
-        Ok(Err(e)) => Err(format!("Failed to spawn claude CLI: {e}. Is 'claude' installed?")),
+        Ok(Err(e)) => Err(format!(
+            "Failed to spawn claude CLI: {e}. Is 'claude' installed?"
+        )),
         Err(_) => Err(interrupted_reason(120)),
     }
 }
@@ -7925,7 +8988,10 @@ async fn llm_call_gemini_cli(
         } else if role == "user" {
             prompt_parts.push(content.to_string());
         } else if role == "assistant" && !content.is_empty() {
-            prompt_parts.push(format!("[Previous assistant response: {}]", crate::util::truncate_utf8(&content, 500)));
+            prompt_parts.push(format!(
+                "[Previous assistant response: {}]",
+                crate::util::truncate_utf8(&content, 500)
+            ));
         }
     }
 
@@ -7963,12 +9029,19 @@ async fn llm_call_gemini_cli(
         format!("{}\n\n{}{}", system_text, prompt, tool_desc)
     };
 
-    info!("[GeminiCLI] LLM call via CLI (model: {}, prompt: {}chars)", model, full_prompt.len());
+    info!(
+        "[GeminiCLI] LLM call via CLI (model: {}, prompt: {}chars)",
+        model,
+        full_prompt.len()
+    );
 
     let mut cli_args = vec![
-        "-p".to_string(), full_prompt,
-        "-o".to_string(), "text".to_string(),
-        "--approval-mode".to_string(), "plan".to_string(), // read-only, no tool execution
+        "-p".to_string(),
+        full_prompt,
+        "-o".to_string(),
+        "text".to_string(),
+        "--approval-mode".to_string(),
+        "plan".to_string(), // read-only, no tool execution
     ];
     if !model.is_empty() {
         cli_args.push("-m".to_string());
@@ -7982,7 +9055,8 @@ async fn llm_call_gemini_cli(
             .env("PATH", cli_env_path())
             .env("HOME", &home),
         180,
-    ).await;
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {
@@ -7991,37 +9065,60 @@ async fn llm_call_gemini_cli(
             let combined = format!("{}\n{}", stdout, stderr);
 
             // Check for quota/API errors in output
-            if combined.contains("QuotaError") || combined.contains("QUOTA_EXHAUSTED") || combined.contains("exhausted your capacity") {
+            if combined.contains("QuotaError")
+                || combined.contains("QUOTA_EXHAUSTED")
+                || combined.contains("exhausted your capacity")
+            {
                 let msg = if let Some(pos) = combined.find("You have exhausted") {
                     let end = combined[pos..].find('\n').unwrap_or(combined.len() - pos);
-                    &combined[pos..pos+end]
-                } else { "Gemini API quota exhausted" };
+                    &combined[pos..pos + end]
+                } else {
+                    "Gemini API quota exhausted"
+                };
                 return Err(format!("Gemini: {}", msg));
             }
             if combined.contains("Error when talking to Gemini API") && stdout.trim().is_empty() {
-                let err_line = combined.lines()
+                let err_line = combined
+                    .lines()
                     .find(|l| l.contains("Error") || l.contains("message:"))
                     .unwrap_or("Unknown Gemini API error");
-                return Err(format!("Gemini API error: {}", crate::util::truncate_utf8(&err_line, 300)));
+                return Err(format!(
+                    "Gemini API error: {}",
+                    crate::util::truncate_utf8(&err_line, 300)
+                ));
             }
 
             if !output.status.success() && stdout.trim().is_empty() {
-                return Err(format!("Gemini CLI failed: {}", crate::util::truncate_utf8(&stderr, 500)));
+                return Err(format!(
+                    "Gemini CLI failed: {}",
+                    crate::util::truncate_utf8(&stderr, 500)
+                ));
             }
 
             // Filter out skill conflict warnings from stdout
-            let clean_stdout: String = stdout.lines()
-                .filter(|l| !l.contains("Skill conflict detected") && !l.contains("Loaded cached credentials"))
+            let clean_stdout: String = stdout
+                .lines()
+                .filter(|l| {
+                    !l.contains("Skill conflict detected")
+                        && !l.contains("Loaded cached credentials")
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
 
             // Try to extract tool calls from the response
             let stdout = clean_stdout;
             for line in stdout.lines() {
-                let trimmed = line.trim().trim_start_matches("```json").trim_start_matches("```").trim();
+                let trimmed = line
+                    .trim()
+                    .trim_start_matches("```json")
+                    .trim_start_matches("```")
+                    .trim();
                 if trimmed.contains("\"tool_call\"") {
                     if let Ok(tc_val) = serde_json::from_str::<Value>(trimmed) {
-                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                        if let (Some(name), Some(args)) = (
+                            tc_val["tool_call"]["name"].as_str(),
+                            tc_val["tool_call"].get("arguments"),
+                        ) {
                             info!("[GeminiCLI] Extracted tool call: {}", name);
                             return Ok(json!({
                                 "choices": [{
@@ -8052,13 +9149,22 @@ async fn llm_call_gemini_cli(
                 for (i, ch) in remaining.char_indices() {
                     match ch {
                         '{' => depth += 1,
-                        '}' => { depth -= 1; if depth == 0 { end_idx = i + 1; break; } }
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_idx = i + 1;
+                                break;
+                            }
+                        }
                         _ => {}
                     }
                 }
                 if end_idx > 0 {
                     if let Ok(tc_val) = serde_json::from_str::<Value>(&remaining[..end_idx]) {
-                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                        if let (Some(name), Some(args)) = (
+                            tc_val["tool_call"]["name"].as_str(),
+                            tc_val["tool_call"].get("arguments"),
+                        ) {
                             info!("[GeminiCLI] Extracted embedded tool call: {}", name);
                             return Ok(json!({
                                 "choices": [{
@@ -8093,7 +9199,9 @@ async fn llm_call_gemini_cli(
                 }]
             }))
         }
-        Ok(Err(e)) => Err(format!("Failed to spawn gemini CLI: {e}. Is 'gemini' in PATH?")),
+        Ok(Err(e)) => Err(format!(
+            "Failed to spawn gemini CLI: {e}. Is 'gemini' in PATH?"
+        )),
         Err(_) => Err(interrupted_reason(180)),
     }
 }
@@ -8145,7 +9253,12 @@ async fn llm_call_codex_cli(
     let full_prompt = if system_text.is_empty() {
         format!("{}{}", task, tool_desc)
     } else {
-        format!("{}\n\n---\n\nTASK:\n{}{}", system_text.trim(), task, tool_desc)
+        format!(
+            "{}\n\n---\n\nTASK:\n{}{}",
+            system_text.trim(),
+            task,
+            tool_desc
+        )
     };
 
     let (node_bin, script_path) = find_codex_cli();
@@ -8156,7 +9269,10 @@ async fn llm_call_codex_cli(
         // Make absolute relative to data dir
         let p = std::path::Path::new(raw);
         if p.is_relative() {
-            crate::server::data::data_dir().join(raw).to_string_lossy().to_string()
+            crate::server::data::data_dir()
+                .join(raw)
+                .to_string_lossy()
+                .to_string()
         } else {
             raw.to_string()
         }
@@ -8164,7 +9280,14 @@ async fn llm_call_codex_cli(
     // Ensure sandbox dir exists
     let _ = std::fs::create_dir_all(&sandbox_dir);
     let home = resolve_home();
-    info!("[Codex] LLM call via CLI (node: {}, script: {}, model: {}, prompt: {}chars, cwd: {})", node_bin, script_path, model, full_prompt.len(), sandbox_dir);
+    info!(
+        "[Codex] LLM call via CLI (node: {}, script: {}, model: {}, prompt: {}chars, cwd: {})",
+        node_bin,
+        script_path,
+        model,
+        full_prompt.len(),
+        sandbox_dir
+    );
 
     // Build args: `node codex.js exec "<prompt>" --json --full-auto [-m <model>]`
     let mut cli_args: Vec<String> = Vec::new();
@@ -8194,7 +9317,8 @@ async fn llm_call_codex_cli(
             .env("PATH", cli_env_path())
             .env("HOME", &home),
         180,
-    ).await;
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {
@@ -8202,20 +9326,31 @@ async fn llm_call_codex_cli(
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             if !output.status.success() && stdout.trim().is_empty() {
-                return Err(format!("Codex CLI failed: {}", crate::util::truncate_utf8(&stderr, 500)));
+                return Err(format!(
+                    "Codex CLI failed: {}",
+                    crate::util::truncate_utf8(&stderr, 500)
+                ));
             }
 
             // Parse JSONL events from codex --json output
             let mut result_text = String::new();
             for line in stdout.lines() {
                 let trimmed = line.trim();
-                if trimmed.is_empty() { continue; }
+                if trimmed.is_empty() {
+                    continue;
+                }
 
                 // First check for our tool_call format in the text
                 if trimmed.contains("\"tool_call\"") {
-                    let clean = trimmed.trim_start_matches("```json").trim_start_matches("```").trim();
+                    let clean = trimmed
+                        .trim_start_matches("```json")
+                        .trim_start_matches("```")
+                        .trim();
                     if let Ok(tc_val) = serde_json::from_str::<Value>(clean) {
-                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                        if let (Some(name), Some(args)) = (
+                            tc_val["tool_call"]["name"].as_str(),
+                            tc_val["tool_call"].get("arguments"),
+                        ) {
                             info!("[Codex] Extracted tool call: {}", name);
                             return Ok(json!({
                                 "choices": [{
@@ -8258,7 +9393,9 @@ async fn llm_call_codex_cli(
                             // Handle content array or string
                             if let Some(content) = item["content"].as_array() {
                                 for block in content {
-                                    if let Some(text) = block["text"].as_str().or(block["output"].as_str()) {
+                                    if let Some(text) =
+                                        block["text"].as_str().or(block["output"].as_str())
+                                    {
                                         result_text.push_str(text);
                                     } else if let Some(s) = block.as_str() {
                                         result_text.push_str(s);
@@ -8280,10 +9417,17 @@ async fn llm_call_codex_cli(
 
             // Also check result_text for embedded tool calls
             for line in result_text.lines() {
-                let clean = line.trim().trim_start_matches("```json").trim_start_matches("```").trim();
+                let clean = line
+                    .trim()
+                    .trim_start_matches("```json")
+                    .trim_start_matches("```")
+                    .trim();
                 if clean.contains("\"tool_call\"") {
                     if let Ok(tc_val) = serde_json::from_str::<Value>(clean) {
-                        if let (Some(name), Some(args)) = (tc_val["tool_call"]["name"].as_str(), tc_val["tool_call"].get("arguments")) {
+                        if let (Some(name), Some(args)) = (
+                            tc_val["tool_call"]["name"].as_str(),
+                            tc_val["tool_call"].get("arguments"),
+                        ) {
                             info!("[Codex] Extracted tool call from result text: {}", name);
                             return Ok(json!({
                                 "choices": [{
@@ -8308,7 +9452,11 @@ async fn llm_call_codex_cli(
             }
 
             let final_text = result_text.trim();
-            let content = if final_text.is_empty() { stdout.trim() } else { final_text };
+            let content = if final_text.is_empty() {
+                stdout.trim()
+            } else {
+                final_text
+            };
 
             Ok(json!({
                 "choices": [{
@@ -8320,7 +9468,10 @@ async fn llm_call_codex_cli(
                 }]
             }))
         }
-        Ok(Err(e)) => Err(format!("Failed to spawn codex CLI (node={}, script={}, cwd={}): {e}", node_bin, script_path, sandbox_dir)),
+        Ok(Err(e)) => Err(format!(
+            "Failed to spawn codex CLI (node={}, script={}, cwd={}): {e}",
+            node_bin, script_path, sandbox_dir
+        )),
         Err(_) => Err(interrupted_reason(180)),
     }
 }
@@ -8356,7 +9507,9 @@ fn sanitize_messages(messages: &[Value]) -> Vec<Value> {
         // Remove tool results referencing non-existent tool calls
         if role == "tool" {
             if let Some(id) = m.get("tool_call_id").and_then(|v| v.as_str()) {
-                if !valid_tc_ids.contains(id) { continue; }
+                if !valid_tc_ids.contains(id) {
+                    continue;
+                }
             }
         }
 
@@ -8364,8 +9517,11 @@ fn sanitize_messages(messages: &[Value]) -> Vec<Value> {
         if role == "assistant" {
             if let Some(tcs) = m.get("tool_calls").and_then(|v| v.as_array()) {
                 if !tcs.is_empty() {
-                    let tc_ids: Vec<String> = tcs.iter()
-                        .filter_map(|tc| tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                    let tc_ids: Vec<String> = tcs
+                        .iter()
+                        .filter_map(|tc| {
+                            tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        })
                         .collect();
                     let has_any_result = tc_ids.iter().any(|id| tool_result_ids.contains(id));
                     if !tc_ids.is_empty() && !has_any_result {
@@ -8454,10 +9610,15 @@ fn sanitize_messages(messages: &[Value]) -> Vec<Value> {
     }
 
     // 6. Ensure a user message exists before the first assistant message
-    let first_non_system = deduped.iter().position(|m| m["role"].as_str() != Some("system"));
+    let first_non_system = deduped
+        .iter()
+        .position(|m| m["role"].as_str() != Some("system"));
     if let Some(idx) = first_non_system {
         if deduped[idx]["role"].as_str() != Some("user") {
-            deduped.insert(idx, json!({"role": "user", "content": "Continue with the task."}));
+            deduped.insert(
+                idx,
+                json!({"role": "user", "content": "Continue with the task."}),
+            );
         }
     }
 
@@ -8493,8 +9654,11 @@ fn build_failover_candidates(
     self_url: &str,
     self_key: &str,
 ) -> Vec<(String, String, String)> {
-    let mut out: Vec<(String, String, String)> =
-        vec![(self_model.to_string(), self_url.to_string(), self_key.to_string())];
+    let mut out: Vec<(String, String, String)> = vec![(
+        self_model.to_string(),
+        self_url.to_string(),
+        self_key.to_string(),
+    )];
 
     let pool = match system_config["system"]["model_pool"].as_array() {
         Some(p) => p,
@@ -8506,7 +9670,11 @@ fn build_failover_candidates(
     let mut ordered: Vec<&Value> = pool.iter().collect();
     if !self_tier.is_empty() {
         ordered.sort_by_key(|e| {
-            if e["tier"].as_str().unwrap_or("") == self_tier { 0 } else { 1 }
+            if e["tier"].as_str().unwrap_or("") == self_tier {
+                0
+            } else {
+                1
+            }
         });
     }
 
@@ -8545,7 +9713,10 @@ pub fn model_requires_default_temperature(model: &str) -> bool {
 /// "invalid temperature", "temperature must be ...") so we just look for the
 /// word in the message, on both top-level and nested `error` shapes.
 fn is_temperature_error(resp: &Value) -> bool {
-    let msg = resp.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str())
+    let msg = resp
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
         .or_else(|| resp.get("message").and_then(|m| m.as_str()))
         .unwrap_or("");
     msg.to_ascii_lowercase().contains("temperature")
@@ -8803,7 +9974,10 @@ fn extract_tool_call(text: &str) -> Option<(String, Value)> {
     }
     let parsed: Value = serde_json::from_str(body).ok()?;
     let name = parsed["tool_call"]["name"].as_str()?.to_string();
-    let args = parsed["tool_call"].get("arguments").cloned().unwrap_or(json!({}));
+    let args = parsed["tool_call"]
+        .get("arguments")
+        .cloned()
+        .unwrap_or(json!({}));
     Some((name, args))
 }
 
@@ -8818,7 +9992,11 @@ async fn llm_call_generic_cli(
     // A backend that cannot be trusted to run our protocol is not asked to:
     // sending tool instructions it will not honour only invites it to reason
     // about the wrapper instead of the task.
-    let offered_tools = if backend.supports_tool_protocol { tools } else { None };
+    let offered_tools = if backend.supports_tool_protocol {
+        tools
+    } else {
+        None
+    };
     if tools.is_some_and(|t| !t.is_empty()) && !backend.supports_tool_protocol {
         info!(
             "[{}] {} tool(s) withheld — this CLI runs as a text backend; tool loops need an \
@@ -8835,7 +10013,13 @@ endpoint with structured function-calling",
     let mut args: Vec<String> = backend
         .prompt_args
         .iter()
-        .map(|a| if *a == "{prompt}" { prompt.clone() } else { a.to_string() })
+        .map(|a| {
+            if *a == "{prompt}" {
+                prompt.clone()
+            } else {
+                a.to_string()
+            }
+        })
         .collect();
     args.extend(backend.extra_args.iter().map(|s| s.to_string()));
     if let (Some(flag), false) = (backend.model_flag, model.is_empty()) {
@@ -8879,7 +10063,10 @@ endpoint with structured function-calling",
                 }
                 return Err(format!("{} CLI returned no output", backend.label));
             }
-            Ok(cli_output_to_openai(&cleaned, backend.supports_tool_protocol))
+            Ok(cli_output_to_openai(
+                &cleaned,
+                backend.supports_tool_protocol,
+            ))
         }
         Ok(Err(e)) => Err(format!(
             "Failed to spawn {}: {e}. Is `{}` in PATH?",
@@ -8941,13 +10128,12 @@ async fn llm_call(
     // fails with "invalid temperature: only 1 is allowed for this model".
     // Proactively pin to 1.0 for known cases; a reactive retry below catches
     // anything this misses.
-    let temperature = if model_requires_default_temperature(model)
-        || api_url.contains("api.kimi.com")
-    {
-        1.0
-    } else {
-        temperature
-    };
+    let temperature =
+        if model_requires_default_temperature(model) || api_url.contains("api.kimi.com") {
+            1.0
+        } else {
+            temperature
+        };
 
     // Sanitize messages before sending (tiger_cowork: sanitizeMessages)
     let messages = sanitize_messages(messages);
@@ -9017,14 +10203,24 @@ async fn llm_call(
         for (k, v) in &headers {
             req = req.header(k.as_str(), v.as_str());
         }
-        let response = req.json(&body).send().await.map_err(|e| format!("API request failed: {e}"))?;
-        let rj: Value = response.json().await.map_err(|e| format!("Failed to parse API response: {e}"))?;
+        let response = req
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("API request failed: {e}"))?;
+        let rj: Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse API response: {e}"))?;
 
         if !retried_temp
             && is_temperature_error(&rj)
             && body.get("temperature").and_then(|t| t.as_f64()) != Some(1.0)
         {
-            warn!("[llm_call] model '{}' rejected temperature; retrying with temperature=1", model);
+            warn!(
+                "[llm_call] model '{}' rejected temperature; retrying with temperature=1",
+                model
+            );
             body["temperature"] = json!(1.0);
             retried_temp = true;
             continue;
@@ -9075,7 +10271,11 @@ fn normalize_anthropic_response(resp: &Value) -> Value {
     }
 
     let stop_reason = resp["stop_reason"].as_str().unwrap_or("stop");
-    let finish_reason = if stop_reason == "tool_use" { "tool_calls" } else { "stop" };
+    let finish_reason = if stop_reason == "tool_use" {
+        "tool_calls"
+    } else {
+        "stop"
+    };
 
     let mut message = json!({
         "role": "assistant",
@@ -9099,40 +10299,51 @@ fn normalize_anthropic_response(resp: &Value) -> Value {
 // ---------------------------------------------------------------------------
 
 fn truncate_tool_call_args(tool_calls: &[Value]) -> Vec<Value> {
-    tool_calls.iter().map(|tc| {
-        let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
-        if args_str.len() <= ARG_TRUNCATE_THRESHOLD {
-            return tc.clone();
-        }
-        // Build valid JSON summary instead of slicing mid-string
-        let truncated_args = match serde_json::from_str::<Value>(args_str) {
-            Ok(parsed) => {
-                if let Some(obj) = parsed.as_object() {
-                    let mut summary = serde_json::Map::new();
-                    for (key, val) in obj {
-                        if let Some(s) = val.as_str() {
-                            if s.len() > ARG_VALUE_TRUNCATE {
-                                summary.insert(key.clone(), json!(format!("{}...(truncated)", crate::util::truncate_utf8(s, ARG_VALUE_TRUNCATE))));
+    tool_calls
+        .iter()
+        .map(|tc| {
+            let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
+            if args_str.len() <= ARG_TRUNCATE_THRESHOLD {
+                return tc.clone();
+            }
+            // Build valid JSON summary instead of slicing mid-string
+            let truncated_args = match serde_json::from_str::<Value>(args_str) {
+                Ok(parsed) => {
+                    if let Some(obj) = parsed.as_object() {
+                        let mut summary = serde_json::Map::new();
+                        for (key, val) in obj {
+                            if let Some(s) = val.as_str() {
+                                if s.len() > ARG_VALUE_TRUNCATE {
+                                    summary.insert(
+                                        key.clone(),
+                                        json!(format!(
+                                            "{}...(truncated)",
+                                            crate::util::truncate_utf8(s, ARG_VALUE_TRUNCATE)
+                                        )),
+                                    );
+                                } else {
+                                    summary.insert(key.clone(), val.clone());
+                                }
                             } else {
                                 summary.insert(key.clone(), val.clone());
                             }
-                        } else {
-                            summary.insert(key.clone(), val.clone());
                         }
+                        serde_json::to_string(&Value::Object(summary))
+                            .unwrap_or_else(|_| args_str.to_string())
+                    } else {
+                        crate::util::truncate_utf8(args_str, ARG_TRUNCATE_THRESHOLD).to_string()
                     }
-                    serde_json::to_string(&Value::Object(summary)).unwrap_or_else(|_| args_str.to_string())
-                } else {
-                    crate::util::truncate_utf8(args_str, ARG_TRUNCATE_THRESHOLD).to_string()
                 }
-            }
-            Err(_) => {
-                serde_json::to_string(&json!({"_truncated": crate::util::truncate_utf8(args_str, 3000)})).unwrap_or_default()
-            }
-        };
-        let mut tc = tc.clone();
-        tc["function"]["arguments"] = json!(truncated_args);
-        tc
-    }).collect()
+                Err(_) => serde_json::to_string(
+                    &json!({"_truncated": crate::util::truncate_utf8(args_str, 3000)}),
+                )
+                .unwrap_or_default(),
+            };
+            let mut tc = tc.clone();
+            tc["function"]["arguments"] = json!(truncated_args);
+            tc
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -9146,7 +10357,10 @@ fn recover_tool_args(tool_name: &str, raw_args: &str) -> Option<Value> {
     // Try to extract "code" value via regex
     let code_re = regex::Regex::new(r#""code"\s*:\s*"((?:[^"\\]|\\.)*)""#).ok()?;
     if let Some(cap) = code_re.captures(raw_args) {
-        let code = cap[1].replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\");
+        let code = cap[1]
+            .replace("\\n", "\n")
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\");
         let mut args = serde_json::Map::new();
         args.insert("code".to_string(), json!(code));
         // Try to recover title
@@ -9163,7 +10377,9 @@ fn recover_tool_args(tool_name: &str, raw_args: &str) -> Option<Value> {
 // Pending work check (tiger_cowork: prevent premature stop)
 // ---------------------------------------------------------------------------
 
-async fn check_pending_work(session_id: &str) -> (Vec<String>, Vec<(String, AgentResult)>, Vec<String>) {
+async fn check_pending_work(
+    session_id: &str,
+) -> (Vec<String>, Vec<(String, AgentResult)>, Vec<String>) {
     let mut working_agents = Vec::new();
     let mut pending_results = Vec::new();
     let mut pending_bb_tasks = Vec::new();
@@ -9218,7 +10434,9 @@ async fn save_checkpoint(
     conversation_key: &str,
     profile_key: &str,
 ) {
-    if session_id.is_empty() { return; }
+    if session_id.is_empty() {
+        return;
+    }
     let dir = crate::server::data::data_dir().join("checkpoints");
     let _ = tokio::fs::create_dir_all(&dir).await;
     let fp = dir.join(format!("{}.json", session_id));
@@ -9263,7 +10481,11 @@ async fn save_checkpoint(
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
-    let _ = tokio::fs::write(&fp, serde_json::to_string_pretty(&checkpoint).unwrap_or_default()).await;
+    let _ = tokio::fs::write(
+        &fp,
+        serde_json::to_string_pretty(&checkpoint).unwrap_or_default(),
+    )
+    .await;
 }
 
 /// Local checkpoint data matching what save_checkpoint writes
@@ -9281,33 +10503,52 @@ struct LocalCheckpoint {
 }
 
 async fn load_checkpoint(session_id: &str) -> Option<LocalCheckpoint> {
-    if session_id.is_empty() { return None; }
-    let fp = crate::server::data::data_dir().join("checkpoints").join(format!("{}.json", session_id));
+    if session_id.is_empty() {
+        return None;
+    }
+    let fp = crate::server::data::data_dir()
+        .join("checkpoints")
+        .join(format!("{}.json", session_id));
     let content = tokio::fs::read_to_string(&fp).await.ok()?;
     let v: Value = serde_json::from_str(&content).ok()?;
     Some(LocalCheckpoint {
         round: v["round"].as_u64().unwrap_or(0) as usize,
         messages: v["messages"].as_array().cloned().unwrap_or_default(),
         total_tool_calls: v["totalToolCalls"].as_u64().unwrap_or(0) as usize,
-        files: v["files"].as_array()
-            .map(|arr| arr.iter().filter_map(|f| f.as_str().map(|s| s.to_string())).collect())
+        files: v["files"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| f.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default(),
-        tool_call_history: v["toolCallHistory"].as_array()
-            .map(|arr| arr.iter().filter_map(|f| f.as_str().map(|s| s.to_string())).collect())
+        tool_call_history: v["toolCallHistory"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| f.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default(),
         consecutive_errors: v["consecutiveErrors"].as_u64().unwrap_or(0) as usize,
         early_content: v["earlyContent"].as_str().map(|s| s.to_string()),
         conversation_key: v["conversationKey"].as_str().unwrap_or("").to_string(),
         profile_key: v["profile"].as_str().unwrap_or("").to_string(),
-        timestamp: v["timestamp"].as_str()
+        timestamp: v["timestamp"]
+            .as_str()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|t| t.with_timezone(&chrono::Utc)),
     })
 }
 
 async fn clear_checkpoint(session_id: &str) {
-    if session_id.is_empty() { return; }
-    let fp = crate::server::data::data_dir().join("checkpoints").join(format!("{}.json", session_id));
+    if session_id.is_empty() {
+        return;
+    }
+    let fp = crate::server::data::data_dir()
+        .join("checkpoints")
+        .join(format!("{}.json", session_id));
     let _ = tokio::fs::remove_file(&fp).await;
 }
 
@@ -9344,7 +10585,11 @@ async fn call_with_tools_inner(
     // Manual mode: load agent_ids from config_file and boot realtime session up-front.
     // Without this, agent_ids is empty and tool_definitions_for_mode returns early.
     let mut sub_agent = sub_agent;
-    if sub_agent.enabled && sub_agent.mode == "manual" && !sub_agent.config_file.is_empty() && sub_agent.agent_ids.is_empty() {
+    if sub_agent.enabled
+        && sub_agent.mode == "manual"
+        && !sub_agent.config_file.is_empty()
+        && sub_agent.agent_ids.is_empty()
+    {
         if let Some((_yaml, ids)) = load_agent_yaml(&sub_agent.config_file) {
             sub_agent.agent_ids = ids;
             boot_realtime_session_deferred(
@@ -9356,13 +10601,25 @@ async fn call_with_tools_inner(
                 sandbox_dir.to_string(),
             );
             session_activated = true;
-            info!("[call_with_tools] manual mode: booted realtime session, agents={:?}", sub_agent.agent_ids);
+            info!(
+                "[call_with_tools] manual mode: booted realtime session, agents={:?}",
+                sub_agent.agent_ids
+            );
         }
     }
 
     let mut tools = if sub_agent.enabled {
         let t = tool_definitions_for_mode(&sub_agent, realtime, session_activated);
-        info!("[call_with_tools] mode={}, enabled={}, agents={:?}, tools={}", sub_agent.mode, sub_agent.enabled, sub_agent.agent_ids, t.iter().filter_map(|td| td["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+        info!(
+            "[call_with_tools] mode={}, enabled={}, agents={:?}, tools={}",
+            sub_agent.mode,
+            sub_agent.enabled,
+            sub_agent.agent_ids,
+            t.iter()
+                .filter_map(|td| td["function"]["name"].as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         t
     } else {
         info!("[call_with_tools] sub_agent disabled, using default tools");
@@ -9371,29 +10628,52 @@ async fn call_with_tools_inner(
 
     // Profile tool filter: intersect AFTER the mode-based list so swarm/router
     // invariants hold. Protected coordination tools are never removed.
-    if let Some(tf) = sub_agent.loop_profile.as_deref().and_then(|p| p.tools.as_ref()) {
+    if let Some(tf) = sub_agent
+        .loop_profile
+        .as_deref()
+        .and_then(|p| p.tools.as_ref())
+    {
         let before = tools.len();
         tools.retain(|t| {
             let name = t["function"]["name"].as_str().unwrap_or("");
             is_protected_tool(name, &sub_agent) || tf.allows(name)
         });
         if tools.len() != before {
-            info!("[call_with_tools] profile tool filter ({}): {} -> {} tools: {}",
-                tf.mode, before, tools.len(),
-                tools.iter().filter_map(|td| td["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+            info!(
+                "[call_with_tools] profile tool filter ({}): {} -> {} tools: {}",
+                tf.mode,
+                before,
+                tools.len(),
+                tools
+                    .iter()
+                    .filter_map(|td| td["function"]["name"].as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
     }
 
     // Inject MCP tools from connected servers — filtered by the profile's MCP
     // server selection (all / selected / none).
-    let mcp_tools = match sub_agent.loop_profile.as_deref().and_then(|p| p.mcp.as_ref()) {
+    let mcp_tools = match sub_agent
+        .loop_profile
+        .as_deref()
+        .and_then(|p| p.mcp.as_ref())
+    {
         Some(m) if m.mode == "none" => Vec::new(),
         Some(m) if m.mode == "selected" => mcp::get_mcp_tools_filtered(Some(&m.servers)).await,
         _ => mcp::get_mcp_tools().await,
     };
     if !mcp_tools.is_empty() {
-        info!("[call_with_tools] Adding {} MCP tool(s): {}", mcp_tools.len(),
-            mcp_tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+        info!(
+            "[call_with_tools] Adding {} MCP tool(s): {}",
+            mcp_tools.len(),
+            mcp_tools
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         tools.extend(mcp_tools);
     }
 
@@ -9404,8 +10684,15 @@ async fn call_with_tools_inner(
     crate::server::services::custom_tools::apply_builtin_overrides(&mut tools);
     let custom_tools = crate::server::services::custom_tools::definitions();
     if !custom_tools.is_empty() {
-        info!("[call_with_tools] Adding {} custom YAML tool(s): {}", custom_tools.len(),
-            custom_tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+        info!(
+            "[call_with_tools] Adding {} custom YAML tool(s): {}",
+            custom_tools.len(),
+            custom_tools
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         // A shadow (override: true) replaced the built-in spec above; guard
         // against any residual duplicate names.
         let existing: std::collections::HashSet<String> = tools
@@ -9428,56 +10715,126 @@ async fn call_with_tools_inner(
     // Load settings — realtime agents get higher limits since orchestrators need many rounds.
     // Knob precedence: agent-loop profile > settings.json keys > compiled defaults.
     let settings = load_agent_settings();
-    let knobs = sub_agent.loop_profile.as_deref().and_then(|p| p.loop_.clone()).unwrap_or_default();
-    let compaction = sub_agent.loop_profile.as_deref().and_then(|p| p.compaction.clone()).unwrap_or_default();
-    let base_max_rounds = knobs.max_rounds.map(|v| v as usize)
-        .unwrap_or_else(|| settings["agentMaxToolRounds"].as_u64().unwrap_or(DEFAULT_MAX_ROUNDS as u64) as usize);
-    let base_max_tool_calls = knobs.max_tool_calls.map(|v| v as usize)
-        .unwrap_or_else(|| settings["agentMaxToolCalls"].as_u64().unwrap_or(DEFAULT_MAX_TOOL_CALLS as u64) as usize);
-    let is_multi_agent_coordinator = !realtime && sub_agent.enabled && !sub_agent.agent_ids.is_empty();
+    let knobs = sub_agent
+        .loop_profile
+        .as_deref()
+        .and_then(|p| p.loop_.clone())
+        .unwrap_or_default();
+    let compaction = sub_agent
+        .loop_profile
+        .as_deref()
+        .and_then(|p| p.compaction.clone())
+        .unwrap_or_default();
+    let base_max_rounds = knobs.max_rounds.map(|v| v as usize).unwrap_or_else(|| {
+        settings["agentMaxToolRounds"]
+            .as_u64()
+            .unwrap_or(DEFAULT_MAX_ROUNDS as u64) as usize
+    });
+    let base_max_tool_calls = knobs.max_tool_calls.map(|v| v as usize).unwrap_or_else(|| {
+        settings["agentMaxToolCalls"]
+            .as_u64()
+            .unwrap_or(DEFAULT_MAX_TOOL_CALLS as u64) as usize
+    });
+    let is_multi_agent_coordinator =
+        !realtime && sub_agent.enabled && !sub_agent.agent_ids.is_empty();
     let is_realtime_delegator = realtime && sub_agent.enabled && !sub_agent.agent_ids.is_empty();
     // Coordinator floors stay on top of profile values: a profile can raise
     // rounds but cannot starve an active orchestrator.
-    let max_rounds = if is_realtime_delegator { base_max_rounds.max(50) }
-        else if realtime { base_max_rounds.max(30) }
-        else if is_multi_agent_coordinator { base_max_rounds.max(40) }
-        else { base_max_rounds };
-    let max_tool_calls = if is_realtime_delegator { base_max_tool_calls.max(100) }
-        else if realtime { base_max_tool_calls.max(60) }
-        else if is_multi_agent_coordinator { base_max_tool_calls.max(80) }
-        else { base_max_tool_calls };
-    let max_consecutive_errors = knobs.max_consecutive_errors.map(|v| v as usize)
-        .unwrap_or_else(|| settings["agentMaxConsecutiveErrors"].as_u64().unwrap_or(DEFAULT_MAX_CONSECUTIVE_ERRORS as u64) as usize);
-    let max_error_recoveries = knobs.max_error_recoveries.map(|v| v as usize)
-        .unwrap_or_else(|| settings["agentMaxErrorRecoveries"].as_u64().unwrap_or(DEFAULT_MAX_ERROR_RECOVERIES as u64) as usize);
-    let compression_interval = compaction.interval.map(|v| v as usize)
-        .unwrap_or_else(|| settings["agentCompressionInterval"].as_u64().unwrap_or(DEFAULT_COMPRESSION_INTERVAL as u64) as usize)
+    let max_rounds = if is_realtime_delegator {
+        base_max_rounds.max(50)
+    } else if realtime {
+        base_max_rounds.max(30)
+    } else if is_multi_agent_coordinator {
+        base_max_rounds.max(40)
+    } else {
+        base_max_rounds
+    };
+    let max_tool_calls = if is_realtime_delegator {
+        base_max_tool_calls.max(100)
+    } else if realtime {
+        base_max_tool_calls.max(60)
+    } else if is_multi_agent_coordinator {
+        base_max_tool_calls.max(80)
+    } else {
+        base_max_tool_calls
+    };
+    let max_consecutive_errors = knobs
+        .max_consecutive_errors
+        .map(|v| v as usize)
+        .unwrap_or_else(|| {
+            settings["agentMaxConsecutiveErrors"]
+                .as_u64()
+                .unwrap_or(DEFAULT_MAX_CONSECUTIVE_ERRORS as u64) as usize
+        });
+    let max_error_recoveries = knobs
+        .max_error_recoveries
+        .map(|v| v as usize)
+        .unwrap_or_else(|| {
+            settings["agentMaxErrorRecoveries"]
+                .as_u64()
+                .unwrap_or(DEFAULT_MAX_ERROR_RECOVERIES as u64) as usize
+        });
+    let compression_interval = compaction
+        .interval
+        .map(|v| v as usize)
+        .unwrap_or_else(|| {
+            settings["agentCompressionInterval"]
+                .as_u64()
+                .unwrap_or(DEFAULT_COMPRESSION_INTERVAL as u64) as usize
+        })
         .max(1);
-    let compression_window = compaction.window.map(|v| v as usize)
-        .unwrap_or_else(|| settings["agentCompressionWindow"].as_u64().unwrap_or(DEFAULT_COMPRESSION_WINDOW as u64) as usize);
-    let max_context_tokens = compaction.max_context_tokens.map(|v| v as usize)
-        .unwrap_or_else(|| settings["agentMaxContextTokens"].as_u64().unwrap_or(DEFAULT_MAX_CONTEXT_TOKENS as u64) as usize);
+    let compression_window = compaction.window.map(|v| v as usize).unwrap_or_else(|| {
+        settings["agentCompressionWindow"]
+            .as_u64()
+            .unwrap_or(DEFAULT_COMPRESSION_WINDOW as u64) as usize
+    });
+    let max_context_tokens = compaction
+        .max_context_tokens
+        .map(|v| v as usize)
+        .unwrap_or_else(|| {
+            settings["agentMaxContextTokens"]
+                .as_u64()
+                .unwrap_or(DEFAULT_MAX_CONTEXT_TOKENS as u64) as usize
+        });
     // false disables PERIODIC compression only — proactive over-budget and
     // emergency overflow compaction stay always-on so long sessions recover.
     let periodic_compaction_enabled = compaction.enabled.unwrap_or(true);
-    let temperature = knobs.temperature
+    let temperature = knobs
+        .temperature
         .unwrap_or_else(|| settings["agentTemperature"].as_f64().unwrap_or(0.7));
-    let max_tokens = knobs.max_tokens
+    let max_tokens = knobs
+        .max_tokens
         .unwrap_or_else(|| settings["agentMaxTokens"].as_u64().unwrap_or(81920));
-    let reflection_enabled = knobs.reflection_enabled
-        .unwrap_or_else(|| settings["agentReflectionEnabled"].as_bool().unwrap_or(false));
-    let eval_threshold = knobs.reflection_threshold
+    let reflection_enabled = knobs.reflection_enabled.unwrap_or_else(|| {
+        settings["agentReflectionEnabled"]
+            .as_bool()
+            .unwrap_or(false)
+    });
+    let eval_threshold = knobs
+        .reflection_threshold
         .unwrap_or_else(|| settings["agentReflectionThreshold"].as_f64().unwrap_or(0.7));
-    let max_reflection_retries = knobs.max_reflection_retries.map(|v| v as usize)
+    let max_reflection_retries = knobs
+        .max_reflection_retries
+        .map(|v| v as usize)
         .unwrap_or_else(|| settings["agentMaxReflectionRetries"].as_u64().unwrap_or(2) as usize);
-    let tool_result_max_len = compaction.tool_result_max_len
+    let tool_result_max_len = compaction
+        .tool_result_max_len
         .unwrap_or_else(|| settings["agentToolResultMaxLen"].as_u64().unwrap_or(6000))
         .min(100_000) as usize;
-    let checkpoint_enabled = knobs.checkpoint_enabled
+    let checkpoint_enabled = knobs
+        .checkpoint_enabled
         .unwrap_or_else(|| settings["agentCheckpointEnabled"].as_bool().unwrap_or(true));
     // Dedicated summarization model: profile > settings > session model.
-    let compression_model: Option<String> = compaction.model.clone().filter(|m| !m.trim().is_empty())
-        .or_else(|| settings["agentCompressionModel"].as_str().filter(|m| !m.trim().is_empty()).map(|m| m.to_string()));
+    let compression_model: Option<String> = compaction
+        .model
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .or_else(|| {
+            settings["agentCompressionModel"]
+                .as_str()
+                .filter(|m| !m.trim().is_empty())
+                .map(|m| m.to_string())
+        });
     let compression_model_ref: &str = compression_model.as_deref().unwrap_or(model);
 
     // --- Outer evaluation loop config (tool-using job-level judge) ---
@@ -9486,9 +10843,16 @@ async fn call_with_tools_inner(
     // drive the same engine with the text-only judge, at any depth, unchanged.
     // The tool-judge NEVER runs for sub-agents: spawn_subagent children run at
     // depth+1 under their own agent_id, so the gate below excludes them.
-    let eval_knobs = sub_agent.loop_profile.as_deref().and_then(|p| p.evaluation.clone()).unwrap_or_default();
-    let evaluation_enabled = eval_knobs.enabled
-        .unwrap_or_else(|| settings["agentEvaluationEnabled"].as_bool().unwrap_or(false));
+    let eval_knobs = sub_agent
+        .loop_profile
+        .as_deref()
+        .and_then(|p| p.evaluation.clone())
+        .unwrap_or_default();
+    let evaluation_enabled = eval_knobs.enabled.unwrap_or_else(|| {
+        settings["agentEvaluationEnabled"]
+            .as_bool()
+            .unwrap_or(false)
+    });
     let is_top_level = sub_agent.depth == 0 && sub_agent.agent_id == "main";
     // Graph mode: a judge panel from the graph profile gates the final answer.
     // Takes precedence over the profile `evaluation` section at top level; a
@@ -9496,7 +10860,10 @@ async fn call_with_tools_inner(
     let graph_eval_config: Option<EvalConfig> = if is_top_level {
         sub_agent.graph_profile.as_deref().and_then(|gp| {
             if gp.judges.is_empty() {
-                warn!("[Graph] Profile '{}' has no judges — gate disabled", gp.name);
+                warn!(
+                    "[Graph] Profile '{}' has no judges — gate disabled",
+                    gp.name
+                );
                 return None;
             }
             let agg = gp.aggregation.clone().unwrap_or_default();
@@ -9506,21 +10873,45 @@ async fn call_with_tools_inner(
             };
             let agg_threshold = agg.threshold.unwrap_or(0.75).clamp(0.0, 1.0);
             let knobs = gp.loop_.clone().unwrap_or_default();
-            let judges: Vec<ResolvedJudge> = gp.judges.iter().enumerate().map(|(i, j)| {
-                ResolvedJudge {
-                    name: if j.name.trim().is_empty() { format!("judge-{}", i + 1) } else { j.name.clone() },
-                    model: if j.model.trim().is_empty() { model.to_string() } else { j.model.clone() },
-                    api_url: if j.api_url.trim().is_empty() { api_url.to_string() } else { j.api_url.clone() },
-                    api_key: if j.api_key.trim().is_empty() { api_key.to_string() } else { j.api_key.clone() },
+            let judges: Vec<ResolvedJudge> = gp
+                .judges
+                .iter()
+                .enumerate()
+                .map(|(i, j)| ResolvedJudge {
+                    name: if j.name.trim().is_empty() {
+                        format!("judge-{}", i + 1)
+                    } else {
+                        j.name.clone()
+                    },
+                    model: if j.model.trim().is_empty() {
+                        model.to_string()
+                    } else {
+                        j.model.clone()
+                    },
+                    api_url: if j.api_url.trim().is_empty() {
+                        api_url.to_string()
+                    } else {
+                        j.api_url.clone()
+                    },
+                    api_key: if j.api_key.trim().is_empty() {
+                        api_key.to_string()
+                    } else {
+                        j.api_key.clone()
+                    },
                     rules: crate::server::services::graph::resolve_judge_rules(j),
                     weight: j.weight.unwrap_or(1.0),
                     threshold: j.threshold.map(|t| t.clamp(0.0, 1.0)),
                     use_tools: j.use_tools.unwrap_or(true),
                     allow_execute: j.allow_execute.unwrap_or(false),
                     max_judge_rounds: j.max_judge_rounds.unwrap_or(3).clamp(1, 6) as usize,
-                }
-            }).collect();
-            info!("[Graph] Gate active: {} judge(s), policy {}, threshold {:.2}", judges.len(), policy, agg_threshold);
+                })
+                .collect();
+            info!(
+                "[Graph] Gate active: {} judge(s), policy {}, threshold {:.2}",
+                judges.len(),
+                policy,
+                agg_threshold
+            );
             Some(EvalConfig {
                 tool_judge: true,
                 threshold: agg_threshold,
@@ -9548,22 +10939,47 @@ async fn call_with_tools_inner(
     } else if is_top_level && evaluation_enabled {
         Some(EvalConfig {
             tool_judge: true,
-            threshold: eval_knobs.threshold
-                .unwrap_or_else(|| settings["agentEvaluationThreshold"].as_f64().unwrap_or(0.75))
+            threshold: eval_knobs
+                .threshold
+                .unwrap_or_else(|| {
+                    settings["agentEvaluationThreshold"]
+                        .as_f64()
+                        .unwrap_or(0.75)
+                })
                 .clamp(0.0, 1.0),
-            max_retries: eval_knobs.max_retries
+            max_retries: eval_knobs
+                .max_retries
                 .unwrap_or_else(|| settings["agentEvaluationMaxRetries"].as_u64().unwrap_or(2))
                 .clamp(1, 5) as usize,
             max_fix_rounds: eval_knobs.max_fix_rounds.unwrap_or(5).clamp(1, 10) as usize,
-            max_judge_rounds: eval_knobs.max_judge_rounds
-                .unwrap_or_else(|| settings["agentEvaluationMaxJudgeRounds"].as_u64().unwrap_or(3))
+            max_judge_rounds: eval_knobs
+                .max_judge_rounds
+                .unwrap_or_else(|| {
+                    settings["agentEvaluationMaxJudgeRounds"]
+                        .as_u64()
+                        .unwrap_or(3)
+                })
                 .clamp(1, 6) as usize,
-            judge_model: eval_knobs.model.clone().filter(|m| !m.trim().is_empty())
-                .or_else(|| settings["agentEvaluationModel"].as_str().filter(|m| !m.trim().is_empty()).map(|m| m.to_string()))
+            judge_model: eval_knobs
+                .model
+                .clone()
+                .filter(|m| !m.trim().is_empty())
+                .or_else(|| {
+                    settings["agentEvaluationModel"]
+                        .as_str()
+                        .filter(|m| !m.trim().is_empty())
+                        .map(|m| m.to_string())
+                })
                 .unwrap_or_else(|| model.to_string()),
-            judge_api_url: eval_knobs.api_url.clone().filter(|u| !u.trim().is_empty())
+            judge_api_url: eval_knobs
+                .api_url
+                .clone()
+                .filter(|u| !u.trim().is_empty())
                 .unwrap_or_else(|| api_url.to_string()),
-            judge_api_key: eval_knobs.api_key.clone().filter(|k| !k.trim().is_empty())
+            judge_api_key: eval_knobs
+                .api_key
+                .clone()
+                .filter(|k| !k.trim().is_empty())
                 .unwrap_or_else(|| api_key.to_string()),
             rubric: eval_knobs.rubric.clone().unwrap_or_default(),
             allow_execute: eval_knobs.allow_execute.unwrap_or(false),
@@ -9611,25 +11027,35 @@ async fn call_with_tools_inner(
     // Identify this conversation by its last real user message — a checkpoint
     // saved for a DIFFERENT message (e.g. left behind by a crashed or killed
     // run) must not hijack this one, or the new question is silently dropped.
-    let conversation_key: String = messages.iter().rev()
+    let conversation_key: String = messages
+        .iter()
+        .rev()
         .find(|m| m["role"].as_str() == Some("user"))
         .map(|m| content_to_text(&m["content"]).chars().take(300).collect())
         .unwrap_or_default();
 
     // A checkpoint saved under a different agent-loop profile carries a
     // transcript built with different tools/prompt — never resume it.
-    let profile_key: String = sub_agent.loop_profile.as_deref().map(|p| p.name.clone()).unwrap_or_default();
+    let profile_key: String = sub_agent
+        .loop_profile
+        .as_deref()
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
 
     if checkpoint_enabled && !sub_agent.session_id.is_empty() {
         if let Some(checkpoint) = load_checkpoint(&sub_agent.session_id).await {
-            let age_ok = checkpoint.timestamp
+            let age_ok = checkpoint
+                .timestamp
                 .map(|t| chrono::Utc::now() - t < chrono::Duration::hours(2))
                 .unwrap_or(false);
             let key_ok = !conversation_key.is_empty()
                 && checkpoint.conversation_key == conversation_key
                 && checkpoint.profile_key == profile_key;
             if age_ok && key_ok {
-                info!("[ToolLoop] Resuming from checkpoint at round {}", checkpoint.round);
+                info!(
+                    "[ToolLoop] Resuming from checkpoint at round {}",
+                    checkpoint.round
+                );
                 all_messages = checkpoint.messages;
                 total_tool_calls = checkpoint.total_tool_calls;
                 collected_files = checkpoint.files;
@@ -9658,33 +11084,56 @@ async fn call_with_tools_inner(
     // Extract user objective for reflection: the LAST real user message is the
     // current request (the first one is stale in multi-turn sessions). Skip
     // injected system nudges, which also use the user role.
-    let user_objective: String = all_messages.iter().rev()
+    let user_objective: String = all_messages
+        .iter()
+        .rev()
         .filter(|m| m["role"].as_str() == Some("user"))
         .map(|m| content_to_text(&m["content"]))
-        .find(|c| !c.starts_with('⚠') && !c.starts_with('🔴') && !c.starts_with('🚨')
-            && !c.starts_with("REFLECTION"))
+        .find(|c| {
+            !c.starts_with('⚠')
+                && !c.starts_with('🔴')
+                && !c.starts_with('🚨')
+                && !c.starts_with("REFLECTION")
+        })
         .unwrap_or_default()
-        .chars().take(2000)
+        .chars()
+        .take(2000)
         .collect();
 
     // Check if user wants output files (charts/graphs)
     let user_wants_output = {
         let lower = user_objective.to_lowercase();
-        lower.contains("chart") || lower.contains("graph") || lower.contains("plot")
-            || lower.contains("diagram") || lower.contains("visualiz")
-            || lower.contains("figure") || lower.contains("draw")
+        lower.contains("chart")
+            || lower.contains("graph")
+            || lower.contains("plot")
+            || lower.contains("diagram")
+            || lower.contains("visualiz")
+            || lower.contains("figure")
+            || lower.contains("draw")
     };
 
     for round in start_round..max_rounds {
         // --- Abort check: save checkpoint and return early (tiger_cowork: signal.aborted) ---
         if sub_agent.cancel_flag.load(Ordering::Relaxed) {
-            info!("[ToolLoop] Abort signal received at round {} — saving checkpoint", round);
+            info!(
+                "[ToolLoop] Abort signal received at round {} — saving checkpoint",
+                round
+            );
             if checkpoint_enabled {
                 save_checkpoint(
-                    &sub_agent.session_id, round, &all_messages, &tool_records,
-                    total_tool_calls, &collected_files, &tool_call_history,
-                    consecutive_errors, &early_content, &conversation_key, &profile_key,
-                ).await;
+                    &sub_agent.session_id,
+                    round,
+                    &all_messages,
+                    &tool_records,
+                    total_tool_calls,
+                    &collected_files,
+                    &tool_call_history,
+                    consecutive_errors,
+                    &early_content,
+                    &conversation_key,
+                    &profile_key,
+                )
+                .await;
             }
             let content = if early_content.is_empty() {
                 "Task was cancelled.".to_string()
@@ -9699,17 +11148,34 @@ async fn call_with_tools_inner(
         }
 
         let ctx_chars = compact::estimate_messages_chars(&all_messages);
-        info!("Tool loop round {}/{} — {} messages, ~{} chars (~{} tokens)", round + 1, max_rounds, all_messages.len(), ctx_chars, ctx_chars / 4);
+        info!(
+            "Tool loop round {}/{} — {} messages, ~{} chars (~{} tokens)",
+            round + 1,
+            max_rounds,
+            all_messages.len(),
+            ctx_chars,
+            ctx_chars / 4
+        );
 
         // --- Context compression ---
         // Periodic compression every N rounds (profile can disable this — the
         // proactive and overflow paths below always stay on).
         if periodic_compaction_enabled && round > 0 && round % compression_interval == 0 {
             let compressed = compact::compress_older_messages(
-                &all_messages, compression_window, api_key, api_url, compression_model_ref, None,
-            ).await;
+                &all_messages,
+                compression_window,
+                api_key,
+                api_url,
+                compression_model_ref,
+                None,
+            )
+            .await;
             if compressed.len() < all_messages.len() {
-                info!("[ToolLoop] Periodic compression: {} -> {} messages", all_messages.len(), compressed.len());
+                info!(
+                    "[ToolLoop] Periodic compression: {} -> {} messages",
+                    all_messages.len(),
+                    compressed.len()
+                );
                 all_messages = compressed;
             }
         }
@@ -9717,14 +11183,26 @@ async fn call_with_tools_inner(
         // Proactive compaction: estimate tokens and compress if over budget
         let estimated_tokens = compact::estimate_messages_chars(&all_messages) / 4;
         if estimated_tokens > max_context_tokens {
-            info!("[ToolLoop] Context ~{} tokens exceeds limit {} — compacting...", estimated_tokens, max_context_tokens);
+            info!(
+                "[ToolLoop] Context ~{} tokens exceeds limit {} — compacting...",
+                estimated_tokens, max_context_tokens
+            );
             let compressed = compact::compress_older_messages(
-                &all_messages, compression_window.min(6), api_key, api_url, compression_model_ref, None,
-            ).await;
+                &all_messages,
+                compression_window.min(6),
+                api_key,
+                api_url,
+                compression_model_ref,
+                None,
+            )
+            .await;
             if compressed.len() < all_messages.len() {
                 all_messages = compressed;
-                info!("[ToolLoop] Compacted to ~{} tokens ({} messages)",
-                    compact::estimate_messages_chars(&all_messages) / 4, all_messages.len());
+                info!(
+                    "[ToolLoop] Compacted to ~{} tokens ({} messages)",
+                    compact::estimate_messages_chars(&all_messages) / 4,
+                    all_messages.len()
+                );
             }
         }
 
@@ -9743,10 +11221,19 @@ async fn call_with_tools_inner(
         // Periodic checkpoint save
         if round > 0 && round % CHECKPOINT_INTERVAL == 0 {
             save_checkpoint(
-                &sub_agent.session_id, round, &all_messages, &tool_records,
-                total_tool_calls, &collected_files, &tool_call_history,
-                consecutive_errors, &early_content, &conversation_key, &profile_key,
-            ).await;
+                &sub_agent.session_id,
+                round,
+                &all_messages,
+                &tool_records,
+                total_tool_calls,
+                &collected_files,
+                &tool_call_history,
+                consecutive_errors,
+                &early_content,
+                &conversation_key,
+                &profile_key,
+            )
+            .await;
         }
 
         // --- LLM call with retry logic (tiger_cowork: 3 retries + overload backoff) ---
@@ -9756,10 +11243,18 @@ async fn call_with_tools_inner(
 
         for llm_retry in 0..LLM_MAX_RETRIES {
             match llm_call(
-                &client, api_key, api_url, model, &all_messages,
-                Some(&tools), temperature, max_tokens,
+                &client,
+                api_key,
+                api_url,
+                model,
+                &all_messages,
+                Some(&tools),
+                temperature,
+                max_tokens,
                 Some(sub_agent.effort.as_str()),
-            ).await {
+            )
+            .await
+            {
                 Ok(resp) => {
                     data = Some(resp);
                     break;
@@ -9770,35 +11265,67 @@ async fn call_with_tools_inner(
                         info!("[ToolLoop] Context overflow detected — compressing before retry (attempt {}/{})...", llm_retry + 1, LLM_MAX_RETRIES);
                         let force_opts = compact::CompactOptions { force: true };
                         let compressed = compact::compress_older_messages(
-                            &all_messages, compression_window.min(6), api_key, api_url, compression_model_ref, Some(&force_opts),
-                        ).await;
+                            &all_messages,
+                            compression_window.min(6),
+                            api_key,
+                            api_url,
+                            compression_model_ref,
+                            Some(&force_opts),
+                        )
+                        .await;
                         if compressed.len() < all_messages.len() {
-                            all_messages = compact::validate_message_structure(&compressed).messages;
+                            all_messages =
+                                compact::validate_message_structure(&compressed).messages;
                         } else if llm_retry >= 1 {
                             // Retries 2+: target single largest tool result (tiger_cowork)
                             let before_chars = compact::estimate_messages_chars(&all_messages);
                             compact::truncate_largest_tool_result(&mut all_messages, 4000);
                             let after_chars = compact::estimate_messages_chars(&all_messages);
                             if after_chars < before_chars {
-                                all_messages = compact::validate_message_structure(&all_messages).messages;
-                                info!("[ToolLoop] Truncated largest tool result: {} → {} chars", before_chars, after_chars);
+                                all_messages =
+                                    compact::validate_message_structure(&all_messages).messages;
+                                info!(
+                                    "[ToolLoop] Truncated largest tool result: {} → {} chars",
+                                    before_chars, after_chars
+                                );
                             } else {
                                 // No tool message large enough — fall back to halving trim
-                                let trimmed = compact::trim_conversation_context(&all_messages, before_chars / 2);
-                                all_messages = compact::validate_message_structure(&trimmed).messages;
-                                info!("[ToolLoop] Trimmed to {} messages ({} chars)", all_messages.len(), compact::estimate_messages_chars(&all_messages));
+                                let trimmed = compact::trim_conversation_context(
+                                    &all_messages,
+                                    before_chars / 2,
+                                );
+                                all_messages =
+                                    compact::validate_message_structure(&trimmed).messages;
+                                info!(
+                                    "[ToolLoop] Trimmed to {} messages ({} chars)",
+                                    all_messages.len(),
+                                    compact::estimate_messages_chars(&all_messages)
+                                );
                             }
                         } else {
                             // First retry: halving trim path
                             let current_chars = compact::estimate_messages_chars(&all_messages);
-                            let trimmed = compact::trim_conversation_context(&all_messages, current_chars / 2);
+                            let trimmed = compact::trim_conversation_context(
+                                &all_messages,
+                                current_chars / 2,
+                            );
                             all_messages = compact::validate_message_structure(&trimmed).messages;
-                            info!("[ToolLoop] Trimmed to {} messages ({} chars)", all_messages.len(), compact::estimate_messages_chars(&all_messages));
+                            info!(
+                                "[ToolLoop] Trimmed to {} messages ({} chars)",
+                                all_messages.len(),
+                                compact::estimate_messages_chars(&all_messages)
+                            );
                         }
                         if llm_retry >= LLM_MAX_RETRIES - 1 {
-                            on_update(ToolUpdate::Error(format!("Context overflow after {} retries", LLM_MAX_RETRIES)));
+                            on_update(ToolUpdate::Error(format!(
+                                "Context overflow after {} retries",
+                                LLM_MAX_RETRIES
+                            )));
                             return ToolLoopResult {
-                                content: format!("Context overflow after {} retries", LLM_MAX_RETRIES),
+                                content: format!(
+                                    "Context overflow after {} retries",
+                                    LLM_MAX_RETRIES
+                                ),
                                 tool_results: tool_records,
                                 files: collected_files,
                             };
@@ -9807,15 +11334,23 @@ async fn call_with_tools_inner(
                     }
 
                     // 529 overloaded: exponential backoff with jitter
-                    let is_overloaded = err_msg.contains("529") || err_msg.to_lowercase().contains("overloaded");
+                    let is_overloaded =
+                        err_msg.contains("529") || err_msg.to_lowercase().contains("overloaded");
                     if is_overloaded && overload_retry_count < OVERLOAD_MAX_RETRIES {
                         overload_retry_count += 1;
-                        let base_delay = 3000u64.min(3000u64.saturating_mul(1u64 << (overload_retry_count - 1))).min(30000);
+                        let base_delay = 3000u64
+                            .min(3000u64.saturating_mul(1u64 << (overload_retry_count - 1)))
+                            .min(30000);
                         let jitter = rand_jitter(2000);
                         let delay = base_delay + jitter;
-                        info!("[ToolLoop] API overloaded — backoff retry {}/{} in {}ms...",
-                            overload_retry_count, OVERLOAD_MAX_RETRIES, delay);
-                        on_update(ToolUpdate::Error(format!("API overloaded — retrying in {}ms...", delay)));
+                        info!(
+                            "[ToolLoop] API overloaded — backoff retry {}/{} in {}ms...",
+                            overload_retry_count, OVERLOAD_MAX_RETRIES, delay
+                        );
+                        on_update(ToolUpdate::Error(format!(
+                            "API overloaded — retrying in {}ms...",
+                            delay
+                        )));
                         tokio::time::sleep(Duration::from_millis(delay)).await;
                         continue; // Don't count toward normal retries
                     }
@@ -9823,14 +11358,27 @@ async fn call_with_tools_inner(
                     // Normal retry: 2s, 4s backoff
                     if llm_retry < LLM_MAX_RETRIES - 1 {
                         let delay = ((llm_retry + 1) * 2000) as u64;
-                        info!("[ToolLoop] LLM call failed (attempt {}/{}). Retrying in {}ms...",
-                            llm_retry + 1, LLM_MAX_RETRIES, delay);
-                        on_update(ToolUpdate::Error(format!("LLM call failed, retrying... ({})", err_msg)));
+                        info!(
+                            "[ToolLoop] LLM call failed (attempt {}/{}). Retrying in {}ms...",
+                            llm_retry + 1,
+                            LLM_MAX_RETRIES,
+                            delay
+                        );
+                        on_update(ToolUpdate::Error(format!(
+                            "LLM call failed, retrying... ({})",
+                            err_msg
+                        )));
                         tokio::time::sleep(Duration::from_millis(delay)).await;
                     } else {
-                        on_update(ToolUpdate::Error(format!("Connection error after {} retries: {}", LLM_MAX_RETRIES, err_msg)));
+                        on_update(ToolUpdate::Error(format!(
+                            "Connection error after {} retries: {}",
+                            LLM_MAX_RETRIES, err_msg
+                        )));
                         return ToolLoopResult {
-                            content: format!("Connection error after {} retries: {}", LLM_MAX_RETRIES, err_msg),
+                            content: format!(
+                                "Connection error after {} retries: {}",
+                                LLM_MAX_RETRIES, err_msg
+                            ),
                             tool_results: tool_records,
                             files: collected_files,
                         };
@@ -9843,13 +11391,15 @@ async fn call_with_tools_inner(
             Some(d) => {
                 // Log key response info for diagnostics
                 if let Some(usage) = d.get("usage") {
-                    info!("[ToolLoop] API usage: prompt_tokens={}, completion_tokens={}, total={}",
+                    info!(
+                        "[ToolLoop] API usage: prompt_tokens={}, completion_tokens={}, total={}",
                         usage["prompt_tokens"].as_u64().unwrap_or(0),
                         usage["completion_tokens"].as_u64().unwrap_or(0),
-                        usage["total_tokens"].as_u64().unwrap_or(0));
+                        usage["total_tokens"].as_u64().unwrap_or(0)
+                    );
                 }
                 d
-            },
+            }
             None => continue,
         };
 
@@ -9866,23 +11416,34 @@ async fn call_with_tools_inner(
                 info!("[ToolLoop] Context overflow in response — compressing and retrying...");
                 let force_opts2 = compact::CompactOptions { force: true };
                 let compressed = compact::compress_older_messages(
-                    &all_messages, compression_window.min(6), api_key, api_url, compression_model_ref, Some(&force_opts2),
-                ).await;
+                    &all_messages,
+                    compression_window.min(6),
+                    api_key,
+                    api_url,
+                    compression_model_ref,
+                    Some(&force_opts2),
+                )
+                .await;
                 if compressed.len() < all_messages.len() {
                     all_messages = compact::validate_message_structure(&compressed).messages;
                     continue;
                 } else {
                     let current_chars = compact::estimate_messages_chars(&all_messages);
-                    let trimmed = compact::trim_conversation_context(&all_messages, current_chars / 2);
+                    let trimmed =
+                        compact::trim_conversation_context(&all_messages, current_chars / 2);
                     all_messages = compact::validate_message_structure(&trimmed).messages;
                     continue;
                 }
             }
 
             // Tool ID mismatch: remove orphaned tool results and retry
-            if err_msg.contains("tool_id") || err_msg.contains("tool result") || err_msg.contains("tool_call_id") {
+            if err_msg.contains("tool_id")
+                || err_msg.contains("tool result")
+                || err_msg.contains("tool_call_id")
+            {
                 let before_len = all_messages.len();
-                let valid_ids: std::collections::HashSet<String> = all_messages.iter()
+                let valid_ids: std::collections::HashSet<String> = all_messages
+                    .iter()
                     .filter_map(|m| m["tool_calls"].as_array())
                     .flatten()
                     .filter_map(|tc| tc["id"].as_str().map(|s| s.to_string()))
@@ -9896,7 +11457,10 @@ async fn call_with_tools_inner(
                     true
                 });
                 if all_messages.len() < before_len {
-                    info!("[ToolLoop] Removed {} orphaned tool results. Retrying...", before_len - all_messages.len());
+                    info!(
+                        "[ToolLoop] Removed {} orphaned tool results. Retrying...",
+                        before_len - all_messages.len()
+                    );
                     continue;
                 }
             }
@@ -9926,10 +11490,20 @@ async fn call_with_tools_inner(
         // --- Handle no-choices error ---
         let choice = &resp_json["choices"][0];
         if choice.is_null() {
-            let api_error = resp_json.get("error")
+            let api_error = resp_json
+                .get("error")
                 .map(|e| e.to_string())
-                .unwrap_or_else(|| serde_json::to_string(&resp_json).unwrap_or_default().chars().take(500).collect());
-            warn!("[ToolLoop] No response from API at round {}. Error: {}", round, api_error);
+                .unwrap_or_else(|| {
+                    serde_json::to_string(&resp_json)
+                        .unwrap_or_default()
+                        .chars()
+                        .take(500)
+                        .collect()
+                });
+            warn!(
+                "[ToolLoop] No response from API at round {}. Error: {}",
+                round, api_error
+            );
 
             no_choices_retries += 1;
             if no_choices_retries < 3 {
@@ -9957,7 +11531,10 @@ async fn call_with_tools_inner(
         // Stream reasoning content to callback if present (extended thinking models)
         if let Some(reasoning) = message.get("reasoning_content").and_then(|r| r.as_str()) {
             if !reasoning.is_empty() {
-                on_update(ToolUpdate::TextChunk(format!("[reasoning] {}", crate::util::truncate_utf8(&reasoning, 500))));
+                on_update(ToolUpdate::TextChunk(format!(
+                    "[reasoning] {}",
+                    crate::util::truncate_utf8(&reasoning, 500)
+                )));
             }
         }
 
@@ -9981,7 +11558,11 @@ async fn call_with_tools_inner(
             if reasoning.is_string() && !reasoning.as_str().unwrap_or("").is_empty() {
                 truncated_message["reasoning_content"] = reasoning.clone();
                 // Kimi API rejects empty content — fill from reasoning if content is empty
-                if truncated_message["content"].as_str().unwrap_or("").is_empty() {
+                if truncated_message["content"]
+                    .as_str()
+                    .unwrap_or("")
+                    .is_empty()
+                {
                     let r = reasoning.as_str().unwrap_or("");
                     truncated_message["content"] = json!(crate::util::truncate_utf8(r, 200));
                 }
@@ -9990,7 +11571,11 @@ async fn call_with_tools_inner(
 
         // Ensure content is never empty (MiniMax/Kimi APIs reject "chat content is empty")
         // This applies even when tool_calls are present — some APIs require non-empty content always
-        if truncated_message["content"].as_str().unwrap_or("").is_empty() {
+        if truncated_message["content"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty()
+        {
             truncated_message["content"] = json!("(thinking...)");
         }
 
@@ -10002,7 +11587,11 @@ async fn call_with_tools_inner(
             if calls.is_empty() {
                 // No tool calls -- treat as final response
                 let mut content = strip_think_blocks(message["content"].as_str().unwrap_or(""));
-                info!("[ToolLoop] LLM returned text-only (no tools) at round {}: {} chars", round, content.len());
+                info!(
+                    "[ToolLoop] LLM returned text-only (no tools) at round {}: {} chars",
+                    round,
+                    content.len()
+                );
                 // Checkpoint is cleared BEFORE evaluation on purpose: a stale
                 // checkpoint surviving a mid-eval crash would resume a
                 // transcript that already contains a final answer.
@@ -10015,11 +11604,25 @@ async fn call_with_tools_inner(
                 if let Some(eval_cfg) = &effective_eval_config {
                     if eval_cfg.should_judge(total_tool_calls) && !content.is_empty() {
                         let eval_result = run_evaluation_loop(
-                            &client, api_key, api_url, model, &mut all_messages, &user_objective,
-                            eval_cfg, temperature, max_tokens,
-                            &tools, &sub_agent, sandbox_dir, on_update.clone(), realtime,
-                            &mut tool_records, &mut collected_files, &mut total_tool_calls,
-                        ).await;
+                            &client,
+                            api_key,
+                            api_url,
+                            model,
+                            &mut all_messages,
+                            &user_objective,
+                            eval_cfg,
+                            temperature,
+                            max_tokens,
+                            &tools,
+                            &sub_agent,
+                            sandbox_dir,
+                            on_update.clone(),
+                            realtime,
+                            &mut tool_records,
+                            &mut collected_files,
+                            &mut total_tool_calls,
+                        )
+                        .await;
                         if let Some(improved) = eval_result {
                             let improved = strip_think_blocks(&improved);
                             if !improved.trim().is_empty() {
@@ -10039,8 +11642,14 @@ async fn call_with_tools_inner(
             // --- Parse tool calls ---
             let mut parsed_calls: Vec<(String, String, Value, String)> = Vec::new(); // (name, id, args, raw_args_str)
             for call in calls {
-                let tool_name = call["function"]["name"].as_str().unwrap_or("unknown").to_string();
-                let tool_args_str = call["function"]["arguments"].as_str().unwrap_or("{}").to_string();
+                let tool_name = call["function"]["name"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string();
+                let tool_args_str = call["function"]["arguments"]
+                    .as_str()
+                    .unwrap_or("{}")
+                    .to_string();
                 let tool_id = call["id"].as_str().unwrap_or("").to_string();
 
                 let tool_args: Value = match serde_json::from_str(&tool_args_str) {
@@ -10051,7 +11660,11 @@ async fn call_with_tools_inner(
                             info!("[ToolLoop] Recovered malformed JSON for {}", tool_name);
                             recovered
                         } else {
-                            warn!("[ToolLoop] Failed to parse args for {}: {}", tool_name, crate::util::truncate_utf8(&tool_args_str, 200));
+                            warn!(
+                                "[ToolLoop] Failed to parse args for {}: {}",
+                                tool_name,
+                                crate::util::truncate_utf8(&tool_args_str, 200)
+                            );
                             json!({})
                         }
                     }
@@ -10061,75 +11674,140 @@ async fn call_with_tools_inner(
 
             // --- Execute tools: parallel for sub-agent tools, sequential for others ---
             let parallel_tool_names: std::collections::HashSet<&str> =
-                ["spawn_subagent", "send_task", "wait_result"].iter().copied().collect();
+                ["spawn_subagent", "send_task", "wait_result"]
+                    .iter()
+                    .copied()
+                    .collect();
 
-            let (sequential_calls, parallel_calls): (Vec<_>, Vec<_>) = parsed_calls.iter()
+            let (sequential_calls, parallel_calls): (Vec<_>, Vec<_>) = parsed_calls
+                .iter()
                 .partition(|(name, _, _, _)| !parallel_tool_names.contains(name.as_str()));
 
             // Execute sequential tools
             for (tool_name, tool_id, tool_args, _raw) in &sequential_calls {
                 if total_tool_calls >= max_tool_calls {
                     warn!("Max total tool calls reached ({})", max_tool_calls);
-                    let content = strip_think_blocks(&force_final_response(
-                        &client, api_key, api_url, model, &all_messages, &tool_records,
-                        total_tool_calls, temperature,
-                    ).await);
+                    let content = strip_think_blocks(
+                        &force_final_response(
+                            &client,
+                            api_key,
+                            api_url,
+                            model,
+                            &all_messages,
+                            &tool_records,
+                            total_tool_calls,
+                            temperature,
+                        )
+                        .await,
+                    );
                     on_update(ToolUpdate::TextChunk(content.clone()));
                     clear_checkpoint(&sub_agent.session_id).await;
-                    return ToolLoopResult { content, tool_results: tool_records, files: collected_files };
+                    return ToolLoopResult {
+                        content,
+                        tool_results: tool_records,
+                        files: collected_files,
+                    };
                 }
 
-                if tool_name == "load_skill" { _uses_skill = true; }
+                if tool_name == "load_skill" {
+                    _uses_skill = true;
+                }
 
                 // Loop detection — skip for monitoring tools that are legitimately called repeatedly
-                let is_monitoring_tool = matches!(tool_name.as_str(),
-                    "check_agents" | "bb_read" | "proto_bb_read" | "proto_bus_history" | "proto_queue_peek"
+                let is_monitoring_tool = matches!(
+                    tool_name.as_str(),
+                    "check_agents"
+                        | "bb_read"
+                        | "proto_bb_read"
+                        | "proto_bus_history"
+                        | "proto_queue_peek"
                 );
                 let signature = format!("{}:{}", tool_name, tool_args);
                 if !is_monitoring_tool {
                     recent_signatures.push(signature.clone());
                 }
-                tool_call_history.push(format!("{}:{}", tool_name, tool_args.to_string().chars().take(100).collect::<String>()));
+                tool_call_history.push(format!(
+                    "{}:{}",
+                    tool_name,
+                    tool_args.to_string().chars().take(100).collect::<String>()
+                ));
                 if recent_signatures.len() >= MAX_LOOP_REPEATS {
                     let tail = &recent_signatures[recent_signatures.len() - MAX_LOOP_REPEATS..];
                     if tail.iter().all(|s| s == &signature) {
-                        warn!("Loop detected: same tool+args repeated {} times", MAX_LOOP_REPEATS);
-                        on_update(ToolUpdate::Error("Loop detected: same tool call repeated".to_string()));
-                        let content = strip_think_blocks(&force_final_response(
-                            &client, api_key, api_url, model, &all_messages, &tool_records,
-                            total_tool_calls, temperature,
-                        ).await);
+                        warn!(
+                            "Loop detected: same tool+args repeated {} times",
+                            MAX_LOOP_REPEATS
+                        );
+                        on_update(ToolUpdate::Error(
+                            "Loop detected: same tool call repeated".to_string(),
+                        ));
+                        let content = strip_think_blocks(
+                            &force_final_response(
+                                &client,
+                                api_key,
+                                api_url,
+                                model,
+                                &all_messages,
+                                &tool_records,
+                                total_tool_calls,
+                                temperature,
+                            )
+                            .await,
+                        );
                         on_update(ToolUpdate::TextChunk(content.clone()));
                         clear_checkpoint(&sub_agent.session_id).await;
-                        return ToolLoopResult { content, tool_results: tool_records, files: collected_files };
+                        return ToolLoopResult {
+                            content,
+                            tool_results: tool_records,
+                            files: collected_files,
+                        };
                     }
                 }
 
-                on_update(ToolUpdate::ToolCall { name: tool_name.clone(), args: tool_args.clone() });
+                on_update(ToolUpdate::ToolCall {
+                    name: tool_name.clone(),
+                    args: tool_args.clone(),
+                });
 
                 // Log tool call to agent history
                 let args_preview: String = tool_args.to_string().chars().take(200).collect();
-                write_agent_history(&sub_agent.session_id, "TOOL_CALL", json!({
-                    "agent_id": sub_agent.agent_id,
-                    "tool": tool_name,
-                    "args_preview": args_preview,
-                    "round": round,
-                })).await;
+                write_agent_history(
+                    &sub_agent.session_id,
+                    "TOOL_CALL",
+                    json!({
+                        "agent_id": sub_agent.agent_id,
+                        "tool": tool_name,
+                        "args_preview": args_preview,
+                        "round": round,
+                    }),
+                )
+                .await;
 
                 info!("Executing tool: {} (round {})", tool_name, round);
                 let result = execute_tool_dispatch(
-                    tool_name, tool_args, sandbox_dir, &sub_agent, on_update.clone(), realtime,
-                ).await;
+                    tool_name,
+                    tool_args,
+                    sandbox_dir,
+                    &sub_agent,
+                    on_update.clone(),
+                    realtime,
+                )
+                .await;
 
                 // Track successful agent delegation
-                if tool_name == "send_task" && result.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                if tool_name == "send_task"
+                    && result.get("ok").and_then(|v| v.as_bool()) == Some(true)
+                {
                     agent_task_sent = true;
                 }
 
                 // Track consecutive errors (skip agent timeouts)
                 let is_agent_timeout = matches!(tool_name.as_str(), "wait_result" | "send_task")
-                    && result.get("error").and_then(|v| v.as_str())
-                        .map(|s| s.to_lowercase().contains("timeout")).unwrap_or(false);
+                    && result
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_lowercase().contains("timeout"))
+                        .unwrap_or(false);
 
                 if (result.get("ok").and_then(|v| v.as_bool()) == Some(false)
                     || result.get("exit_code").and_then(|v| v.as_i64()) == Some(1))
@@ -10140,26 +11818,45 @@ async fn call_with_tools_inner(
                     consecutive_errors = 0;
                 }
 
-                on_update(ToolUpdate::ToolResult { name: tool_name.clone(), result: result.clone() });
+                on_update(ToolUpdate::ToolResult {
+                    name: tool_name.clone(),
+                    result: result.clone(),
+                });
 
                 // Check cancel flag after each tool execution (not just at round start)
                 if sub_agent.cancel_flag.load(Ordering::Relaxed) {
-                    info!("[ToolLoop] Abort signal after tool '{}' — stopping", tool_name);
+                    info!(
+                        "[ToolLoop] Abort signal after tool '{}' — stopping",
+                        tool_name
+                    );
                     on_update(ToolUpdate::Error("Task cancelled by user.".to_string()));
-                    let content = if early_content.is_empty() { "Task was cancelled.".to_string() } else { early_content };
-                    return ToolLoopResult { content, tool_results: tool_records, files: collected_files };
+                    let content = if early_content.is_empty() {
+                        "Task was cancelled.".to_string()
+                    } else {
+                        early_content
+                    };
+                    return ToolLoopResult {
+                        content,
+                        tool_results: tool_records,
+                        files: collected_files,
+                    };
                 }
 
                 // Log tool result to agent history
                 {
                     let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
                     let result_preview: String = result.to_string().chars().take(200).collect();
-                    write_agent_history(&sub_agent.session_id, "TOOL_RESULT", json!({
-                        "agent_id": sub_agent.agent_id,
-                        "tool": tool_name,
-                        "ok": ok,
-                        "result_preview": result_preview,
-                    })).await;
+                    write_agent_history(
+                        &sub_agent.session_id,
+                        "TOOL_RESULT",
+                        json!({
+                            "agent_id": sub_agent.agent_id,
+                            "tool": tool_name,
+                            "ok": ok,
+                            "result_preview": result_preview,
+                        }),
+                    )
+                    .await;
                 }
 
                 // Track file reads for post-compact restoration
@@ -10172,7 +11869,10 @@ async fn call_with_tools_inner(
                     }
                 }
 
-                tool_records.push(ToolCallRecord { tool: tool_name.clone(), result: result.clone() });
+                tool_records.push(ToolCallRecord {
+                    tool: tool_name.clone(),
+                    result: result.clone(),
+                });
 
                 // After create_architecture or select_swarm: update agent_ids + refresh tools
                 if (tool_name == "create_architecture" || tool_name == "select_swarm")
@@ -10188,7 +11888,8 @@ async fn call_with_tools_inner(
                             sub_agent.config_file = selected.to_string();
                         }
                         if let Some(agents) = result.get("agents").and_then(|v| v.as_array()) {
-                            sub_agent.agent_ids = agents.iter()
+                            sub_agent.agent_ids = agents
+                                .iter()
                                 .filter_map(|a| a["id"].as_str().map(|s| s.to_string()))
                                 .collect();
                         }
@@ -10217,12 +11918,22 @@ async fn call_with_tools_inner(
                         }
                     }
 
-                    info!("[ToolLoop] Session activated via {}, agent_ids={:?}", tool_name, sub_agent.agent_ids);
+                    info!(
+                        "[ToolLoop] Session activated via {}, agent_ids={:?}",
+                        tool_name, sub_agent.agent_ids
+                    );
 
                     // Refresh tool set to include send_task/wait_result
                     tools = tool_definitions_for_mode(&sub_agent, true, true);
                     apply_profile_tool_overrides(&mut tools, &sub_agent);
-                    info!("[ToolLoop] Tools refreshed: {}", tools.iter().filter_map(|td| td["function"]["name"].as_str()).collect::<Vec<_>>().join(", "));
+                    info!(
+                        "[ToolLoop] Tools refreshed: {}",
+                        tools
+                            .iter()
+                            .filter_map(|td| td["function"]["name"].as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
                 }
 
                 // Collect output files
@@ -10237,7 +11948,11 @@ async fn call_with_tools_inner(
                 }
 
                 // Append tool result message (with smart compression)
-                let max_len = if tool_name == "load_skill" { 3000 } else { tool_result_max_len };
+                let max_len = if tool_name == "load_skill" {
+                    3000
+                } else {
+                    tool_result_max_len
+                };
                 let result_str = compact::compress_tool_result(tool_name, &result, max_len);
                 all_messages.push(json!({
                     "role": "tool",
@@ -10269,22 +11984,37 @@ async fn call_with_tools_inner(
                 let results = futures_util::future::join_all(handles).await;
                 for join_result in results {
                     if let Ok((tool_name, tool_id, tool_args, result)) = join_result {
-                        on_update(ToolUpdate::ToolCall { name: tool_name.clone(), args: tool_args.clone() });
-                        on_update(ToolUpdate::ToolResult { name: tool_name.clone(), result: result.clone() });
+                        on_update(ToolUpdate::ToolCall {
+                            name: tool_name.clone(),
+                            args: tool_args.clone(),
+                        });
+                        on_update(ToolUpdate::ToolResult {
+                            name: tool_name.clone(),
+                            result: result.clone(),
+                        });
 
                         // Log
-                        let args_preview: String = tool_args.to_string().chars().take(200).collect();
+                        let args_preview: String =
+                            tool_args.to_string().chars().take(200).collect();
                         write_agent_history(&sub_agent.session_id, "TOOL_CALL", json!({
                             "agent_id": sub_agent.agent_id, "tool": &tool_name, "args_preview": args_preview, "round": round,
                         })).await;
                         let result_preview: String = result.to_string().chars().take(200).collect();
-                        write_agent_history(&sub_agent.session_id, "TOOL_RESULT", json!({
-                            "agent_id": sub_agent.agent_id, "tool": &tool_name,
-                            "ok": result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
-                            "result_preview": result_preview,
-                        })).await;
+                        write_agent_history(
+                            &sub_agent.session_id,
+                            "TOOL_RESULT",
+                            json!({
+                                "agent_id": sub_agent.agent_id, "tool": &tool_name,
+                                "ok": result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+                                "result_preview": result_preview,
+                            }),
+                        )
+                        .await;
 
-                        tool_records.push(ToolCallRecord { tool: tool_name.clone(), result: result.clone() });
+                        tool_records.push(ToolCallRecord {
+                            tool: tool_name.clone(),
+                            result: result.clone(),
+                        });
 
                         if let Some(files) = result.get("output_files").and_then(|v| v.as_array()) {
                             for f in files {
@@ -10297,7 +12027,8 @@ async fn call_with_tools_inner(
                         }
 
                         let max_len = tool_result_max_len;
-                        let result_str = compact::compress_tool_result(&tool_name, &result, max_len);
+                        let result_str =
+                            compact::compress_tool_result(&tool_name, &result, max_len);
                         all_messages.push(json!({
                             "role": "tool",
                             "tool_call_id": tool_id,
@@ -10313,8 +12044,10 @@ async fn call_with_tools_inner(
             if consecutive_errors >= max_consecutive_errors {
                 if error_recovery_attempts < max_error_recoveries {
                     error_recovery_attempts += 1;
-                    info!("[ToolLoop] {} consecutive errors. Recovery attempt {}/{}...",
-                        max_consecutive_errors, error_recovery_attempts, max_error_recoveries);
+                    info!(
+                        "[ToolLoop] {} consecutive errors. Recovery attempt {}/{}...",
+                        max_consecutive_errors, error_recovery_attempts, max_error_recoveries
+                    );
 
                     let recovery_msg = if error_recovery_attempts <= 2 {
                         format!(
@@ -10354,30 +12087,43 @@ async fn call_with_tools_inner(
 
             // --- Max tool calls check ---
             if total_tool_calls >= max_tool_calls {
-                info!("[ToolLoop] Reached max tool calls ({}). Ending loop.", max_tool_calls);
+                info!(
+                    "[ToolLoop] Reached max tool calls ({}). Ending loop.",
+                    max_tool_calls
+                );
                 break;
             }
 
             // --- Persistent errors after all recoveries ---
-            if consecutive_errors >= max_consecutive_errors && error_recovery_attempts >= max_error_recoveries * 2 {
+            if consecutive_errors >= max_consecutive_errors
+                && error_recovery_attempts >= max_error_recoveries * 2
+            {
                 info!("[ToolLoop] Persistent errors after all recovery cycles. Ending loop.");
                 break;
             }
-
         } else {
             // No tool calls — agent wants to stop
             // But first: check for pending sub-agent work (tiger_cowork)
             if !sub_agent.session_id.is_empty() {
                 let (working, pending, bb_tasks) = check_pending_work(&sub_agent.session_id).await;
-                let has_pending = !working.is_empty() || !pending.is_empty() || !bb_tasks.is_empty();
+                let has_pending =
+                    !working.is_empty() || !pending.is_empty() || !bb_tasks.is_empty();
 
                 if has_pending {
                     let agent_names = working.join(", ");
                     let mut pending_info = String::new();
                     if !pending.is_empty() {
-                        pending_info = format!("\n\nResults just arrived from your agents:\n{}",
-                            pending.iter().map(|(id, r)| format!("**{}**: {}", id, crate::util::truncate_utf8(&r.result, 3000)))
-                                .collect::<Vec<_>>().join("\n\n")
+                        pending_info = format!(
+                            "\n\nResults just arrived from your agents:\n{}",
+                            pending
+                                .iter()
+                                .map(|(id, r)| format!(
+                                    "**{}**: {}",
+                                    id,
+                                    crate::util::truncate_utf8(&r.result, 3000)
+                                ))
+                                .collect::<Vec<_>>()
+                                .join("\n\n")
                         );
                     }
 
@@ -10397,26 +12143,40 @@ async fn call_with_tools_inner(
                         )
                     }));
                     #[allow(unused_assignments)]
-                    { consecutive_errors = 0; }
+                    {
+                        consecutive_errors = 0;
+                    }
                     continue;
                 }
             }
 
             // Nudge: if in multi-agent mode and AI never successfully delegated, push it to retry
-            if sub_agent.enabled && !agent_task_sent && !agent_stop_nudged && !sub_agent.agent_ids.is_empty() {
+            if sub_agent.enabled
+                && !agent_task_sent
+                && !agent_stop_nudged
+                && !sub_agent.agent_ids.is_empty()
+            {
                 agent_stop_nudged = true;
                 let agents_list = sub_agent.agent_ids.join(", ");
                 // Find the orchestrator if it exists
                 let orch_hint = if let Some((yaml, _)) = load_agent_yaml(&sub_agent.config_file) {
-                    yaml.get("agents").and_then(|a| a.as_array()).and_then(|arr|
-                        arr.iter().find(|a| a["role"].as_str() == Some("orchestrator"))
-                            .and_then(|a| a["id"].as_str().map(|s| s.to_string()))
-                    )
-                } else { None };
+                    yaml.get("agents")
+                        .and_then(|a| a.as_array())
+                        .and_then(|arr| {
+                            arr.iter()
+                                .find(|a| a["role"].as_str() == Some("orchestrator"))
+                                .and_then(|a| a["id"].as_str().map(|s| s.to_string()))
+                        })
+                } else {
+                    None
+                };
                 let orch_msg = if let Some(orch_id) = orch_hint {
                     format!("The orchestrator is '{}'. Send your task to the orchestrator using: send_task({{\"to\": \"{}\", \"task\": \"...\"}})", orch_id, orch_id)
                 } else {
-                    format!("Available agents: [{}]. Use send_task to delegate your task.", agents_list)
+                    format!(
+                        "Available agents: [{}]. Use send_task to delegate your task.",
+                        agents_list
+                    )
                 };
                 warn!("[ToolLoop] AI tried to stop without delegating in multi-agent mode. Nudging to retry.");
                 all_messages.push(json!({
@@ -10439,11 +12199,23 @@ async fn call_with_tools_inner(
             // Some models end with empty content (e.g. text went to reasoning_content,
             // or a malformed tool call). Never return a blank answer after real work.
             if content.is_empty() && total_tool_calls > 0 {
-                warn!("[ToolLoop] Empty final content after {} tool calls — forcing final synthesis", total_tool_calls);
-                content = strip_think_blocks(&force_final_response(
-                    &client, api_key, api_url, model, &all_messages, &tool_records,
-                    total_tool_calls, temperature,
-                ).await);
+                warn!(
+                    "[ToolLoop] Empty final content after {} tool calls — forcing final synthesis",
+                    total_tool_calls
+                );
+                content = strip_think_blocks(
+                    &force_final_response(
+                        &client,
+                        api_key,
+                        api_url,
+                        model,
+                        &all_messages,
+                        &tool_records,
+                        total_tool_calls,
+                        temperature,
+                    )
+                    .await,
+                );
             }
             if content.is_empty() && !early_content.is_empty() {
                 content = strip_think_blocks(&early_content);
@@ -10451,26 +12223,47 @@ async fn call_with_tools_inner(
             if content.is_empty() && total_tool_calls > 0 {
                 content = format!(
                     "The task ran {} tool calls but the model did not produce a final answer. \
-                    Please send the request again or rephrase it.", total_tool_calls
+                    Please send the request again or rephrase it.",
+                    total_tool_calls
                 );
             }
-            info!("[ToolLoop] No tool_calls from LLM at round {} — returning text ({} chars)", round, content.len());
+            info!(
+                "[ToolLoop] No tool_calls from LLM at round {} — returning text ({} chars)",
+                round,
+                content.len()
+            );
             clear_checkpoint(&sub_agent.session_id).await;
 
             // --- Evaluation loop (outer job-level judge; legacy reflection) ---
             // Runs BEFORE the final TextChunk emission so the UI receives the
             // improved answer, not the pre-evaluation draft. Note checkpoint
             // was already cleared above — see the comment at completion point A.
-            if effective_eval_config.as_ref().is_some_and(|c| c.should_judge(total_tool_calls))
+            if effective_eval_config
+                .as_ref()
+                .is_some_and(|c| c.should_judge(total_tool_calls))
                 && !content.is_empty()
             {
                 let eval_cfg = effective_eval_config.as_ref().unwrap();
                 let reflection_result = run_evaluation_loop(
-                    &client, api_key, api_url, model, &mut all_messages, &user_objective,
-                    eval_cfg, temperature, max_tokens,
-                    &tools, &sub_agent, sandbox_dir, on_update.clone(), realtime,
-                    &mut tool_records, &mut collected_files, &mut total_tool_calls,
-                ).await;
+                    &client,
+                    api_key,
+                    api_url,
+                    model,
+                    &mut all_messages,
+                    &user_objective,
+                    eval_cfg,
+                    temperature,
+                    max_tokens,
+                    &tools,
+                    &sub_agent,
+                    sandbox_dir,
+                    on_update.clone(),
+                    realtime,
+                    &mut tool_records,
+                    &mut collected_files,
+                    &mut total_tool_calls,
+                )
+                .await;
                 if let Some(improved) = reflection_result {
                     let improved = strip_think_blocks(&improved);
                     if !improved.trim().is_empty() {
@@ -10490,11 +12283,23 @@ async fn call_with_tools_inner(
             // --- Output file nudge (tiger_cowork: if user wants files but none generated) ---
             if user_wants_output && collected_files.is_empty() && total_tool_calls > 0 {
                 let nudge_result = run_output_nudge(
-                    &client, api_key, api_url, model, &mut all_messages,
-                    &tools, temperature, max_tokens, &sub_agent, sandbox_dir,
-                    on_update.clone(), realtime,
-                    &mut tool_records, &mut collected_files, &mut total_tool_calls,
-                ).await;
+                    &client,
+                    api_key,
+                    api_url,
+                    model,
+                    &mut all_messages,
+                    &tools,
+                    temperature,
+                    max_tokens,
+                    &sub_agent,
+                    sandbox_dir,
+                    on_update.clone(),
+                    realtime,
+                    &mut tool_records,
+                    &mut collected_files,
+                    &mut total_tool_calls,
+                )
+                .await;
                 if let Some(nudged_content) = nudge_result {
                     return ToolLoopResult {
                         content: nudged_content,
@@ -10520,10 +12325,19 @@ async fn call_with_tools_inner(
         info!("[Evaluation] Skipped: max rounds exhausted");
     }
     clear_checkpoint(&sub_agent.session_id).await;
-    let content = strip_think_blocks(&force_final_response(
-        &client, api_key, api_url, model, &all_messages, &tool_records,
-        total_tool_calls, temperature,
-    ).await);
+    let content = strip_think_blocks(
+        &force_final_response(
+            &client,
+            api_key,
+            api_url,
+            model,
+            &all_messages,
+            &tool_records,
+            total_tool_calls,
+            temperature,
+        )
+        .await,
+    );
     // Fall back to early_content if force_final_response returned empty
     let content = if content.is_empty() && !early_content.is_empty() {
         strip_think_blocks(&early_content)
@@ -10572,7 +12386,12 @@ async fn execute_tool_dispatch(
         .scope(
             ctx,
             execute_tool_dispatch_inner(
-                tool_name, tool_args, sandbox_dir, sub_agent, on_update, realtime,
+                tool_name,
+                tool_args,
+                sandbox_dir,
+                sub_agent,
+                on_update,
+                realtime,
             ),
         )
         .await
@@ -10615,8 +12434,15 @@ async fn execute_tool_dispatch_inner(
             if let Some(pins) = &c.pinned_params {
                 let sent = tool_args.as_object();
                 for (k, v) in pins {
-                    if sent.and_then(|o| o.get(k)).map(|old| old != v).unwrap_or(false) {
-                        info!("[profile] pinned_params override on '{}': key '{}'", tool_name, k);
+                    if sent
+                        .and_then(|o| o.get(k))
+                        .map(|old| old != v)
+                        .unwrap_or(false)
+                    {
+                        info!(
+                            "[profile] pinned_params override on '{}': key '{}'",
+                            tool_name, k
+                        );
                     }
                 }
             }
@@ -10690,8 +12516,11 @@ async fn execute_tool_dispatch_inner(
         exec_select_swarm(tool_args, sub_agent, sandbox_dir).await
     } else {
         let fut = execute_tool_with_context(
-            tool_name, tool_args, sandbox_dir,
-            &sub_agent.session_id, &sub_agent.agent_id,
+            tool_name,
+            tool_args,
+            sandbox_dir,
+            &sub_agent.session_id,
+            &sub_agent.agent_id,
         );
         // Profile wall-clock cap. Dropping the future kills the direct child
         // process (kill_on_drop in run_guarded), but grandchildren in the
@@ -10758,7 +12587,11 @@ impl EvalConfig {
     /// too when judge_plain_answers is set — gating is its whole point.
     fn should_judge(&self, total_tool_calls: usize) -> bool {
         total_tool_calls > 0
-            || self.graph.as_ref().map(|g| g.judge_plain_answers).unwrap_or(false)
+            || self
+                .graph
+                .as_ref()
+                .map(|g| g.judge_plain_answers)
+                .unwrap_or(false)
     }
 }
 
@@ -10895,11 +12728,18 @@ fn aggregate_verdicts(
 
     let total_weight: f64 = considered.iter().map(|(i, _)| weight_of(*i)).sum();
     let aggregate_score = if total_weight > 0.0 {
-        considered.iter().map(|(i, v)| weight_of(*i) * v.score).sum::<f64>() / total_weight
+        considered
+            .iter()
+            .map(|(i, v)| weight_of(*i) * v.score)
+            .sum::<f64>()
+            / total_weight
     } else {
         0.0
     };
-    let pass_count = considered.iter().filter(|(i, v)| judge_passes(*i, v)).count();
+    let pass_count = considered
+        .iter()
+        .filter(|(i, v)| judge_passes(*i, v))
+        .count();
     let pass = match policy {
         "majority" => pass_count * 2 > considered.len(),
         "weighted_average" => aggregate_score >= agg_threshold,
@@ -10910,7 +12750,11 @@ fn aggregate_verdicts(
         .iter()
         .filter(|(i, v)| !judge_passes(*i, v))
         .map(|(_, v)| {
-            let instr = if v.revise.trim().is_empty() { &v.missing } else { &v.revise };
+            let instr = if v.revise.trim().is_empty() {
+                &v.missing
+            } else {
+                &v.revise
+            };
             format!("[{}] {}", v.judge, instr.trim())
         })
         .filter(|s| !s.ends_with("] "))
@@ -10924,16 +12768,16 @@ fn aggregate_verdicts(
         judges: verdicts.iter().map(|(_, v)| v.clone()).collect(),
         revise,
     };
-    let yaml = serde_yaml::to_string(&report).unwrap_or_else(|_| {
-        format!("pass: {}\naggregate_score: {:.2}\n", pass, aggregate_score)
-    });
+    let yaml = serde_yaml::to_string(&report)
+        .unwrap_or_else(|_| format!("pass: {}\naggregate_score: {:.2}\n", pass, aggregate_score));
     (pass, aggregate_score, yaml)
 }
 
 /// Extract the verdict JSON from a judge reply. Shared by the text-only and
 /// tool-using judges. Returns None (fail open) when no JSON can be parsed.
 fn parse_judge_verdict(content: &str) -> Option<JudgeVerdict> {
-    let json_str = content.find('{')
+    let json_str = content
+        .find('{')
         .and_then(|start| content.rfind('}').map(|end| &content[start..=end]));
     let parsed: Value = match json_str.and_then(|s| serde_json::from_str(s).ok()) {
         Some(p) => p,
@@ -10957,22 +12801,35 @@ fn summarize_tool_records(records: &[ToolCallRecord]) -> String {
     let mut tool_summary = String::new();
     let skipped = records.len().saturating_sub(SUMMARY_MAX_RECORDS);
     if skipped > 0 {
-        tool_summary.push_str(&format!("[... {} earlier tool calls omitted ...]\n", skipped));
+        tool_summary.push_str(&format!(
+            "[... {} earlier tool calls omitted ...]\n",
+            skipped
+        ));
     }
     for tr in records.iter().skip(skipped) {
         let r = &tr.result;
-        let line = if let Some(files) = r.get("output_files").and_then(|v| v.as_array()).filter(|f| !f.is_empty()) {
+        let line = if let Some(files) = r
+            .get("output_files")
+            .and_then(|v| v.as_array())
+            .filter(|f| !f.is_empty())
+        {
             let fnames: Vec<&str> = files.iter().filter_map(|f| f.as_str()).collect();
             format!("[{}] Generated: {}", tr.tool, fnames.join(", "))
         } else if r.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-            format!("[{}] Error: {}", tr.tool, r.get("error").and_then(|v| v.as_str()).unwrap_or("failed"))
+            format!(
+                "[{}] Error: {}",
+                tr.tool,
+                r.get("error").and_then(|v| v.as_str()).unwrap_or("failed")
+            )
         } else if let Some(stdout) = r.get("stdout").and_then(|v| v.as_str()) {
             format!("[{}] {}", tr.tool, crate::util::truncate_utf8(stdout, 300))
         } else {
             let r_str = serde_json::to_string(r).unwrap_or_default();
             format!("[{}] {}", tr.tool, crate::util::truncate_utf8(&r_str, 300))
         };
-        if tool_summary.len() + line.len() > SUMMARY_MAX_CHARS { break; }
+        if tool_summary.len() + line.len() > SUMMARY_MAX_CHARS {
+            break;
+        }
         tool_summary.push_str(&line);
         tool_summary.push('\n');
     }
@@ -11018,15 +12875,32 @@ async fn judge_task_result(
         )}),
     ];
 
-    let eval_data = match llm_call(client, api_key, api_url, model, &eval_messages, None, 0.1, 1024, None).await {
+    let eval_data = match llm_call(
+        client,
+        api_key,
+        api_url,
+        model,
+        &eval_messages,
+        None,
+        0.1,
+        1024,
+        None,
+    )
+    .await
+    {
         Ok(d) => d,
         Err(e) => {
             error!("[Judge] Eval call failed: {}", e);
             return None;
         }
     };
-    let eval_content = eval_data["choices"][0]["message"]["content"].as_str().unwrap_or("");
-    info!("[Judge] Raw eval: {}", crate::util::truncate_utf8(eval_content, 300));
+    let eval_content = eval_data["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("");
+    info!(
+        "[Judge] Raw eval: {}",
+        crate::util::truncate_utf8(eval_content, 300)
+    );
     parse_judge_verdict(eval_content)
 }
 
@@ -11051,8 +12925,14 @@ async fn judge_job_with_tools(
     if cfg.allow_execute {
         allowed.extend(["run_python", "run_shell"]);
     }
-    let judge_tools: Vec<Value> = tool_definitions().into_iter()
-        .filter(|t| t["function"]["name"].as_str().map(|n| allowed.contains(&n)).unwrap_or(false))
+    let judge_tools: Vec<Value> = tool_definitions()
+        .into_iter()
+        .filter(|t| {
+            t["function"]["name"]
+                .as_str()
+                .map(|n| allowed.contains(&n))
+                .unwrap_or(false)
+        })
         .collect();
 
     let rubric_section = if cfg.rubric.trim().is_empty() {
@@ -11118,7 +12998,19 @@ async fn judge_job_with_tools(
             info!("[Judge] Abort signal — skipping tool-judge");
             return None;
         }
-        let data = match llm_call(client, &cfg.judge_api_key, &cfg.judge_api_url, &cfg.judge_model, &msgs, Some(&judge_tools), 0.1, 1024, None).await {
+        let data = match llm_call(
+            client,
+            &cfg.judge_api_key,
+            &cfg.judge_api_url,
+            &cfg.judge_model,
+            &msgs,
+            Some(&judge_tools),
+            0.1,
+            1024,
+            None,
+        )
+        .await
+        {
             Ok(d) => d,
             Err(e) => {
                 error!("[Judge] Tool-judge call failed: {}", e);
@@ -11134,12 +13026,19 @@ async fn judge_job_with_tools(
         }
         msgs.push(assistant_msg);
 
-        let calls = message["tool_calls"].as_array().filter(|c| !c.is_empty()).cloned();
+        let calls = message["tool_calls"]
+            .as_array()
+            .filter(|c| !c.is_empty())
+            .cloned();
         let Some(calls) = calls else {
             let content = message["content"].as_str().unwrap_or("");
-            info!("[Judge] Raw eval (tool-judge): {}", crate::util::truncate_utf8(content, 300));
+            info!(
+                "[Judge] Raw eval (tool-judge): {}",
+                crate::util::truncate_utf8(content, 300)
+            );
             let stripped = strip_think_blocks(content);
-            if let Some(v) = parse_judge_verdict(&stripped).or_else(|| parse_judge_verdict(content)) {
+            if let Some(v) = parse_judge_verdict(&stripped).or_else(|| parse_judge_verdict(content))
+            {
                 return Some(v);
             }
             // Text reply without a verdict (thinking models often narrate a
@@ -11151,16 +13050,31 @@ async fn judge_job_with_tools(
         };
         for call in &calls {
             let name = call["function"]["name"].as_str().unwrap_or("unknown");
-            let args: Value = serde_json::from_str(call["function"]["arguments"].as_str().unwrap_or("{}")).unwrap_or(json!({}));
+            let args: Value =
+                serde_json::from_str(call["function"]["arguments"].as_str().unwrap_or("{}"))
+                    .unwrap_or(json!({}));
             let id = call["id"].as_str().unwrap_or("");
             let result = if allowed.contains(&name) {
                 info!("[Judge] Verifying with {}", name);
                 // Surface judge verification in the activity log so users can
                 // see the evaluator working (prefixed to distinguish from the
                 // worker's own tool calls).
-                on_update(ToolUpdate::ToolCall { name: format!("evaluator:{}", name), args: args.clone() });
-                let r = execute_tool_with_context(name, &args, sandbox_dir, &sub_agent.session_id, "evaluator").await;
-                on_update(ToolUpdate::ToolResult { name: format!("evaluator:{}", name), result: r.clone() });
+                on_update(ToolUpdate::ToolCall {
+                    name: format!("evaluator:{}", name),
+                    args: args.clone(),
+                });
+                let r = execute_tool_with_context(
+                    name,
+                    &args,
+                    sandbox_dir,
+                    &sub_agent.session_id,
+                    "evaluator",
+                )
+                .await;
+                on_update(ToolUpdate::ToolResult {
+                    name: format!("evaluator:{}", name),
+                    result: r.clone(),
+                });
                 r
             } else {
                 json!({"ok": false, "error": format!("tool '{}' is not allowed for the evaluator", name)})
@@ -11172,11 +13086,27 @@ async fn judge_job_with_tools(
 
     // Verification budget exhausted — demand the verdict with no tools.
     msgs.push(json!({"role": "user", "content": "Verification budget exhausted. Output ONLY the verdict JSON now."}));
-    match llm_call(client, &cfg.judge_api_key, &cfg.judge_api_url, &cfg.judge_model, &msgs, None, 0.1, 1024, None).await {
+    match llm_call(
+        client,
+        &cfg.judge_api_key,
+        &cfg.judge_api_url,
+        &cfg.judge_model,
+        &msgs,
+        None,
+        0.1,
+        1024,
+        None,
+    )
+    .await
+    {
         Ok(d) => {
             let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("");
-            info!("[Judge] Raw eval (tool-judge, forced): {}", crate::util::truncate_utf8(content, 300));
-            parse_judge_verdict(&strip_think_blocks(content)).or_else(|| parse_judge_verdict(content))
+            info!(
+                "[Judge] Raw eval (tool-judge, forced): {}",
+                crate::util::truncate_utf8(content, 300)
+            );
+            parse_judge_verdict(&strip_think_blocks(content))
+                .or_else(|| parse_judge_verdict(content))
         }
         Err(e) => {
             error!("[Judge] Final verdict call failed: {}", e);
@@ -11216,7 +13146,10 @@ async fn run_graph_judge(
     let rules_section = if judge.rules.trim().is_empty() {
         String::new()
     } else {
-        format!("RULES (mandatory — verify each one, echo each rule id in rule_results):\n{}\n\n", judge.rules)
+        format!(
+            "RULES (mandatory — verify each one, echo each rule id in rule_results):\n{}\n\n",
+            judge.rules
+        )
     };
     // Rules are BINDING and live in the SYSTEM prompt, like the legacy rubric:
     // judges anchor on "satisfies the objective" and treat mid-message
@@ -11252,15 +13185,33 @@ async fn run_graph_judge(
             json!({"role": "system", "content": system_content}),
             json!({"role": "user", "content": user_content}),
         ];
-        let data = match llm_call(client, &judge.api_key, &judge.api_url, &judge.model, &msgs, None, 0.1, 2048, None).await {
+        let data = match llm_call(
+            client,
+            &judge.api_key,
+            &judge.api_url,
+            &judge.model,
+            &msgs,
+            None,
+            0.1,
+            2048,
+            None,
+        )
+        .await
+        {
             Ok(d) => d,
             Err(e) => {
                 error!("[Graph] Judge '{}' call failed: {}", judge.name, e);
                 return None;
             }
         };
-        let content = data["choices"][0]["message"]["content"].as_str().unwrap_or("");
-        info!("[Graph] Judge '{}' raw verdict: {}", judge.name, crate::util::truncate_utf8(content, 300));
+        let content = data["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("");
+        info!(
+            "[Graph] Judge '{}' raw verdict: {}",
+            judge.name,
+            crate::util::truncate_utf8(content, 300)
+        );
         return parse_graph_verdict(content);
     }
 
@@ -11268,8 +13219,14 @@ async fn run_graph_judge(
     if judge.allow_execute {
         allowed.extend(["run_python", "run_shell"]);
     }
-    let judge_tools: Vec<Value> = tool_definitions().into_iter()
-        .filter(|t| t["function"]["name"].as_str().map(|n| allowed.contains(&n)).unwrap_or(false))
+    let judge_tools: Vec<Value> = tool_definitions()
+        .into_iter()
+        .filter(|t| {
+            t["function"]["name"]
+                .as_str()
+                .map(|n| allowed.contains(&n))
+                .unwrap_or(false)
+        })
         .collect();
     let mut msgs = vec![
         json!({"role": "system", "content": format!(
@@ -11286,7 +13243,19 @@ async fn run_graph_judge(
             info!("[Graph] Abort signal — skipping judge '{}'", judge.name);
             return None;
         }
-        let data = match llm_call(client, &judge.api_key, &judge.api_url, &judge.model, &msgs, Some(&judge_tools), 0.1, 2048, None).await {
+        let data = match llm_call(
+            client,
+            &judge.api_key,
+            &judge.api_url,
+            &judge.model,
+            &msgs,
+            Some(&judge_tools),
+            0.1,
+            2048,
+            None,
+        )
+        .await
+        {
             Ok(d) => d,
             Err(e) => {
                 error!("[Graph] Judge '{}' call failed: {}", judge.name, e);
@@ -11300,10 +13269,17 @@ async fn run_graph_judge(
         }
         msgs.push(assistant_msg);
 
-        let calls = message["tool_calls"].as_array().filter(|c| !c.is_empty()).cloned();
+        let calls = message["tool_calls"]
+            .as_array()
+            .filter(|c| !c.is_empty())
+            .cloned();
         let Some(calls) = calls else {
             let content = message["content"].as_str().unwrap_or("");
-            info!("[Graph] Judge '{}' raw verdict: {}", judge.name, crate::util::truncate_utf8(content, 300));
+            info!(
+                "[Graph] Judge '{}' raw verdict: {}",
+                judge.name,
+                crate::util::truncate_utf8(content, 300)
+            );
             if let Some(v) = parse_graph_verdict(content) {
                 return Some(v);
             }
@@ -11314,13 +13290,28 @@ async fn run_graph_judge(
         };
         for call in &calls {
             let name = call["function"]["name"].as_str().unwrap_or("unknown");
-            let args: Value = serde_json::from_str(call["function"]["arguments"].as_str().unwrap_or("{}")).unwrap_or(json!({}));
+            let args: Value =
+                serde_json::from_str(call["function"]["arguments"].as_str().unwrap_or("{}"))
+                    .unwrap_or(json!({}));
             let id = call["id"].as_str().unwrap_or("");
             let display = format!("judge:{}:{}", judge.name, name);
             let result = if allowed.contains(&name) {
-                on_update(ToolUpdate::ToolCall { name: display.clone(), args: args.clone() });
-                let r = execute_tool_with_context(name, &args, sandbox_dir, &sub_agent.session_id, "evaluator").await;
-                on_update(ToolUpdate::ToolResult { name: display, result: r.clone() });
+                on_update(ToolUpdate::ToolCall {
+                    name: display.clone(),
+                    args: args.clone(),
+                });
+                let r = execute_tool_with_context(
+                    name,
+                    &args,
+                    sandbox_dir,
+                    &sub_agent.session_id,
+                    "evaluator",
+                )
+                .await;
+                on_update(ToolUpdate::ToolResult {
+                    name: display,
+                    result: r.clone(),
+                });
                 r
             } else {
                 json!({"ok": false, "error": format!("tool '{}' is not allowed for the judge", name)})
@@ -11331,14 +13322,33 @@ async fn run_graph_judge(
     }
 
     msgs.push(json!({"role": "user", "content": "Verification budget exhausted. Output ONLY the verdict YAML now."}));
-    match llm_call(client, &judge.api_key, &judge.api_url, &judge.model, &msgs, None, 0.1, 2048, None).await {
+    match llm_call(
+        client,
+        &judge.api_key,
+        &judge.api_url,
+        &judge.model,
+        &msgs,
+        None,
+        0.1,
+        2048,
+        None,
+    )
+    .await
+    {
         Ok(d) => {
             let content = d["choices"][0]["message"]["content"].as_str().unwrap_or("");
-            info!("[Graph] Judge '{}' forced verdict: {}", judge.name, crate::util::truncate_utf8(content, 300));
+            info!(
+                "[Graph] Judge '{}' forced verdict: {}",
+                judge.name,
+                crate::util::truncate_utf8(content, 300)
+            );
             parse_graph_verdict(content)
         }
         Err(e) => {
-            error!("[Graph] Judge '{}' final verdict call failed: {}", judge.name, e);
+            error!(
+                "[Graph] Judge '{}' final verdict call failed: {}",
+                judge.name, e
+            );
             None
         }
     }
@@ -11376,15 +13386,25 @@ async fn run_evaluation_loop(
             info!("[Evaluation] Abort signal — skipping evaluation");
             break;
         }
-        info!("[Evaluation] Round {}/{} — evaluating objective satisfaction...", retry_round + 1, cfg.max_retries);
+        info!(
+            "[Evaluation] Round {}/{} — evaluating objective satisfaction...",
+            retry_round + 1,
+            cfg.max_retries
+        );
 
         let mut evidence = summarize_tool_records(tool_records_mut);
         evidence.push_str(&format!(
             "FILES GENERATED: {}",
-            if collected_files.is_empty() { "(none)".to_string() } else { collected_files.join(", ") }
+            if collected_files.is_empty() {
+                "(none)".to_string()
+            } else {
+                collected_files.join(", ")
+            }
         ));
 
-        let last_assistant = all_messages.iter().rev()
+        let last_assistant = all_messages
+            .iter()
+            .rev()
             .find(|m| m["role"].as_str() == Some("assistant"))
             .and_then(|m| m["content"].as_str())
             .unwrap_or("(none)");
@@ -11402,15 +13422,29 @@ async fn run_evaluation_loop(
                     return None;
                 }
                 match run_graph_judge(
-                    client, judge, user_objective, &evidence, last_assistant,
-                    sandbox_dir, sub_agent, on_update.clone(),
-                ).await {
+                    client,
+                    judge,
+                    user_objective,
+                    &evidence,
+                    last_assistant,
+                    sandbox_dir,
+                    sub_agent,
+                    on_update.clone(),
+                )
+                .await
+                {
                     Some(mut v) => {
                         v.judge = judge.name.clone();
-                        info!("[Graph] Judge '{}': score {:.2}, satisfied {}", judge.name, v.score, v.satisfied);
+                        info!(
+                            "[Graph] Judge '{}': score {:.2}, satisfied {}",
+                            judge.name, v.score, v.satisfied
+                        );
                         verdicts.push((i, v));
                     }
-                    None => warn!("[Graph] Judge '{}' failed — skipped (fail open)", judge.name),
+                    None => warn!(
+                        "[Graph] Judge '{}' failed — skipped (fail open)",
+                        judge.name
+                    ),
                 }
             }
             if verdicts.is_empty() {
@@ -11420,14 +13454,22 @@ async fn run_evaluation_loop(
             let (pass, agg_score, report_yaml) =
                 aggregate_verdicts(&g.judges, &verdicts, &g.policy, g.agg_threshold);
             if pass {
-                info!("[Graph] Panel passed — policy {}, aggregate {:.2}", g.policy, agg_score);
+                info!(
+                    "[Graph] Panel passed — policy {}, aggregate {:.2}",
+                    g.policy, agg_score
+                );
                 on_update(ToolUpdate::TextChunk(format!(
                     "[graph] ✓ Passed — {} judge(s), policy {}, aggregate score {:.2} (threshold {:.2})\n\n",
                     verdicts.len(), g.policy, agg_score, g.agg_threshold
                 )));
                 break;
             }
-            info!("[Graph] Panel rejected (iteration {}/{}) — aggregate {:.2}", retry_round + 1, cfg.max_retries, agg_score);
+            info!(
+                "[Graph] Panel rejected (iteration {}/{}) — aggregate {:.2}",
+                retry_round + 1,
+                cfg.max_retries,
+                agg_score
+            );
             on_update(ToolUpdate::TextChunk(format!(
                 "[graph] ✗ Rejected (iteration {}/{}) — aggregate score {:.2}, policy {} — revising...\n",
                 retry_round + 1, cfg.max_retries, agg_score, g.policy
@@ -11444,15 +13486,28 @@ async fn run_evaluation_loop(
             // --- Legacy single judge ---
             let verdict = if cfg.tool_judge {
                 judge_job_with_tools(
-                    client, cfg, user_objective, &evidence, last_assistant,
-                    sandbox_dir, sub_agent, on_update.clone(),
-                ).await
+                    client,
+                    cfg,
+                    user_objective,
+                    &evidence,
+                    last_assistant,
+                    sandbox_dir,
+                    sub_agent,
+                    on_update.clone(),
+                )
+                .await
             } else {
                 judge_task_result(
-                    client, &cfg.judge_api_key, &cfg.judge_api_url, &cfg.judge_model,
-                    user_objective, &evidence, last_assistant,
+                    client,
+                    &cfg.judge_api_key,
+                    &cfg.judge_api_url,
+                    &cfg.judge_model,
+                    user_objective,
+                    &evidence,
+                    last_assistant,
                     "the user's objective",
-                ).await
+                )
+                .await
             };
             let verdict = match verdict {
                 Some(v) => v,
@@ -11460,10 +13515,18 @@ async fn run_evaluation_loop(
             };
             let (score, satisfied, missing) = (verdict.score, verdict.satisfied, verdict.missing);
 
-            info!("[Evaluation] Score: {:.2}, Satisfied: {}, Missing: {}", score, satisfied, crate::util::truncate_utf8(&missing, 200));
+            info!(
+                "[Evaluation] Score: {:.2}, Satisfied: {}, Missing: {}",
+                score,
+                satisfied,
+                crate::util::truncate_utf8(&missing, 200)
+            );
 
             if score >= cfg.threshold || satisfied {
-                info!("[Evaluation] Score {:.2} >= threshold {:.2}. Objective satisfied.", score, cfg.threshold);
+                info!(
+                    "[Evaluation] Score {:.2} >= threshold {:.2}. Objective satisfied.",
+                    score, cfg.threshold
+                );
                 // Make a PASSING evaluation visible too — without this, users
                 // can't tell the eval loop ran at all (logs go to stderr, which
                 // Finder-launched apps discard).
@@ -11475,10 +13538,14 @@ async fn run_evaluation_loop(
             }
 
             // Score below threshold — re-enter agent loop to address gaps.
-            info!("[Evaluation] Score {:.2} < threshold {:.2}. Re-entering agent loop...", score, cfg.threshold);
+            info!(
+                "[Evaluation] Score {:.2} < threshold {:.2}. Re-entering agent loop...",
+                score, cfg.threshold
+            );
             on_update(ToolUpdate::TextChunk(format!(
                 "[evaluation] Score {:.1}/1.0 — addressing gaps: {}",
-                score, crate::util::truncate_utf8(&missing, 200)
+                score,
+                crate::util::truncate_utf8(&missing, 200)
             )));
 
             format!(
@@ -11498,7 +13565,19 @@ async fn run_evaluation_loop(
                 info!("[Evaluation] Abort signal during gap-fix rounds");
                 return None;
             }
-            let resp = match llm_call(client, api_key, api_url, model, all_messages, Some(tools), temperature, max_tokens, None).await {
+            let resp = match llm_call(
+                client,
+                api_key,
+                api_url,
+                model,
+                all_messages,
+                Some(tools),
+                temperature,
+                max_tokens,
+                None,
+            )
+            .await
+            {
                 Ok(d) => d,
                 Err(e) => {
                     error!("[Evaluation retry] LLM call failed: {}", e);
@@ -11519,10 +13598,27 @@ async fn run_evaluation_loop(
                     let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
                     let id = call["id"].as_str().unwrap_or("");
 
-                    on_update(ToolUpdate::ToolCall { name: name.to_string(), args: args.clone() });
-                    let result = execute_tool_dispatch(name, &args, sandbox_dir, sub_agent, on_update.clone(), realtime).await;
-                    on_update(ToolUpdate::ToolResult { name: name.to_string(), result: result.clone() });
-                    tool_records_mut.push(ToolCallRecord { tool: name.to_string(), result: result.clone() });
+                    on_update(ToolUpdate::ToolCall {
+                        name: name.to_string(),
+                        args: args.clone(),
+                    });
+                    let result = execute_tool_dispatch(
+                        name,
+                        &args,
+                        sandbox_dir,
+                        sub_agent,
+                        on_update.clone(),
+                        realtime,
+                    )
+                    .await;
+                    on_update(ToolUpdate::ToolResult {
+                        name: name.to_string(),
+                        result: result.clone(),
+                    });
+                    tool_records_mut.push(ToolCallRecord {
+                        tool: name.to_string(),
+                        result: result.clone(),
+                    });
 
                     if let Some(files) = result.get("output_files").and_then(|v| v.as_array()) {
                         for f in files {
@@ -11535,7 +13631,8 @@ async fn run_evaluation_loop(
                     }
 
                     let result_str = compact::compress_tool_result(name, &result, 6000);
-                    all_messages.push(json!({"role": "tool", "tool_call_id": id, "content": result_str}));
+                    all_messages
+                        .push(json!({"role": "tool", "tool_call_id": id, "content": result_str}));
                     *total_tool_calls += 1;
                 }
             } else {
@@ -11547,7 +13644,9 @@ async fn run_evaluation_loop(
 
     // Return the last assistant message with real text content (gap-fix rounds
     // can leave tool-call messages with null content at the tail).
-    all_messages.iter().rev()
+    all_messages
+        .iter()
+        .rev()
         .filter(|m| m["role"].as_str() == Some("assistant"))
         .filter_map(|m| m["content"].as_str())
         .find(|c| !c.trim().is_empty())
@@ -11583,7 +13682,19 @@ async fn run_output_nudge(
     }));
 
     for _nudge_round in 0..3 {
-        let resp = llm_call(client, api_key, api_url, model, all_messages, Some(tools), temperature, max_tokens, None).await.ok()?;
+        let resp = llm_call(
+            client,
+            api_key,
+            api_url,
+            model,
+            all_messages,
+            Some(tools),
+            temperature,
+            max_tokens,
+            None,
+        )
+        .await
+        .ok()?;
 
         let message = &resp["choices"][0]["message"];
         all_messages.push(message.clone());
@@ -11598,8 +13709,19 @@ async fn run_output_nudge(
                 let args: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
                 let id = call["id"].as_str().unwrap_or("");
 
-                let result = execute_tool_dispatch(name, &args, sandbox_dir, sub_agent, on_update.clone(), realtime).await;
-                tool_records.push(ToolCallRecord { tool: name.to_string(), result: result.clone() });
+                let result = execute_tool_dispatch(
+                    name,
+                    &args,
+                    sandbox_dir,
+                    sub_agent,
+                    on_update.clone(),
+                    realtime,
+                )
+                .await;
+                tool_records.push(ToolCallRecord {
+                    tool: name.to_string(),
+                    result: result.clone(),
+                });
 
                 if let Some(files) = result.get("output_files").and_then(|v| v.as_array()) {
                     for f in files {
@@ -11612,14 +13734,29 @@ async fn run_output_nudge(
                 }
 
                 let result_str = compact::compress_tool_result(name, &result, 6000);
-                all_messages.push(json!({"role": "tool", "tool_call_id": id, "content": result_str}));
+                all_messages
+                    .push(json!({"role": "tool", "tool_call_id": id, "content": result_str}));
                 *total_tool_calls += 1;
             }
 
             if !collected_files.is_empty() {
                 // Files generated — get final response
-                let final_resp = llm_call(client, api_key, api_url, model, all_messages, None, temperature, max_tokens, None).await.ok()?;
-                return final_resp["choices"][0]["message"]["content"].as_str().map(|s| s.to_string());
+                let final_resp = llm_call(
+                    client,
+                    api_key,
+                    api_url,
+                    model,
+                    all_messages,
+                    None,
+                    temperature,
+                    max_tokens,
+                    None,
+                )
+                .await
+                .ok()?;
+                return final_resp["choices"][0]["message"]["content"]
+                    .as_str()
+                    .map(|s| s.to_string());
             }
         } else {
             return message["content"].as_str().map(|s| s.to_string());
@@ -11635,7 +13772,10 @@ async fn run_output_nudge(
 
 fn rand_jitter(max_ms: u64) -> u64 {
     use std::time::SystemTime;
-    let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+    let seed = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
     (seed as u64) % max_ms
 }
 
@@ -11653,29 +13793,51 @@ async fn force_final_response(
     total_tool_calls: usize,
     temperature: f64,
 ) -> String {
-    let tool_summary = tool_records.iter().map(|tr| {
-        let brief = if tr.result.get("output_files")
-            .and_then(|v| v.as_array())
-            .map(|a| !a.is_empty())
-            .unwrap_or(false)
-        {
-            let files: Vec<&str> = tr.result["output_files"]
-                .as_array().unwrap()
-                .iter()
-                .filter_map(|v| v.as_str())
-                .collect();
-            format!("Generated: {}", files.join(", "))
-        } else if tr.result.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-            format!("Error: {}", tr.result.get("error").and_then(|v| v.as_str()).unwrap_or("failed"))
-        } else if let Some(stdout) = tr.result.get("stdout").and_then(|v| v.as_str()) {
-            stdout.chars().take(300).collect::<String>()
-        } else if tr.result.is_string() {
-            tr.result.as_str().unwrap_or("").chars().take(300).collect::<String>()
-        } else {
-            serde_json::to_string(&tr.result).unwrap_or_default().chars().take(300).collect::<String>()
-        };
-        format!("[{}]: {}", tr.tool, brief)
-    }).collect::<Vec<_>>().join("\n");
+    let tool_summary = tool_records
+        .iter()
+        .map(|tr| {
+            let brief = if tr
+                .result
+                .get("output_files")
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+            {
+                let files: Vec<&str> = tr.result["output_files"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .collect();
+                format!("Generated: {}", files.join(", "))
+            } else if tr.result.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                format!(
+                    "Error: {}",
+                    tr.result
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("failed")
+                )
+            } else if let Some(stdout) = tr.result.get("stdout").and_then(|v| v.as_str()) {
+                stdout.chars().take(300).collect::<String>()
+            } else if tr.result.is_string() {
+                tr.result
+                    .as_str()
+                    .unwrap_or("")
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
+            } else {
+                serde_json::to_string(&tr.result)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
+            };
+            format!("[{}]: {}", tr.tool, brief)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     // Keep system prompt (first system msg) + all user messages
     let mut final_messages: Vec<Value> = vec![];
@@ -11703,9 +13865,24 @@ async fn force_final_response(
     }));
 
     // Call LLM without tools (forces text-only response)
-    match llm_call(client, api_key, api_url, model, &final_messages, None, temperature, 8192, None).await {
+    match llm_call(
+        client,
+        api_key,
+        api_url,
+        model,
+        &final_messages,
+        None,
+        temperature,
+        8192,
+        None,
+    )
+    .await
+    {
         Ok(data) => {
-            let content = data["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+            let content = data["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
             if !content.is_empty() {
                 return content;
             }
@@ -11714,27 +13891,49 @@ async fn force_final_response(
     }
 
     // Absolute fallback
-    let output_files: Vec<String> = tool_records.iter()
-        .filter_map(|tr| tr.result.get("output_files").and_then(|v| v.as_array()).map(|a| {
-            a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")
-        }))
+    let output_files: Vec<String> = tool_records
+        .iter()
+        .filter_map(|tr| {
+            tr.result
+                .get("output_files")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+        })
         .filter(|s| !s.is_empty())
         .collect();
 
-    let stdouts: Vec<String> = tool_records.iter()
-        .filter_map(|tr| tr.result.get("stdout").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+    let stdouts: Vec<String> = tool_records
+        .iter()
+        .filter_map(|tr| {
+            tr.result
+                .get("stdout")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
         .map(|s| s.chars().take(500).collect::<String>())
         .collect();
 
-    let errors: Vec<String> = tool_records.iter()
+    let errors: Vec<String> = tool_records
+        .iter()
         .filter_map(|tr| {
             if tr.result.get("ok").and_then(|v| v.as_bool()) == Some(false) {
-                tr.result.get("error").and_then(|v| v.as_str()).map(|s| format!("Error: {s}"))
-            } else { None }
+                tr.result
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .map(|s| format!("Error: {s}"))
+            } else {
+                None
+            }
         })
         .collect();
 
-    let fallback_parts: Vec<String> = output_files.into_iter()
+    let fallback_parts: Vec<String> = output_files
+        .into_iter()
         .chain(stdouts.into_iter())
         .chain(errors.into_iter())
         .collect();
@@ -11752,14 +13951,23 @@ mod vision_tests {
 
     #[test]
     fn minimax_m3_supports_vision() {
-        assert!(model_supports_vision("https://api.minimax.io/v1/chat/completions", "MiniMax-M3"));
+        assert!(model_supports_vision(
+            "https://api.minimax.io/v1/chat/completions",
+            "MiniMax-M3"
+        ));
         // Non-vision MiniMax models should not be treated as vision-capable
-        assert!(!model_supports_vision("https://api.minimax.io/v1/chat/completions", "MiniMax-M2.5"));
+        assert!(!model_supports_vision(
+            "https://api.minimax.io/v1/chat/completions",
+            "MiniMax-M2.5"
+        ));
     }
 
     #[test]
     fn common_vision_and_text_models() {
-        assert!(model_supports_vision("https://api.openai.com/v1/chat/completions", "gpt-4o"));
+        assert!(model_supports_vision(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-4o"
+        ));
         assert!(model_supports_vision("https://x/v1", "qwen2.5-vl-72b"));
         assert!(model_supports_vision("https://x/v1", "claude-3-5-sonnet"));
         assert!(!model_supports_vision("https://x/v1", "TigerBot-70B-Chat"));
@@ -11804,7 +14012,9 @@ mod vision_tests {
         use base64::Engine;
         // 1x1 transparent PNG
         let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-        let png = base64::engine::general_purpose::STANDARD.decode(png_b64).unwrap();
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(png_b64)
+            .unwrap();
         let dir = std::env::temp_dir().join("andrewos_vision_test");
         let uploads = dir.join("uploads");
         std::fs::create_dir_all(&uploads).unwrap();
@@ -11812,7 +14022,8 @@ mod vision_tests {
 
         // Web UI note format
         let text = "What is this?\n\n[Attached files]\n- uploads/pic.png (pic.png)";
-        let content = build_image_content(text, &dir.to_string_lossy()).expect("should inline image");
+        let content =
+            build_image_content(text, &dir.to_string_lossy()).expect("should inline image");
         let arr = content.as_array().unwrap();
         assert_eq!(arr[0]["type"], "text");
         assert_eq!(arr[1]["type"], "image_url");
@@ -11831,9 +14042,13 @@ mod vision_tests {
     fn desktop_note_with_spaces_in_path_is_inlined() {
         use base64::Engine;
         let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-        let png = base64::engine::general_purpose::STANDARD.decode(png_b64).unwrap();
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(png_b64)
+            .unwrap();
         // Reproduce the real macOS path that contains a space: "App Support".
-        let dir = std::env::temp_dir().join("andrewos App Support").join("sandbox");
+        let dir = std::env::temp_dir()
+            .join("andrewos App Support")
+            .join("sandbox");
         let uploads = dir.join("uploads");
         std::fs::create_dir_all(&uploads).unwrap();
         let img_path = uploads.join("20260613_pointcloud.png");
@@ -11850,7 +14065,10 @@ mod vision_tests {
         // Exactly one image part (the bare 'pointcloud.png' name must not double-add).
         let imgs: Vec<_> = arr.iter().filter(|p| p["type"] == "image_url").collect();
         assert_eq!(imgs.len(), 1, "should inline the image exactly once");
-        assert!(imgs[0]["image_url"]["url"].as_str().unwrap().starts_with("data:image/png;base64,"));
+        assert!(imgs[0]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
 
         let _ = std::fs::remove_dir_all(std::env::temp_dir().join("andrewos App Support"));
     }
@@ -11867,9 +14085,16 @@ mod sandbox_path_tests {
         let sandbox = tmp.to_string_lossy().to_string();
 
         // Absolute path outside the sandbox -> sentinel.
-        let outside = if cfg!(windows) { "C:\\Windows\\system32" } else { "/etc" };
+        let outside = if cfg!(windows) {
+            "C:\\Windows\\system32"
+        } else {
+            "/etc"
+        };
         let resolved = resolve_path(&sandbox, outside);
-        assert!(is_blocked_path(&resolved), "expected sentinel for {outside}, got {resolved:?}");
+        assert!(
+            is_blocked_path(&resolved),
+            "expected sentinel for {outside}, got {resolved:?}"
+        );
 
         // ../ traversal -> sentinel.
         let resolved = resolve_path(&sandbox, "../../outside.txt");
@@ -11882,7 +14107,10 @@ mod sandbox_path_tests {
         // The error result names the path and the sandbox.
         let err = blocked_path_error("Hint.", outside, &sandbox);
         let msg = err["error"].as_str().unwrap();
-        assert!(msg.contains("outside the sandbox") && msg.contains(outside), "{msg}");
+        assert!(
+            msg.contains("outside the sandbox") && msg.contains(outside),
+            "{msg}"
+        );
     }
 }
 
@@ -11928,7 +14156,9 @@ mod claude_cli_tests {
         assert!(!is_native_executable(&js.to_string_lossy()));
 
         // Nonexistent path is not native.
-        assert!(!is_native_executable(&dir.join("does_not_exist").to_string_lossy()));
+        assert!(!is_native_executable(
+            &dir.join("does_not_exist").to_string_lossy()
+        ));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -12009,7 +14239,10 @@ mod generic_cli_backend_tests {
             .as_str()
             .unwrap()
             .to_string();
-        assert!(args.contains("fn x() { y }"), "arguments were truncated: {args}");
+        assert!(
+            args.contains("fn x() { y }"),
+            "arguments were truncated: {args}"
+        );
     }
 
     // --- the reason this path was tightened -----------------------------
@@ -12128,7 +14361,11 @@ mod graph_judge_tests {
     }
 
     fn verdict(score: f64, satisfied: bool) -> GraphJudgeVerdict {
-        GraphJudgeVerdict { score, satisfied, ..Default::default() }
+        GraphJudgeVerdict {
+            score,
+            satisfied,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -12147,16 +14384,16 @@ mod graph_judge_tests {
     fn parses_fenced_yaml_verdict() {
         let v = parse_graph_verdict(
             "Here is my verdict:\n```yaml\nscore: 0.9\nsatisfied: true\nmissing: \"\"\n```\nDone.",
-        ).unwrap();
+        )
+        .unwrap();
         assert!(v.satisfied);
         assert!((v.score - 0.9).abs() < f64::EPSILON);
     }
 
     #[test]
     fn falls_back_to_json_verdict() {
-        let v = parse_graph_verdict(
-            "{\"score\": 0.8, \"satisfied\": true, \"missing\": \"\"}",
-        ).unwrap();
+        let v = parse_graph_verdict("{\"score\": 0.8, \"satisfied\": true, \"missing\": \"\"}")
+            .unwrap();
         assert!(v.satisfied);
         assert!(v.rule_results.is_empty());
     }
@@ -12197,7 +14434,11 @@ mod graph_judge_tests {
 
     #[test]
     fn majority_policy() {
-        let judges = vec![judge("a", 1.0, None), judge("b", 1.0, None), judge("c", 1.0, None)];
+        let judges = vec![
+            judge("a", 1.0, None),
+            judge("b", 1.0, None),
+            judge("c", 1.0, None),
+        ];
         let two_of_three = vec![
             (0usize, verdict(0.9, true)),
             (1usize, verdict(0.8, true)),

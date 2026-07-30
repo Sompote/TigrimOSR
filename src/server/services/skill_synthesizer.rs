@@ -239,7 +239,11 @@ async fn write_skill_file(name: &str, content: &str, proposed: bool) -> Result<(
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("Failed to create skill dir: {e}"))?;
-    let filename = if proposed { "SKILL.md.proposed" } else { "SKILL.md" };
+    let filename = if proposed {
+        "SKILL.md.proposed"
+    } else {
+        "SKILL.md"
+    };
     tokio::fs::write(dir.join(filename), content)
         .await
         .map_err(|e| format!("Failed to write {filename}: {e}"))
@@ -333,14 +337,15 @@ fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
             if !$map.contains_key($label) {
                 $order.push($label.to_string());
             }
-            $map.entry($label.to_string()).or_insert_with(|| SubagentTrace {
-                label: $label.to_string(),
-                task: None,
-                tools_used: Vec::new(),
-                skills_loaded: Vec::new(),
-                completed: false,
-                error: None,
-            })
+            $map.entry($label.to_string())
+                .or_insert_with(|| SubagentTrace {
+                    label: $label.to_string(),
+                    task: None,
+                    tools_used: Vec::new(),
+                    skills_loaded: Vec::new(),
+                    completed: false,
+                    error: None,
+                })
         }};
     }
 
@@ -354,7 +359,11 @@ fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
         let mut chars = rest.chars();
         while let Some(c) = chars.next() {
             match c {
-                '\\' => { if let Some(n) = chars.next() { out.push(n); } }
+                '\\' => {
+                    if let Some(n) = chars.next() {
+                        out.push(n);
+                    }
+                }
                 '"' => break,
                 _ => out.push(c),
             }
@@ -364,7 +373,8 @@ fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
 
     // Desktop format: "[ts] TOOL CALL: name" or "[ts] [agent] TOOL CALL: name",
     // with "  args: {...}" on the following line. Same shape for TOOL RESULT.
-    let re_call = Regex::new(r"(?m)^\[[^\]]+\]\s*(?:\[([^\]]+)\]\s*)?TOOL (CALL|RESULT): (\S+)\s*$").unwrap();
+    let re_call =
+        Regex::new(r"(?m)^\[[^\]]+\]\s*(?:\[([^\]]+)\]\s*)?TOOL (CALL|RESULT): (\S+)\s*$").unwrap();
     let lines: Vec<&str> = log.lines().collect();
     let mut line_starts: HashMap<usize, usize> = HashMap::new(); // byte offset -> line index
     {
@@ -376,11 +386,16 @@ fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
     }
 
     for cap in re_call.captures_iter(log) {
-        let label = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("main").to_string();
+        let label = cap
+            .get(1)
+            .map(|m| m.as_str().trim())
+            .unwrap_or("main")
+            .to_string();
         let kind = &cap[2];
         let tool = cap[3].trim().to_string();
         // Payload is on the next line ("  args: {...}" for CALL, "  {...}" for RESULT)
-        let payload: &str = cap.get(0)
+        let payload: &str = cap
+            .get(0)
             .and_then(|m| line_starts.get(&m.start()))
             .and_then(|i| lines.get(i + 1))
             .map(|l| l.trim().trim_start_matches("args:").trim())
@@ -404,8 +419,8 @@ fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
                 let target = json_field(payload, "to")
                     .or_else(|| json_field(payload, "agent_name"))
                     .or_else(|| json_field(payload, "agentId"));
-                let task = json_field(payload, "task")
-                    .or_else(|| json_field(payload, "task_description"));
+                let task =
+                    json_field(payload, "task").or_else(|| json_field(payload, "task_description"));
                 if let (Some(target), Some(task)) = (target, task) {
                     let rt = ensure_trace!(traces, order, target.as_str());
                     if rt.task.is_none() {
@@ -480,9 +495,15 @@ fn parse_subagent_workflow(log: &str) -> Vec<SubagentTrace> {
     }
 
     // Preserve first-seen order (main first, then agents in spawn order)
-    order.into_iter()
+    order
+        .into_iter()
         .filter_map(|label| traces.remove(&label))
-        .filter(|t| !t.tools_used.is_empty() || !t.skills_loaded.is_empty() || t.task.is_some() || t.error.is_some())
+        .filter(|t| {
+            !t.tools_used.is_empty()
+                || !t.skills_loaded.is_empty()
+                || t.task.is_some()
+                || t.error.is_some()
+        })
         .collect()
 }
 
@@ -503,8 +524,11 @@ fn collect_loaded_skills(traces: &[SubagentTrace]) -> Vec<String> {
 async fn summarise_session(s: &ChatSession) -> Option<SessionSummary> {
     let user_msgs: Vec<&crate::server::data::ChatMessage> =
         s.messages.iter().filter(|m| m.role == "user").collect();
-    let assistant_msgs: Vec<&crate::server::data::ChatMessage> =
-        s.messages.iter().filter(|m| m.role == "assistant").collect();
+    let assistant_msgs: Vec<&crate::server::data::ChatMessage> = s
+        .messages
+        .iter()
+        .filter(|m| m.role == "assistant")
+        .collect();
 
     if user_msgs.is_empty() || assistant_msgs.is_empty() {
         return None;
@@ -738,10 +762,7 @@ fn build_remediation_prompt(
                 format!("- {}{}{}{}", w.label, skills, tools, status)
             })
             .collect();
-        format!(
-            "\nSUB-AGENT WORKFLOW:\n{}\n",
-            lines.join("\n")
-        )
+        format!("\nSUB-AGENT WORKFLOW:\n{}\n", lines.join("\n"))
     } else {
         String::new()
     };
@@ -859,8 +880,12 @@ fn extract_json(text: &str) -> Result<Value, String> {
     // Try 1: strip reasoning tags, then find JSON
     let stripped = strip_reasoning(text);
     let stripped = stripped.trim();
-    info!("[SkillSynth] extract_json: input len={}, stripped len={}, stripped has '{{': {}",
-        text.len(), stripped.len(), stripped.contains('{'));
+    info!(
+        "[SkillSynth] extract_json: input len={}, stripped len={}, stripped has '{{': {}",
+        text.len(),
+        stripped.len(),
+        stripped.contains('{')
+    );
     match find_balanced_json(stripped) {
         Ok(v) => return Ok(v),
         Err(e) => info!("[SkillSynth] extract_json: try1 (stripped) failed: {}", e),
@@ -892,17 +917,12 @@ fn validate_proposal(
     raw: &Value,
     existing: &[(String, String)], // (name, source)
 ) -> Result<Proposal, String> {
-    let kind = raw["kind"]
-        .as_str()
-        .ok_or("bad kind")?;
+    let kind = raw["kind"].as_str().ok_or("bad kind")?;
     if kind != "create" && kind != "update" {
         return Err(format!("bad kind: {kind}"));
     }
 
-    let name = raw["name"]
-        .as_str()
-        .ok_or("missing name")?
-        .to_string();
+    let name = raw["name"].as_str().ok_or("missing name")?.to_string();
     if !name_re().is_match(&name) || name.len() > MAX_NAME_LEN {
         return Err(format!("bad name: {name}"));
     }
@@ -940,7 +960,9 @@ fn validate_proposal(
             // auto + custom skills can receive updates (custom always goes
             // through the .proposed approval path); marketplace skills never.
             Some((_, src)) if src != "auto" && src != "custom" => {
-                return Err(format!("{name}: refuse to update {src} skill (only auto/custom)"))
+                return Err(format!(
+                    "{name}: refuse to update {src} skill (only auto/custom)"
+                ))
             }
             _ => {}
         }
@@ -955,10 +977,7 @@ fn validate_proposal(
         })
         .unwrap_or_default();
 
-    let rationale = raw["rationale"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let rationale = raw["rationale"].as_str().unwrap_or("").to_string();
 
     Ok(Proposal {
         kind: kind.to_string(),
@@ -982,9 +1001,7 @@ async fn write_new_auto_skill(p: &Proposal, model: &str) {
     }
 
     let settings = get_settings().await;
-    let require_approval = settings
-        .skill_auto_update_require_approval
-        .unwrap_or(true);
+    let require_approval = settings.skill_auto_update_require_approval.unwrap_or(true);
 
     let skill = Skill {
         id: Uuid::new_v4().to_string(),
@@ -1017,14 +1034,12 @@ async fn write_new_auto_skill(p: &Proposal, model: &str) {
 async fn write_proposed_update(p: &Proposal, model: &str) {
     let slug = sanitize_slug(&p.name);
     let settings = get_settings().await;
-    let mut require_approval = settings
-        .skill_auto_update_require_approval
-        .unwrap_or(true);
+    let mut require_approval = settings.skill_auto_update_require_approval.unwrap_or(true);
 
     let mut skills = get_skills().await;
-    let idx = skills.iter().position(|s| {
-        s.name == p.name && (s.source == "auto" || s.source == "custom")
-    });
+    let idx = skills
+        .iter()
+        .position(|s| s.name == p.name && (s.source == "auto" || s.source == "custom"));
 
     if idx.is_none() {
         // Target doesn't exist — create instead
@@ -1090,7 +1105,10 @@ async fn forward_proposal_action(proposal_id: &str, action: &str) -> Option<Resu
     Some(match resp {
         Ok(r) => match r.json::<serde_json::Value>().await {
             Ok(v) if v["ok"].as_bool() == Some(true) => Ok(()),
-            Ok(v) => Err(v["error"].as_str().unwrap_or("Remote rejected the action").to_string()),
+            Ok(v) => Err(v["error"]
+                .as_str()
+                .unwrap_or("Remote rejected the action")
+                .to_string()),
             Err(e) => Err(format!("Remote response parse error: {e}")),
         },
         Err(e) => Err(format!("Remote request failed: {e}")),
@@ -1193,9 +1211,7 @@ pub async fn reject_proposal(proposal_id: &str) -> Result<(), String> {
 }
 
 #[allow(dead_code)]
-pub async fn get_proposed_diff(
-    skill_id: &str,
-) -> Result<(String, String), String> {
+pub async fn get_proposed_diff(skill_id: &str) -> Result<(String, String), String> {
     let skills = get_skills().await;
     let skill = skills
         .iter()
@@ -1211,7 +1227,11 @@ pub async fn get_proposed_diff(
         .await
         .unwrap_or_default();
 
-    let proposed = if let Some(ref pp) = skill.auto_meta.as_ref().and_then(|m| m.proposed_path.as_ref()) {
+    let proposed = if let Some(ref pp) = skill
+        .auto_meta
+        .as_ref()
+        .and_then(|m| m.proposed_path.as_ref())
+    {
         tokio::fs::read_to_string(skill_dir.join(pp))
             .await
             .unwrap_or_default()
@@ -1229,10 +1249,20 @@ pub async fn get_proposed_diff(
 // LLM call
 // ---------------------------------------------------------------------------
 
-async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value>) -> Result<String, String> {
+async fn call_llm(
+    api_key: &str,
+    api_url: &str,
+    model: &str,
+    messages: Vec<Value>,
+) -> Result<String, String> {
     let client = Client::new();
     // Kimi "thinking" / reasoning models reject any temperature but 1.
-    let temperature = if crate::server::services::toolbox::model_requires_default_temperature(model) { 1.0 } else { 0.3 };
+    let temperature = if crate::server::services::toolbox::model_requires_default_temperature(model)
+    {
+        1.0
+    } else {
+        0.3
+    };
     let body = json!({
         "model": model,
         "messages": messages,
@@ -1276,14 +1306,20 @@ async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value
         .and_then(|arr| arr.first())
         .and_then(|c| {
             // Standard OpenAI: content is a string
-            c["message"]["content"].as_str().map(|s| s.to_string())
+            c["message"]["content"]
+                .as_str()
+                .map(|s| s.to_string())
                 .or_else(|| {
                     // Some providers: content is array of blocks inside choices
                     c["message"]["content"].as_array().map(|blocks| {
-                        blocks.iter()
+                        blocks
+                            .iter()
                             .filter_map(|b| {
-                                if b["type"] == "text" { b["text"].as_str().map(|s| s.to_string()) }
-                                else { None }
+                                if b["type"] == "text" {
+                                    b["text"].as_str().map(|s| s.to_string())
+                                } else {
+                                    None
+                                }
                             })
                             .collect::<Vec<_>>()
                             .join("\n")
@@ -1292,39 +1328,49 @@ async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value
         })
         .or_else(|| {
             // Anthropic native format: content is array of blocks at root
-            resp_json["content"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|b| {
-                            if b["type"] == "text" {
-                                b["text"].as_str().map(|s| s.to_string())
-                            } else if b["type"] == "thinking" {
-                                b["thinking"].as_str().map(|s| format!("<think>{}</think>", s))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
+            resp_json["content"].as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|b| {
+                        if b["type"] == "text" {
+                            b["text"].as_str().map(|s| s.to_string())
+                        } else if b["type"] == "thinking" {
+                            b["thinking"]
+                                .as_str()
+                                .map(|s| format!("<think>{}</think>", s))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
         })
         .or_else(|| {
             // Fallback: try "output" or "result" keys
-            resp_json["output"].as_str().map(|s| s.to_string())
+            resp_json["output"]
+                .as_str()
+                .map(|s| s.to_string())
                 .or_else(|| resp_json["result"].as_str().map(|s| s.to_string()))
         })
         .unwrap_or_default();
 
     let raw_str = resp_json.to_string();
-    info!("[SkillSynth] Raw LLM response (first 1000): {}", crate::util::truncate_utf8(&raw_str, 1000));
+    info!(
+        "[SkillSynth] Raw LLM response (first 1000): {}",
+        crate::util::truncate_utf8(&raw_str, 1000)
+    );
 
     if content.is_empty() {
-        error!("[SkillSynth] LLM returned empty content! Full raw response (first 2000): {}",
-            crate::util::truncate_utf8(&raw_str, 2000));
+        error!(
+            "[SkillSynth] LLM returned empty content! Full raw response (first 2000): {}",
+            crate::util::truncate_utf8(&raw_str, 2000)
+        );
     } else {
-        info!("[SkillSynth] Extracted content length={}, first 300: {}",
-            content.len(), crate::util::truncate_utf8(&content, 300));
+        info!(
+            "[SkillSynth] Extracted content length={}, first 300: {}",
+            content.len(),
+            crate::util::truncate_utf8(&content, 300)
+        );
     }
 
     Ok(content)
@@ -1336,8 +1382,8 @@ async fn call_llm(api_key: &str, api_url: &str, model: &str, messages: Vec<Value
 
 fn tokenize(s: &str) -> HashSet<String> {
     let stop_words: HashSet<&str> = [
-        "the", "and", "for", "with", "this", "that", "your", "from", "into", "have",
-        "should", "would", "could", "about", "user", "agent", "skill", "code", "use", "using",
+        "the", "and", "for", "with", "this", "that", "your", "from", "into", "have", "should",
+        "would", "could", "about", "user", "agent", "skill", "code", "use", "using",
     ]
     .into_iter()
     .collect();
@@ -1366,7 +1412,10 @@ fn select_remediation_target(
             "{} {} {}",
             name,
             desc,
-            contents.get(name).map(|c| crate::util::truncate_utf8(&c, 4000)).unwrap_or("")
+            contents
+                .get(name)
+                .map(|c| crate::util::truncate_utf8(&c, 4000))
+                .unwrap_or("")
         );
         let hay_tokens = tokenize(&hay_str);
         let hits = needle.iter().filter(|t| hay_tokens.contains(*t)).count();
@@ -1402,7 +1451,10 @@ async fn run_remediations(
     for c in candidates {
         for f in &c.feedback {
             if f.rating.as_deref() == Some("down")
-                && f.comment.as_ref().map(|c| !c.trim().is_empty()).unwrap_or(false)
+                && f.comment
+                    .as_ref()
+                    .map(|c| !c.trim().is_empty())
+                    .unwrap_or(false)
                 && f.role == "assistant"
             {
                 let excerpt: String = f
@@ -1438,8 +1490,10 @@ async fn run_remediations(
     if auto_skills.is_empty() {
         for t in &targets {
             out.skipped += 1;
-            out.reasons
-                .push(format!("remediation skipped ({}): no updatable (auto/custom) skill exists", t.session_id));
+            out.reasons.push(format!(
+                "remediation skipped ({}): no updatable (auto/custom) skill exists",
+                t.session_id
+            ));
         }
         return out;
     }
@@ -1511,7 +1565,8 @@ async fn run_remediations(
             }
         };
 
-        let prompt = build_remediation_prompt(&pick.0, &skill_md, &t.excerpt, &t.comment, &t.workflow);
+        let prompt =
+            build_remediation_prompt(&pick.0, &skill_md, &t.excerpt, &t.comment, &t.workflow);
         let reply = match call_llm(
             api_key,
             api_url,
@@ -1659,7 +1714,7 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
         settings.tiger_bot_model.clone()
     };
 
-    // CLI providers (claude-code, gemini-cli, codex-cli) are not supported for skill synthesis
+    // Local CLI providers are not supported for skill synthesis
     if crate::server::services::cli_models::is_local_cli_url(&api_url_raw) {
         let mut status = synth_status().lock().await;
         status.running = false;
@@ -1690,9 +1745,7 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
             .to_string()
     };
 
-    let max_candidates = settings
-        .skill_auto_update_max_candidates
-        .unwrap_or(10) as usize;
+    let max_candidates = settings.skill_auto_update_max_candidates.unwrap_or(10) as usize;
 
     // Load chat sessions sorted ascending by updatedAt
     let mut sessions = get_chat_history().await;
@@ -1701,7 +1754,10 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     let fresh: Vec<&ChatSession> = if force {
         sessions.iter().collect()
     } else {
-        sessions.iter().filter(|s| s.updated_at.as_str() > cursor.as_str()).collect()
+        sessions
+            .iter()
+            .filter(|s| s.updated_at.as_str() > cursor.as_str())
+            .collect()
     };
 
     // Summarize sessions
@@ -1757,7 +1813,9 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
         let new_cursor = &candidates.last().unwrap().updated_at;
         let summary_msg = format!(
             "created=0 updated={} skipped={} candidates={} (all consumed by remediation)",
-            remediation.updated, remediation.skipped, candidates.len()
+            remediation.updated,
+            remediation.skipped,
+            candidates.len()
         );
         update_settings_after_run(Some(new_cursor), &summary_msg, &remediation.reasons).await;
         finish_status(&summary_msg).await;
@@ -1766,11 +1824,7 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
 
     // ── Pass 2: Synthesis ──
     let existing = list_existing_skill_summaries().await;
-    let prompt = build_prompt(
-        &candidates,
-        &existing,
-        &remediation.consumed_session_ids,
-    );
+    let prompt = build_prompt(&candidates, &existing, &remediation.consumed_session_ids);
 
     let reply = match call_llm(
         &api_key,
@@ -1806,7 +1860,11 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     }
 
     // Parse proposals — dump full reply for debugging
-    info!("[SkillSynth] LLM reply length={}, has </think>: {}", reply.len(), reply.contains("</think>"));
+    info!(
+        "[SkillSynth] LLM reply length={}, has </think>: {}",
+        reply.len(),
+        reply.contains("</think>")
+    );
     let stripped_preview = strip_reasoning(&reply);
     info!("[SkillSynth] after strip length={}", stripped_preview.len());
     // Write full reply to debug file
@@ -1830,7 +1888,10 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
                 json!({"proposals": []})
             } else {
                 let reply_preview: String = reply.chars().take(500).collect();
-                error!("[SkillSynth] JSON parse failed. LLM reply (first 500 chars): {}", reply_preview);
+                error!(
+                    "[SkillSynth] JSON parse failed. LLM reply (first 500 chars): {}",
+                    reply_preview
+                );
                 let summary_msg = format!("LLM JSON parse failed: {}", e);
                 let mut reasons = remediation.reasons.clone();
                 reasons.push(summary_msg.clone());
@@ -1854,9 +1915,11 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
             vec![]
         }
     };
-    info!("[SkillSynth] parsed JSON keys: {:?}, proposals count: {}",
+    info!(
+        "[SkillSynth] parsed JSON keys: {:?}, proposals count: {}",
         parsed.as_object().map(|o| o.keys().collect::<Vec<_>>()),
-        proposals.len());
+        proposals.len()
+    );
 
     let mut created = 0usize;
     let mut updated = remediation.updated;
@@ -1870,8 +1933,12 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
         .collect();
 
     for (idx, raw) in proposals.iter().enumerate() {
-        info!("[SkillSynth] proposal[{}] kind={:?} name={:?}",
-            idx, raw["kind"].as_str(), raw["name"].as_str());
+        info!(
+            "[SkillSynth] proposal[{}] kind={:?} name={:?}",
+            idx,
+            raw["kind"].as_str(),
+            raw["name"].as_str()
+        );
         match validate_proposal(raw, &existing_for_collision) {
             Ok(proposal) => {
                 if proposal.kind == "create" {
@@ -1901,7 +1968,10 @@ async fn run_synthesis_core(force: bool) -> Result<String, String> {
     let new_cursor = &candidates.last().unwrap().updated_at;
     let summary_msg = format!(
         "created={} updated={} skipped={} candidates={}",
-        created, updated, skipped, candidates.len()
+        created,
+        updated,
+        skipped,
+        candidates.len()
     );
     update_settings_after_run(Some(new_cursor), &summary_msg, &reasons).await;
     finish_status(&summary_msg).await;
@@ -1944,7 +2014,12 @@ async fn update_settings_after_run(cursor: Option<&str>, summary: &str, reasons:
     let reason_suffix = if !reasons.is_empty() {
         format!(
             " | {}",
-            reasons.iter().take(3).cloned().collect::<Vec<_>>().join("; ")
+            reasons
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; ")
         )
     } else {
         String::new()
@@ -2021,19 +2096,32 @@ mod tests {
 [22:09:01] === Response complete ===
 "#;
         let traces = parse_subagent_workflow(log);
-        let main = traces.iter().find(|t| t.label == "main").expect("main trace");
+        let main = traces
+            .iter()
+            .find(|t| t.label == "main")
+            .expect("main trace");
         assert!(main.tools_used.contains(&"check_agents".to_string()));
         assert!(main.tools_used.contains(&"send_task".to_string()));
         assert!(main.completed);
 
-        let orch = traces.iter().find(|t| t.label == "design_orchestrator").expect("orch trace");
+        let orch = traces
+            .iter()
+            .find(|t| t.label == "design_orchestrator")
+            .expect("orch trace");
         assert!(orch.task.as_deref().unwrap().contains("shallow foundation"));
         assert!(orch.completed); // via wait_result ok
 
-        let geo = traces.iter().find(|t| t.label == "geotechnical_engineer").expect("geo trace");
+        let geo = traces
+            .iter()
+            .find(|t| t.label == "geotechnical_engineer")
+            .expect("geo trace");
         assert_eq!(geo.skills_loaded, vec!["shallow_foundation".to_string()]);
         assert!(geo.error.as_deref().unwrap().contains("Skill not found"));
-        assert!(geo.task.as_deref().unwrap().contains("geotechnical analysis"));
+        assert!(geo
+            .task
+            .as_deref()
+            .unwrap()
+            .contains("geotechnical analysis"));
     }
 
     #[test]

@@ -81,10 +81,7 @@ async fn fetch_url(Json(body): Json<FetchBody>) -> impl IntoResponse {
 
     // SSRF protection: block private/internal addresses
     if let Err(reason) = validate_url_no_ssrf(&url) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": reason})),
-        );
+        return (StatusCode::FORBIDDEN, Json(json!({"error": reason})));
     }
 
     let method = body.method.as_deref().unwrap_or("GET");
@@ -161,10 +158,7 @@ async fn fetch_url(Json(body): Json<FetchBody>) -> impl IntoResponse {
 }
 
 /// POST /mcp/:toolName — MCP tool proxy
-async fn mcp_proxy(
-    Path(tool_name): Path<String>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
+async fn mcp_proxy(Path(tool_name): Path<String>, Json(body): Json<Value>) -> impl IntoResponse {
     let settings = get_settings().await;
 
     let tool = settings

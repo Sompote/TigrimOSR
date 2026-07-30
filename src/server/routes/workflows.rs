@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::server::services::workflow::{
-    build_pattern, pattern_catalog, WorkflowProfile,
+    build_pattern, pattern_catalog, WorkflowProfile, PATTERN_LOOP_UNTIL_DONE,
 };
 use crate::server::AppState;
 
@@ -41,7 +41,7 @@ async fn list_patterns() -> Json<Value> {
                 "description": description,
                 "name": built.as_ref().map(|p| p.name.clone()).unwrap_or_default(),
                 "nodeCount": built.as_ref().map(|p| p.nodes.len()).unwrap_or(0),
-                "supportsWidth": id != "loop_until_done",
+                "supportsWidth": id != PATTERN_LOOP_UNTIL_DONE,
             })
         })
         .collect();
@@ -78,7 +78,11 @@ fn describe(profile: &WorkflowProfile) -> Value {
         .levels()
         .map(|ls| {
             ls.into_iter()
-                .map(|l| l.into_iter().map(|i| profile.nodes[i].name.clone()).collect())
+                .map(|l| {
+                    l.into_iter()
+                        .map(|i| profile.nodes[i].name.clone())
+                        .collect()
+                })
                 .collect()
         })
         .unwrap_or_default();

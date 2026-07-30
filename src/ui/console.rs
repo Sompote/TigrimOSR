@@ -15,7 +15,9 @@ pub fn console_view(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Clear").clicked() {
                 let vm = vm_manager.clone();
-                runtime.spawn(async move { vm.clear_console().await; });
+                runtime.spawn(async move {
+                    vm.clear_console().await;
+                });
             }
         });
     });

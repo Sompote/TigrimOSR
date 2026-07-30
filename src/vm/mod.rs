@@ -9,4 +9,4 @@ pub mod manager;
 // Re-export key types for convenient access from other modules.
 pub use config::VmConfig;
 #[allow(unused_imports)]
-pub use manager::{ProcessResult, SharedFolderEntry, AndrewOSError, VmManager, VmState};
+pub use manager::{AndrewOSError, ProcessResult, SharedFolderEntry, VmManager, VmState};

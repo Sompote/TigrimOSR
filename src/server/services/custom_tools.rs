@@ -46,7 +46,11 @@ pub struct CustomTool {
     pub enabled: bool,
     /// Required (`override: true`) for an http/shell tool whose name matches a
     /// built-in: the YAML implementation then REPLACES the built-in at dispatch.
-    #[serde(default, rename = "override", skip_serializing_if = "std::ops::Not::not")]
+    #[serde(
+        default,
+        rename = "override",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub override_builtin: bool,
     #[serde(default)]
     pub parameters: Vec<CustomParam>,
@@ -164,9 +168,9 @@ pub fn load_all() -> Vec<CustomTool> {
 /// Look up one enabled EXECUTABLE (http/shell) tool by name — includes
 /// override files that shadow a built-in implementation.
 fn find(name: &str) -> Option<CustomTool> {
-    load_all().into_iter().find(|t| {
-        t.name == name && t.enabled && matches!(t.kind.as_str(), "http" | "shell")
-    })
+    load_all()
+        .into_iter()
+        .find(|t| t.name == name && t.enabled && matches!(t.kind.as_str(), "http" | "shell"))
 }
 
 /// Any tool file by name, including `kind: builtin` customization records.
@@ -212,15 +216,23 @@ pub fn apply_builtin_overrides(tools: &mut Vec<Value>) {
         return;
     }
     for f in &files {
-        let shadows = matches!(f.kind.as_str(), "http" | "shell") && f.override_builtin && f.enabled;
+        let shadows =
+            matches!(f.kind.as_str(), "http" | "shell") && f.override_builtin && f.enabled;
         let hides = f.kind == "builtin" && !f.enabled;
         if shadows || hides {
             tools.retain(|t| t["function"]["name"].as_str() != Some(f.name.as_str()));
         }
     }
     for t in tools.iter_mut() {
-        let Some(name) = t["function"]["name"].as_str().map(|s| s.to_string()) else { continue };
-        let Some(f) = files.iter().find(|f| f.name == name && f.kind == "builtin" && f.enabled) else { continue };
+        let Some(name) = t["function"]["name"].as_str().map(|s| s.to_string()) else {
+            continue;
+        };
+        let Some(f) = files
+            .iter()
+            .find(|f| f.name == name && f.kind == "builtin" && f.enabled)
+        else {
+            continue;
+        };
         if !f.description.is_empty() {
             t["function"]["description"] = json!(f.description);
         }
@@ -246,8 +258,16 @@ pub fn schema_to_params(schema: &Value) -> Vec<CustomParam> {
                 .iter()
                 .map(|(name, p)| CustomParam {
                     name: name.clone(),
-                    type_: p.get("type").and_then(|t| t.as_str()).unwrap_or("string").to_string(),
-                    description: p.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                    type_: p
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("string")
+                        .to_string(),
+                    description: p
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     required: required.contains(&name.as_str()),
                     default: None,
                 })
@@ -533,7 +553,9 @@ pub async fn execute(name: &str, args: &Value, sandbox_dir: &str) -> Value {
     match tool.kind.as_str() {
         "http" => execute_http(&tool, &params).await,
         "shell" => execute_shell(&tool, &params, sandbox_dir).await,
-        other => json!({ "ok": false, "error": format!("Unknown tool kind '{other}' (use http|shell)") }),
+        other => {
+            json!({ "ok": false, "error": format!("Unknown tool kind '{other}' (use http|shell)") })
+        }
     }
 }
 
@@ -566,7 +588,9 @@ async fn execute_http(tool: &CustomTool, params: &HashMap<String, Value>) -> Val
     let resp = match tokio::time::timeout(Duration::from_secs(timeout_s), req.send()).await {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => return json!({ "ok": false, "error": format!("Request failed: {e}") }),
-        Err(_) => return json!({ "ok": false, "error": format!("Request timed out ({timeout_s}s)") }),
+        Err(_) => {
+            return json!({ "ok": false, "error": format!("Request timed out ({timeout_s}s)") })
+        }
     };
     let status = resp.status().as_u16();
     let content_type = resp
@@ -639,7 +663,11 @@ pub fn validate(tool: &CustomTool) -> Result<Vec<String>, String> {
     if tool.name.is_empty() {
         return Err("tool `name` is required".into());
     }
-    if !tool.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+    if !tool
+        .name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
         return Err(format!(
             "tool name '{}' must be lowercase letters, digits, and underscores only",
             tool.name
@@ -649,9 +677,9 @@ pub fn validate(tool: &CustomTool) -> Result<Vec<String>, String> {
         return Err("tool name must not start with 'mcp_' (reserved for MCP tools)".into());
     }
     let builtins = crate::server::services::toolbox::tool_definitions();
-    let collides = builtins.iter().any(|t| {
-        t.pointer("/function/name").and_then(|n| n.as_str()) == Some(tool.name.as_str())
-    });
+    let collides = builtins
+        .iter()
+        .any(|t| t.pointer("/function/name").and_then(|n| n.as_str()) == Some(tool.name.as_str()));
     // A built-in name is allowed for kind:builtin (customization record) and
     // for http/shell with an explicit `override: true` (implementation shadow).
     if collides && tool.kind != "builtin" && !tool.override_builtin {
@@ -681,7 +709,10 @@ pub fn validate(tool: &CustomTool) -> Result<Vec<String>, String> {
                 .as_ref()
                 .ok_or("http tool requires a `request` block")?;
             if !matches!(req.method.to_uppercase().as_str(), "GET" | "POST") {
-                return Err(format!("request.method must be GET or POST, got '{}'", req.method));
+                return Err(format!(
+                    "request.method must be GET or POST, got '{}'",
+                    req.method
+                ));
             }
             if req.url.is_empty() {
                 return Err("request.url is required".into());
@@ -695,7 +726,10 @@ pub fn validate(tool: &CustomTool) -> Result<Vec<String>, String> {
             }
         }
         "shell" => {
-            let run = tool.run.as_ref().ok_or("shell tool requires a `run` block")?;
+            let run = tool
+                .run
+                .as_ref()
+                .ok_or("shell tool requires a `run` block")?;
             if run.command.is_empty() {
                 return Err("run.command is required".into());
             }
@@ -710,12 +744,19 @@ pub fn validate(tool: &CustomTool) -> Result<Vec<String>, String> {
                 );
             }
         }
-        other => return Err(format!("kind must be 'http', 'shell' or 'builtin', got '{other}'")),
+        other => {
+            return Err(format!(
+                "kind must be 'http', 'shell' or 'builtin', got '{other}'"
+            ))
+        }
     }
 
     // Parameter types.
     for p in &tool.parameters {
-        if !matches!(p.type_.as_str(), "string" | "integer" | "number" | "boolean") {
+        if !matches!(
+            p.type_.as_str(),
+            "string" | "integer" | "number" | "boolean"
+        ) {
             warnings.push(format!(
                 "parameter '{}' has unknown type '{}' (treated as string)",
                 p.name, p.type_
@@ -731,7 +772,10 @@ fn check_placeholders(template: &str, tool: &CustomTool, warnings: &mut Vec<Stri
     for caps in re.captures_iter(template) {
         let name = &caps[1];
         if !tool.parameters.iter().any(|p| p.name == name) {
-            warnings.push(format!("template uses '{{{{{}}}}}'  but no such parameter is declared", name));
+            warnings.push(format!(
+                "template uses '{{{{{}}}}}'  but no such parameter is declared",
+                name
+            ));
         }
     }
 }

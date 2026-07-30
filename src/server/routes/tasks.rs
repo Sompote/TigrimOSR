@@ -103,7 +103,10 @@ async fn create_task(Json(body): Json<CreateTaskBody>) -> impl IntoResponse {
     tasks.push(task.clone());
     save_tasks(&tasks).await;
 
-    (StatusCode::CREATED, Json(serde_json::to_value(&task).unwrap()))
+    (
+        StatusCode::CREATED,
+        Json(serde_json::to_value(&task).unwrap()),
+    )
 }
 
 /// PATCH /:id - update an existing task
@@ -117,10 +120,7 @@ async fn update_task(
     let idx = match idx {
         Some(i) => i,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "Not found"})),
-            );
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"})));
         }
     };
 
@@ -139,7 +139,10 @@ async fn update_task(
 
     save_tasks(&tasks).await;
 
-    (StatusCode::OK, Json(serde_json::to_value(&tasks[idx]).unwrap()))
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(&tasks[idx]).unwrap()),
+    )
 }
 
 /// DELETE /:id - delete a task

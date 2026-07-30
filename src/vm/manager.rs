@@ -403,10 +403,8 @@ impl VmManager {
             let _ = std::fs::remove_file(p);
         }
 
-        self.append_console(
-            "[AndrewOS] VM reset -- will re-download and provision on next start",
-        )
-        .await;
+        self.append_console("[AndrewOS] VM reset -- will re-download and provision on next start")
+            .await;
     }
 
     // ===================================================================
@@ -415,20 +413,14 @@ impl VmManager {
 
     /// Locate `qemu-img` on disk.  Checks Homebrew paths first, then `which`.
     pub fn find_qemu_img() -> Option<String> {
-        let candidates = [
-            "/usr/local/bin/qemu-img",
-            "/opt/homebrew/bin/qemu-img",
-        ];
+        let candidates = ["/usr/local/bin/qemu-img", "/opt/homebrew/bin/qemu-img"];
         for path in &candidates {
             if std::path::Path::new(path).exists() {
                 return Some(path.to_string());
             }
         }
         // Fallback: `which qemu-img`.
-        if let Ok(output) = std::process::Command::new("which")
-            .arg("qemu-img")
-            .output()
-        {
+        if let Ok(output) = std::process::Command::new("which").arg("qemu-img").output() {
             let p = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !p.is_empty() && std::path::Path::new(&p).exists() {
                 return Some(p);
@@ -627,10 +619,7 @@ impl VmManager {
 
         // ---- meta-data ----
         let instance_id = format!("tigris-vm-{}", chrono::Utc::now().timestamp());
-        let meta_data = format!(
-            "instance-id: {}\nlocal-hostname: tigris\n",
-            instance_id
-        );
+        let meta_data = format!("instance-id: {}\nlocal-hostname: tigris\n", instance_id);
         tokio::fs::write(seed_dir.join("meta-data"), &meta_data).await?;
 
         // ---- user-data (matches Swift original) ----
@@ -660,7 +649,12 @@ ethernets:
         // Step 1: Create empty 1.44 MB raw file.
         let dd = Self::run_process(
             "/bin/dd",
-            &["if=/dev/zero", &format!("of={}", iso_str), "bs=512", "count=2880"],
+            &[
+                "if=/dev/zero",
+                &format!("of={}", iso_str),
+                "bs=512",
+                "count=2880",
+            ],
         )
         .await?;
         if dd.exit_code != 0 {
@@ -671,11 +665,8 @@ ethernets:
         }
 
         // Step 2: Attach as disk device (no mount).
-        let attach = Self::run_process(
-            "/usr/bin/hdiutil",
-            &["attach", "-nomount", &iso_str],
-        )
-        .await?;
+        let attach =
+            Self::run_process("/usr/bin/hdiutil", &["attach", "-nomount", &iso_str]).await?;
         if attach.exit_code != 0 {
             return Err(AndrewOSError::ProvisioningFailed(format!(
                 "Failed to attach seed image: {}",
@@ -715,11 +706,7 @@ ethernets:
         tokio::fs::create_dir_all(&mount_point).await?;
         let mp_str = mount_point.to_string_lossy().to_string();
 
-        let mnt = Self::run_process(
-            "/sbin/mount",
-            &["-t", "msdos", &device_path, &mp_str],
-        )
-        .await?;
+        let mnt = Self::run_process("/sbin/mount", &["-t", "msdos", &device_path, &mp_str]).await?;
 
         if mnt.exit_code == 0 {
             for name in &["meta-data", "user-data", "network-config"] {
@@ -787,7 +774,13 @@ ethernets:
         }
 
         // CPU, memory, display.
-        args.extend(["-smp".into(), cpus, "-m".into(), memory, "-nographic".into()]);
+        args.extend([
+            "-smp".into(),
+            cpus,
+            "-m".into(),
+            memory,
+            "-nographic".into(),
+        ]);
 
         // EFI firmware (arm64 needs EDK2).
         if cfg!(target_arch = "aarch64") {
@@ -815,10 +808,7 @@ ethernets:
         // Drives: main disk + cloud-init seed.
         args.extend([
             "-drive".into(),
-            format!(
-                "file={},format=raw,if=virtio",
-                raw_disk.to_string_lossy()
-            ),
+            format!("file={},format=raw,if=virtio", raw_disk.to_string_lossy()),
         ]);
         if seed_iso.exists() {
             args.extend([
@@ -983,10 +973,7 @@ ethernets:
                     if needs_ip {
                         if let Some(ip) = find_vm_via_arp().await {
                             let mut g = inner.lock().await;
-                            g.append_console(&format!(
-                                "[AndrewOS] Found VM at {} (ARP table)",
-                                ip
-                            ));
+                            g.append_console(&format!("[AndrewOS] Found VM at {} (ARP table)", ip));
                             g.vm_ip_address = Some(ip);
                         }
                     }
@@ -1111,7 +1098,11 @@ ethernets:
     pub async fn toggle_read_only(&self, id: Uuid) {
         {
             let mut g = self.inner.lock().await;
-            let info = g.shared_folders.iter().find(|e| e.id == id).map(|e| (e.name.clone(), !e.read_only));
+            let info = g
+                .shared_folders
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| (e.name.clone(), !e.read_only));
             if let Some((name, new_val)) = info {
                 if let Some(e) = g.shared_folders.iter_mut().find(|e| e.id == id) {
                     e.read_only = new_val;
@@ -1236,10 +1227,7 @@ async fn find_vm_via_arp() -> Option<String> {
         if line.contains("bridge") || line.contains("vmnet") {
             if let (Some(start), Some(end)) = (line.find('('), line.find(')')) {
                 let ip = &line[start + 1..end];
-                if is_valid_vm_ip(ip)
-                    && ip.starts_with("192.168.")
-                    && !ip.ends_with(".1")
-                {
+                if is_valid_vm_ip(ip) && ip.starts_with("192.168.") && !ip.ends_with(".1") {
                     return Some(ip.to_string());
                 }
             }
@@ -1251,13 +1239,10 @@ async fn find_vm_via_arp() -> Option<String> {
 /// Raw TCP connect test with a 2-second timeout.
 pub async fn try_tcp_connect(host: &str, port: u16) -> bool {
     let addr = format!("{}:{}", host, port);
-    tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        TcpStream::connect(&addr),
-    )
-    .await
-    .map(|r| r.is_ok())
-    .unwrap_or(false)
+    tokio::time::timeout(std::time::Duration::from_secs(2), TcpStream::connect(&addr))
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
 }
 
 /// Locate the tiger_cowork source directory on the host.

@@ -52,7 +52,13 @@ pub struct CliModel {
 impl CliModel {
     fn bare(id: impl Into<String>) -> Self {
         let id = id.into();
-        Self { label: id.clone(), id, description: None, default_effort: None, efforts: Vec::new() }
+        Self {
+            label: id.clone(),
+            id,
+            description: None,
+            default_effort: None,
+            efforts: Vec::new(),
+        }
     }
 }
 
@@ -139,7 +145,10 @@ async fn binary_present(binary: &str) -> bool {
 
 /// First line that looks like a version string.
 fn first_line(s: &str) -> Option<String> {
-    s.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string)
+    s.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
 }
 
 /// Pull `low, medium, high, xhigh, max` out of a help line such as
@@ -155,8 +164,12 @@ fn efforts_from_help(help: &str, flag: &str) -> Vec<String> {
         }
         // The list may wrap onto the following line.
         let window = format!("{line} {}", lines.clone().next().unwrap_or(""));
-        let Some(open) = window.find('(') else { continue };
-        let Some(close) = window[open..].find(')') else { continue };
+        let Some(open) = window.find('(') else {
+            continue;
+        };
+        let Some(close) = window[open..].find(')') else {
+            continue;
+        };
         let inner = &window[open + 1..open + close];
         let parsed: Vec<String> = inner
             .split([',', '|'])
@@ -186,20 +199,50 @@ async fn probe_claude() -> CliProvider {
     if !binary_present(binary).await {
         return CliProvider::missing("claude", "Claude Code (Local)", binary);
     }
-    let version = probe(binary, &["--version"]).await.ok().and_then(|s| first_line(&s));
+    let version = probe(binary, &["--version"])
+        .await
+        .ok()
+        .and_then(|s| first_line(&s));
     let help = probe(binary, &["--help"]).await.unwrap_or_default();
 
     let mut efforts = efforts_from_help(&help, "--effort");
     if efforts.is_empty() {
-        efforts = ["low", "medium", "high", "xhigh", "max"].iter().map(|s| s.to_string()).collect();
+        efforts = ["low", "medium", "high", "xhigh", "max"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
 
     // Aliases always resolve to the current model, so they age well.
     let models = vec![
-        CliModel { id: "fable".into(), label: "Fable (alias — latest)".into(), description: Some("Alias that always resolves to the newest Fable model".into()), default_effort: None, efforts: efforts.clone() },
-        CliModel { id: "opus".into(), label: "Opus (alias — latest)".into(), description: Some("Alias that always resolves to the newest Opus model".into()), default_effort: None, efforts: efforts.clone() },
-        CliModel { id: "sonnet".into(), label: "Sonnet (alias — latest)".into(), description: Some("Alias that always resolves to the newest Sonnet model".into()), default_effort: None, efforts: efforts.clone() },
-        CliModel { id: "haiku".into(), label: "Haiku (alias — latest)".into(), description: Some("Alias that always resolves to the newest Haiku model".into()), default_effort: None, efforts: efforts.clone() },
+        CliModel {
+            id: "fable".into(),
+            label: "Fable (alias — latest)".into(),
+            description: Some("Alias that always resolves to the newest Fable model".into()),
+            default_effort: None,
+            efforts: efforts.clone(),
+        },
+        CliModel {
+            id: "opus".into(),
+            label: "Opus (alias — latest)".into(),
+            description: Some("Alias that always resolves to the newest Opus model".into()),
+            default_effort: None,
+            efforts: efforts.clone(),
+        },
+        CliModel {
+            id: "sonnet".into(),
+            label: "Sonnet (alias — latest)".into(),
+            description: Some("Alias that always resolves to the newest Sonnet model".into()),
+            default_effort: None,
+            efforts: efforts.clone(),
+        },
+        CliModel {
+            id: "haiku".into(),
+            label: "Haiku (alias — latest)".into(),
+            description: Some("Alias that always resolves to the newest Haiku model".into()),
+            default_effort: None,
+            efforts: efforts.clone(),
+        },
     ];
 
     CliProvider {
@@ -224,7 +267,10 @@ async fn probe_codex() -> CliProvider {
     if !binary_present(binary).await {
         return CliProvider::missing("codex", "Codex (Local)", binary);
     }
-    let version = probe(binary, &["--version"]).await.ok().and_then(|s| first_line(&s));
+    let version = probe(binary, &["--version"])
+        .await
+        .ok()
+        .and_then(|s| first_line(&s));
 
     let mut provider = CliProvider {
         id: "codex".into(),
@@ -234,19 +280,29 @@ async fn probe_codex() -> CliProvider {
         version,
         source: "builtin".into(),
         models: Vec::new(),
-        efforts: vec!["low".into(), "medium".into(), "high".into(), "xhigh".into(), "max".into()],
+        efforts: vec![
+            "low".into(),
+            "medium".into(),
+            "high".into(),
+            "xhigh".into(),
+            "max".into(),
+        ],
         error: None,
     };
 
     let Some(home) = dirs::home_dir() else {
-        provider.error = Some("could not resolve the home directory to find Codex's model cache".into());
+        provider.error =
+            Some("could not resolve the home directory to find Codex's model cache".into());
         return provider;
     };
     let cache_path = home.join(".codex").join("models_cache.json");
     let raw = match tokio::fs::read_to_string(&cache_path).await {
         Ok(r) => r,
         Err(e) => {
-            provider.error = Some(format!("Codex model cache unreadable at {}: {e}", cache_path.display()));
+            provider.error = Some(format!(
+                "Codex model cache unreadable at {}: {e}",
+                cache_path.display()
+            ));
             return provider;
         }
     };
@@ -265,10 +321,16 @@ async fn probe_codex() -> CliProvider {
         if m["visibility"].as_str() == Some("hide") {
             continue;
         }
-        let Some(id) = m["slug"].as_str() else { continue };
+        let Some(id) = m["slug"].as_str() else {
+            continue;
+        };
         let efforts: Vec<String> = m["supported_reasoning_levels"]
             .as_array()
-            .map(|a| a.iter().filter_map(|e| e["effort"].as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| e["effort"].as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
         for e in &efforts {
             if !union.contains(e) {
@@ -303,7 +365,10 @@ async fn probe_antigravity() -> CliProvider {
     if !binary_present(binary).await {
         return CliProvider::missing("antigravity", "Antigravity (Local)", binary);
     }
-    let version = probe(binary, &["--version"]).await.ok().and_then(|s| first_line(&s));
+    let version = probe(binary, &["--version"])
+        .await
+        .ok()
+        .and_then(|s| first_line(&s));
     let help = probe(binary, &["--help"]).await.unwrap_or_default();
     let mut efforts = efforts_from_help(&help, "--effort");
     if efforts.is_empty() {
@@ -319,25 +384,51 @@ async fn probe_antigravity() -> CliProvider {
                 .filter(|l| {
                     !l.is_empty()
                         && !l.contains(char::is_whitespace)
-                        && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '/')
+                        && l.chars().all(|c| {
+                            c.is_ascii_alphanumeric()
+                                || c == '-'
+                                || c == '.'
+                                || c == '_'
+                                || c == '/'
+                        })
                 })
                 .map(CliModel::bare)
                 .collect();
             if models.is_empty() {
                 return CliProvider {
-                    id: "antigravity".into(), name: "Antigravity (Local)".into(), binary: binary.into(),
-                    available: true, version, source: "builtin".into(), models: Vec::new(),
-                    efforts, error: Some("`agy models` returned nothing recognisable".into()),
+                    id: "antigravity".into(),
+                    name: "Antigravity (Local)".into(),
+                    binary: binary.into(),
+                    available: true,
+                    version,
+                    source: "builtin".into(),
+                    models: Vec::new(),
+                    efforts,
+                    error: Some("`agy models` returned nothing recognisable".into()),
                 };
             }
             CliProvider {
-                id: "antigravity".into(), name: "Antigravity (Local)".into(), binary: binary.into(),
-                available: true, version, source: "cli".into(), models, efforts, error: None,
+                id: "antigravity".into(),
+                name: "Antigravity (Local)".into(),
+                binary: binary.into(),
+                available: true,
+                version,
+                source: "cli".into(),
+                models,
+                efforts,
+                error: None,
             }
         }
         Err(e) => CliProvider {
-            id: "antigravity".into(), name: "Antigravity (Local)".into(), binary: binary.into(),
-            available: true, version, source: "builtin".into(), models: Vec::new(), efforts, error: Some(e),
+            id: "antigravity".into(),
+            name: "Antigravity (Local)".into(),
+            binary: binary.into(),
+            available: true,
+            version,
+            source: "builtin".into(),
+            models: Vec::new(),
+            efforts,
+            error: Some(e),
         },
     }
 }
@@ -349,7 +440,10 @@ async fn probe_opencode() -> CliProvider {
     if !binary_present(binary).await {
         return CliProvider::missing("opencode", "OpenCode (Local)", binary);
     }
-    let version = probe(binary, &["--version"]).await.ok().and_then(|s| first_line(&s));
+    let version = probe(binary, &["--version"])
+        .await
+        .ok()
+        .and_then(|s| first_line(&s));
     match probe(binary, &["models"]).await {
         Ok(text) => {
             let models: Vec<CliModel> = text
@@ -360,17 +454,31 @@ async fn probe_opencode() -> CliProvider {
                 .collect();
             let empty = models.is_empty();
             CliProvider {
-                id: "opencode".into(), name: "OpenCode (Local)".into(), binary: binary.into(),
-                available: true, version,
-                source: if empty { "builtin".into() } else { "cli".into() },
-                models, efforts: Vec::new(),
+                id: "opencode".into(),
+                name: "OpenCode (Local)".into(),
+                binary: binary.into(),
+                available: true,
+                version,
+                source: if empty {
+                    "builtin".into()
+                } else {
+                    "cli".into()
+                },
+                models,
+                efforts: Vec::new(),
                 error: empty.then(|| "`opencode models` returned nothing recognisable".to_string()),
             }
         }
         Err(e) => CliProvider {
-            id: "opencode".into(), name: "OpenCode (Local)".into(), binary: binary.into(),
-            available: true, version, source: "builtin".into(), models: Vec::new(),
-            efforts: Vec::new(), error: Some(e),
+            id: "opencode".into(),
+            name: "OpenCode (Local)".into(),
+            binary: binary.into(),
+            available: true,
+            version,
+            source: "builtin".into(),
+            models: Vec::new(),
+            efforts: Vec::new(),
+            error: Some(e),
         },
     }
 }
@@ -382,7 +490,10 @@ async fn probe_grok() -> CliProvider {
     if !binary_present(binary).await {
         return CliProvider::missing("grok", "Grok (Local)", binary);
     }
-    let version = probe(binary, &["--version"]).await.ok().and_then(|s| first_line(&s));
+    let version = probe(binary, &["--version"])
+        .await
+        .ok()
+        .and_then(|s| first_line(&s));
     // `--reasoning-effort` exists but its help documents no fixed enum, so we
     // leave efforts empty instead of fabricating tiers.
     match probe(binary, &["models"]).await {
@@ -416,17 +527,33 @@ async fn probe_grok() -> CliProvider {
             }
             let empty = models.is_empty();
             CliProvider {
-                id: "grok".into(), name: "Grok (Local)".into(), binary: binary.into(),
-                available: true, version,
-                source: if empty { "builtin".into() } else { "cli".into() },
-                models, efforts: Vec::new(),
-                error: empty.then(|| "`grok models` listed no models — you may need to authenticate".to_string()),
+                id: "grok".into(),
+                name: "Grok (Local)".into(),
+                binary: binary.into(),
+                available: true,
+                version,
+                source: if empty {
+                    "builtin".into()
+                } else {
+                    "cli".into()
+                },
+                models,
+                efforts: Vec::new(),
+                error: empty.then(|| {
+                    "`grok models` listed no models — you may need to authenticate".to_string()
+                }),
             }
         }
         Err(e) => CliProvider {
-            id: "grok".into(), name: "Grok (Local)".into(), binary: binary.into(),
-            available: true, version, source: "builtin".into(), models: Vec::new(),
-            efforts: Vec::new(), error: Some(e),
+            id: "grok".into(),
+            name: "Grok (Local)".into(),
+            binary: binary.into(),
+            available: true,
+            version,
+            source: "builtin".into(),
+            models: Vec::new(),
+            efforts: Vec::new(),
+            error: Some(e),
         },
     }
 }
@@ -438,7 +565,10 @@ async fn probe_copilot() -> CliProvider {
     if !binary_present(binary).await {
         return CliProvider::missing("copilot", "GitHub Copilot (Local)", binary);
     }
-    let version = probe(binary, &["--version"]).await.ok().and_then(|s| first_line(&s));
+    let version = probe(binary, &["--version"])
+        .await
+        .ok()
+        .and_then(|s| first_line(&s));
     CliProvider {
         id: "copilot".into(),
         name: "GitHub Copilot (Local)".into(),
@@ -448,7 +578,9 @@ async fn probe_copilot() -> CliProvider {
         source: "builtin".into(),
         models: Vec::new(),
         efforts: Vec::new(),
-        error: Some("Copilot does not expose a model listing command — enter a model id manually".into()),
+        error: Some(
+            "Copilot does not expose a model listing command — enter a model id manually".into(),
+        ),
     }
 }
 
@@ -459,7 +591,10 @@ async fn probe_gemini() -> CliProvider {
     if !binary_present(binary).await {
         return CliProvider::missing("gemini", "Gemini CLI (Local)", binary);
     }
-    let version = probe(binary, &["--version"]).await.ok().and_then(|s| first_line(&s));
+    let version = probe(binary, &["--version"])
+        .await
+        .ok()
+        .and_then(|s| first_line(&s));
     match probe(binary, &["models"]).await {
         Ok(text) => {
             let models: Vec<CliModel> = text
@@ -470,17 +605,31 @@ async fn probe_gemini() -> CliProvider {
                 .collect();
             let empty = models.is_empty();
             CliProvider {
-                id: "gemini".into(), name: "Gemini CLI (Local)".into(), binary: binary.into(),
-                available: true, version,
-                source: if empty { "builtin".into() } else { "cli".into() },
-                models, efforts: Vec::new(),
+                id: "gemini".into(),
+                name: "Gemini CLI (Local)".into(),
+                binary: binary.into(),
+                available: true,
+                version,
+                source: if empty {
+                    "builtin".into()
+                } else {
+                    "cli".into()
+                },
+                models,
+                efforts: Vec::new(),
                 error: empty.then(|| "`gemini models` returned nothing recognisable".to_string()),
             }
         }
         Err(e) => CliProvider {
-            id: "gemini".into(), name: "Gemini CLI (Local)".into(), binary: binary.into(),
-            available: true, version, source: "builtin".into(), models: Vec::new(),
-            efforts: Vec::new(), error: Some(e),
+            id: "gemini".into(),
+            name: "Gemini CLI (Local)".into(),
+            binary: binary.into(),
+            available: true,
+            version,
+            source: "builtin".into(),
+            models: Vec::new(),
+            efforts: Vec::new(),
+            error: Some(e),
         },
     }
 }
@@ -578,13 +727,19 @@ mod tests {
     #[test]
     fn parses_effort_list_from_help_text() {
         let help = "  --effort <level>   Effort level for the current session (low, medium, high, xhigh, max)";
-        assert_eq!(efforts_from_help(help, "--effort"), vec!["low", "medium", "high", "xhigh", "max"]);
+        assert_eq!(
+            efforts_from_help(help, "--effort"),
+            vec!["low", "medium", "high", "xhigh", "max"]
+        );
     }
 
     #[test]
     fn parses_effort_list_that_wraps_onto_the_next_line() {
         let help = "  --effort <level>   Effort level for the current session\n                     (low, medium, high)";
-        assert_eq!(efforts_from_help(help, "--effort"), vec!["low", "medium", "high"]);
+        assert_eq!(
+            efforts_from_help(help, "--effort"),
+            vec!["low", "medium", "high"]
+        );
     }
 
     #[test]
@@ -615,23 +770,41 @@ mod tests {
                 println!("    {:<24} {}", m.id, m.efforts.join(","));
             }
         }
-        assert!(!providers.is_empty(), "discovery must always report the known provider set");
+        assert!(
+            !providers.is_empty(),
+            "discovery must always report the known provider set"
+        );
     }
 
     #[test]
     fn every_sentinel_url_is_recognised_as_a_local_cli() {
         // Each provider we can discover must also be routable, or selecting it
         // sends traffic down the HTTP path and demands an API key it has none of.
-        for id in ["claude", "codex", "gemini", "antigravity", "opencode", "grok", "copilot"] {
+        for id in [
+            "claude",
+            "codex",
+            "gemini",
+            "antigravity",
+            "opencode",
+            "grok",
+            "copilot",
+        ] {
             let url = provider_sentinel_url(id);
             assert!(!url.is_empty(), "{id} has no sentinel url");
-            assert!(is_local_cli_url(url), "{id} sentinel '{url}' not recognised as local");
+            assert!(
+                is_local_cli_url(url),
+                "{id} sentinel '{url}' not recognised as local"
+            );
         }
     }
 
     #[test]
     fn http_endpoints_are_not_treated_as_local_clis() {
-        for url in ["https://api.anthropic.com/v1", "http://localhost:1234/v1", ""] {
+        for url in [
+            "https://api.anthropic.com/v1",
+            "http://localhost:1234/v1",
+            "",
+        ] {
             assert!(!is_local_cli_url(url), "{url} should not be local");
         }
     }

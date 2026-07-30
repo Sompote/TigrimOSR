@@ -56,14 +56,20 @@ fn maybe_prompt_browser_install(runtime: &tokio::runtime::Runtime) {
     }
     if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
         println!("Skipped. Enable later in Settings → Security → Browser Control.");
-        println!("(Prefer Obscura? Install the `obscura` binary and pick it there — no npx needed.)");
+        println!(
+            "(Prefer Obscura? Install the `obscura` binary and pick it there — no npx needed.)"
+        );
         println!();
         return;
     }
 
     println!("Installing Playwright browser (chrome-for-testing)…");
     match std::process::Command::new("npx")
-        .args(["@playwright/mcp@latest", "install-browser", "chrome-for-testing"])
+        .args([
+            "@playwright/mcp@latest",
+            "install-browser",
+            "chrome-for-testing",
+        ])
         .status()
     {
         Ok(s) if s.success() => {
@@ -102,7 +108,10 @@ fn main() {
     if !current_path.contains("/opt/homebrew/bin") || !current_path.contains("/usr/local/bin") {
         std::env::set_var(
             "PATH",
-            format!("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{}", current_path),
+            format!(
+                "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{}",
+                current_path
+            ),
         );
     }
 
@@ -171,7 +180,10 @@ fn main() {
                 if !token.is_empty() {
                     println!();
                     println!("Token set. Use this to connect from your Mac or browser.");
-                    println!("  Web UI:  http://<server-ip>:{}/web/", std::env::var("PORT").unwrap_or_else(|_| "3001".to_string()));
+                    println!(
+                        "  Web UI:  http://<server-ip>:{}/web/",
+                        std::env::var("PORT").unwrap_or_else(|_| "3001".to_string())
+                    );
                     println!("  Token:   {}", token);
                     println!();
                     break token;

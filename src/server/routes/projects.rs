@@ -35,7 +35,10 @@ fn resolve_sandbox_dir(configured: &str) -> String {
     if Path::new(&cwd).exists() {
         return cwd;
     }
-    let fallback = std::env::temp_dir().join("andrewos_sandbox").to_string_lossy().to_string();
+    let fallback = std::env::temp_dir()
+        .join("andrewos_sandbox")
+        .to_string_lossy()
+        .to_string();
     let _ = std::fs::create_dir_all(&fallback);
     fallback
 }
@@ -121,7 +124,10 @@ pub async fn load_project_run_context(project_id: &str) -> Option<ProjectRunCont
     };
 
     let mut parts: Vec<String> = Vec::new();
-    parts.push(format!("You are assisting with the project: {}", project.name));
+    parts.push(format!(
+        "You are assisting with the project: {}",
+        project.name
+    ));
     if !project.description.is_empty() {
         parts.push(format!("Project description: {}", project.description));
     }
@@ -213,12 +219,17 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/bulk", put(put_all_projects))
         .route(
             "/{id}",
-            get(get_project).patch(update_project).delete(delete_project),
+            get(get_project)
+                .patch(update_project)
+                .delete(delete_project),
         )
         .route("/{id}/memory", get(get_memory).put(put_memory))
         .route("/{id}/memory/generate", post(generate_memory))
         .route("/{id}/tiger-md", get(get_tiger_md).put(put_tiger_md))
-        .route("/{id}/files", get(list_project_files).delete(delete_project_file))
+        .route(
+            "/{id}/files",
+            get(list_project_files).delete(delete_project_file),
+        )
         .route("/{id}/files/mkdir", post(mkdir_project))
         .route("/{id}/files/download", get(download_project_file))
         .route("/{id}/files/upload", post(upload_project_file))
@@ -504,7 +515,9 @@ async fn generate_memory(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
     match find_project(&projects, &id) {
         Some(_) => (
             StatusCode::OK,
-            Json(json!({"content": "", "message": "Memory generation not yet implemented in Rust backend"})),
+            Json(
+                json!({"content": "", "message": "Memory generation not yet implemented in Rust backend"}),
+            ),
         ),
         None => (
             StatusCode::NOT_FOUND,
@@ -633,10 +646,7 @@ async fn list_project_files(
     let mut files = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        let is_dir = entry
-            .file_type()
-            .map(|ft| ft.is_dir())
-            .unwrap_or(false);
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
         let size = if is_dir {
             0u64
         } else {
@@ -695,10 +705,7 @@ async fn upload_project_file(
         if field_name == "path" {
             sub_path = field.text().await.unwrap_or_default();
         } else if field_name == "file" {
-            file_name = field
-                .file_name()
-                .unwrap_or("upload")
-                .to_string();
+            file_name = field.file_name().unwrap_or("upload").to_string();
             file_data = Some(field.bytes().await.unwrap_or_default().to_vec());
         }
     }
@@ -706,10 +713,7 @@ async fn upload_project_file(
     let data = match file_data {
         Some(d) => d,
         None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "No file"})),
-            );
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "No file"})));
         }
     };
 
@@ -777,8 +781,8 @@ async fn mkdir_project(
     let full_path = PathBuf::from(&resolved).join(&sub_path).join(&dir_name);
 
     // Prevent path traversal
-    let resolved_canon = std::fs::canonicalize(&resolved)
-        .unwrap_or_else(|_| PathBuf::from(&resolved));
+    let resolved_canon =
+        std::fs::canonicalize(&resolved).unwrap_or_else(|_| PathBuf::from(&resolved));
     let full_canon = full_path
         .canonicalize()
         .unwrap_or_else(|_| full_path.clone());
@@ -843,8 +847,8 @@ async fn delete_project_file(
     let full_path = PathBuf::from(&resolved).join(&file_path);
 
     // Prevent path traversal
-    let resolved_canon = std::fs::canonicalize(&resolved)
-        .unwrap_or_else(|_| PathBuf::from(&resolved));
+    let resolved_canon =
+        std::fs::canonicalize(&resolved).unwrap_or_else(|_| PathBuf::from(&resolved));
     if let Ok(full_canon) = std::fs::canonicalize(&full_path) {
         if !full_canon
             .to_string_lossy()
@@ -932,8 +936,8 @@ async fn download_project_file(
     let full_path = PathBuf::from(&resolved).join(&file_path);
 
     // Prevent path traversal
-    let resolved_canon = std::fs::canonicalize(&resolved)
-        .unwrap_or_else(|_| PathBuf::from(&resolved));
+    let resolved_canon =
+        std::fs::canonicalize(&resolved).unwrap_or_else(|_| PathBuf::from(&resolved));
     if let Ok(full_canon) = std::fs::canonicalize(&full_path) {
         if !full_canon
             .to_string_lossy()

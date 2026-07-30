@@ -33,7 +33,9 @@ pub async fn verify_handler(
     // Brute-force guard — this endpoint is unauthenticated by design, so it
     // is the natural token-guessing target.
     if crate::server::auth_rate_limited() {
-        return Json(json!({"ok": false, "error": "Too many failed attempts. Try again in a minute."}));
+        return Json(
+            json!({"ok": false, "error": "Too many failed attempts. Try again in a minute."}),
+        );
     }
 
     // Check access token (constant-time)

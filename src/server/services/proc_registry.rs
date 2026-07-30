@@ -62,7 +62,11 @@ pub fn kill_session(session_id: &str) -> usize {
         }
     }
     if killed > 0 {
-        tracing::info!("[proc] killed {} process group(s) for session {}", killed, session_id);
+        tracing::info!(
+            "[proc] killed {} process group(s) for session {}",
+            killed,
+            session_id
+        );
     }
     killed
 }

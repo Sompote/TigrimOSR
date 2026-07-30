@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, Mutex};
+use std::sync::{Mutex, OnceLock};
 
 use chrono::{DateTime, Utc};
 use rand::Rng;
@@ -24,8 +24,19 @@ pub fn set_remote_backend(backend: Option<RemoteBackend>) {
     remote_cache_clear();
     // Pre-warm cache for the new backend
     if let Some(ref rb) = backend {
-        eprintln!("[remote] Connecting to remote: {} (token={}...)", rb.url, crate::util::truncate_utf8(&rb.token, 4));
-        let _ = std::fs::write("/tmp/andrewos_remote.log", format!("CONNECT url={} token={}\n", rb.url, crate::util::truncate_utf8(&rb.token, 8)));
+        eprintln!(
+            "[remote] Connecting to remote: {} (token={}...)",
+            rb.url,
+            crate::util::truncate_utf8(&rb.token, 4)
+        );
+        let _ = std::fs::write(
+            "/tmp/andrewos_remote.log",
+            format!(
+                "CONNECT url={} token={}\n",
+                rb.url,
+                crate::util::truncate_utf8(&rb.token, 8)
+            ),
+        );
         remote_bg_fetch(rb, "/api/chat/sessions/bulk", 10);
         remote_bg_fetch(rb, "/api/settings", 15);
         remote_bg_fetch(rb, "/api/projects", 10);
@@ -73,10 +84,13 @@ fn remote_cache_get(key: &str) -> Option<String> {
 
 fn remote_cache_set(key: &str, data: String, ttl_secs: u64) {
     if let Ok(mut cache) = remote_cache().lock() {
-        cache.insert(key.to_string(), CacheEntry {
-            data,
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(ttl_secs),
-        });
+        cache.insert(
+            key.to_string(),
+            CacheEntry {
+                data,
+                expires: std::time::Instant::now() + std::time::Duration::from_secs(ttl_secs),
+            },
+        );
     }
 }
 
@@ -155,8 +169,14 @@ async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
 ) -> T {
     let url = format!("{}{}", rb.url, path);
     eprintln!("[remote] GET {}", url);
-    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/andrewos_remote.log")
-        .and_then(|mut f| { use std::io::Write; writeln!(f, "GET {}", url) });
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/andrewos_remote.log")
+        .and_then(|mut f| {
+            use std::io::Write;
+            writeln!(f, "GET {}", url)
+        });
     match remote_client()
         .get(&url)
         .bearer_auth(&rb.token)
@@ -167,8 +187,14 @@ async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
         Ok(resp) => {
             let status = resp.status();
             eprintln!("[remote] GET {} → {}", path, status);
-            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/andrewos_remote.log")
-                .and_then(|mut f| { use std::io::Write; writeln!(f, "RESULT {} → {}", path, status) });
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/andrewos_remote.log")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "RESULT {} → {}", path, status)
+                });
             if !status.is_success() {
                 // Cache a short-lived empty marker to avoid hammering the server
                 remote_cache_set(path, String::new(), 5);
@@ -183,15 +209,24 @@ async fn remote_fetch_and_cache<T: serde::de::DeserializeOwned + Default>(
         }
         Err(e) => {
             eprintln!("[remote] GET {} FAILED: {}", path, e);
-            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/andrewos_remote.log")
-                .and_then(|mut f| { use std::io::Write; writeln!(f, "FAILED {} → {}", path, e) });
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/andrewos_remote.log")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "FAILED {} → {}", path, e)
+                });
             T::default()
         }
     }
 }
 
 #[allow(dead_code)]
-async fn remote_get_json<T: serde::de::DeserializeOwned + Default>(rb: &RemoteBackend, path: &str) -> T {
+async fn remote_get_json<T: serde::de::DeserializeOwned + Default>(
+    rb: &RemoteBackend,
+    path: &str,
+) -> T {
     match remote_client()
         .get(format!("{}{}", rb.url, path))
         .bearer_auth(&rb.token)
@@ -229,7 +264,10 @@ async fn remote_delete(rb: &RemoteBackend, path: &str) {
         .await;
 }
 
-async fn remote_get_result<T: serde::de::DeserializeOwned>(rb: &RemoteBackend, path: &str) -> Result<T, String> {
+async fn remote_get_result<T: serde::de::DeserializeOwned>(
+    rb: &RemoteBackend,
+    path: &str,
+) -> Result<T, String> {
     let resp = remote_client()
         .get(format!("{}{}", rb.url, path))
         .bearer_auth(&rb.token)
@@ -359,7 +397,10 @@ pub struct ChatSession {
 }
 
 /// Create a single chat session on the remote server. Returns the created session.
-pub async fn remote_create_chat_session(title: &str, project_id: Option<&str>) -> Option<ChatSession> {
+pub async fn remote_create_chat_session(
+    title: &str,
+    project_id: Option<&str>,
+) -> Option<ChatSession> {
     let rb = get_remote_backend()?;
     let mut body = serde_json::json!({ "title": title });
     if let Some(pid) = project_id {
@@ -389,7 +430,8 @@ pub async fn get_chat_history() -> Vec<ChatSession> {
             return bulk;
         }
         // Fallback for old servers without bulk endpoint
-        let summaries: Vec<serde_json::Value> = remote_get_cached(&rb, "/api/chat/sessions", 10).await;
+        let summaries: Vec<serde_json::Value> =
+            remote_get_cached(&rb, "/api/chat/sessions", 10).await;
         let mut sessions = Vec::new();
         for s in &summaries {
             if let Some(id) = s.get("id").and_then(|v| v.as_str()) {
@@ -500,15 +542,15 @@ pub struct RemoteInstance {
 /// `api_url`/`api_key`; empty values inherit the main session's.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelPoolEntry {
-    pub id: String,        // stable key, e.g. "claude_opus"
-    pub label: String,     // display name
-    pub model: String,     // model id passed to llm_call
+    pub id: String,    // stable key, e.g. "claude_opus"
+    pub label: String, // display name
+    pub model: String, // model id passed to llm_call
     #[serde(default)]
-    pub api_url: String,   // empty -> inherit session api_url
+    pub api_url: String, // empty -> inherit session api_url
     #[serde(default)]
-    pub api_key: String,   // empty -> inherit session api_key
+    pub api_key: String, // empty -> inherit session api_key
     #[serde(default)]
-    pub tier: String,      // "fast" | "balanced" | "deep"
+    pub tier: String, // "fast" | "balanced" | "deep"
     #[serde(default)]
     pub strengths: String, // freeform hint for the designer LLM
     /// Reasoning effort for CLI providers that support one; "" = CLI default.
@@ -603,13 +645,19 @@ pub struct Settings {
     pub router_tier: Option<String>,
     /// Which pool model the router ORCHESTRATOR runs on (triage + dispatch +
     /// merge). Stores the entry's `model` id; empty/unset = use the main model.
-    #[serde(rename = "routerOrchestratorModel", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "routerOrchestratorModel",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub router_orchestrator_model: Option<String>,
     #[serde(rename = "remoteEnabled", skip_serializing_if = "Option::is_none")]
     pub remote_enabled: Option<bool>,
     #[serde(rename = "remoteToken", skip_serializing_if = "Option::is_none")]
     pub remote_token: Option<String>,
-    #[serde(rename = "remoteTaskMaxRetries", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "remoteTaskMaxRetries",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub remote_task_max_retries: Option<u64>,
     #[serde(rename = "remoteInstances", skip_serializing_if = "Option::is_none")]
     pub remote_instances: Option<Vec<RemoteInstance>>,
@@ -620,39 +668,75 @@ pub struct Settings {
     pub vpn_enabled: Option<bool>,
     #[serde(rename = "localFileMounts", skip_serializing_if = "Option::is_none")]
     pub local_file_mounts: Option<Vec<LocalFileMount>>,
-    #[serde(rename = "skillAutoUpdateEnabled", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "skillAutoUpdateEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub skill_auto_update_enabled: Option<bool>,
-    #[serde(rename = "skillAutoUpdateIntervalMinutes", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "skillAutoUpdateIntervalMinutes",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub skill_auto_update_interval_minutes: Option<u64>,
-    #[serde(rename = "skillAutoUpdateRequireApproval", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "skillAutoUpdateRequireApproval",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub skill_auto_update_require_approval: Option<bool>,
-    #[serde(rename = "skillAutoUpdateHumanFeedbackEnabled", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "skillAutoUpdateHumanFeedbackEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub skill_auto_update_human_feedback_enabled: Option<bool>,
-    #[serde(rename = "skillAutoUpdateMaxCandidates", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "skillAutoUpdateMaxCandidates",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub skill_auto_update_max_candidates: Option<u64>,
     // Tool approval security settings
-    #[serde(rename = "approvalRequiredForShell", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "approvalRequiredForShell",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub approval_required_for_shell: Option<bool>,
-    #[serde(rename = "approvalRequiredForPython", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "approvalRequiredForPython",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub approval_required_for_python: Option<bool>,
-    #[serde(rename = "approvalRequiredForFileWrite", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "approvalRequiredForFileWrite",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub approval_required_for_file_write: Option<bool>,
-    #[serde(rename = "approvalRequiredForFileDelete", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "approvalRequiredForFileDelete",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub approval_required_for_file_delete: Option<bool>,
-    #[serde(rename = "approvalRequiredForAgentSpawn", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "approvalRequiredForAgentSpawn",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub approval_required_for_agent_spawn: Option<bool>,
     /// Whether background swarm sub-agents may auto-run tools that would otherwise
     /// require interactive approval. Background agents have no UI to prompt, so the
     /// interactive approval channel cannot serve them; this toggle governs them instead.
     /// Defaults to true so auto-swarm runs don't stall. Set false to make sub-agents
     /// refuse approval-gated tools (run_shell/run_python/etc.) rather than run them.
-    #[serde(rename = "autoApproveSubagentTools", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "autoApproveSubagentTools",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub auto_approve_subagent_tools: Option<bool>,
     /// Browser control: when true, a Playwright browser MCP server is
     /// auto-registered so the agent can drive a real web browser (navigate,
     /// click, type, screenshot). Off by default for safety — once on, the agent
     /// can act in the browser (submit forms, click buttons) as the user.
-    #[serde(rename = "browserControlEnabled", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "browserControlEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub browser_control_enabled: Option<bool>,
     /// Which engine browser control drives: "chromium" (Playwright's bundled
     /// build — portable, always available), "chrome" (the user's installed
@@ -685,13 +769,19 @@ pub struct Settings {
     pub telegram_bot_token: Option<String>,
     /// Telegram numeric user IDs stored as strings; empty/unset = nobody
     /// allowed (fail closed — the rejection reply tells the sender their id).
-    #[serde(rename = "telegramAllowedUserIds", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "telegramAllowedUserIds",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub telegram_allowed_user_ids: Option<Vec<String>>,
     #[serde(rename = "lineEnabled", skip_serializing_if = "Option::is_none")]
     pub line_enabled: Option<bool>,
     #[serde(rename = "lineChannelSecret", skip_serializing_if = "Option::is_none")]
     pub line_channel_secret: Option<String>,
-    #[serde(rename = "lineChannelAccessToken", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "lineChannelAccessToken",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub line_channel_access_token: Option<String>,
     /// LINE user IDs ("U...") allowed to talk to the bot; empty/unset = nobody.
     #[serde(rename = "lineAllowedUserIds", skip_serializing_if = "Option::is_none")]
@@ -824,7 +914,10 @@ pub struct AgentOverride {
     pub agent_loop_profile: Option<String>,
     #[serde(rename = "graphProfile", skip_serializing_if = "Option::is_none")]
     pub graph_profile: Option<String>,
-    #[serde(rename = "autoArchitectureType", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "autoArchitectureType",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub auto_architecture_type: Option<String>,
     #[serde(rename = "autoAgentCount", skip_serializing_if = "Option::is_none")]
     pub auto_agent_count: Option<serde_json::Value>,
@@ -920,7 +1013,9 @@ pub fn generate_token() -> String {
         .chars()
         .collect();
     let mut rng = rand::thread_rng();
-    (0..48).map(|_| chars[rng.gen_range(0..chars.len())]).collect()
+    (0..48)
+        .map(|_| chars[rng.gen_range(0..chars.len())])
+        .collect()
 }
 
 pub async fn is_valid_file_token(token: &str) -> bool {
@@ -1011,10 +1106,7 @@ pub async fn append_agent_history(session_id: &str, file: &str, entry: &serde_js
 
 #[allow(dead_code)]
 pub async fn read_agent_history(session_id: &str, file: &str) -> Vec<serde_json::Value> {
-    let fp = data_dir()
-        .join("agent_history")
-        .join(session_id)
-        .join(file);
+    let fp = data_dir().join("agent_history").join(session_id).join(file);
     match fs::read_to_string(&fp).await {
         Ok(content) => content
             .lines()
@@ -1038,7 +1130,9 @@ pub async fn delete_agent_history(session_id: &str) {
 // ---------------------------------------------------------------------------
 
 pub fn validate_path(sandbox_dir: &str, requested: &str) -> Result<PathBuf, String> {
-    let root = std::path::Path::new(sandbox_dir).canonicalize().unwrap_or_else(|_| PathBuf::from(sandbox_dir));
+    let root = std::path::Path::new(sandbox_dir)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(sandbox_dir));
     let resolved = root.join(requested);
     let resolved = resolved.canonicalize().unwrap_or(resolved);
     if !resolved.starts_with(&root) {
@@ -1047,7 +1141,10 @@ pub fn validate_path(sandbox_dir: &str, requested: &str) -> Result<PathBuf, Stri
     Ok(resolved)
 }
 
-pub async fn list_files(sandbox_dir: &str, sub_path: &str) -> Result<Vec<serde_json::Value>, String> {
+pub async fn list_files(
+    sandbox_dir: &str,
+    sub_path: &str,
+) -> Result<Vec<serde_json::Value>, String> {
     if let Some(rb) = get_remote_backend() {
         let encoded = urlencoding::encode(sub_path);
         let path = format!("/api/files?path={}", encoded);
@@ -1165,7 +1262,9 @@ pub async fn write_file_bytes(
     if let Some(parent) = resolved.parent() {
         let _ = fs::create_dir_all(parent).await;
     }
-    fs::write(&resolved, &bytes).await.map_err(|e| e.to_string())
+    fs::write(&resolved, &bytes)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Read raw bytes from the sandbox — remote-aware (downloads from the
@@ -1184,7 +1283,11 @@ pub async fn read_file_bytes(sandbox_dir: &str, file_path: &str) -> Result<Vec<u
         if !resp.status().is_success() {
             return Err(format!("Remote download failed: HTTP {}", resp.status()));
         }
-        return resp.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string());
+        return resp
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| e.to_string());
     }
     let resolved = validate_path(sandbox_dir, file_path)?;
     fs::read(&resolved).await.map_err(|e| e.to_string())
@@ -1197,17 +1300,13 @@ pub async fn delete_file_or_dir(sandbox_dir: &str, file_path: &str) -> Result<()
         return Ok(());
     }
     let resolved = validate_path(sandbox_dir, file_path)?;
-    let meta = fs::metadata(&resolved)
-        .await
-        .map_err(|e| e.to_string())?;
+    let meta = fs::metadata(&resolved).await.map_err(|e| e.to_string())?;
     if meta.is_dir() {
         fs::remove_dir_all(&resolved)
             .await
             .map_err(|e| e.to_string())
     } else {
-        fs::remove_file(&resolved)
-            .await
-            .map_err(|e| e.to_string())
+        fs::remove_file(&resolved).await.map_err(|e| e.to_string())
     }
 }
 

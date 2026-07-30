@@ -10,16 +10,16 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::broadcast;
+use tokio::sync::Mutex as TokioMutex;
 use tracing::info;
 use uuid::Uuid;
 
+use crate::server::data::get_settings;
 use crate::server::services::toolbox::{
-    call_with_tools, load_agent_yaml, shutdown_realtime_session,
-    start_realtime_session, SubAgentConfig, ToolUpdate,
+    call_with_tools, load_agent_yaml, shutdown_realtime_session, start_realtime_session,
+    SubAgentConfig, ToolUpdate,
 };
-use crate::server::data::{get_settings};
 
 // ---------------------------------------------------------------------------
 // Remote task state
@@ -29,14 +29,14 @@ use crate::server::data::{get_settings};
 struct RemoteTaskEntry {
     id: String,
     task: String,
-    status: String,           // "pending", "running", "completed", "failed", "killed"
+    status: String, // "pending", "running", "completed", "failed", "killed"
     progress: Vec<Value>,
     result: Option<String>,
     session_id: String,
     created_at: String,
     completed_at: Option<String>,
     progress_seq: u64,
-    owner_token: String,      // token that created this task (for session isolation)
+    owner_token: String, // token that created this task (for session isolation)
 }
 
 static REMOTE_TASKS: OnceLock<TokioMutex<HashMap<String, RemoteTaskEntry>>> = OnceLock::new();
@@ -72,7 +72,9 @@ fn notify_task_updated(task_id: &str) {
 }
 
 fn now_iso() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+    chrono::Utc::now()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -130,13 +132,19 @@ async fn submit_task(headers: HeaderMap, Json(body): Json<SubmitTaskBody>) -> im
     let config_file = if mode == "single" {
         None
     } else {
-        body.config_file.clone().filter(|f| !f.is_empty()).or_else(|| {
-            if settings.sub_agent_enabled == Some(true) {
-                settings.sub_agent_config_file.clone().filter(|f| !f.is_empty())
-            } else {
-                None
-            }
-        })
+        body.config_file
+            .clone()
+            .filter(|f| !f.is_empty())
+            .or_else(|| {
+                if settings.sub_agent_enabled == Some(true) {
+                    settings
+                        .sub_agent_config_file
+                        .clone()
+                        .filter(|f| !f.is_empty())
+                } else {
+                    None
+                }
+            })
     };
 
     let entry = RemoteTaskEntry {
@@ -152,10 +160,7 @@ async fn submit_task(headers: HeaderMap, Json(body): Json<SubmitTaskBody>) -> im
         owner_token: caller_token,
     };
 
-    remote_tasks()
-        .lock()
-        .await
-        .insert(task_id.clone(), entry);
+    remote_tasks().lock().await.insert(task_id.clone(), entry);
 
     // Spawn the task processor
     let task = body.task.clone();
@@ -201,11 +206,7 @@ async fn list_tasks(headers: HeaderMap) -> impl IntoResponse {
         .collect();
 
     // Sort by created_at descending
-    list.sort_by(|a, b| {
-        b["createdAt"]
-            .as_str()
-            .cmp(&a["createdAt"].as_str())
-    });
+    list.sort_by(|a, b| b["createdAt"].as_str().cmp(&a["createdAt"].as_str()));
 
     Json(json!({ "ok": true, "tasks": list }))
 }
@@ -376,7 +377,13 @@ async fn process_remote_task(
             .iter()
             .filter_map(|e| serde_json::to_value(e).ok())
             .collect::<Vec<_>>();
-        (pool, settings.router_tier.clone().unwrap_or_else(|| "fast".into()))
+        (
+            pool,
+            settings
+                .router_tier
+                .clone()
+                .unwrap_or_else(|| "fast".into()),
+        )
     } else {
         (Vec::new(), String::new())
     };
@@ -384,20 +391,34 @@ async fn process_remote_task(
     // Router: orchestrator runs on the user-chosen pool model (workers keep
     // their own per-agent models). Empty/unset → main model.
     let (api_key, api_url, model) = match (mode == "router")
-        .then(|| settings.router_orchestrator_model.as_ref().filter(|s| !s.is_empty()))
+        .then(|| {
+            settings
+                .router_orchestrator_model
+                .as_ref()
+                .filter(|s| !s.is_empty())
+        })
         .flatten()
     {
         Some(want) => {
-            match settings.model_pool.as_ref().and_then(|pool| pool.iter().find(|e| &e.model == want)) {
+            match settings
+                .model_pool
+                .as_ref()
+                .and_then(|pool| pool.iter().find(|e| &e.model == want))
+            {
                 Some(e) => {
                     let u = if e.api_url.trim().is_empty() {
                         api_url.clone()
-                    } else if e.api_url == "claude-code" || e.api_url.ends_with("/chat/completions") {
+                    } else if e.api_url == "claude-code" || e.api_url.ends_with("/chat/completions")
+                    {
                         e.api_url.clone()
                     } else {
                         format!("{}/chat/completions", e.api_url.trim_end_matches('/'))
                     };
-                    let k = if e.api_key.trim().is_empty() { api_key.clone() } else { e.api_key.clone() };
+                    let k = if e.api_key.trim().is_empty() {
+                        api_key.clone()
+                    } else {
+                        e.api_key.clone()
+                    };
                     (k, u, e.model.clone())
                 }
                 None => (api_key, api_url, want.clone()),
@@ -414,19 +435,17 @@ async fn process_remote_task(
 
     if has_agents {
         let cf = config_file.as_ref().unwrap();
-        add_progress(
-            &task_id,
-            &format!("Booting agent team from {}", cf),
-        )
-        .await;
+        add_progress(&task_id, &format!("Booting agent team from {}", cf)).await;
 
-        let booted = start_realtime_session(
-            &session_id, cf, &api_key, &api_url, &model, &sandbox_dir,
-        )
-        .await;
+        let booted =
+            start_realtime_session(&session_id, cf, &api_key, &api_url, &model, &sandbox_dir).await;
 
         if !booted {
-            add_progress(&task_id, "Failed to boot agent team, falling back to simple mode").await;
+            add_progress(
+                &task_id,
+                "Failed to boot agent team, falling back to simple mode",
+            )
+            .await;
         }
     }
 
@@ -475,7 +494,11 @@ async fn process_remote_task(
                     depth: 0,
                     session_id: session_id.clone(),
                     agent_id: "main".to_string(),
-                    mode: if mode == "single" { "auto".to_string() } else { mode.clone() },
+                    mode: if mode == "single" {
+                        "auto".to_string()
+                    } else {
+                        mode.clone()
+                    },
                     agent_role: "orchestrator".to_string(),
                     cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     loop_profile: loop_profile.clone(),
@@ -615,9 +638,7 @@ pub async fn get_all_remote_tasks() -> Vec<Value> {
             })
         })
         .collect();
-    list.sort_by(|a, b| {
-        b["createdAt"].as_str().cmp(&a["createdAt"].as_str())
-    });
+    list.sort_by(|a, b| b["createdAt"].as_str().cmp(&a["createdAt"].as_str()));
     list
 }
 
@@ -726,7 +747,11 @@ async fn handle_ws_connection(mut socket: axum::extract::ws::WebSocket) {
                 info!("[WS] Client lagged by {} events, sending snapshot", n);
                 let snapshot = get_all_remote_tasks().await;
                 let msg = json!({ "type": "snapshot", "tasks": snapshot });
-                if socket.send(Message::Text(msg.to_string().into())).await.is_err() {
+                if socket
+                    .send(Message::Text(msg.to_string().into()))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }

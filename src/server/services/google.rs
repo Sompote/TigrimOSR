@@ -39,7 +39,12 @@ pub fn find_uvx() -> Option<String> {
     let probe = std::process::Command::new("where").arg("uvx").output();
     if let Ok(out) = probe {
         if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
+            let path = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if !path.is_empty() {
                 return Some(path);
             }
@@ -55,7 +60,9 @@ pub fn find_uvx() -> Option<String> {
         candidates.push(format!("/opt/homebrew/bin/{exe}"));
         candidates.push(format!("/usr/local/bin/{exe}"));
     }
-    candidates.into_iter().find(|c| std::path::Path::new(c).exists())
+    candidates
+        .into_iter()
+        .find(|c| std::path::Path::new(c).exists())
 }
 
 /// Install uv (which provides uvx) with the official installer. Returns the
@@ -65,19 +72,30 @@ pub async fn install_uv() -> Result<String, String> {
     #[cfg(not(target_os = "windows"))]
     let mut cmd = {
         let mut c = tokio::process::Command::new("/bin/sh");
-        c.arg("-c").arg("curl -LsSf https://astral.sh/uv/install.sh | sh");
+        c.arg("-c")
+            .arg("curl -LsSf https://astral.sh/uv/install.sh | sh");
         c
     };
     #[cfg(target_os = "windows")]
     let mut cmd = {
         let mut c = tokio::process::Command::new("powershell");
-        c.args(["-ExecutionPolicy", "ByPass", "-NoProfile", "-Command",
-            "irm https://astral.sh/uv/install.ps1 | iex"]);
+        c.args([
+            "-ExecutionPolicy",
+            "ByPass",
+            "-NoProfile",
+            "-Command",
+            "irm https://astral.sh/uv/install.ps1 | iex",
+        ]);
         c
     };
-    cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
     let run = tokio::time::timeout(std::time::Duration::from_secs(180), async {
-        cmd.spawn().map_err(|e| format!("Failed to run installer: {e}"))?.wait_with_output().await
+        cmd.spawn()
+            .map_err(|e| format!("Failed to run installer: {e}"))?
+            .wait_with_output()
+            .await
             .map_err(|e| format!("Installer failed: {e}"))
     })
     .await
@@ -102,7 +120,11 @@ pub fn build_google_mcp_entry(
     calendar: bool,
     drive: bool,
 ) -> crate::server::data::McpTool {
-    let mut args = vec!["workspace-mcp".to_string(), "--single-user".to_string(), "--tools".to_string()];
+    let mut args = vec![
+        "workspace-mcp".to_string(),
+        "--single-user".to_string(),
+        "--tools".to_string(),
+    ];
     if gmail {
         args.push("gmail".to_string());
     }
@@ -114,16 +136,25 @@ pub fn build_google_mcp_entry(
     }
 
     let mut env = std::collections::HashMap::new();
-    env.insert("GOOGLE_OAUTH_CLIENT_ID".to_string(), client_id.trim().to_string());
+    env.insert(
+        "GOOGLE_OAUTH_CLIENT_ID".to_string(),
+        client_id.trim().to_string(),
+    );
     if !client_secret.trim().is_empty() {
-        env.insert("GOOGLE_OAUTH_CLIENT_SECRET".to_string(), client_secret.trim().to_string());
+        env.insert(
+            "GOOGLE_OAUTH_CLIENT_SECRET".to_string(),
+            client_secret.trim().to_string(),
+        );
     }
     // The local OAuth callback (http://localhost:8000/oauth2callback) is plain
     // http — allow it.
     env.insert("OAUTHLIB_INSECURE_TRANSPORT".to_string(), "1".to_string());
     // Pin the callback port so the login URL and the AndrewOS relay
     // (/oauth2callback) are deterministic.
-    env.insert("WORKSPACE_MCP_PORT".to_string(), GOOGLE_CALLBACK_PORT.to_string());
+    env.insert(
+        "WORKSPACE_MCP_PORT".to_string(),
+        GOOGLE_CALLBACK_PORT.to_string(),
+    );
     if !email.trim().is_empty() {
         env.insert("USER_GOOGLE_EMAIL".to_string(), email.trim().to_string());
     }
@@ -165,7 +196,11 @@ pub async fn start_login(email: &str) -> Value {
         .iter()
         .find(|t| t.as_str() == "start_google_auth")
         .or_else(|| tools.iter().find(|t| t.contains("auth")))
-        .or_else(|| tools.iter().find(|t| t.contains("list") || t.contains("search")))
+        .or_else(|| {
+            tools
+                .iter()
+                .find(|t| t.contains("list") || t.contains("search"))
+        })
         .cloned();
     let Some(tool) = tool else {
         return json!({ "ok": false, "message": "Connected, but the server exposed no tools to trigger login with." });

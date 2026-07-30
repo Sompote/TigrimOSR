@@ -1,8 +1,8 @@
-use eframe::egui;
 use crate::server::data::{
     self, get_chat_history, get_projects, get_skills, save_chat_history, save_projects,
     AgentOverride, ChatSession, Project, Skill,
 };
+use eframe::egui;
 
 // ---------------------------------------------------------------------------
 // Detail panel tab enum
@@ -163,7 +163,10 @@ impl ProjectsView {
                 match client.get(&url).bearer_auth(&token).send().await {
                     Ok(resp) => {
                         if let Ok(val) = resp.json::<serde_json::Value>().await {
-                            val.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                            val.get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string()
                         } else {
                             String::new()
                         }
@@ -193,7 +196,13 @@ impl ProjectsView {
             let ok = runtime.block_on(async {
                 let client = reqwest::Client::new();
                 let body = serde_json::json!({ "content": content });
-                client.put(&url).bearer_auth(&token).json(&body).send().await.is_ok()
+                client
+                    .put(&url)
+                    .bearer_auth(&token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .is_ok()
             });
             if ok {
                 self.memory_dirty = false;
@@ -324,8 +333,7 @@ impl ProjectsView {
                 if ui
                     .add(
                         egui::Button::new(
-                            egui::RichText::new("+ Create Project")
-                                .color(egui::Color32::WHITE),
+                            egui::RichText::new("+ Create Project").color(egui::Color32::WHITE),
                         )
                         .fill(crate::ui::theme::accent_color()),
                     )
@@ -357,11 +365,9 @@ impl ProjectsView {
                 );
                 ui.add_space(8.0);
                 ui.label(
-                    egui::RichText::new(
-                        "Click \"+ Create Project\" to set up a new workspace.",
-                    )
-                    .size(12.0)
-                    .color(egui::Color32::GRAY),
+                    egui::RichText::new("Click \"+ Create Project\" to set up a new workspace.")
+                        .size(12.0)
+                        .color(egui::Color32::GRAY),
                 );
             });
         } else {
@@ -455,29 +461,41 @@ impl ProjectsView {
                                 .color(crate::ui::theme::accent_color()),
                         );
                         ui.vertical(|ui| {
-                            ui.add(egui::Label::new(egui::RichText::new(&project.name).strong().size(14.0)).wrap());
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&project.name).strong().size(14.0),
+                                )
+                                .wrap(),
+                            );
                             if !project.description.is_empty() {
-                                ui.add(egui::Label::new(
-                                    egui::RichText::new(&project.description)
-                                        .size(11.0)
-                                        .color(egui::Color32::GRAY),
-                                ).wrap());
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&project.description)
+                                            .size(11.0)
+                                            .color(egui::Color32::GRAY),
+                                    )
+                                    .wrap(),
+                                );
                             }
                             ui.horizontal_wrapped(|ui| {
                                 if !project.working_folder.is_empty() {
                                     // Show only last path component to save space
-                                    let folder_display = std::path::Path::new(&project.working_folder)
-                                        .file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or(&project.working_folder);
-                                    ui.add(egui::Label::new(
-                                        egui::RichText::new(format!(
-                                            "\u{1F4C2} {}",
-                                            folder_display
-                                        ))
-                                        .size(10.0)
-                                        .color(egui::Color32::from_gray(120)),
-                                    ).wrap());
+                                    let folder_display =
+                                        std::path::Path::new(&project.working_folder)
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or(&project.working_folder);
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(format!(
+                                                "\u{1F4C2} {}",
+                                                folder_display
+                                            ))
+                                            .size(10.0)
+                                            .color(egui::Color32::from_gray(120)),
+                                        )
+                                        .wrap(),
+                                    );
                                 }
                                 let skill_count = project.skills.len();
                                 ui.label(
@@ -539,26 +557,29 @@ impl ProjectsView {
 
         // ── Tab bar ───────────────────────────────────────────────────
         ui.horizontal(|ui| {
-            let tab_btn = |ui: &mut egui::Ui, label: &str, tab: DetailTab, current: &mut DetailTab| {
-                let is_active = *current == tab;
-                let text = if is_active {
-                    egui::RichText::new(label).strong().color(egui::Color32::WHITE)
-                } else {
-                    egui::RichText::new(label).color(egui::Color32::GRAY)
+            let tab_btn =
+                |ui: &mut egui::Ui, label: &str, tab: DetailTab, current: &mut DetailTab| {
+                    let is_active = *current == tab;
+                    let text = if is_active {
+                        egui::RichText::new(label)
+                            .strong()
+                            .color(egui::Color32::WHITE)
+                    } else {
+                        egui::RichText::new(label).color(egui::Color32::GRAY)
+                    };
+                    let btn = if is_active {
+                        egui::Button::new(text)
+                            .fill(crate::ui::theme::accent_color())
+                            .corner_radius(egui::CornerRadius::same(4))
+                    } else {
+                        egui::Button::new(text)
+                            .fill(egui::Color32::TRANSPARENT)
+                            .corner_radius(egui::CornerRadius::same(4))
+                    };
+                    if ui.add(btn).clicked() {
+                        *current = tab;
+                    }
                 };
-                let btn = if is_active {
-                    egui::Button::new(text)
-                        .fill(crate::ui::theme::accent_color())
-                        .corner_radius(egui::CornerRadius::same(4))
-                } else {
-                    egui::Button::new(text)
-                        .fill(egui::Color32::TRANSPARENT)
-                        .corner_radius(egui::CornerRadius::same(4))
-                };
-                if ui.add(btn).clicked() {
-                    *current = tab;
-                }
-            };
             tab_btn(ui, "Overview", DetailTab::Overview, &mut self.detail_tab);
             tab_btn(ui, "Memory", DetailTab::Memory, &mut self.detail_tab);
             tab_btn(ui, "Files", DetailTab::Files, &mut self.detail_tab);
@@ -611,8 +632,7 @@ impl ProjectsView {
                             .set_title("Select working folder")
                             .pick_folder()
                         {
-                            self.projects[idx].working_folder =
-                                path.to_string_lossy().to_string();
+                            self.projects[idx].working_folder = path.to_string_lossy().to_string();
                         }
                     }
                 });
@@ -648,13 +668,8 @@ impl ProjectsView {
         // ── System Prompt ─────────────────────────────────────────────
         ui.collapsing("System Prompt", |ui| {
             // Sync buffer from project on first open
-            let current = self.projects[idx]
-                .system_prompt
-                .clone()
-                .unwrap_or_default();
-            if self.system_prompt_text != current
-                && self.system_prompt_text.is_empty()
-            {
+            let current = self.projects[idx].system_prompt.clone().unwrap_or_default();
+            if self.system_prompt_text != current && self.system_prompt_text.is_empty() {
                 self.system_prompt_text = current;
             }
             ui.label(
@@ -670,11 +685,7 @@ impl ProjectsView {
             );
             if ui.button("Apply System Prompt").clicked() {
                 let val = self.system_prompt_text.trim().to_string();
-                self.projects[idx].system_prompt = if val.is_empty() {
-                    None
-                } else {
-                    Some(val)
-                };
+                self.projects[idx].system_prompt = if val.is_empty() { None } else { Some(val) };
             }
         });
 
@@ -824,12 +835,9 @@ impl ProjectsView {
 
             // Delete button
             if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new("Delete")
-                            .color(egui::Color32::from_rgb(239, 68, 68)),
-                    ),
-                )
+                .add(egui::Button::new(
+                    egui::RichText::new("Delete").color(egui::Color32::from_rgb(239, 68, 68)),
+                ))
                 .clicked()
             {
                 self.confirm_delete_id = Some(sel_id.to_string());
@@ -843,10 +851,7 @@ impl ProjectsView {
                 .inner_margin(egui::Margin::same(10))
                 .corner_radius(egui::CornerRadius::same(6))
                 .fill(egui::Color32::from_rgb(50, 20, 20))
-                .stroke(egui::Stroke::new(
-                    1.0,
-                    egui::Color32::from_rgb(239, 68, 68),
-                ))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68)))
                 .show(ui, |ui| {
                     ui.label(
                         egui::RichText::new("Are you sure you want to delete this project?")
@@ -904,12 +909,9 @@ impl ProjectsView {
                 .strong(),
         );
         ui.label(
-            egui::RichText::new(format!(
-                "Stored at: data/projects/{}/memory.md",
-                project_id
-            ))
-            .size(10.0)
-            .color(egui::Color32::GRAY),
+            egui::RichText::new(format!("Stored at: data/projects/{}/memory.md", project_id))
+                .size(10.0)
+                .color(egui::Color32::GRAY),
         );
         ui.add_space(4.0);
 
@@ -940,10 +942,8 @@ impl ProjectsView {
 
             if ui
                 .add(
-                    egui::Button::new(
-                        egui::RichText::new("Reload").color(egui::Color32::WHITE),
-                    )
-                    .fill(crate::ui::theme::accent_color()),
+                    egui::Button::new(egui::RichText::new("Reload").color(egui::Color32::WHITE))
+                        .fill(crate::ui::theme::accent_color()),
                 )
                 .clicked()
             {
@@ -1035,13 +1035,13 @@ impl ProjectsView {
                 let mut nav: Option<String> = None;
                 for (i, seg) in segments.iter().enumerate() {
                     ui.label(
-                        egui::RichText::new("/").size(12.0).color(egui::Color32::GRAY),
+                        egui::RichText::new("/")
+                            .size(12.0)
+                            .color(egui::Color32::GRAY),
                     );
                     let partial: String = segments[..=i].join("/");
                     if ui
-                        .add(
-                            egui::Button::new(egui::RichText::new(*seg).size(12.0)).frame(false),
-                        )
+                        .add(egui::Button::new(egui::RichText::new(*seg).size(12.0)).frame(false))
                         .clicked()
                     {
                         nav = Some(partial);
@@ -1155,8 +1155,7 @@ impl ProjectsView {
                 ui.label("Folder name:");
                 let resp = ui.text_edit_singleline(&mut self.file_new_dir_name);
                 if ui.button("Create").clicked()
-                    || (resp.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                 {
                     let dir_name = self.file_new_dir_name.trim().to_string();
                     if !dir_name.is_empty() {
@@ -1165,8 +1164,7 @@ impl ProjectsView {
                         } else {
                             format!("{}/{}", self.file_browser_path, dir_name)
                         };
-                        let full =
-                            std::path::Path::new(working_folder).join(&rel);
+                        let full = std::path::Path::new(working_folder).join(&rel);
                         match runtime.block_on(tokio::fs::create_dir_all(&full)) {
                             Ok(()) => {
                                 self.file_new_dir_name.clear();
@@ -1176,8 +1174,7 @@ impl ProjectsView {
                                     Some((format!("Created folder: {}", dir_name), false));
                             }
                             Err(e) => {
-                                self.file_status =
-                                    Some((format!("Failed: {}", e), true));
+                                self.file_status = Some((format!("Failed: {}", e), true));
                             }
                         }
                     }
@@ -1280,8 +1277,7 @@ impl ProjectsView {
                                 egui::RichText::new(&label_text).size(12.0)
                             };
                             let btn = if is_sel {
-                                egui::Button::new(text)
-                                    .fill(crate::ui::theme::accent_color())
+                                egui::Button::new(text).fill(crate::ui::theme::accent_color())
                             } else {
                                 egui::Button::new(text).frame(false)
                             };
@@ -1317,7 +1313,8 @@ impl ProjectsView {
                                         let rgba = img.to_rgba8();
                                         let size = [rgba.width() as usize, rgba.height() as usize];
                                         let pixels = rgba.into_raw();
-                                        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                                        let color_image =
+                                            egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
                                         self.file_image_texture = Some(ui.ctx().load_texture(
                                             format!("file_preview_{}", path),
                                             color_image,
@@ -1326,7 +1323,8 @@ impl ProjectsView {
                                     }
                                     Err(e) => {
                                         self.file_image_texture = None;
-                                        self.file_status = Some((format!("Failed to load image: {}", e), true));
+                                        self.file_status =
+                                            Some((format!("Failed to load image: {}", e), true));
                                     }
                                 }
                             } else {
@@ -1364,98 +1362,75 @@ impl ProjectsView {
             // Right: file viewer
             ui.vertical(|ui| {
                 if let Some(ref selected) = self.file_selected.clone() {
-                    let file_name = selected
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(selected)
-                        .to_string();
+                    let file_name = selected.rsplit('/').next().unwrap_or(selected).to_string();
 
                     ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(&file_name).size(13.0).strong(),
-                        );
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                // Delete
+                        ui.label(egui::RichText::new(&file_name).size(13.0).strong());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // Delete
+                            if ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new("Delete")
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(239, 68, 68)),
+                                ))
+                                .clicked()
+                            {
+                                let wf = working_folder.to_string();
+                                let p = selected.clone();
+                                match runtime.block_on(data::delete_file_or_dir(&wf, &p)) {
+                                    Ok(()) => {
+                                        self.file_selected = None;
+                                        self.file_content.clear();
+                                        self.file_editing = false;
+                                        self.file_browser_needs_refresh = true;
+                                        self.file_status = Some(("Deleted.".to_string(), false));
+                                    }
+                                    Err(e) => {
+                                        self.file_status =
+                                            Some((format!("Delete failed: {}", e), true));
+                                    }
+                                }
+                            }
+
+                            // Save (if editing)
+                            if self.file_editing {
                                 if ui
-                                    .add(egui::Button::new(
-                                        egui::RichText::new("Delete")
-                                            .size(11.0)
-                                            .color(egui::Color32::from_rgb(239, 68, 68)),
-                                    ))
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("Save")
+                                                .size(11.0)
+                                                .color(egui::Color32::WHITE),
+                                        )
+                                        .fill(egui::Color32::from_rgb(34, 197, 94)),
+                                    )
                                     .clicked()
                                 {
                                     let wf = working_folder.to_string();
                                     let p = selected.clone();
-                                    match runtime
-                                        .block_on(data::delete_file_or_dir(&wf, &p))
-                                    {
+                                    let c = self.file_content.clone();
+                                    match runtime.block_on(data::write_file_content(&wf, &p, &c)) {
                                         Ok(()) => {
-                                            self.file_selected = None;
-                                            self.file_content.clear();
                                             self.file_editing = false;
+                                            self.file_status = Some(("Saved.".to_string(), false));
                                             self.file_browser_needs_refresh = true;
-                                            self.file_status =
-                                                Some(("Deleted.".to_string(), false));
                                         }
                                         Err(e) => {
-                                            self.file_status = Some((
-                                                format!("Delete failed: {}", e),
-                                                true,
-                                            ));
+                                            self.file_status =
+                                                Some((format!("Save failed: {}", e), true));
                                         }
                                     }
                                 }
+                            }
 
-                                // Save (if editing)
-                                if self.file_editing {
-                                    if ui
-                                        .add(
-                                            egui::Button::new(
-                                                egui::RichText::new("Save")
-                                                    .size(11.0)
-                                                    .color(egui::Color32::WHITE),
-                                            )
-                                            .fill(egui::Color32::from_rgb(34, 197, 94)),
-                                        )
-                                        .clicked()
-                                    {
-                                        let wf = working_folder.to_string();
-                                        let p = selected.clone();
-                                        let c = self.file_content.clone();
-                                        match runtime.block_on(data::write_file_content(
-                                            &wf, &p, &c,
-                                        )) {
-                                            Ok(()) => {
-                                                self.file_editing = false;
-                                                self.file_status =
-                                                    Some(("Saved.".to_string(), false));
-                                                self.file_browser_needs_refresh = true;
-                                            }
-                                            Err(e) => {
-                                                self.file_status = Some((
-                                                    format!("Save failed: {}", e),
-                                                    true,
-                                                ));
-                                            }
-                                        }
-                                    }
+                            // Edit toggle (not for binary files)
+                            if !self.file_is_binary {
+                                let edit_label = if self.file_editing { "View" } else { "Edit" };
+                                if ui.button(edit_label).clicked() {
+                                    self.file_editing = !self.file_editing;
                                 }
-
-                                // Edit toggle (not for binary files)
-                                if !self.file_is_binary {
-                                    let edit_label = if self.file_editing {
-                                        "View"
-                                    } else {
-                                        "Edit"
-                                    };
-                                    if ui.button(edit_label).clicked() {
-                                        self.file_editing = !self.file_editing;
-                                    }
-                                }
-                            },
-                        );
+                            }
+                        });
                     });
                     ui.separator();
 
@@ -1471,7 +1446,8 @@ impl ProjectsView {
                                     let tex_size = tex.size_vec2();
                                     let avail_w = ui.available_width().min(tex_size.x);
                                     let scale = avail_w / tex_size.x;
-                                    let display_size = egui::vec2(tex_size.x * scale, tex_size.y * scale);
+                                    let display_size =
+                                        egui::vec2(tex_size.x * scale, tex_size.y * scale);
                                     ui.image(egui::load::SizedTexture::new(tex.id(), display_size));
                                 } else {
                                     ui.label(
@@ -1491,13 +1467,11 @@ impl ProjectsView {
                                     );
                                 } else {
                                     ui.add(
-                                        egui::TextEdit::multiline(
-                                            &mut self.file_content.as_str(),
-                                        )
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(f32::INFINITY)
-                                        .desired_rows(rows)
-                                        .code_editor(),
+                                        egui::TextEdit::multiline(&mut self.file_content.as_str())
+                                            .font(egui::TextStyle::Monospace)
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(rows)
+                                            .code_editor(),
                                     );
                                 }
                             }
@@ -1519,12 +1493,7 @@ impl ProjectsView {
     // =====================================================================
     // TAB: Skills
     // =====================================================================
-    fn show_skills_tab(
-        &mut self,
-        ui: &mut egui::Ui,
-        runtime: &tokio::runtime::Handle,
-        idx: usize,
-    ) {
+    fn show_skills_tab(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle, idx: usize) {
         // Always reload skills when tab is shown
         self.available_skills = runtime.block_on(get_skills());
         self.skills_loaded = true;
@@ -1537,156 +1506,145 @@ impl ProjectsView {
         let mut skill_to_add: Option<String> = None;
 
         ui.vertical(|ui| {
-        ui.set_min_width(full_width);
+            ui.set_min_width(full_width);
 
-        ui.label(
-            egui::RichText::new(format!("Assigned Skills ({})", project_skills.len()))
-                .size(14.0)
-                .strong(),
-        );
-        ui.add_space(4.0);
-
-        if project_skills.is_empty() {
             ui.label(
-                egui::RichText::new("No skills assigned yet")
-                    .size(12.0)
-                    .color(egui::Color32::GRAY),
+                egui::RichText::new(format!("Assigned Skills ({})", project_skills.len()))
+                    .size(14.0)
+                    .strong(),
             );
-        } else {
-            for (si, skill_id) in project_skills.iter().enumerate() {
-                let skill_info = self
-                    .available_skills
-                    .iter()
-                    .find(|s| &s.id == skill_id);
+            ui.add_space(4.0);
 
-                egui::Frame::default()
-                    .inner_margin(egui::Margin::same(10))
-                    .corner_radius(egui::CornerRadius::same(6))
-                    .fill(egui::Color32::from_rgb(220, 238, 255))
-                    .stroke(egui::Stroke::new(1.5, crate::ui::theme::accent_color()))
-                    .show(ui, |ui| {
-                        if let Some(info) = skill_info {
-                            let status = if info.enabled { "enabled" } else { "disabled" };
-                            let status_color = if info.enabled {
-                                egui::Color32::from_rgb(34, 197, 94)
-                            } else {
-                                egui::Color32::from_rgb(156, 163, 175)
-                            };
-                            ui.label(
-                                egui::RichText::new(&info.name)
-                                    .size(13.0)
-                                    .strong()
-                                    .color(egui::Color32::from_rgb(20, 50, 100)),
-                            );
-                            ui.label(
-                                egui::RichText::new(&info.description)
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(80, 80, 100)),
-                            );
-                            ui.label(
-                                egui::RichText::new(status)
-                                    .size(10.0)
-                                    .color(status_color),
-                            );
-                        } else {
-                            ui.label(
-                                egui::RichText::new(format!("Skill: {}", skill_id))
-                                    .size(12.0)
-                                    .color(egui::Color32::from_rgb(20, 50, 100)),
-                            );
-                        }
-                        ui.add_space(4.0);
-                        if ui
-                            .add(egui::Button::new(
-                                egui::RichText::new("Remove")
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(239, 68, 68)),
-                            ))
-                            .clicked()
-                        {
-                            remove_idx = Some(si);
-                        }
-                    });
-                ui.add_space(4.0);
-            }
-        }
+            if project_skills.is_empty() {
+                ui.label(
+                    egui::RichText::new("No skills assigned yet")
+                        .size(12.0)
+                        .color(egui::Color32::GRAY),
+                );
+            } else {
+                for (si, skill_id) in project_skills.iter().enumerate() {
+                    let skill_info = self.available_skills.iter().find(|s| &s.id == skill_id);
 
-        if let Some(ri) = remove_idx {
-            self.projects[idx].skills.remove(ri);
-            self.projects[idx].updated_at = chrono::Utc::now().to_rfc3339();
-            let to_save = self.projects.clone();
-            runtime.block_on(save_projects(&to_save));
-        }
-
-        // ── Available Skills to Add ──
-        ui.add_space(12.0);
-        ui.separator();
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new("Available Skills")
-                .size(14.0)
-                .strong(),
-        );
-        ui.add_space(4.0);
-
-        let avail = self.available_skills.clone();
-        let unassigned: Vec<_> = avail.iter()
-            .filter(|s| !self.projects[idx].skills.contains(&s.id))
-            .collect();
-
-        if unassigned.is_empty() && avail.is_empty() {
-            ui.label(
-                egui::RichText::new("No skills in the system. Create skills in the Skills tab.")
-                    .size(12.0)
-                    .color(egui::Color32::GRAY),
-            );
-        } else if unassigned.is_empty() {
-            ui.label(
-                egui::RichText::new("All skills are already assigned")
-                    .size(12.0)
-                    .color(egui::Color32::from_rgb(34, 197, 94)),
-            );
-        } else {
-            for skill in &unassigned {
-                egui::Frame::default()
-                    .inner_margin(egui::Margin::same(10))
-                    .corner_radius(egui::CornerRadius::same(6))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(160)))
-                    .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(&skill.name)
-                                .size(13.0)
-                                .strong(),
-                        );
-                        ui.label(
-                            egui::RichText::new(&skill.description)
-                                .size(11.0)
-                                .color(egui::Color32::GRAY),
-                        );
-                        ui.label(
-                            egui::RichText::new(format!("source: {}", skill.source))
-                                .size(9.0)
-                                .color(egui::Color32::from_gray(140)),
-                        );
-                        ui.add_space(4.0);
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new("+ Add")
+                    egui::Frame::default()
+                        .inner_margin(egui::Margin::same(10))
+                        .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_SMALL))
+                        .fill(crate::ui::theme::accent_color().gamma_multiply(0.12))
+                        .stroke(egui::Stroke::new(1.5, crate::ui::theme::accent_color()))
+                        .show(ui, |ui| {
+                            if let Some(info) = skill_info {
+                                let status = if info.enabled { "enabled" } else { "disabled" };
+                                let status_color = if info.enabled {
+                                    egui::Color32::from_rgb(34, 197, 94)
+                                } else {
+                                    egui::Color32::from_rgb(156, 163, 175)
+                                };
+                                ui.label(
+                                    egui::RichText::new(&info.name)
+                                        .size(13.0)
+                                        .strong()
+                                        .color(egui::Color32::from_rgb(20, 50, 100)),
+                                );
+                                ui.label(
+                                    egui::RichText::new(&info.description)
                                         .size(11.0)
-                                        .color(egui::Color32::WHITE),
-                                )
-                                .fill(crate::ui::theme::accent_color()),
-                            )
-                            .clicked()
-                        {
-                            skill_to_add = Some(skill.id.clone());
-                        }
-                    });
-                ui.add_space(4.0);
+                                        .color(egui::Color32::from_rgb(80, 80, 100)),
+                                );
+                                ui.label(
+                                    egui::RichText::new(status).size(10.0).color(status_color),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(format!("Skill: {}", skill_id))
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(20, 50, 100)),
+                                );
+                            }
+                            ui.add_space(4.0);
+                            if ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new("Remove")
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(239, 68, 68)),
+                                ))
+                                .clicked()
+                            {
+                                remove_idx = Some(si);
+                            }
+                        });
+                    ui.add_space(4.0);
+                }
             }
-        }
 
+            if let Some(ri) = remove_idx {
+                self.projects[idx].skills.remove(ri);
+                self.projects[idx].updated_at = chrono::Utc::now().to_rfc3339();
+                let to_save = self.projects.clone();
+                runtime.block_on(save_projects(&to_save));
+            }
+
+            // ── Available Skills to Add ──
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Available Skills").size(14.0).strong());
+            ui.add_space(4.0);
+
+            let avail = self.available_skills.clone();
+            let unassigned: Vec<_> = avail
+                .iter()
+                .filter(|s| !self.projects[idx].skills.contains(&s.id))
+                .collect();
+
+            if unassigned.is_empty() && avail.is_empty() {
+                ui.label(
+                    egui::RichText::new(
+                        "No skills in the system. Create skills in the Skills tab.",
+                    )
+                    .size(12.0)
+                    .color(egui::Color32::GRAY),
+                );
+            } else if unassigned.is_empty() {
+                ui.label(
+                    egui::RichText::new("All skills are already assigned")
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(34, 197, 94)),
+                );
+            } else {
+                for skill in &unassigned {
+                    egui::Frame::default()
+                        .inner_margin(egui::Margin::same(10))
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(160)))
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new(&skill.name).size(13.0).strong());
+                            ui.label(
+                                egui::RichText::new(&skill.description)
+                                    .size(11.0)
+                                    .color(egui::Color32::GRAY),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("source: {}", skill.source))
+                                    .size(9.0)
+                                    .color(egui::Color32::from_gray(140)),
+                            );
+                            ui.add_space(4.0);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("+ Add")
+                                            .size(11.0)
+                                            .color(egui::Color32::WHITE),
+                                    )
+                                    .fill(crate::ui::theme::accent_color()),
+                                )
+                                .clicked()
+                            {
+                                skill_to_add = Some(skill.id.clone());
+                            }
+                        });
+                    ui.add_space(4.0);
+                }
+            }
         }); // end ui.vertical
 
         if let Some(sid) = skill_to_add {
@@ -1716,14 +1674,20 @@ impl ProjectsView {
 
         // Header buttons
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Linked Chat Sessions").size(14.0).strong());
+            ui.label(
+                egui::RichText::new("Linked Chat Sessions")
+                    .size(14.0)
+                    .strong(),
+            );
             ui.label(
                 egui::RichText::new(format!("({})", self.linked_sessions.len()))
                     .size(12.0)
                     .color(egui::Color32::GRAY),
             );
             if ui.button("+ New Chat").clicked() {
-                let project_name = self.projects.iter()
+                let project_name = self
+                    .projects
+                    .iter()
                     .find(|p| p.id == project_id)
                     .map(|p| p.name.clone())
                     .unwrap_or_default();
@@ -1794,14 +1758,17 @@ impl ProjectsView {
                     );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.add(
-                            egui::Button::new(
-                                egui::RichText::new("▶ Open Chat")
-                                    .size(11.0)
-                                    .color(egui::Color32::WHITE),
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("▶ Open Chat")
+                                        .size(11.0)
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .fill(crate::ui::theme::accent_color()),
                             )
-                            .fill(crate::ui::theme::accent_color()),
-                        ).clicked() {
+                            .clicked()
+                        {
                             open_session_id = Some(session.id.clone());
                         }
                         if ui.button("Unlink").clicked() {
@@ -1818,7 +1785,11 @@ impl ProjectsView {
             ui.separator();
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Link Existing Chat").size(13.0).strong());
+                ui.label(
+                    egui::RichText::new("Link Existing Chat")
+                        .size(13.0)
+                        .strong(),
+                );
                 ui.label(
                     egui::RichText::new(format!("({} available)", unlinked.len()))
                         .size(11.0)
@@ -1841,7 +1812,8 @@ impl ProjectsView {
             // Only show results when there's a search query
             if !self.chat_search_query.trim().is_empty() {
                 let query_lower = self.chat_search_query.trim().to_lowercase();
-                let filtered: Vec<_> = unlinked.iter()
+                let filtered: Vec<_> = unlinked
+                    .iter()
                     .filter(|s| s.title.to_lowercase().contains(&query_lower))
                     .take(10)
                     .collect();
@@ -1862,25 +1834,36 @@ impl ProjectsView {
                             .show(ui, |ui| {
                                 ui.label(egui::RichText::new(&session.title).size(12.0));
                                 ui.label(
-                                    egui::RichText::new(format!("{} messages", session.messages.len()))
-                                        .size(10.0)
-                                        .color(egui::Color32::GRAY),
+                                    egui::RichText::new(format!(
+                                        "{} messages",
+                                        session.messages.len()
+                                    ))
+                                    .size(10.0)
+                                    .color(egui::Color32::GRAY),
                                 );
                                 ui.add_space(2.0);
-                                if ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new("+ Link to Project")
-                                            .size(11.0)
-                                            .color(egui::Color32::WHITE),
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("+ Link to Project")
+                                                .size(11.0)
+                                                .color(egui::Color32::WHITE),
+                                        )
+                                        .fill(crate::ui::theme::accent_color()),
                                     )
-                                    .fill(crate::ui::theme::accent_color()),
-                                ).clicked() {
+                                    .clicked()
+                                {
                                     link_session_id = Some(session.id.clone());
                                 }
                             });
                         ui.add_space(3.0);
                     }
-                    if unlinked.iter().filter(|s| s.title.to_lowercase().contains(&query_lower)).count() > 10 {
+                    if unlinked
+                        .iter()
+                        .filter(|s| s.title.to_lowercase().contains(&query_lower))
+                        .count()
+                        > 10
+                    {
                         ui.label(
                             egui::RichText::new("...and more. Refine your search.")
                                 .size(11.0)
@@ -1920,11 +1903,7 @@ impl ProjectsView {
     }
 
     // ── Create-project dialog window ──────────────────────────────────
-    fn show_create_project_dialog(
-        &mut self,
-        ui: &mut egui::Ui,
-        runtime: &tokio::runtime::Handle,
-    ) {
+    fn show_create_project_dialog(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         let mut still_open = true;
 
         egui::Window::new("Create Project")
@@ -1956,8 +1935,7 @@ impl ProjectsView {
                                     .set_title("Select working folder")
                                     .pick_folder()
                                 {
-                                    self.new_working_folder =
-                                        path.to_string_lossy().to_string();
+                                    self.new_working_folder = path.to_string_lossy().to_string();
                                 }
                             }
                         });
@@ -1981,15 +1959,16 @@ impl ProjectsView {
                         let now = chrono::Utc::now().to_rfc3339();
                         // Resolve relative working folder to absolute path
                         let wf_raw = self.new_working_folder.trim().to_string();
-                        let resolved_wf = if wf_raw.is_empty() || std::path::Path::new(&wf_raw).is_absolute() {
-                            wf_raw
-                        } else {
-                            let sandbox = crate::server::data::get_sandbox_dir_sync();
-                            std::path::PathBuf::from(&sandbox)
-                                .join(&wf_raw)
-                                .to_string_lossy()
-                                .to_string()
-                        };
+                        let resolved_wf =
+                            if wf_raw.is_empty() || std::path::Path::new(&wf_raw).is_absolute() {
+                                wf_raw
+                            } else {
+                                let sandbox = crate::server::data::get_sandbox_dir_sync();
+                                std::path::PathBuf::from(&sandbox)
+                                    .join(&wf_raw)
+                                    .to_string_lossy()
+                                    .to_string()
+                            };
                         let new_project = Project {
                             id: uuid::Uuid::new_v4().to_string(),
                             name: self.new_name.trim().to_string(),

@@ -1,4 +1,6 @@
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, RichText, CornerRadius, Stroke, StrokeKind, Vec2};
+use eframe::egui::{
+    self, Color32, CornerRadius, FontId, Pos2, Rect, RichText, Stroke, StrokeKind, Vec2,
+};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
@@ -179,7 +181,8 @@ impl AgentsView {
                     }
                 }
             } else {
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(500));
             }
         }
 
@@ -191,11 +194,11 @@ impl AgentsView {
             }
         }
 
-        // Kimi-style light background
+        // Themed dark canvas (was a light-template solid white).
         ui.painter().rect_filled(
             ui.available_rect_before_wrap(),
             0.0,
-            Color32::WHITE,
+            crate::ui::theme::surface_color(),
         );
 
         let text_normal = crate::ui::theme::text_primary_color();
@@ -205,7 +208,12 @@ impl AgentsView {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.label(RichText::new("Agent Swarm").size(18.0).strong().color(text_normal));
+            ui.label(
+                RichText::new("Agent Swarm")
+                    .size(18.0)
+                    .strong()
+                    .color(text_normal),
+            );
             ui.add_space(16.0);
             if ui
                 .add(
@@ -256,12 +264,21 @@ impl AgentsView {
                 ui.set_width(sidebar_w);
                 ui.set_max_width(sidebar_w);
                 ui.set_min_height(available.y - 10.0);
-                let sidebar_rect = egui::Rect::from_min_size(ui.min_rect().min, egui::Vec2::new(sidebar_w, available.y - 10.0));
-                ui.painter().rect_filled(sidebar_rect, 0.0, crate::ui::theme::surface_color());
+                let sidebar_rect = egui::Rect::from_min_size(
+                    ui.min_rect().min,
+                    egui::Vec2::new(sidebar_w, available.y - 10.0),
+                );
+                ui.painter()
+                    .rect_filled(sidebar_rect, 0.0, crate::ui::theme::surface_color());
                 ui.add_space(4.0);
 
                 // File list header
-                ui.label(RichText::new("  Agent Systems").size(12.0).strong().color(text_normal));
+                ui.label(
+                    RichText::new("  Agent Systems")
+                        .size(12.0)
+                        .strong()
+                        .color(text_normal),
+                );
                 ui.add_space(2.0);
 
                 egui::ScrollArea::vertical()
@@ -274,9 +291,16 @@ impl AgentsView {
                             let selected = self.selected_file.as_deref() == Some(&f.filename);
                             let mut label = format!("{} ({})", f.name, f.agent_count);
                             if label.len() > 28 {
-                                label = format!("{}... ({})", &f.name[..24.min(f.name.len())], f.agent_count);
+                                label = format!(
+                                    "{}... ({})",
+                                    &f.name[..24.min(f.name.len())],
+                                    f.agent_count
+                                );
                             }
-                            if ui.selectable_label(selected, RichText::new(&label).size(11.0)).clicked() {
+                            if ui
+                                .selectable_label(selected, RichText::new(&label).size(11.0))
+                                .clicked()
+                            {
                                 load_file = Some(f.filename.clone());
                             }
                         }
@@ -284,7 +308,11 @@ impl AgentsView {
                             self.load_agent_file(&fname, rt);
                         }
                         if self.agent_files.is_empty() {
-                            ui.label(RichText::new("  No agent systems yet").size(11.0).color(text_dim));
+                            ui.label(
+                                RichText::new("  No agent systems yet")
+                                    .size(11.0)
+                                    .color(text_dim),
+                            );
                         }
                     });
 
@@ -292,9 +320,18 @@ impl AgentsView {
                 ui.add_space(4.0);
 
                 // Auto Architecture
-                ui.label(RichText::new("  Auto Architecture").size(12.0).strong().color(text_normal));
+                ui.label(
+                    RichText::new("  Auto Architecture")
+                        .size(12.0)
+                        .strong()
+                        .color(text_normal),
+                );
                 ui.add_space(2.0);
-                ui.label(RichText::new("  Describe your system:").size(11.0).color(text_dim));
+                ui.label(
+                    RichText::new("  Describe your system:")
+                        .size(11.0)
+                        .color(text_dim),
+                );
                 ui.add(
                     egui::TextEdit::multiline(&mut self.auto_arch_description)
                         .desired_rows(3)
@@ -309,7 +346,8 @@ impl AgentsView {
                         .width(85.0)
                         .selected_text(&self.auto_arch_type)
                         .show_ui(ui, |ui| {
-                            for t in &["hierarchical", "flat", "mesh", "hybrid", "pipeline", "p2p"] {
+                            for t in &["hierarchical", "flat", "mesh", "hybrid", "pipeline", "p2p"]
+                            {
                                 ui.selectable_value(&mut self.auto_arch_type, t.to_string(), *t);
                             }
                         });
@@ -320,24 +358,49 @@ impl AgentsView {
                         .width(65.0)
                         .selected_text(&self.auto_arch_count)
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.auto_arch_count, "auto".to_string(), "Auto");
+                            ui.selectable_value(
+                                &mut self.auto_arch_count,
+                                "auto".to_string(),
+                                "Auto",
+                            );
                             for n in 3..=8 {
-                                ui.selectable_value(&mut self.auto_arch_count, n.to_string(), format!("{}", n));
+                                ui.selectable_value(
+                                    &mut self.auto_arch_count,
+                                    n.to_string(),
+                                    format!("{}", n),
+                                );
                             }
                         });
                 });
 
                 ui.add_space(4.0);
                 let gen_enabled = !self.auto_arch_loading && !self.auto_arch_description.is_empty();
-                if ui.add_enabled(gen_enabled,
-                    egui::Button::new(RichText::new(if self.auto_arch_loading { "Generating..." } else { "Generate" }).size(12.0).color(Color32::WHITE))
-                        .fill(crate::ui::theme::accent_color()).corner_radius(6.0),
-                ).clicked() {
+                if ui
+                    .add_enabled(
+                        gen_enabled,
+                        egui::Button::new(
+                            RichText::new(if self.auto_arch_loading {
+                                "Generating..."
+                            } else {
+                                "Generate"
+                            })
+                            .size(12.0)
+                            .color(Color32::WHITE),
+                        )
+                        .fill(crate::ui::theme::accent_color())
+                        .corner_radius(6.0),
+                    )
+                    .clicked()
+                {
                     self.run_auto_architecture(rt);
                 }
 
                 if let Some((msg, is_err)) = &self.auto_arch_status {
-                    let color = if *is_err { Color32::from_rgb(220, 50, 50) } else { Color32::from_rgb(50, 180, 50) };
+                    let color = if *is_err {
+                        Color32::from_rgb(220, 50, 50)
+                    } else {
+                        Color32::from_rgb(50, 180, 50)
+                    };
                     ui.label(RichText::new(msg).size(10.0).color(color));
                 }
 
@@ -345,24 +408,56 @@ impl AgentsView {
                 ui.add_space(4.0);
 
                 // Add agent + Save + Apply
-                if ui.add(egui::Button::new(RichText::new("+ Add Agent").size(12.0).color(text_normal)).corner_radius(6.0)).clicked() {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("+ Add Agent").size(12.0).color(text_normal),
+                        )
+                        .corner_radius(6.0),
+                    )
+                    .clicked()
+                {
                     self.show_add_node = true;
                     self.new_node_name.clear();
                     self.new_node_role = "worker".to_string();
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new(RichText::new("Save").size(11.0).color(Color32::WHITE)).fill(Color32::from_rgb(34, 197, 94)).corner_radius(6.0)).clicked() {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Save").size(11.0).color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(34, 197, 94))
+                            .corner_radius(6.0),
+                        )
+                        .clicked()
+                    {
                         self.save_current_system(rt);
                     }
                     let settings = rt.block_on(crate::server::data::get_settings());
                     let current_mode = settings.sub_agent_mode.clone().unwrap_or_default();
                     let is_manual = current_mode == "manual";
-                    let fill = if is_manual { crate::ui::theme::accent_color() } else { Color32::from_rgb(180, 180, 185) };
-                    let apply_resp = ui.add_enabled(is_manual,
-                        egui::Button::new(RichText::new("Apply to Chat").size(11.0).color(Color32::WHITE)).fill(fill).corner_radius(6.0),
+                    let fill = if is_manual {
+                        crate::ui::theme::accent_color()
+                    } else {
+                        Color32::from_rgb(180, 180, 185)
+                    };
+                    let apply_resp = ui.add_enabled(
+                        is_manual,
+                        egui::Button::new(
+                            RichText::new("Apply to Chat")
+                                .size(11.0)
+                                .color(Color32::WHITE),
+                        )
+                        .fill(fill)
+                        .corner_radius(6.0),
                     );
-                    if !is_manual { apply_resp.clone().on_disabled_hover_text("Only available in Manual mode"); }
+                    if !is_manual {
+                        apply_resp
+                            .clone()
+                            .on_disabled_hover_text("Only available in Manual mode");
+                    }
                     if apply_resp.clicked() {
                         if let Some(ref filename) = self.selected_file {
                             let mut s = settings.clone();
@@ -376,7 +471,11 @@ impl AgentsView {
                     }
                 });
                 if let Some((msg, is_err)) = &self.save_status {
-                    let color = if *is_err { Color32::from_rgb(220, 50, 50) } else { Color32::from_rgb(50, 180, 50) };
+                    let color = if *is_err {
+                        Color32::from_rgb(220, 50, 50)
+                    } else {
+                        Color32::from_rgb(50, 180, 50)
+                    };
                     ui.label(RichText::new(msg).size(10.0).color(color));
                 }
             });
@@ -400,10 +499,13 @@ impl AgentsView {
                         .width(100.0)
                         .selected_text(&self.orchestration_mode)
                         .show_ui(ui, |ui| {
-                            for m in &[
-                                "hierarchical", "flat", "mesh", "hybrid", "pipeline", "p2p",
-                            ] {
-                                ui.selectable_value(&mut self.orchestration_mode, m.to_string(), *m);
+                            for m in &["hierarchical", "flat", "mesh", "hybrid", "pipeline", "p2p"]
+                            {
+                                ui.selectable_value(
+                                    &mut self.orchestration_mode,
+                                    m.to_string(),
+                                    *m,
+                                );
                             }
                         });
                     if self.connecting_from.is_some() {
@@ -498,7 +600,11 @@ impl AgentsView {
                         let perp = Vec2::new(-dir.y, dir.x) * 5.0;
                         let tip = to - dir * 40.0; // stop before node center
                         painter.add(egui::Shape::convex_polygon(
-                            vec![tip, tip - dir * arrow_len + perp, tip - dir * arrow_len - perp],
+                            vec![
+                                tip,
+                                tip - dir * arrow_len + perp,
+                                tip - dir * arrow_len - perp,
+                            ],
                             color,
                             Stroke::NONE,
                         ));
@@ -535,7 +641,10 @@ impl AgentsView {
                         if let Some(pointer) = ui.ctx().pointer_latest_pos() {
                             painter.line_segment(
                                 [from, pointer],
-                                Stroke::new(2.0, crate::ui::theme::accent_color().linear_multiply(0.6)),
+                                Stroke::new(
+                                    2.0,
+                                    crate::ui::theme::accent_color().linear_multiply(0.6),
+                                ),
                             );
                         }
                         ui.ctx().request_repaint();
@@ -556,7 +665,9 @@ impl AgentsView {
 
                     let role_color = role_color(&node.role);
                     let is_selected = self.selected_node_idx == Some(idx);
-                    let is_hovered = ui.ctx().pointer_latest_pos()
+                    let is_hovered = ui
+                        .ctx()
+                        .pointer_latest_pos()
                         .map(|p| node_rect.contains(p))
                         .unwrap_or(false);
 
@@ -576,11 +687,7 @@ impl AgentsView {
                     }
 
                     // Node background
-                    painter.rect_filled(
-                        node_rect,
-                        CornerRadius::same(10),
-                        role_color,
-                    );
+                    painter.rect_filled(node_rect, CornerRadius::same(10), role_color);
 
                     // Selection border
                     if is_selected {
@@ -614,7 +721,8 @@ impl AgentsView {
                     {
                         let statuses = self.agent_statuses.lock().unwrap();
                         if let Some(status) = statuses.get(&node.id) {
-                            let dot_center = Pos2::new(node_rect.left() + 8.0, node_rect.top() + 8.0);
+                            let dot_center =
+                                Pos2::new(node_rect.left() + 8.0, node_rect.top() + 8.0);
                             let (dot_color, label) = match status.as_str() {
                                 "working" => (Color32::from_rgb(34, 197, 94), "working"),
                                 _ => (Color32::from_rgb(120, 120, 120), "idle"),
@@ -623,8 +731,12 @@ impl AgentsView {
                             if status == "working" {
                                 // Pulsing ring for working agents
                                 painter.circle_stroke(
-                                    dot_center, 7.0,
-                                    Stroke::new(1.5, Color32::from_rgba_unmultiplied(34, 197, 94, 120)),
+                                    dot_center,
+                                    7.0,
+                                    Stroke::new(
+                                        1.5,
+                                        Color32::from_rgba_unmultiplied(34, 197, 94, 120),
+                                    ),
                                     // StrokeKind not needed for circle_stroke
                                 );
                             }
@@ -663,24 +775,59 @@ impl AgentsView {
                         let tip_x = node_rect.right() + 8.0;
                         let tip_y = node_rect.min.y;
                         let tip_w = 200.0_f32;
-                        let persona_preview = crate::util::truncate_utf8_ellipsis(&node.persona, 60);
-                        let line_count = 2 + if persona_preview.is_empty() { 0 } else { 1 } + if node.bus_enabled { 1 } else { 0 };
+                        let persona_preview =
+                            crate::util::truncate_utf8_ellipsis(&node.persona, 60);
+                        let line_count = 2
+                            + if persona_preview.is_empty() { 0 } else { 1 }
+                            + if node.bus_enabled { 1 } else { 0 };
                         let tip_h = line_count as f32 * 16.0 + 16.0;
-                        let tip_rect = Rect::from_min_size(Pos2::new(tip_x, tip_y), Vec2::new(tip_w, tip_h));
+                        let tip_rect =
+                            Rect::from_min_size(Pos2::new(tip_x, tip_y), Vec2::new(tip_w, tip_h));
 
                         // Shadow
-                        painter.rect_filled(tip_rect.expand(2.0), CornerRadius::same(10), Color32::from_rgba_premultiplied(0, 0, 0, 20));
-                        // Card background
-                        painter.rect_filled(tip_rect, CornerRadius::same(8), Color32::WHITE);
-                        painter.rect_stroke(tip_rect, CornerRadius::same(8), Stroke::new(0.5, crate::ui::theme::border_color()), StrokeKind::Outside);
+                        painter.rect_filled(
+                            tip_rect.expand(2.0),
+                            CornerRadius::same(10),
+                            Color32::from_rgba_premultiplied(0, 0, 0, 20),
+                        );
+                        // Card background (themed, was light-template white)
+                        painter.rect_filled(
+                            tip_rect,
+                            CornerRadius::same(crate::ui::theme::RADIUS_SMALL),
+                            crate::ui::theme::card_color(),
+                        );
+                        painter.rect_stroke(
+                            tip_rect,
+                            CornerRadius::same(8),
+                            Stroke::new(0.5, crate::ui::theme::border_color()),
+                            StrokeKind::Outside,
+                        );
 
                         let mut ty = tip_y + 10.0;
-                        painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &node.name, FontId::proportional(12.0), crate::ui::theme::text_primary_color());
+                        painter.text(
+                            Pos2::new(tip_x + 10.0, ty),
+                            egui::Align2::LEFT_TOP,
+                            &node.name,
+                            FontId::proportional(12.0),
+                            crate::ui::theme::text_primary_color(),
+                        );
                         ty += 16.0;
-                        painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &format!("Role: {}", node.role), FontId::proportional(10.0), crate::ui::theme::text_secondary_color());
+                        painter.text(
+                            Pos2::new(tip_x + 10.0, ty),
+                            egui::Align2::LEFT_TOP,
+                            &format!("Role: {}", node.role),
+                            FontId::proportional(10.0),
+                            crate::ui::theme::text_secondary_color(),
+                        );
                         ty += 16.0;
                         if !persona_preview.is_empty() {
-                            painter.text(Pos2::new(tip_x + 10.0, ty), egui::Align2::LEFT_TOP, &persona_preview, FontId::proportional(10.0), crate::ui::theme::text_secondary_color());
+                            painter.text(
+                                Pos2::new(tip_x + 10.0, ty),
+                                egui::Align2::LEFT_TOP,
+                                &persona_preview,
+                                FontId::proportional(10.0),
+                                crate::ui::theme::text_secondary_color(),
+                            );
                             // ty += 16.0;
                         }
 
@@ -761,8 +908,9 @@ impl AgentsView {
                 }
 
                 // Delete key removes selected node or connection
-                if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
-                {
+                if ui.input(|i| {
+                    i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)
+                }) {
                     if let Some(idx) = self.selected_node_idx {
                         if self.nodes[idx].role != "human" {
                             let id = self.nodes[idx].id.clone();
@@ -778,7 +926,6 @@ impl AgentsView {
                     }
                 }
             });
-
         });
 
         // --- Node Properties floating window ---
@@ -841,7 +988,12 @@ impl AgentsView {
     fn show_node_properties(&mut self, ui: &mut egui::Ui, idx: usize) {
         let text_normal = crate::ui::theme::text_primary_color();
         let text_dim = crate::ui::theme::text_secondary_color();
-        ui.label(RichText::new("Node Properties").size(14.0).strong().color(text_normal));
+        ui.label(
+            RichText::new("Node Properties")
+                .size(14.0)
+                .strong()
+                .color(text_normal),
+        );
         ui.add_space(4.0);
 
         let node = &mut self.nodes[idx];
@@ -878,8 +1030,7 @@ impl AgentsView {
         // Role color preview
         let color = role_color(&node.role);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(220.0, 6.0), egui::Sense::hover());
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(3), color);
+        ui.painter().rect_filled(rect, CornerRadius::same(3), color);
 
         ui.add_space(4.0);
         ui.label("Persona:");
@@ -955,7 +1106,11 @@ impl AgentsView {
                         "blackboard" => Color32::from_rgb(34, 197, 94),
                         _ => Color32::GRAY,
                     };
-                    ui.label(RichText::new(format!("[{}]", conn.protocol)).small().color(proto_color));
+                    ui.label(
+                        RichText::new(format!("[{}]", conn.protocol))
+                            .small()
+                            .color(proto_color),
+                    );
                     if ui.small_button("x").clicked() {
                         conn_to_remove = Some(ci);
                     }
@@ -981,7 +1136,12 @@ impl AgentsView {
     fn show_connection_properties(&mut self, ui: &mut egui::Ui, ci: usize) {
         let text_normal = crate::ui::theme::text_primary_color();
         let _text_dim = crate::ui::theme::text_secondary_color();
-        ui.label(RichText::new("Connection Properties").size(14.0).strong().color(text_normal));
+        ui.label(
+            RichText::new("Connection Properties")
+                .size(14.0)
+                .strong()
+                .color(text_normal),
+        );
         ui.add_space(4.0);
 
         let conn = &mut self.connections[ci];
@@ -1069,12 +1229,9 @@ impl AgentsView {
 
         // Delete connection
         if ui
-            .add(
-                egui::Button::new(
-                    RichText::new("Delete connection")
-                        .color(Color32::from_rgb(239, 68, 68)),
-                ),
-            )
+            .add(egui::Button::new(
+                RichText::new("Delete connection").color(Color32::from_rgb(239, 68, 68)),
+            ))
             .clicked()
         {
             self.connections.remove(ci);
@@ -1187,7 +1344,10 @@ impl AgentsView {
                 match client.get(&url).bearer_auth(&token).send().await {
                     Ok(resp) => {
                         if let Ok(val) = resp.json::<Value>().await {
-                            val.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                            val.get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string()
                         } else {
                             String::new()
                         }
@@ -1243,7 +1403,8 @@ impl AgentsView {
         let center_y = radius + node_pad;
 
         for (i, agent) in agents.iter().enumerate() {
-            let angle = (i as f32 / count.max(1) as f32) * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+            let angle = (i as f32 / count.max(1) as f32) * std::f32::consts::TAU
+                - std::f32::consts::FRAC_PI_2;
             let cx = center_x + angle.cos() * radius;
             let cy = center_y + angle.sin() * radius;
 
@@ -1344,10 +1505,7 @@ impl AgentsView {
 
         lines.push("system:".to_string());
         lines.push(format!("  name: {}", self.system_name));
-        lines.push(format!(
-            "  orchestration_mode: {}",
-            self.orchestration_mode
-        ));
+        lines.push(format!("  orchestration_mode: {}", self.orchestration_mode));
         lines.push("  communication_protocol: structured_handoff".to_string());
         lines.push("  context_passing: full_chain".to_string());
 
@@ -1405,19 +1563,16 @@ impl AgentsView {
 
     fn save_current_system(&mut self, rt: &tokio::runtime::Handle) {
         let yaml = self.generate_yaml();
-        let filename = self
-            .selected_file
-            .clone()
-            .unwrap_or_else(|| {
-                let safe: String = self
-                    .system_name
-                    .to_lowercase()
-                    .replace(' ', "_")
-                    .chars()
-                    .filter(|c| c.is_alphanumeric() || *c == '_')
-                    .collect();
-                format!("{}.yaml", safe)
-            });
+        let filename = self.selected_file.clone().unwrap_or_else(|| {
+            let safe: String = self
+                .system_name
+                .to_lowercase()
+                .replace(' ', "_")
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            format!("{}.yaml", safe)
+        });
 
         if let Some(rb) = crate::server::data::get_remote_backend() {
             let body = serde_json::json!({ "filename": filename, "content": yaml });
@@ -1425,7 +1580,13 @@ impl AgentsView {
             let token = rb.token.clone();
             let ok = rt.block_on(async {
                 let client = reqwest::Client::new();
-                client.post(&url).bearer_auth(&token).json(&body).send().await.is_ok()
+                client
+                    .post(&url)
+                    .bearer_auth(&token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .is_ok()
             });
             if ok {
                 self.selected_file = Some(filename);
@@ -1481,7 +1642,10 @@ impl AgentsView {
 
         if api_key.is_empty() {
             self.auto_arch_loading = false;
-            self.auto_arch_status = Some(("API key not configured. Set it in Settings > AI / API".to_string(), true));
+            self.auto_arch_status = Some((
+                "API key not configured. Set it in Settings > AI / API".to_string(),
+                true,
+            ));
             return;
         }
 
@@ -1644,13 +1808,13 @@ Rules:
 
 fn role_color(role: &str) -> Color32 {
     match role {
-        "human" => Color32::from_rgb(107, 114, 128),    // gray
+        "human" => Color32::from_rgb(107, 114, 128), // gray
         "orchestrator" => crate::ui::theme::accent_color(), // blue
-        "worker" => Color32::from_rgb(34, 197, 94),      // green
-        "checker" => Color32::from_rgb(245, 158, 11),    // amber
-        "reporter" => Color32::from_rgb(168, 85, 247),   // purple
-        "researcher" => Color32::from_rgb(6, 182, 212),  // cyan
-        "peer" => Color32::from_rgb(236, 72, 153),       // pink
+        "worker" => Color32::from_rgb(34, 197, 94),  // green
+        "checker" => Color32::from_rgb(245, 158, 11), // amber
+        "reporter" => Color32::from_rgb(168, 85, 247), // purple
+        "researcher" => Color32::from_rgb(6, 182, 212), // cyan
+        "peer" => Color32::from_rgb(236, 72, 153),   // pink
         _ => Color32::from_rgb(100, 100, 100),
     }
 }
@@ -1671,11 +1835,23 @@ async fn load_agent_files() -> Result<Vec<AgentSystemFile>, String> {
         let items: Vec<Value> = resp.json().await.unwrap_or_default();
         let mut result = Vec::new();
         for item in &items {
-            let filename = item.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let name = item.get("name").and_then(|v| v.as_str()).unwrap_or(&filename).to_string();
+            let filename = item
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&filename)
+                .to_string();
             let agent_count = item.get("agentCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             if !filename.is_empty() {
-                result.push(AgentSystemFile { filename, name, agent_count });
+                result.push(AgentSystemFile {
+                    filename,
+                    name,
+                    agent_count,
+                });
             }
         }
         return Ok(result);
@@ -1685,9 +1861,7 @@ async fn load_agent_files() -> Result<Vec<AgentSystemFile>, String> {
     let _ = tokio::fs::create_dir_all(&dir).await;
 
     let mut result = Vec::new();
-    let mut entries = tokio::fs::read_dir(&dir)
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
 
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -1695,9 +1869,7 @@ async fn load_agent_files() -> Result<Vec<AgentSystemFile>, String> {
             continue;
         }
         let path = dir.join(&name);
-        let content = tokio::fs::read_to_string(&path)
-            .await
-            .unwrap_or_default();
+        let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
         let parsed: Value = serde_yaml::from_str(&content).unwrap_or(Value::Null);
         let display = parsed
             .get("system")

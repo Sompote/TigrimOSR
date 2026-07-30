@@ -2,19 +2,19 @@ use std::sync::Arc;
 
 use eframe::egui;
 
-use crate::vm::{VmManager, VmState, SharedFolderEntry};
+use crate::vm::{SharedFolderEntry, VmManager, VmState};
 
 use super::agents_view::AgentsView;
 use super::chat::ChatView;
 use super::console::console_view;
 use super::files_view::FilesView;
 use super::projects_view::ProjectsView;
+use super::remote_view::RemoteView;
 use super::settings::SettingsView;
 use super::setup::SetupView;
 use super::shared_folders::shared_folders_view;
 use super::skills_view::SkillsView;
 use super::tasks_view::TasksView;
-use super::remote_view::RemoteView;
 use super::terminal_view::TerminalView;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,17 +175,23 @@ impl AndrewOSApp {
 
     fn spawn_start(&self) {
         let vm = self.vm_manager.clone();
-        self.runtime.spawn(async move { let _ = vm.start_vm().await; });
+        self.runtime.spawn(async move {
+            let _ = vm.start_vm().await;
+        });
     }
 
     fn spawn_stop(&self) {
         let vm = self.vm_manager.clone();
-        self.runtime.spawn(async move { vm.stop_vm().await; });
+        self.runtime.spawn(async move {
+            vm.stop_vm().await;
+        });
     }
 
     fn spawn_reset(&self) {
         let vm = self.vm_manager.clone();
-        self.runtime.spawn(async move { vm.reset_vm().await; });
+        self.runtime.spawn(async move {
+            vm.reset_vm().await;
+        });
     }
 }
 
@@ -238,7 +244,10 @@ impl eframe::App for AndrewOSApp {
         let snap = self.snapshot();
         self.get_logo_texture(ctx);
 
-        if snap.state != VmState::Stopped && snap.state != VmState::Running && snap.state != VmState::Error {
+        if snap.state != VmState::Stopped
+            && snap.state != VmState::Running
+            && snap.state != VmState::Error
+        {
             ctx.request_repaint();
         }
 
@@ -246,23 +255,46 @@ impl eframe::App for AndrewOSApp {
         let accent = super::theme::accent_color();
         let text_dim = super::theme::text_secondary_color();
         let text_dark = super::theme::text_primary_color();
-        let sidebar_bg = super::theme::hover_color();  // warm rail
+        let sidebar_bg = super::theme::hover_color(); // cool rail
+
+        // ── Ambient background (liquid glass) ───────────────────────
+        // One full-window gradient + teal glow on the background layer; the
+        // panels above use translucent fills so it bleeds through like glass.
+        super::theme::paint_ambient(
+            &ctx.layer_painter(egui::LayerId::background()),
+            ctx.screen_rect(),
+        );
 
         // ── Left sidebar (Kimi-style) ────────────────────────────────
-        // Collapsed rail: 48px controls + the frame's 8px margins each side.
-        // It was 52px wide, which forced 36px buttons — small enough that the
-        // icons read as faint marks rather than targets.
+        // Collapsed rail: 48px controls + the frame's margins each side.
         const RAIL_BTN: f32 = 48.0;
-        let sidebar_w = if self.sidebar_open { 240.0 } else { RAIL_BTN + 18.0 };
+        let sidebar_w = if self.sidebar_open {
+            240.0
+        } else {
+            RAIL_BTN + 18.0
+        };
 
         egui::SidePanel::left("nav_sidebar")
             .exact_width(sidebar_w)
             .resizable(false)
             .frame(egui::Frame::new()
-                .fill(sidebar_bg)
+                // Translucent rail: the ambient gradient glows through.
+                .fill(super::theme::glass_fill(sidebar_bg, 208))
                 .inner_margin(egui::Margin::symmetric(8, 12))
                 .stroke(egui::Stroke::NONE))
             .show(ctx, |ui| {
+                // Glass finish: right-edge hairline + top specular highlight.
+                let rail_rect = ui.max_rect();
+                ui.painter().vline(
+                    rail_rect.right() - 0.5,
+                    rail_rect.y_range(),
+                    super::theme::hairline_stroke(),
+                );
+                ui.painter().hline(
+                    rail_rect.x_range(),
+                    rail_rect.top() + 0.5,
+                    super::theme::specular_stroke(),
+                );
                 ui.set_min_width(sidebar_w - 16.0);
                 ui.spacing_mut().item_spacing.y = 4.0;
                 // Expanded, these are real labelled buttons and need padding.
@@ -305,23 +337,15 @@ impl eframe::App for AndrewOSApp {
                 // ── New Chat button — the rail's one filled control ──
                 {
                     let (label, icon) = if self.sidebar_open { ("+  New chat", "") } else { ("+", "New chat") };
-                    // The rail is one shape system: 36-wide rounded squares at
-                    // radius 10. This button was a 36x38 squircle at radius 14,
-                    // so it read as a lopsided blob wedged between the hairline
-                    // hamburger above and the nav items below. Same box as its
-                    // neighbours; it earns its prominence from the accent fill,
-                    // not from a different silhouette.
-                    // White on the teal accent is 1.82:1 — the glyph was washing
-                    // out into its own fill. readable_on picks near-black here
-                    // (8.88:1) and still does the right thing if the accent is
-                    // re-themed.
+                    // White text washes out on the teal accent; readable_on
+                    // picks a contrasting ink and tracks re-theming.
                     let ink = super::theme::readable_on(accent);
                     let resp = if self.sidebar_open {
                         ui.add(
                             egui::Button::new(egui::RichText::new(label).size(15.0).strong().color(ink))
                                 .fill(accent)
                                 .stroke(egui::Stroke::NONE)
-                                .corner_radius(13)
+                                .corner_radius(super::theme::RADIUS_BUTTON)
                                 .min_size(egui::vec2(ui.available_width(), RAIL_BTN)),
                         )
                     } else {
@@ -365,9 +389,7 @@ impl eframe::App for AndrewOSApp {
 
                 for &(tab, icon, label) in nav_items {
                     let is_active = self.selected_tab == tab;
-                    // Active state is an accent tint, not a solid white card.
-                    // The white came from the original light-theme template and
-                    // read as a bright blob punched into a dark navy rail.
+                    // Active state is an accent tint, not a solid card.
                     let text_color = if is_active { accent } else { text_dim };
                     let bg = if is_active {
                         egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 38)
@@ -401,7 +423,7 @@ impl eframe::App for AndrewOSApp {
                             egui::Button::new(rich)
                                 .fill(bg)
                                 .stroke(stroke)
-                                .corner_radius(13)
+                                .corner_radius(super::theme::RADIUS_BUTTON)
                                 .min_size(egui::vec2(ui.available_width(), RAIL_BTN)),
                         )
                     } else {
@@ -468,9 +490,9 @@ impl eframe::App for AndrewOSApp {
                                     } else {
                                         display.clone()
                                     };
-                                    // Active = accent-ink + bold, inactive = dim
+                                    // Active = accent ink + bold, inactive = dim
                                     let item_color = if is_sel {
-                                        egui::Color32::from_rgb(10, 95, 90) // accent-ink
+                                        crate::ui::theme::accent_color()
                                     } else {
                                         text_dim
                                     };
@@ -653,48 +675,65 @@ impl eframe::App for AndrewOSApp {
                 });
         }
 
-        self.settings_view.show(ctx, &self.vm_manager, &self.runtime);
+        self.settings_view
+            .show(ctx, &self.vm_manager, &self.runtime);
         self.setup_view.show(ctx, &self.vm_manager, &self.runtime);
 
-        // Central panel - main content
+        // Central panel - main content. Transparent fill: the ambient gradient
+        // painted on the background layer is the visible backdrop.
         egui::CentralPanel::default()
-            .frame(egui::Frame::new()
-                .fill(super::theme::surface_color())
-                .inner_margin(egui::Margin::same(0)))
+            .frame(
+                egui::Frame::new()
+                    .fill(egui::Color32::TRANSPARENT)
+                    .inner_margin(egui::Margin::same(0)),
+            )
             .show(ctx, |ui| {
-            // Handle navigation from Projects -> Chat
-            if let Some((project_id, session_id)) = self.projects_view.navigate_to_chat_session.take() {
-                self.chat_view.selected_project_id = Some(project_id);
-                self.chat_view.selected_session_id = Some(session_id);
-                self.chat_view.needs_refresh = true;
-                self.selected_tab = Tab::Chat;
-            }
-
-            // Handle navigation from Tasks -> Chat
-            if let Some(session_id) = self.tasks_view.navigate_to_chat.take() {
-                self.chat_view.selected_session_id = Some(session_id);
-                self.chat_view.needs_refresh = true;
-                self.selected_tab = Tab::Chat;
-            }
-
-            // In remote mode, the same tabs work transparently against the remote server
-            // via the data layer's RemoteBackend proxy. Terminal passes VmState::Running
-            // since the remote server is always "running".
-            match self.selected_tab {
-                Tab::Chat => self.chat_view.show(ui, &self.runtime),
-                Tab::Projects => self.projects_view.show(ui, &self.runtime),
-                Tab::Agents => self.agents_view.show(ui, &self.runtime),
-                Tab::Files => self.files_view.show(ui, &self.runtime),
-                Tab::Tasks => self.tasks_view.show(ui, &self.runtime),
-                Tab::Skills => self.skills_view.show(ui, &self.runtime),
-                Tab::Terminal => {
-                    let effective_state = if self.remote_mode { VmState::Running } else { snap.state };
-                    self.terminal_view.show(ui, &self.runtime, effective_state);
+                // Handle navigation from Projects -> Chat
+                if let Some((project_id, session_id)) =
+                    self.projects_view.navigate_to_chat_session.take()
+                {
+                    self.chat_view.selected_project_id = Some(project_id);
+                    self.chat_view.selected_session_id = Some(session_id);
+                    self.chat_view.needs_refresh = true;
+                    self.selected_tab = Tab::Chat;
                 }
-                Tab::RemoteServer => self.remote_view.show(ui, &self.runtime),
-                Tab::Console => console_view(ui, &snap.console_output, &self.vm_manager, &self.runtime),
-                Tab::Folders => shared_folders_view(ui, &snap.shared_folders, &self.vm_manager, &self.runtime),
-            }
-        });
+
+                // Handle navigation from Tasks -> Chat
+                if let Some(session_id) = self.tasks_view.navigate_to_chat.take() {
+                    self.chat_view.selected_session_id = Some(session_id);
+                    self.chat_view.needs_refresh = true;
+                    self.selected_tab = Tab::Chat;
+                }
+
+                // In remote mode, the same tabs work transparently against the remote server
+                // via the data layer's RemoteBackend proxy. Terminal passes VmState::Running
+                // since the remote server is always "running".
+                match self.selected_tab {
+                    Tab::Chat => self.chat_view.show(ui, &self.runtime),
+                    Tab::Projects => self.projects_view.show(ui, &self.runtime),
+                    Tab::Agents => self.agents_view.show(ui, &self.runtime),
+                    Tab::Files => self.files_view.show(ui, &self.runtime),
+                    Tab::Tasks => self.tasks_view.show(ui, &self.runtime),
+                    Tab::Skills => self.skills_view.show(ui, &self.runtime),
+                    Tab::Terminal => {
+                        let effective_state = if self.remote_mode {
+                            VmState::Running
+                        } else {
+                            snap.state
+                        };
+                        self.terminal_view.show(ui, &self.runtime, effective_state);
+                    }
+                    Tab::RemoteServer => self.remote_view.show(ui, &self.runtime),
+                    Tab::Console => {
+                        console_view(ui, &snap.console_output, &self.vm_manager, &self.runtime)
+                    }
+                    Tab::Folders => shared_folders_view(
+                        ui,
+                        &snap.shared_folders,
+                        &self.vm_manager,
+                        &self.runtime,
+                    ),
+                }
+            });
     }
 }

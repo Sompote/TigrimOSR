@@ -1,5 +1,5 @@
-use eframe::egui;
 use crate::server::data::{self, Skill};
+use eframe::egui;
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
@@ -198,7 +198,9 @@ impl SkillsView {
     // ------------------------------------------------------------------
     // Parse YAML frontmatter from a markdown file
     // ------------------------------------------------------------------
-    fn parse_md_frontmatter(content: &str) -> (String, String, String, String, Vec<String>, String) {
+    fn parse_md_frontmatter(
+        content: &str,
+    ) -> (String, String, String, String, Vec<String>, String) {
         let mut name = String::new();
         let mut description = String::new();
         let mut version = String::new();
@@ -291,11 +293,7 @@ impl SkillsView {
             .inner_margin(egui::Margin::symmetric(5, 1))
             .corner_radius(3.0)
             .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(category)
-                        .size(10.0)
-                        .color(color),
-                );
+                ui.label(egui::RichText::new(category).size(10.0).color(color));
             });
     }
 
@@ -329,9 +327,9 @@ impl SkillsView {
                     .add(
                         egui::Button::new(
                             egui::RichText::new("Upload Skill")
-                                .color(egui::Color32::WHITE),
+                            .color(crate::ui::theme::readable_on(crate::ui::theme::accent_color())),
                         )
-                        .fill(egui::Color32::from_rgb(18, 154, 145)),
+                        .fill(crate::ui::theme::accent_color()),
                     )
                     .clicked()
                 {
@@ -339,7 +337,11 @@ impl SkillsView {
                         .add_filter("Skill files", &["md", "zip"])
                         .pick_file()
                     {
-                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                        let ext = path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_lowercase();
                         if ext == "zip" {
                             // Handle ZIP: extract SKILL.md from inside
                             if let Ok(bytes) = std::fs::read(&path) {
@@ -349,7 +351,9 @@ impl SkillsView {
                                     for i in 0..archive.len() {
                                         if let Ok(mut file) = archive.by_index(i) {
                                             let fname = file.name().to_string();
-                                            if fname.ends_with("SKILL.md") || fname.ends_with("skill.md") {
+                                            if fname.ends_with("SKILL.md")
+                                                || fname.ends_with("skill.md")
+                                            {
                                                 use std::io::Read;
                                                 let _ = file.read_to_string(&mut skill_content);
                                                 break;
@@ -359,8 +363,14 @@ impl SkillsView {
                                     if skill_content.is_empty() {
                                         tracing::warn!("ZIP does not contain SKILL.md");
                                     } else {
-                                        let (name, description, version, author, allowed_tools, body) =
-                                            Self::parse_md_frontmatter(&skill_content);
+                                        let (
+                                            name,
+                                            description,
+                                            version,
+                                            author,
+                                            allowed_tools,
+                                            body,
+                                        ) = Self::parse_md_frontmatter(&skill_content);
                                         let file_name = if name.is_empty() {
                                             path.file_stem()
                                                 .map(|s| s.to_string_lossy().to_string())
@@ -414,12 +424,7 @@ impl SkillsView {
                 }
 
                 // Manual install button
-                if ui
-                    .add(
-                        egui::Button::new("+ Install Skill"),
-                    )
-                    .clicked()
-                {
+                if ui.add(egui::Button::new("+ Install Skill")).clicked() {
                     self.show_install = true;
                     self.new_name.clear();
                     self.new_description.clear();
@@ -585,8 +590,8 @@ impl SkillsView {
                     .hint_text("Search skills on Clawhub..."),
             );
 
-            let enter_pressed = response.lost_focus()
-                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let enter_pressed =
+                response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
             let search_clicked = ui
                 .add_enabled(
@@ -632,9 +637,9 @@ impl SkillsView {
                                 match resp.json::<serde_json::Value>().await {
                                     Ok(json) => {
                                         let mut items = Vec::new();
-                                        if let Some(arr) = json.as_array()
-                                            .or_else(|| json.get("results").and_then(|v| v.as_array()))
-                                        {
+                                        if let Some(arr) = json.as_array().or_else(|| {
+                                            json.get("results").and_then(|v| v.as_array())
+                                        }) {
                                             for (i, entry) in arr.iter().enumerate() {
                                                 items.push(ClawhubResult {
                                                     rank: i + 1,
@@ -725,8 +730,7 @@ impl SkillsView {
                             })
                             .collect();
                         let count = self.clawhub_results.len();
-                        self.clawhub_status_msg =
-                            Some(format!("Found {} result(s)", count));
+                        self.clawhub_status_msg = Some(format!("Found {} result(s)", count));
                     }
                     Err(e) => {
                         self.clawhub_status_msg = Some(format!("Error: {e}"));
@@ -796,9 +800,7 @@ impl SkillsView {
                                         ui.horizontal(|ui| {
                                             ui.strong(&result.title);
                                             ui.label(
-                                                egui::RichText::new(&result.slug)
-                                                    .small()
-                                                    .weak(),
+                                                egui::RichText::new(&result.slug).small().weak(),
                                             );
                                         });
                                         if !result.description.is_empty() {
@@ -833,10 +835,9 @@ impl SkillsView {
                                                         );
                                                     });
                                             } else {
-                                                let is_installing = self
-                                                    .clawhub_installing
-                                                    .as_deref()
-                                                    == Some(&result.slug);
+                                                let is_installing =
+                                                    self.clawhub_installing.as_deref()
+                                                        == Some(&result.slug);
 
                                                 if is_installing {
                                                     ui.spinner();
@@ -858,11 +859,14 @@ impl SkillsView {
 
                                             // Score badge
                                             let score_color = if result.score >= 3.5 {
-                                                egui::Color32::from_rgb(34, 197, 94) // green
+                                                egui::Color32::from_rgb(34, 197, 94)
+                                            // green
                                             } else if result.score >= 2.5 {
-                                                egui::Color32::from_rgb(234, 179, 8) // yellow
+                                                egui::Color32::from_rgb(234, 179, 8)
+                                            // yellow
                                             } else {
-                                                egui::Color32::from_rgb(239, 68, 68) // red
+                                                egui::Color32::from_rgb(239, 68, 68)
+                                                // red
                                             };
                                             egui::Frame::new()
                                                 .fill(score_color.gamma_multiply(0.15))
@@ -910,10 +914,7 @@ impl SkillsView {
                             if let Some(t) = token {
                                 req = req.bearer_auth(t);
                             }
-                            let outcome = match req
-                                .send()
-                                .await
-                            {
+                            let outcome = match req.send().await {
                                 Ok(resp) => {
                                     if resp.status().is_success() {
                                         match resp.json::<serde_json::Value>().await {
@@ -948,9 +949,9 @@ impl SkillsView {
                                                     auto_meta: None,
                                                 })
                                             }
-                                            Err(e) => {
-                                                Err(format!("Failed to parse install response: {e}"))
-                                            }
+                                            Err(e) => Err(format!(
+                                                "Failed to parse install response: {e}"
+                                            )),
                                         }
                                     } else {
                                         Err(format!("Install failed: HTTP {}", resp.status()))
@@ -1073,7 +1074,10 @@ impl SkillsView {
                     ui.add_space(8.0);
                     ui.label("Content Preview:");
                     let preview_text = if preview.content.len() > 2000 {
-                        format!("{}...\n\n(truncated)", crate::util::truncate_utf8(&preview.content, 2000))
+                        format!(
+                            "{}...\n\n(truncated)",
+                            crate::util::truncate_utf8(&preview.content, 2000)
+                        )
                     } else {
                         preview.content.clone()
                     };
@@ -1117,7 +1121,8 @@ impl SkillsView {
                 if let Some(rb) = crate::server::data::get_remote_backend() {
                     let file_path = preview.file_path.clone();
                     let fname = std::path::Path::new(&file_path)
-                        .file_name().map(|n| n.to_string_lossy().to_string())
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| "SKILL.md".to_string());
                     runtime.spawn(async move {
                         if let Ok(bytes) = tokio::fs::read(&file_path).await {
@@ -1129,7 +1134,8 @@ impl SkillsView {
                                 .bearer_auth(&rb.token)
                                 .timeout(std::time::Duration::from_secs(60))
                                 .multipart(form)
-                                .send().await;
+                                .send()
+                                .await;
                             crate::server::data::remote_cache_invalidate("/api/skills");
                         }
                     });
@@ -1137,8 +1143,12 @@ impl SkillsView {
                     return;
                 }
 
-                let slug = preview.name.to_lowercase()
-                    .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
+                let slug = preview
+                    .name
+                    .to_lowercase()
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                    .collect::<String>();
                 let slug = slug.trim_matches('-').to_string();
 
                 // Save SKILL.md and supporting files to data/skills/<slug>/
@@ -1149,7 +1159,8 @@ impl SkillsView {
                 runtime.spawn(async move {
                     let _ = tokio::fs::create_dir_all(&skill_dir_clone).await;
                     // Write SKILL.md
-                    let _ = tokio::fs::write(skill_dir_clone.join("SKILL.md"), &content_for_disk).await;
+                    let _ =
+                        tokio::fs::write(skill_dir_clone.join("SKILL.md"), &content_for_disk).await;
                     // If source was a ZIP, also extract supporting files
                     if file_path.ends_with(".zip") {
                         if let Ok(bytes) = tokio::fs::read(&file_path).await {
@@ -1170,10 +1181,14 @@ impl SkillsView {
                                 }
                                 for i in 0..archive.len() {
                                     if let Ok(mut f) = archive.by_index(i) {
-                                        if f.is_dir() { continue; }
+                                        if f.is_dir() {
+                                            continue;
+                                        }
                                         let raw = f.name().to_string();
                                         let rel = raw.strip_prefix(&root_prefix).unwrap_or(&raw);
-                                        if rel.is_empty() || rel == "SKILL.md" { continue; }
+                                        if rel.is_empty() || rel == "SKILL.md" {
+                                            continue;
+                                        }
                                         let dest = skill_dir_clone.join(rel);
                                         if let Some(parent) = dest.parent() {
                                             let _ = std::fs::create_dir_all(parent);
@@ -1255,8 +1270,7 @@ impl SkillsView {
 
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    let can_save =
-                        !self.new_name.is_empty() && !self.new_description.is_empty();
+                    let can_save = !self.new_name.is_empty() && !self.new_description.is_empty();
 
                     if ui
                         .add_enabled(can_save, egui::Button::new("Install"))
@@ -1309,10 +1323,7 @@ impl SkillsView {
                 continue;
             }
 
-            let is_selected = self
-                .selected_skill_id
-                .as_deref()
-                == Some(&skill.id);
+            let is_selected = self.selected_skill_id.as_deref() == Some(&skill.id);
 
             let frame = egui::Frame::new()
                 .inner_margin(egui::Margin::same(10))
@@ -1351,11 +1362,7 @@ impl SkillsView {
                                     );
                                 }
                             });
-                            ui.label(
-                                egui::RichText::new(&skill.description)
-                                    .small()
-                                    .weak(),
-                            );
+                            ui.label(egui::RichText::new(&skill.description).small().weak());
                         });
                     });
                 })
@@ -1420,7 +1427,9 @@ impl SkillsView {
 
         // --- User-installed skills section ---
         // Show skills from skills.json that aren't in the built-in catalog
-        let user_skills: Vec<&Skill> = self.skills.iter()
+        let user_skills: Vec<&Skill> = self
+            .skills
+            .iter()
             .filter(|s| !builtin_names.contains(&s.name.as_str()))
             .filter(|s| s.source != "bundled") // skip bundled duplicates
             .collect();
@@ -1437,11 +1446,17 @@ impl SkillsView {
         };
         if let Ok(entries) = std::fs::read_dir(&skills_on_disk) {
             for entry in entries.flatten() {
-                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    continue;
+                }
                 let name = entry.file_name().to_string_lossy().to_string();
                 // Skip if already in built-in or skills.json
-                if builtin_names.contains(&name.as_str()) { continue; }
-                if self.skills.iter().any(|s| s.name == name) { continue; }
+                if builtin_names.contains(&name.as_str()) {
+                    continue;
+                }
+                if self.skills.iter().any(|s| s.name == name) {
+                    continue;
+                }
                 let skill_md = entry.path().join("SKILL.md");
                 if skill_md.exists() {
                     // Read first few lines for description
@@ -1451,9 +1466,18 @@ impl SkillsView {
                             // Try frontmatter description
                             if c.starts_with("---") {
                                 c[3..].find("---").and_then(|end| {
-                                    c[3..3+end].lines()
+                                    c[3..3 + end]
+                                        .lines()
                                         .find(|l| l.trim().starts_with("description:"))
-                                        .map(|l| l.trim().strip_prefix("description:").unwrap_or("").trim().trim_matches('"').trim_matches('\'').to_string())
+                                        .map(|l| {
+                                            l.trim()
+                                                .strip_prefix("description:")
+                                                .unwrap_or("")
+                                                .trim()
+                                                .trim_matches('"')
+                                                .trim_matches('\'')
+                                                .to_string()
+                                        })
                                 })
                             } else {
                                 None
@@ -1483,7 +1507,13 @@ impl SkillsView {
                     continue;
                 }
                 let category = Self::infer_category(&skill.source);
-                Self::render_catalog_card(ui, &skill.name, &skill.description, &skill.source, category);
+                Self::render_catalog_card(
+                    ui,
+                    &skill.name,
+                    &skill.description,
+                    &skill.source,
+                    category,
+                );
                 ui.add_space(3.0);
             }
 
@@ -1501,7 +1531,13 @@ impl SkillsView {
     }
 
     /// Render a single catalog card
-    fn render_catalog_card(ui: &mut egui::Ui, name: &str, description: &str, source: &str, category: &str) {
+    fn render_catalog_card(
+        ui: &mut egui::Ui,
+        name: &str,
+        description: &str,
+        source: &str,
+        category: &str,
+    ) {
         egui::Frame::new()
             .fill(ui.visuals().extreme_bg_color)
             .inner_margin(egui::Margin::same(8))
@@ -1516,7 +1552,14 @@ impl SkillsView {
                         });
                         // Show description truncated to ~120 chars
                         let desc = if description.len() > 120 {
-                            format!("{}...", &description[..description.char_indices().nth(120).map(|(i,_)|i).unwrap_or(description.len())])
+                            format!(
+                                "{}...",
+                                &description[..description
+                                    .char_indices()
+                                    .nth(120)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(description.len())]
+                            )
                         } else {
                             description.to_string()
                         };
@@ -1639,7 +1682,11 @@ impl SkillsView {
         ui.horizontal(|ui| {
             ui.strong("Description");
             if ui
-                .small_button(if self.editing_description { "Done" } else { "Edit" })
+                .small_button(if self.editing_description {
+                    "Done"
+                } else {
+                    "Edit"
+                })
                 .clicked()
             {
                 if self.editing_description {
@@ -1717,8 +1764,11 @@ impl SkillsView {
         // Try to load SKILL.md from data/skills/{name}/ for folder-based skills
         let skill_name = self.skills[idx].name.clone();
         let skill_source = self.skills[idx].source.clone();
-        let slug = skill_name.to_lowercase()
-            .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
+        let slug = skill_name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect::<String>();
         let skill_dir = data::data_dir().join("skills").join(slug.trim_matches('-'));
         let skill_md_path = skill_dir.join("SKILL.md");
         let is_remote = crate::server::data::get_remote_backend().is_some();
@@ -1727,7 +1777,12 @@ impl SkillsView {
         } else if is_remote {
             // Fetch the REMOTE server's SKILL.md once per selected skill
             let sid = self.skills[idx].id.clone();
-            if self.remote_md_cache.as_ref().map(|(k, _)| k != &sid).unwrap_or(true) {
+            if self
+                .remote_md_cache
+                .as_ref()
+                .map(|(k, _)| k != &sid)
+                .unwrap_or(true)
+            {
                 self.remote_md_cache = Some((sid.clone(), Self::fetch_skill_content_remote(&sid)));
             }
             self.remote_md_cache.as_ref().and_then(|(_, c)| c.clone())
@@ -1736,23 +1791,26 @@ impl SkillsView {
         };
         // Collect all files in the skill subfolder (local mode only — the
         // remote server exposes SKILL.md via API, not the folder listing)
-        let skill_files: Vec<(String, String)> = if !is_remote && skill_source != "built-in" && skill_dir.is_dir() {
-            let mut files = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(&skill_dir) {
-                for entry in entries.flatten() {
-                    let fname = entry.file_name().to_string_lossy().to_string();
-                    if fname == "SKILL.md" { continue; } // shown above already
-                    let fpath = entry.path();
-                    if fpath.is_file() {
-                        files.push((fname, fpath.display().to_string()));
+        let skill_files: Vec<(String, String)> =
+            if !is_remote && skill_source != "built-in" && skill_dir.is_dir() {
+                let mut files = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(&skill_dir) {
+                    for entry in entries.flatten() {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if fname == "SKILL.md" {
+                            continue;
+                        } // shown above already
+                        let fpath = entry.path();
+                        if fpath.is_file() {
+                            files.push((fname, fpath.display().to_string()));
+                        }
                     }
                 }
-            }
-            files.sort_by(|a, b| a.0.cmp(&b.0));
-            files
-        } else {
-            Vec::new()
-        };
+                files.sort_by(|a, b| a.0.cmp(&b.0));
+                files
+            } else {
+                Vec::new()
+            };
 
         let display_content = skill_md_content
             .clone()
@@ -1768,7 +1826,11 @@ impl SkillsView {
                 );
             }
             if ui
-                .small_button(if self.editing_content { "Save & Lock" } else { "Edit" })
+                .small_button(if self.editing_content {
+                    "Save & Lock"
+                } else {
+                    "Edit"
+                })
                 .clicked()
             {
                 if self.editing_content {
@@ -1787,7 +1849,8 @@ impl SkillsView {
                                         .bearer_auth(&rb.token)
                                         .timeout(std::time::Duration::from_secs(10))
                                         .json(&serde_json::json!({ "script": content }))
-                                        .send().await;
+                                        .send()
+                                        .await;
                                 }
                             });
                         } else {
@@ -1863,18 +1926,34 @@ impl SkillsView {
                     .fill(ui.visuals().faint_bg_color)
                     .inner_margin(egui::Margin::same(8))
                     .corner_radius(4.0)
-                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(200, 205, 210)))
+                    .stroke(egui::Stroke::new(
+                        0.5,
+                        egui::Color32::from_rgb(200, 205, 210),
+                    ))
                     .show(ui, |ui| {
-                        let icon = if is_md { "\u{1F4CB}" }
-                            else if fname.ends_with(".py") { "\u{1F40D}" }
-                            else if fname.ends_with(".json") { "\u{1F4BE}" }
-                            else { "\u{1F4C4}" };
+                        let icon = if is_md {
+                            "\u{1F4CB}"
+                        } else if fname.ends_with(".py") {
+                            "\u{1F40D}"
+                        } else if fname.ends_with(".json") {
+                            "\u{1F4BE}"
+                        } else {
+                            "\u{1F4C4}"
+                        };
                         let header_id = ui.make_persistent_id(format!("skill_file_{}", fname));
                         egui::collapsing_header::CollapsingState::load_with_default_open(
-                            ui.ctx(), header_id, false,
-                        ).show_header(ui, |ui| {
-                            ui.label(egui::RichText::new(format!("{} {}", icon, fname)).size(12.0).strong());
-                        }).body(|ui| {
+                            ui.ctx(),
+                            header_id,
+                            false,
+                        )
+                        .show_header(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{} {}", icon, fname))
+                                    .size(12.0)
+                                    .strong(),
+                            );
+                        })
+                        .body(|ui| {
                             if let Ok(content) = std::fs::read_to_string(fpath) {
                                 egui::ScrollArea::vertical()
                                     .id_salt(format!("skill_file_scroll_{}", fname))
@@ -1894,9 +1973,7 @@ impl SkillsView {
                                     });
                             } else {
                                 ui.label(
-                                    egui::RichText::new("(unable to read file)")
-                                        .small()
-                                        .weak(),
+                                    egui::RichText::new("(unable to read file)").small().weak(),
                                 );
                             }
                         });
@@ -1922,8 +1999,7 @@ impl SkillsView {
                 if ui
                     .add(
                         egui::Button::new(
-                            egui::RichText::new("Yes, Delete")
-                                .color(egui::Color32::WHITE),
+                            egui::RichText::new("Yes, Delete").color(egui::Color32::WHITE),
                         )
                         .fill(egui::Color32::from_rgb(220, 38, 38)),
                     )
@@ -1939,16 +2015,25 @@ impl SkillsView {
                                 .delete(format!("{}/api/skills/{}", rb.url, sid))
                                 .bearer_auth(&rb.token)
                                 .timeout(std::time::Duration::from_secs(10))
-                                .send().await;
+                                .send()
+                                .await;
                             crate::server::data::remote_cache_invalidate("/api/skills");
                         });
                         self.skills.retain(|s| s.id != sel_id);
                     } else {
-                        let skill_name = self.skills.iter().find(|s| s.id == sel_id)
-                            .map(|s| s.name.clone()).unwrap_or_default();
-                        let slug = skill_name.to_lowercase()
-                            .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>();
-                        let skill_dir = data::data_dir().join("skills").join(slug.trim_matches('-'));
+                        let skill_name = self
+                            .skills
+                            .iter()
+                            .find(|s| s.id == sel_id)
+                            .map(|s| s.name.clone())
+                            .unwrap_or_default();
+                        let slug = skill_name
+                            .to_lowercase()
+                            .chars()
+                            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                            .collect::<String>();
+                        let skill_dir =
+                            data::data_dir().join("skills").join(slug.trim_matches('-'));
                         let _ = std::fs::remove_dir_all(&skill_dir);
 
                         self.skills.retain(|s| s.id != sel_id);
@@ -1964,12 +2049,10 @@ impl SkillsView {
                 }
             } else {
                 if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("Delete Skill")
-                                .color(egui::Color32::from_rgb(239, 68, 68)),
-                        ),
-                    )
+                    .add(egui::Button::new(
+                        egui::RichText::new("Delete Skill")
+                            .color(egui::Color32::from_rgb(239, 68, 68)),
+                    ))
                     .clicked()
                 {
                     self.confirm_delete_id = Some(sel_id.clone());

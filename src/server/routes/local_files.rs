@@ -66,7 +66,10 @@ fn validate_local_path(mount_path: &str, requested: &str) -> Result<PathBuf, Str
 }
 
 /// Look up an enabled mount by id; optionally require write permission.
-async fn get_mount(mount_id: &str, require_write: bool) -> Result<LocalFileMount, (StatusCode, Json<Value>)> {
+async fn get_mount(
+    mount_id: &str,
+    require_write: bool,
+) -> Result<LocalFileMount, (StatusCode, Json<Value>)> {
     let settings = get_settings().await;
     let mount = settings
         .local_file_mounts
@@ -121,7 +124,11 @@ async fn browse(Query(q): Query<MountQuery>) -> impl IntoResponse {
     let mount_id = match &q.mount_id {
         Some(id) => id.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId required"})),
+            )
+                .into_response();
         }
     };
 
@@ -184,13 +191,21 @@ async fn read_file(Query(q): Query<MountQuery>) -> impl IntoResponse {
     let mount_id = match &q.mount_id {
         Some(id) => id.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
     let file_path = match &q.path {
         Some(p) => p.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
 
@@ -205,12 +220,21 @@ async fn read_file(Query(q): Query<MountQuery>) -> impl IntoResponse {
     };
 
     if fs::metadata(&resolved).await.is_err() {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "File not found"}))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "File not found"})),
+        )
+            .into_response();
     }
 
     match fs::read_to_string(&resolved).await {
-        Ok(content) => Json(json!({"content": content, "path": file_path, "mountId": mount_id})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Ok(content) => Json(json!({"content": content, "path": file_path, "mountId": mount_id}))
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -219,13 +243,21 @@ async fn write_file(Json(body): Json<WriteBody>) -> impl IntoResponse {
     let mount_id = match &body.mount_id {
         Some(id) => id.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
     let file_path = match &body.path {
         Some(p) => p.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
 
@@ -247,7 +279,11 @@ async fn write_file(Json(body): Json<WriteBody>) -> impl IntoResponse {
     let content = body.content.clone().unwrap_or_default();
     match fs::write(&resolved, content).await {
         Ok(_) => Json(json!({"success": true, "path": file_path})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -256,13 +292,21 @@ async fn delete_file(Query(q): Query<MountQuery>) -> impl IntoResponse {
     let mount_id = match &q.mount_id {
         Some(id) => id.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
     let file_path = match &q.path {
         Some(p) => p.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
 
@@ -278,7 +322,9 @@ async fn delete_file(Query(q): Query<MountQuery>) -> impl IntoResponse {
 
     let meta = match fs::metadata(&resolved).await {
         Ok(m) => m,
-        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response()
+        }
     };
 
     let result = if meta.is_dir() {
@@ -289,7 +335,11 @@ async fn delete_file(Query(q): Query<MountQuery>) -> impl IntoResponse {
 
     match result {
         Ok(_) => Json(json!({"success": true})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -298,13 +348,21 @@ async fn mkdir(Json(body): Json<MkdirBody>) -> impl IntoResponse {
     let mount_id = match &body.mount_id {
         Some(id) => id.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
     let dir_path = match &body.path {
         Some(p) => p.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
 
@@ -327,13 +385,21 @@ async fn download(Query(q): Query<MountQuery>) -> impl IntoResponse {
     let mount_id = match &q.mount_id {
         Some(id) => id.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
     let file_path = match &q.path {
         Some(p) => p.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId and path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId and path required"})),
+            )
+                .into_response();
         }
     };
 
@@ -354,19 +420,16 @@ async fn download(Query(q): Query<MountQuery>) -> impl IntoResponse {
 
     let file = match tokio::fs::File::open(&resolved).await {
         Ok(f) => f,
-        Err(e) => return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))).into_response()
+        }
     };
 
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
     let disposition = format!("attachment; filename=\"{}\"", file_name);
-    (
-        StatusCode::OK,
-        [("content-disposition", disposition)],
-        body,
-    )
-        .into_response()
+    (StatusCode::OK, [("content-disposition", disposition)], body).into_response()
 }
 
 /// POST /upload -- multipart file upload (requires readwrite)
@@ -404,7 +467,11 @@ async fn upload(mut multipart: Multipart) -> impl IntoResponse {
     let mount_id = match mount_id {
         Some(id) => id,
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "mountId required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "mountId required"})),
+            )
+                .into_response();
         }
     };
 
@@ -418,7 +485,11 @@ async fn upload(mut multipart: Multipart) -> impl IntoResponse {
     let data = match file_data {
         Some(d) => d,
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "No file data"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "No file data"})),
+            )
+                .into_response();
         }
     };
 
@@ -445,7 +516,11 @@ async fn upload(mut multipart: Multipart) -> impl IntoResponse {
 
     match fs::write(&resolved, data).await {
         Ok(_) => Json(json!({"success": true, "path": dest_path})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -454,7 +529,11 @@ async fn validate_path_handler(Json(body): Json<ValidatePathBody>) -> impl IntoR
     let dir_path = match &body.path {
         Some(p) => p.clone(),
         None => {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "path required"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "path required"})),
+            )
+                .into_response();
         }
     };
 
@@ -490,7 +569,10 @@ async fn detect_shares() -> impl IntoResponse {
         // macOS: scan /Volumes for mounted shares
         let scan_roots = vec!["/Volumes"];
         let skip_names: std::collections::HashSet<&str> =
-            ["Macintosh HD", "Recovery", ".timemachine"].iter().copied().collect();
+            ["Macintosh HD", "Recovery", ".timemachine"]
+                .iter()
+                .copied()
+                .collect();
 
         for root in &scan_roots {
             let root_path = Path::new(root);
@@ -530,7 +612,10 @@ async fn detect_shares() -> impl IntoResponse {
     } else {
         // Linux: try /proc/mounts for VM share filesystems
         let vm_fs_types: std::collections::HashSet<&str> =
-            ["9p", "virtiofs", "vboxsf", "fuse.vmhgfs-fuse"].iter().copied().collect();
+            ["9p", "virtiofs", "vboxsf", "fuse.vmhgfs-fuse"]
+                .iter()
+                .copied()
+                .collect();
 
         if let Ok(content) = fs::read_to_string("/proc/mounts").await {
             for line in content.lines() {
@@ -564,7 +649,14 @@ async fn detect_shares() -> impl IntoResponse {
         }
 
         // Scan common mount roots
-        let scan_roots = vec!["/mnt", "/media", "/media/share", "/media/psf", "/shared", "/host"];
+        let scan_roots = vec![
+            "/mnt",
+            "/media",
+            "/media/share",
+            "/media/psf",
+            "/shared",
+            "/host",
+        ];
         let skip_names: std::collections::HashSet<&str> =
             ["cdrom", "floppy", "removable"].iter().copied().collect();
 

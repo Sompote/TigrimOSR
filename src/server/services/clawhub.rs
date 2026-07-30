@@ -4,10 +4,7 @@ use tokio::process::Command;
 
 /// Find the clawhub CLI binary — checks node_modules first, then PATH
 async fn find_clawhub_bin() -> Option<String> {
-    let candidates = [
-        "Tiger_bot/node_modules/.bin/clawhub",
-        "clawhub",
-    ];
+    let candidates = ["Tiger_bot/node_modules/.bin/clawhub", "clawhub"];
     for bin in &candidates {
         if Command::new(bin)
             .arg("--cli-version")
@@ -40,11 +37,15 @@ pub async fn clawhub_search(query: &str, limit: usize) -> Value {
 
     match Command::new(&bin)
         .args([
-            "search", query,
-            "--limit", &limit.to_string(),
+            "search",
+            query,
+            "--limit",
+            &limit.to_string(),
             "--no-input",
-            "--workdir", &wd_str,
-            "--dir", "skills",
+            "--workdir",
+            &wd_str,
+            "--dir",
+            "skills",
         ])
         .output()
         .await
@@ -60,7 +61,10 @@ pub async fn clawhub_search(query: &str, limit: usize) -> Value {
 
 /// Install a skill from ClawHub by slug
 pub async fn clawhub_install(slug: &str, force: bool) -> Value {
-    if !regex::Regex::new(r"^[a-z0-9][a-z0-9-]*$").unwrap().is_match(slug) {
+    if !regex::Regex::new(r"^[a-z0-9][a-z0-9-]*$")
+        .unwrap()
+        .is_match(slug)
+    {
         return json!({ "ok": false, "error": "Invalid slug format" });
     }
 
@@ -72,9 +76,13 @@ pub async fn clawhub_install(slug: &str, force: bool) -> Value {
     let wd_str = wd.display().to_string();
 
     let mut argv: Vec<&str> = vec![
-        "install", slug, "--no-input",
-        "--workdir", &wd_str,
-        "--dir", "skills",
+        "install",
+        slug,
+        "--no-input",
+        "--workdir",
+        &wd_str,
+        "--dir",
+        "skills",
     ];
     if force {
         argv.push("--force");
@@ -111,7 +119,15 @@ pub async fn clawhub_info(slug: &str) -> Value {
     let wd_str = wd.display().to_string();
 
     match Command::new(&bin)
-        .args(["info", slug, "--no-input", "--workdir", &wd_str, "--dir", "skills"])
+        .args([
+            "info",
+            slug,
+            "--no-input",
+            "--workdir",
+            &wd_str,
+            "--dir",
+            "skills",
+        ])
         .output()
         .await
     {
@@ -126,7 +142,11 @@ pub async fn clawhub_info(slug: &str) -> Value {
 /// List installed skills with version info from data/skills.json and skill directories
 pub async fn list_installed_skills() -> Value {
     // Read from data/skills.json
-    let skills: Vec<Value> = match tokio::fs::read_to_string(crate::server::data::data_dir().join("skills.json")).await {
+    let skills: Vec<Value> = match tokio::fs::read_to_string(
+        crate::server::data::data_dir().join("skills.json"),
+    )
+    .await
+    {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => vec![],
     };
@@ -152,6 +172,8 @@ pub async fn read_skill(name: &str) -> Value {
     let path = format!("skills/{}/SKILL.md", name);
     match tokio::fs::read_to_string(&path).await {
         Ok(content) => json!({ "ok": true, "name": name, "content": content }),
-        Err(_) => json!({ "ok": false, "error": format!("Skill '{}' not found or SKILL.md missing", name) }),
+        Err(_) => {
+            json!({ "ok": false, "error": format!("Skill '{}' not found or SKILL.md missing", name) })
+        }
     }
 }

@@ -89,10 +89,7 @@ pub struct ToolFilter {
     pub list: Vec<String>,
     /// Per-tool overrides keyed by tool name (built-in or MCP).
     /// BTreeMap so serialized YAML has a stable key order.
-    #[serde(
-        default,
-        skip_serializing_if = "std::collections::BTreeMap::is_empty"
-    )]
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub config: std::collections::BTreeMap<String, ToolConfig>,
 }
 
@@ -470,17 +467,24 @@ pub fn profile_from_agent_def(agent_def: &Value) -> Option<AgentLoopProfile> {
         .get("tools")
         .filter(|v| v.is_object())
         .and_then(|v| serde_json::from_value::<ToolFilter>(v.clone()).ok());
-    let mcp = agent_def.get("mcp_servers").and_then(|v| v.as_array()).map(|arr| {
-        let servers: Vec<String> = arr
-            .iter()
-            .filter_map(|s| s.as_str())
-            .map(|s| s.to_string())
-            .collect();
-        McpFilter {
-            mode: if servers.is_empty() { "none".to_string() } else { "selected".to_string() },
-            servers,
-        }
-    });
+    let mcp = agent_def
+        .get("mcp_servers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            let servers: Vec<String> = arr
+                .iter()
+                .filter_map(|s| s.as_str())
+                .map(|s| s.to_string())
+                .collect();
+            McpFilter {
+                mode: if servers.is_empty() {
+                    "none".to_string()
+                } else {
+                    "selected".to_string()
+                },
+                servers,
+            }
+        });
     let skills = agent_def
         .get("skills")
         .filter(|v| v.is_object())
@@ -497,7 +501,10 @@ pub fn profile_from_agent_def(agent_def: &Value) -> Option<AgentLoopProfile> {
         .get("system_prompt")
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
-        .map(|s| SystemPromptOverride { text: s.to_string(), replace_base: false });
+        .map(|s| SystemPromptOverride {
+            text: s.to_string(),
+            replace_base: false,
+        });
 
     if tools.is_none()
         && mcp.is_none()
@@ -509,7 +516,11 @@ pub fn profile_from_agent_def(agent_def: &Value) -> Option<AgentLoopProfile> {
         return None;
     }
     Some(AgentLoopProfile {
-        name: agent_def.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        name: agent_def
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         description: String::new(),
         model: None, // per-agent model/api_url/api_key are handled by the existing YAML fields
         system_prompt,
@@ -592,7 +603,11 @@ fn param_schema_comments(schema: &Value) -> Vec<String> {
     out.push("# Arguments this tool accepts (keys usable in params / pinned_params):".to_string());
     for (name, p) in props {
         let ty = p.get("type").and_then(|t| t.as_str()).unwrap_or("any");
-        let req = if required.contains(&name.as_str()) { ", required" } else { "" };
+        let req = if required.contains(&name.as_str()) {
+            ", required"
+        } else {
+            ""
+        };
         let desc = p
             .get("description")
             .and_then(|d| d.as_str())
@@ -620,7 +635,8 @@ pub fn tool_editor_yaml(
     let doc = ToolEditorDoc {
         enabled: Some(cfg.and_then(|c| c.enabled).unwrap_or(true)),
         require_approval: Some(
-            cfg.and_then(|c| c.require_approval).unwrap_or(default_approval),
+            cfg.and_then(|c| c.require_approval)
+                .unwrap_or(default_approval),
         ),
         description: Some(
             cfg.and_then(|c| c.description.clone())
@@ -670,9 +686,10 @@ pub fn tool_editor_to_config(
     default_approval: bool,
 ) -> Result<Option<ToolConfig>, String> {
     // Comments/blank-only = explicit clear.
-    let has_content = content
-        .lines()
-        .any(|l| { let t = l.trim(); !t.is_empty() && !t.starts_with('#') });
+    let has_content = content.lines().any(|l| {
+        let t = l.trim();
+        !t.is_empty() && !t.starts_with('#')
+    });
     if !has_content {
         return Ok(None);
     }
@@ -722,8 +739,7 @@ mod tests {
         let p3: AgentLoopProfile = serde_yaml::from_str("name: plain\n").unwrap();
         assert!(p3.graph.is_none());
         // enabled: false explicitly overrides the settings toggle.
-        let p4: AgentLoopProfile =
-            serde_yaml::from_str("graph:\n  enabled: false\n").unwrap();
+        let p4: AgentLoopProfile = serde_yaml::from_str("graph:\n  enabled: false\n").unwrap();
         assert_eq!(p4.graph.unwrap().enabled, Some(false));
     }
 
@@ -761,7 +777,10 @@ tools:
         assert_eq!(sh.require_approval, Some(false));
         assert_eq!(sh.timeout_secs, Some(5));
         assert_eq!(sh.pinned_params.as_ref().unwrap()["cwd"], json!("."));
-        assert_eq!(p.tool_config("read_file").unwrap().max_result_len, Some(300));
+        assert_eq!(
+            p.tool_config("read_file").unwrap().max_result_len,
+            Some(300)
+        );
         let ws = p.tool_config("web_search").unwrap();
         assert_eq!(ws.enabled, Some(false));
         assert_eq!(ws.description.as_deref(), Some("custom"));
@@ -782,10 +801,20 @@ tools:
             let mut config = std::collections::BTreeMap::new();
             config.insert(
                 "web_search".to_string(),
-                ToolConfig { enabled: Some(false), ..Default::default() },
+                ToolConfig {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
             );
-            let tf = ToolFilter { mode: mode.to_string(), list, config };
-            assert!(!tf.allows("web_search"), "mode {mode} should deny disabled tool");
+            let tf = ToolFilter {
+                mode: mode.to_string(),
+                list,
+                config,
+            };
+            assert!(
+                !tf.allows("web_search"),
+                "mode {mode} should deny disabled tool"
+            );
         }
     }
 
@@ -805,7 +834,10 @@ tools:
         let merged = merge_tool_args(&Value::Null, &cfg);
         assert_eq!(merged["cwd"], json!("."));
         // No params configured -> args pass through untouched.
-        let noop = ToolConfig { max_result_len: Some(100), ..Default::default() };
+        let noop = ToolConfig {
+            max_result_len: Some(100),
+            ..Default::default()
+        };
         assert_eq!(merge_tool_args(&json!({"a": 1}), &noop), json!({"a": 1}));
     }
 }

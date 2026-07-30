@@ -57,15 +57,10 @@ fn vpn_url(ip: &str, port: u16) -> String {
 /// Query `tailscale status --json` and extract the tailnet IP + MagicDNS name.
 /// Returns (running, ip, hostname).
 async fn tailscale_status(bin: &str) -> (bool, Option<String>, Option<String>) {
-    let output = Command::new(bin)
-        .args(["status", "--json"])
-        .output()
-        .await;
+    let output = Command::new(bin).args(["status", "--json"]).output().await;
 
     let json: Value = match output {
-        Ok(o) if o.status.success() => {
-            serde_json::from_slice(&o.stdout).unwrap_or(Value::Null)
-        }
+        Ok(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or(Value::Null),
         _ => return (false, None, None),
     };
 
@@ -100,10 +95,7 @@ pub async fn tailnet_ip() -> Option<String> {
 /// Get current VPN status as JSON.
 pub async fn get_vpn_state() -> Value {
     let state = vpn_state().lock().await;
-    let url = state
-        .ip
-        .as_ref()
-        .map(|ip| vpn_url(ip, current_port()));
+    let url = state.ip.as_ref().map(|ip| vpn_url(ip, current_port()));
     json!({
         "running": state.running,
         "ip": state.ip,
@@ -284,7 +276,10 @@ pub async fn init_vpn(port: u16) {
                 state["error"].as_str().unwrap_or("unknown")
             );
         } else {
-            info!("[VPN] Reachable at {}", state["url"].as_str().unwrap_or("?"));
+            info!(
+                "[VPN] Reachable at {}",
+                state["url"].as_str().unwrap_or("?")
+            );
         }
     }
 }
@@ -296,11 +291,17 @@ pub async fn init_vpn(port: u16) {
 static VPN_PORT: OnceLock<std::sync::Mutex<u16>> = OnceLock::new();
 
 fn set_current_port(port: u16) {
-    *VPN_PORT.get_or_init(|| std::sync::Mutex::new(3001)).lock().unwrap() = port;
+    *VPN_PORT
+        .get_or_init(|| std::sync::Mutex::new(3001))
+        .lock()
+        .unwrap() = port;
 }
 
 fn current_port() -> u16 {
-    *VPN_PORT.get_or_init(|| std::sync::Mutex::new(3001)).lock().unwrap()
+    *VPN_PORT
+        .get_or_init(|| std::sync::Mutex::new(3001))
+        .lock()
+        .unwrap()
 }
 
 // ---------------------------------------------------------------------------

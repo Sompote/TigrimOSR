@@ -38,12 +38,20 @@ impl TerminalView {
 
         // ---------- header ----------
         ui.horizontal(|ui| {
-            ui.heading(if is_remote { "Remote Terminal" } else { "VM Terminal" });
+            ui.heading(if is_remote {
+                "Remote Terminal"
+            } else {
+                "VM Terminal"
+            });
             if can_use {
                 ui.label(
-                    egui::RichText::new(if is_remote { "● Remote" } else { "● Connected" })
-                        .color(egui::Color32::from_rgb(34, 197, 94))
-                        .size(12.0),
+                    egui::RichText::new(if is_remote {
+                        "● Remote"
+                    } else {
+                        "● Connected"
+                    })
+                    .color(egui::Color32::from_rgb(34, 197, 94))
+                    .size(12.0),
                 );
             } else {
                 ui.label(
@@ -88,14 +96,12 @@ impl TerminalView {
                         .desired_width(f32::INFINITY),
                 );
 
-                let enter_pressed = input_response.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let enter_pressed =
+                    input_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
                 let can_run = !self.command_input.trim().is_empty() && !self.running;
 
-                let run_clicked = ui
-                    .add_enabled(can_run, egui::Button::new("Run"))
-                    .clicked();
+                let run_clicked = ui.add_enabled(can_run, egui::Button::new("Run")).clicked();
 
                 if can_run && (run_clicked || enter_pressed) {
                     run_command = true;
@@ -130,12 +136,20 @@ impl TerminalView {
                     {
                         Ok(resp) => {
                             if let Ok(val) = resp.json::<serde_json::Value>().await {
-                                let stdout = val.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-                                let stderr = val.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+                                let stdout =
+                                    val.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+                                let stderr =
+                                    val.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
                                 let mut buf = String::new();
-                                if !stdout.is_empty() { buf.push_str(stdout); }
-                                if !stderr.is_empty() { buf.push_str(stderr); }
-                                if buf.is_empty() { buf.push_str("(no output)\n"); }
+                                if !stdout.is_empty() {
+                                    buf.push_str(stdout);
+                                }
+                                if !stderr.is_empty() {
+                                    buf.push_str(stderr);
+                                }
+                                if buf.is_empty() {
+                                    buf.push_str("(no output)\n");
+                                }
                                 buf
                             } else {
                                 "(empty response)\n".to_string()
@@ -153,13 +167,19 @@ impl TerminalView {
                     let port_str = ssh_port.to_string();
                     let output = tokio::process::Command::new("sshpass")
                         .args([
-                            "-p", "tigris",
+                            "-p",
+                            "tigris",
                             "ssh",
-                            "-o", "StrictHostKeyChecking=no",
-                            "-o", "UserKnownHostsFile=/dev/null",
-                            "-o", "ConnectTimeout=5",
-                            "-o", "LogLevel=ERROR",
-                            "-p", &port_str,
+                            "-o",
+                            "StrictHostKeyChecking=no",
+                            "-o",
+                            "UserKnownHostsFile=/dev/null",
+                            "-o",
+                            "ConnectTimeout=5",
+                            "-o",
+                            "LogLevel=ERROR",
+                            "-p",
+                            &port_str,
                             "tigris@localhost",
                             &command,
                         ])

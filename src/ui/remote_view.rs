@@ -81,7 +81,7 @@ pub struct RemoteView {
     // WebSocket live updates for tasks
     ws_tasks: Arc<Mutex<Vec<Value>>>,
     ws_connected: Arc<std::sync::atomic::AtomicBool>,
-    ws_url_connected: Mutex<String>,  // track which URL the WS is connected to
+    ws_url_connected: Mutex<String>, // track which URL the WS is connected to
 
     // Remote files
     remote_files: AsyncResult<Vec<Value>>,
@@ -159,10 +159,11 @@ impl RemoteView {
     }
 
     pub fn selected_remote_backend(&self) -> Option<crate::server::data::RemoteBackend> {
-        self.selected_instance().map(|i| crate::server::data::RemoteBackend {
-            url: i.url.trim_end_matches('/').to_string(),
-            token: i.token.clone(),
-        })
+        self.selected_instance()
+            .map(|i| crate::server::data::RemoteBackend {
+                url: i.url.trim_end_matches('/').to_string(),
+                token: i.token.clone(),
+            })
     }
 
     pub fn ensure_instances_loaded(&mut self, runtime: &tokio::runtime::Handle) {
@@ -197,12 +198,7 @@ impl RemoteView {
     }
 
     // HTTP GET helper
-    fn remote_get(
-        &self,
-        runtime: &tokio::runtime::Handle,
-        path: &str,
-        result: AsyncResult<Value>,
-    ) {
+    fn remote_get(&self, runtime: &tokio::runtime::Handle, path: &str, result: AsyncResult<Value>) {
         let Some(base) = self.base_url() else { return };
         let Some(token) = self.token() else { return };
         let url = format!("{}{}", base, path);
@@ -339,7 +335,9 @@ impl RemoteView {
         // Already connected to this URL?
         {
             let connected_url = self.ws_url_connected.lock().unwrap();
-            if *connected_url == base && self.ws_connected.load(std::sync::atomic::Ordering::Relaxed) {
+            if *connected_url == base
+                && self.ws_connected.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 return;
             }
         }
@@ -353,7 +351,11 @@ impl RemoteView {
         let ws_url = base
             .replace("http://", "ws://")
             .replace("https://", "wss://");
-        let ws_url = format!("{}/api/remote/ws?token={}", ws_url, urlencoding::encode(&token));
+        let ws_url = format!(
+            "{}/api/remote/ws?token={}",
+            ws_url,
+            urlencoding::encode(&token)
+        );
         let ws_tasks = self.ws_tasks.clone();
         let ws_connected = self.ws_connected.clone();
         let ctx = ctx.clone();
@@ -399,7 +401,9 @@ impl RemoteView {
                                 if let Some(task) = json.get("task") {
                                     let tid = task["id"].as_str().unwrap_or("");
                                     let mut guard = ws_tasks.lock().unwrap();
-                                    if let Some(existing) = guard.iter_mut().find(|t| t["id"].as_str() == Some(tid)) {
+                                    if let Some(existing) =
+                                        guard.iter_mut().find(|t| t["id"].as_str() == Some(tid))
+                                    {
                                         *existing = task.clone();
                                     } else {
                                         guard.insert(0, task.clone());
@@ -504,11 +508,7 @@ impl RemoteView {
         // Instance selector
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            ui.label(
-                egui::RichText::new("Server:")
-                    .size(13.0)
-                    .color(text_dim),
-            );
+            ui.label(egui::RichText::new("Server:").size(13.0).color(text_dim));
 
             if self.instances.is_empty() {
                 ui.label(
@@ -544,17 +544,38 @@ impl RemoteView {
             // Connection status indicator
             if self.connected.is_loading() {
                 ui.spinner();
-                ui.label(egui::RichText::new("Connecting...").size(12.0).color(text_dim));
+                ui.label(
+                    egui::RichText::new("Connecting...")
+                        .size(12.0)
+                        .color(text_dim),
+                );
             } else if let Some(ok) = self.connected.take() {
                 if ok {
-                    ui.label(egui::RichText::new("\u{25CF}").size(14.0).color(egui::Color32::from_rgb(74, 222, 128)));
-                    let lat_text = self.latency_ms
+                    ui.label(
+                        egui::RichText::new("\u{25CF}")
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(74, 222, 128)),
+                    );
+                    let lat_text = self
+                        .latency_ms
                         .map(|ms| format!("Connected ({}ms)", ms))
                         .unwrap_or_else(|| "Connected".to_string());
-                    ui.label(egui::RichText::new(lat_text).size(12.0).color(egui::Color32::from_rgb(74, 222, 128)));
+                    ui.label(
+                        egui::RichText::new(lat_text)
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(74, 222, 128)),
+                    );
                 } else {
-                    ui.label(egui::RichText::new("\u{25CF}").size(14.0).color(egui::Color32::from_rgb(239, 68, 68)));
-                    ui.label(egui::RichText::new("Disconnected").size(12.0).color(egui::Color32::from_rgb(239, 68, 68)));
+                    ui.label(
+                        egui::RichText::new("\u{25CF}")
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(239, 68, 68)),
+                    );
+                    ui.label(
+                        egui::RichText::new("Disconnected")
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(239, 68, 68)),
+                    );
                 }
             }
 
@@ -592,11 +613,9 @@ impl RemoteView {
                 } else {
                     egui::Color32::TRANSPARENT
                 };
-                let btn = egui::Button::new(
-                    egui::RichText::new(label).size(13.0).color(color),
-                )
-                .fill(fill)
-                .corner_radius(6.0);
+                let btn = egui::Button::new(egui::RichText::new(label).size(13.0).color(color))
+                    .fill(fill)
+                    .corner_radius(6.0);
                 if ui.add(btn).clicked() {
                     self.tab = tab;
                 }
@@ -647,7 +666,8 @@ impl RemoteView {
             );
 
             let submit = ui.button("Submit");
-            if (submit.clicked() || (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
+            if (submit.clicked()
+                || (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
                 && !self.task_input.trim().is_empty()
             {
                 let task = self.task_input.trim().to_string();
@@ -704,7 +724,11 @@ impl RemoteView {
             if tasks.is_empty() {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    ui.label(egui::RichText::new("No remote tasks").size(13.0).color(egui::Color32::from_rgb(139, 148, 158)));
+                    ui.label(
+                        egui::RichText::new("No remote tasks")
+                            .size(13.0)
+                            .color(egui::Color32::from_rgb(139, 148, 158)),
+                    );
                 });
             }
             for task in &tasks {
@@ -729,7 +753,10 @@ impl RemoteView {
 
                     let frame = egui::Frame::new()
                         .fill(crate::ui::theme::card_color())
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgb(208, 215, 222),
+                        ))
                         .corner_radius(8.0)
                         .inner_margin(egui::Margin::same(12));
 
@@ -743,12 +770,20 @@ impl RemoteView {
                                 .corner_radius(4.0)
                                 .inner_margin(egui::Margin::symmetric(6, 2));
                             badge.show(ui, |ui| {
-                                ui.label(egui::RichText::new(status).size(11.0).color(egui::Color32::WHITE).strong());
+                                ui.label(
+                                    egui::RichText::new(status)
+                                        .size(11.0)
+                                        .color(egui::Color32::WHITE)
+                                        .strong(),
+                                );
                             });
 
                             ui.label(
                                 egui::RichText::new(if task_text.len() > 80 {
-                                    format!("{}...", &task_text[..floor_char_boundary(&task_text, 80)])
+                                    format!(
+                                        "{}...",
+                                        &task_text[..floor_char_boundary(&task_text, 80)]
+                                    )
                                 } else {
                                     task_text.to_string()
                                 })
@@ -759,25 +794,39 @@ impl RemoteView {
 
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new(format!("ID: {}  |  Created: {}  |  Progress: {}", &id[..8.min(id.len())], created, progress_count))
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(139, 148, 158)),
+                                egui::RichText::new(format!(
+                                    "ID: {}  |  Created: {}  |  Progress: {}",
+                                    &id[..8.min(id.len())],
+                                    created,
+                                    progress_count
+                                ))
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(139, 148, 158)),
                             );
 
-                            if ui.small_button(if is_expanded { "Collapse" } else { "Expand" }).clicked() {
+                            if ui
+                                .small_button(if is_expanded { "Collapse" } else { "Expand" })
+                                .clicked()
+                            {
                                 if is_expanded {
                                     self.expanded_task_id = None;
                                 } else {
                                     self.expanded_task_id = Some(id.to_string());
                                     // Fetch full task details
                                     let detail = AsyncResult::<Value>::new();
-                                    self.remote_get(runtime, &format!("/api/remote/task/{}", id), detail);
+                                    self.remote_get(
+                                        runtime,
+                                        &format!("/api/remote/task/{}", id),
+                                        detail,
+                                    );
                                 }
                             }
 
                             if status == "running" || status == "pending" {
                                 let kill_btn = egui::Button::new(
-                                    egui::RichText::new("Kill").size(11.0).color(egui::Color32::WHITE),
+                                    egui::RichText::new("Kill")
+                                        .size(11.0)
+                                        .color(egui::Color32::WHITE),
                                 )
                                 .fill(egui::Color32::from_rgb(220, 38, 38))
                                 .corner_radius(4.0);
@@ -867,8 +916,7 @@ impl RemoteView {
 
             for file in &files {
                 let name = file["name"].as_str().or(file.as_str()).unwrap_or("?");
-                let is_dir = file["isDirectory"].as_bool().unwrap_or(false)
-                    || name.ends_with('/');
+                let is_dir = file["isDirectory"].as_bool().unwrap_or(false) || name.ends_with('/');
 
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
@@ -911,8 +959,7 @@ impl RemoteView {
                                     .await;
                                 match resp {
                                     Ok(r) => {
-                                        let json =
-                                            r.json::<Value>().await.unwrap_or(Value::Null);
+                                        let json = r.json::<Value>().await.unwrap_or(Value::Null);
                                         let content = json["content"]
                                             .as_str()
                                             .unwrap_or("(could not read)")
@@ -944,7 +991,10 @@ impl RemoteView {
                 ui.add_space(16.0);
                 let frame = egui::Frame::new()
                     .fill(crate::ui::theme::card_color())
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgb(208, 215, 222),
+                    ))
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::same(8));
                 frame.show(ui, |ui| {
@@ -975,7 +1025,11 @@ impl RemoteView {
 
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            ui.label(egui::RichText::new("Remote Chat Sessions").size(15.0).strong());
+            ui.label(
+                egui::RichText::new("Remote Chat Sessions")
+                    .size(15.0)
+                    .strong(),
+            );
             if ui.button("Refresh").clicked() {
                 self.fetch_chat_sessions(runtime);
             }
@@ -1006,7 +1060,9 @@ impl RemoteView {
                         self.chat_selected_session
                             .as_ref()
                             .and_then(|id| {
-                                sessions.iter().find(|s| s["id"].as_str() == Some(id.as_str()))
+                                sessions
+                                    .iter()
+                                    .find(|s| s["id"].as_str() == Some(id.as_str()))
                                     .map(|s| {
                                         format!(
                                             "{} ({})",
@@ -1046,7 +1102,8 @@ impl RemoteView {
                                         .await;
                                     match resp {
                                         Ok(r) => {
-                                            let json = r.json::<Value>().await.unwrap_or(Value::Null);
+                                            let json =
+                                                r.json::<Value>().await.unwrap_or(Value::Null);
                                             let msgs = json["messages"]
                                                 .as_array()
                                                 .cloned()
@@ -1068,7 +1125,10 @@ impl RemoteView {
         if let Some(messages) = self.chat_messages.take() {
             let frame = egui::Frame::new()
                 .fill(crate::ui::theme::card_color())
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgb(208, 215, 222),
+                ))
                 .corner_radius(6.0)
                 .inner_margin(egui::Margin::same(8));
 
@@ -1139,7 +1199,10 @@ impl RemoteView {
                     runtime.spawn(async move {
                         let client = reqwest::Client::new();
                         let _resp = client
-                            .post(format!("{}/api/chat/sessions/{}/messages", base, session_id))
+                            .post(format!(
+                                "{}/api/chat/sessions/{}/messages",
+                                base, session_id
+                            ))
                             .header("Authorization", format!("Bearer {}", token))
                             .json(&serde_json::json!({ "message": msg }))
                             .timeout(Duration::from_secs(120))
@@ -1205,7 +1268,11 @@ impl RemoteView {
 
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            ui.label(egui::RichText::new("Remote Server Settings (read-only)").size(15.0).strong());
+            ui.label(
+                egui::RichText::new("Remote Server Settings (read-only)")
+                    .size(15.0)
+                    .strong(),
+            );
             if ui.button("Refresh").clicked() {
                 *self.remote_settings.data.lock().unwrap() = None;
             }
@@ -1220,7 +1287,10 @@ impl RemoteView {
             if settings.is_null() {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    ui.label(egui::RichText::new("Could not fetch remote settings").color(egui::Color32::from_rgb(220, 38, 38)));
+                    ui.label(
+                        egui::RichText::new("Could not fetch remote settings")
+                            .color(egui::Color32::from_rgb(220, 38, 38)),
+                    );
                 });
                 return;
             }
@@ -1256,7 +1326,11 @@ impl RemoteView {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    ui.label(egui::RichText::new(format!("MCP Tools ({})", tools.len())).size(13.0).strong());
+                    ui.label(
+                        egui::RichText::new(format!("MCP Tools ({})", tools.len()))
+                            .size(13.0)
+                            .strong(),
+                    );
                 });
                 for tool in tools {
                     ui.horizontal(|ui| {
@@ -1292,9 +1366,9 @@ impl RemoteView {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             let frame = egui::Frame::new()
-                .fill(egui::Color32::from_rgb(13, 27, 42))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(42, 42, 74)))
-                .corner_radius(6.0)
+                .fill(crate::ui::theme::canvas_color())
+                .stroke(crate::ui::theme::hairline_stroke())
+                .corner_radius(crate::ui::theme::RADIUS_SMALL)
                 .inner_margin(egui::Margin::same(8));
 
             frame.show(ui, |ui| {
@@ -1445,7 +1519,11 @@ impl RemoteView {
     fn show_agents(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            ui.label(egui::RichText::new("Remote Agent Configs").size(15.0).strong());
+            ui.label(
+                egui::RichText::new("Remote Agent Configs")
+                    .size(15.0)
+                    .strong(),
+            );
             if ui.button("Refresh").clicked() {
                 *self.remote_agents.data.lock().unwrap() = None;
             }
@@ -1485,28 +1563,32 @@ impl RemoteView {
             if agents.is_empty() {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    ui.label(egui::RichText::new("No agent configs on remote server").size(13.0).color(egui::Color32::from_rgb(139, 148, 158)));
+                    ui.label(
+                        egui::RichText::new("No agent configs on remote server")
+                            .size(13.0)
+                            .color(egui::Color32::from_rgb(139, 148, 158)),
+                    );
                 });
             }
             for agent in &agents {
-                let name = agent.as_str().unwrap_or(
-                    agent["name"].as_str().unwrap_or("?")
-                );
+                let name = agent
+                    .as_str()
+                    .unwrap_or(agent["name"].as_str().unwrap_or("?"));
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
                     let frame = egui::Frame::new()
                         .fill(crate::ui::theme::card_color())
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(208, 215, 222)))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgb(208, 215, 222),
+                        ))
                         .corner_radius(6.0)
                         .inner_margin(egui::Margin::same(10));
 
                     frame.show(ui, |ui| {
                         ui.set_min_width(ui.available_width() - 40.0);
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("\u{1F4C4}")
-                                    .size(14.0),
-                            );
+                            ui.label(egui::RichText::new("\u{1F4C4}").size(14.0));
                             ui.label(
                                 egui::RichText::new(name)
                                     .size(13.0)
@@ -1526,7 +1608,11 @@ impl RemoteView {
         // Submit task with agent config
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            ui.label(egui::RichText::new("Submit Remote Task").size(15.0).strong());
+            ui.label(
+                egui::RichText::new("Submit Remote Task")
+                    .size(15.0)
+                    .strong(),
+            );
         });
 
         ui.add_space(4.0);
@@ -1540,7 +1626,8 @@ impl RemoteView {
             );
 
             let submit = ui.button("Submit");
-            if (submit.clicked() || (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
+            if (submit.clicked()
+                || (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
                 && !self.task_input.trim().is_empty()
             {
                 let task = self.task_input.trim().to_string();

@@ -11,13 +11,13 @@ use tracing::{info, warn};
 #[derive(Debug, Clone)]
 struct McpConnection {
     name: String,
-    transport: String,       // "stdio", "sse", "http"
+    transport: String, // "stdio", "sse", "http"
     command: Option<String>,
     args: Vec<String>,
     env: HashMap<String, String>, // extra env vars for stdio servers
     url: Option<String>,
     headers: HashMap<String, String>, // custom headers for HTTP/SSE
-    tools: Vec<Value>,       // tool definitions in OpenAI format
+    tools: Vec<Value>,                // tool definitions in OpenAI format
     connected: bool,
     error: Option<String>,
 }
@@ -212,7 +212,10 @@ async fn get_or_spawn_proc(
     }
     let proc = spawn_and_init(command, args, env).await?;
     let arc = Arc::new(TokioMutex::new(proc));
-    processes().lock().await.insert(name.to_string(), arc.clone());
+    processes()
+        .lock()
+        .await
+        .insert(name.to_string(), arc.clone());
     Ok(arc)
 }
 
@@ -268,25 +271,41 @@ pub async fn init_mcp_servers() {
             }
             let result = connect_server_impl(&tool.name, "stdio", &config).await;
             if result["ok"].as_bool().unwrap_or(false) {
-                info!("[MCP] Connected to '{}' (stdio) — {} tool(s)", tool.name, result["tools"]);
+                info!(
+                    "[MCP] Connected to '{}' (stdio) — {} tool(s)",
+                    tool.name, result["tools"]
+                );
             } else {
-                warn!("[MCP] Failed to connect to '{}': {}", tool.name, result["error"].as_str().unwrap_or("unknown"));
+                warn!(
+                    "[MCP] Failed to connect to '{}': {}",
+                    tool.name,
+                    result["error"].as_str().unwrap_or("unknown")
+                );
             }
         } else {
             // HTTP/SSE
             if let Some(headers) = &tool.headers {
-                let h: serde_json::Map<String, Value> = headers
-                    .iter()
-                    .map(|(k, v)| (k.clone(), json!(v)))
-                    .collect();
+                let h: serde_json::Map<String, Value> =
+                    headers.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
                 config["headers"] = Value::Object(h);
             }
-            let t = if transport == "auto" || transport == "http" { "http" } else { transport };
+            let t = if transport == "auto" || transport == "http" {
+                "http"
+            } else {
+                transport
+            };
             let result = connect_server_impl(&tool.name, t, &config).await;
             if result["ok"].as_bool().unwrap_or(false) {
-                info!("[MCP] Connected to '{}' ({}) — {} tool(s)", tool.name, t, result["tools"]);
+                info!(
+                    "[MCP] Connected to '{}' ({}) — {} tool(s)",
+                    tool.name, t, result["tools"]
+                );
             } else {
-                warn!("[MCP] Failed to connect to '{}': {}", tool.name, result["error"].as_str().unwrap_or("unknown"));
+                warn!(
+                    "[MCP] Failed to connect to '{}': {}",
+                    tool.name,
+                    result["error"].as_str().unwrap_or("unknown")
+                );
             }
         }
     }
@@ -294,9 +313,14 @@ pub async fn init_mcp_servers() {
     // Built-in browser control (Playwright MCP), gated by the safety toggle.
     if settings.browser_control_enabled == Some(true) {
         // Defer to a user-defined "browser" server if one exists.
-        let user_defined = settings.mcp_tools.iter().any(|t| t.enabled && t.name == "browser");
+        let user_defined = settings
+            .mcp_tools
+            .iter()
+            .any(|t| t.enabled && t.name == "browser");
         if user_defined {
-            info!("[MCP] Browser control on, but a user-defined 'browser' server exists — using that");
+            info!(
+                "[MCP] Browser control on, but a user-defined 'browser' server exists — using that"
+            );
         } else {
             connect_builtin_browser(&settings).await;
         }
@@ -375,7 +399,9 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
         .unwrap_or_else(|| "chromium".to_string());
 
     // Profile lives under the data dir (internal browser state, not served).
-    let data_dir = crate::server::data::data_dir().to_string_lossy().to_string();
+    let data_dir = crate::server::data::data_dir()
+        .to_string_lossy()
+        .to_string();
     let profile = format!("{}/browser-profile-{}", data_dir, engine);
 
     // A crashed/killed browser (e.g. a Docker container that died without a clean
@@ -389,7 +415,10 @@ async fn connect_builtin_browser(settings: &crate::server::data::Settings) {
     }
     // Screenshots/snapshots go in the sandbox so the agent (read_file) and the
     // web UI (file-server) can read/display them.
-    let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
+    let output = format!(
+        "{}/browser-output",
+        crate::server::data::get_sandbox_dir_sync()
+    );
 
     let (command, args) = build_browser_launch(settings, Some(&profile), &output, false);
 
@@ -443,8 +472,17 @@ fn agent_browser_launch_lock() -> &'static TokioMutex<()> {
 
 fn agent_browser_key(session_id: &str, agent_id: &str) -> String {
     // Keep it filesystem/identifier-safe.
-    let safe = |s: &str| s.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>();
-    format!("{}{}__{}", AGENT_BROWSER_PREFIX, safe(session_id), safe(agent_id))
+    let safe = |s: &str| {
+        s.chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+    };
+    format!(
+        "{}{}__{}",
+        AGENT_BROWSER_PREFIX,
+        safe(session_id),
+        safe(agent_id)
+    )
 }
 
 /// Lazily launch an isolated Playwright MCP browser dedicated to one agent.
@@ -461,8 +499,14 @@ pub async fn ensure_agent_browser(session_id: &str, agent_id: &str) -> bool {
     }
 
     let settings = crate::server::data::get_settings().await;
-    let engine = settings.browser_engine.clone().unwrap_or_else(|| "chromium".to_string());
-    let output = format!("{}/browser-output", crate::server::data::get_sandbox_dir_sync());
+    let engine = settings
+        .browser_engine
+        .clone()
+        .unwrap_or_else(|| "chromium".to_string());
+    let output = format!(
+        "{}/browser-output",
+        crate::server::data::get_sandbox_dir_sync()
+    );
 
     // Per-agent browser: no shared profile (Playwright uses --isolated for an
     // ephemeral one; each `obscura mcp` is already its own process).
@@ -472,7 +516,10 @@ pub async fn ensure_agent_browser(session_id: &str, agent_id: &str) -> bool {
     let result = connect_server_impl(&key, "stdio", &config).await;
     let ok = result["ok"].as_bool().unwrap_or(false);
     if ok {
-        info!("[MCP] Launched isolated browser for agent '{}' ({})", agent_id, engine);
+        info!(
+            "[MCP] Launched isolated browser for agent '{}' ({})",
+            agent_id, engine
+        );
     } else {
         warn!(
             "[MCP] Failed to launch isolated browser for agent '{}': {} — falling back to shared browser",
@@ -544,7 +591,11 @@ fn clear_stale_browser_locks(profile: &str) {
         if std::fs::symlink_metadata(&path).is_ok() {
             match std::fs::remove_file(&path) {
                 Ok(_) => info!("[MCP] Cleared stale browser lock: {}", path.display()),
-                Err(e) => warn!("[MCP] Could not clear browser lock {}: {}", path.display(), e),
+                Err(e) => warn!(
+                    "[MCP] Could not clear browser lock {}: {}",
+                    path.display(),
+                    e
+                ),
             }
         }
     }
@@ -598,7 +649,10 @@ async fn connect_stdio(name: &str, config: &Value) -> Value {
 
     // Discover tools over the same live connection.
     let tools = match proc.request("tools/list", json!({}), 15).await {
-        Ok(resp) => resp["result"]["tools"].as_array().cloned().unwrap_or_default(),
+        Ok(resp) => resp["result"]["tools"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
         Err(e) => return json!({ "ok": false, "error": format!("tools/list failed: {e}") }),
     };
 
@@ -791,9 +845,10 @@ pub async fn disconnect_all() {
 /// Get connection status for all servers (for UI display)
 pub async fn get_connection_status() -> Vec<(String, bool, usize, Option<String>)> {
     let conns = connections().lock().await;
-    conns.values().map(|c| {
-        (c.name.clone(), c.connected, c.tools.len(), c.error.clone())
-    }).collect()
+    conns
+        .values()
+        .map(|c| (c.name.clone(), c.connected, c.tools.len(), c.error.clone()))
+        .collect()
 }
 
 /// Get all MCP tool definitions in OpenAI function-calling format
@@ -879,7 +934,9 @@ pub async fn call_mcp_tool(prefixed_name: &str, args: &Value) -> Value {
 
     let conn = match found_server {
         Some(c) => c.clone(),
-        None => return json!({ "ok": false, "error": format!("MCP server not found for tool '{}'", prefixed_name) }),
+        None => {
+            return json!({ "ok": false, "error": format!("MCP server not found for tool '{}'", prefixed_name) })
+        }
     };
     drop(conns);
 

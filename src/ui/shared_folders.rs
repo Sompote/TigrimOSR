@@ -14,13 +14,31 @@ pub fn shared_folders_view(
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.heading("Shared Folders");
-            ui.label(egui::RichText::new("Only these folders are accessible inside the sandbox.").size(12.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new("Only these folders are accessible inside the sandbox.")
+                    .size(12.0)
+                    .color(egui::Color32::GRAY),
+            );
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.add(egui::Button::new(egui::RichText::new("+ Add Folder").color(egui::Color32::WHITE)).fill(egui::Color32::from_rgb(18, 154, 145))).clicked() {
-                if let Some(path) = rfd::FileDialog::new().set_title("Select folder to share").pick_folder() {
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("+ Add Folder")
+                            .color(crate::ui::theme::readable_on(crate::ui::theme::accent_color())),
+                    )
+                    .fill(crate::ui::theme::accent_color()),
+                )
+                .clicked()
+            {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Select folder to share")
+                    .pick_folder()
+                {
                     let vm = vm_manager.clone();
-                    runtime.spawn(async move { vm.add_shared_folder(path, true).await; });
+                    runtime.spawn(async move {
+                        vm.add_shared_folder(path, true).await;
+                    });
                 }
             }
         });
@@ -38,43 +56,71 @@ pub fn shared_folders_view(
             ui.label(egui::RichText::new("The VM is fully isolated from your file system.\nAdd folders here to grant controlled access.").size(12.0).color(egui::Color32::GRAY));
         });
     } else {
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            let mut toggle_id = None;
-            let mut remove_id = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let mut toggle_id = None;
+                let mut remove_id = None;
 
-            for entry in shared_folders {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("\u{1F4C1}").size(18.0).color(egui::Color32::from_rgb(18, 154, 145)));
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(&entry.name).strong());
-                        ui.label(egui::RichText::new(entry.path.to_string_lossy().as_ref()).size(11.0).color(egui::Color32::GRAY));
+                for entry in shared_folders {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("\u{1F4C1}")
+                                .size(18.0)
+                                .color(egui::Color32::from_rgb(18, 154, 145)),
+                        );
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(&entry.name).strong());
+                            ui.label(
+                                egui::RichText::new(entry.path.to_string_lossy().as_ref())
+                                    .size(11.0)
+                                    .color(egui::Color32::GRAY),
+                            );
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new("\u{1F5D1}")
+                                        .color(egui::Color32::from_rgb(239, 68, 68)),
+                                ))
+                                .clicked()
+                            {
+                                remove_id = Some(entry.id);
+                            }
+                            let (label, color) = if entry.read_only {
+                                ("\u{1F512} Read Only", egui::Color32::from_rgb(34, 197, 94))
+                            } else {
+                                (
+                                    "\u{1F513} Read & Write",
+                                    egui::Color32::from_rgb(249, 115, 22),
+                                )
+                            };
+                            if ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new(label).color(color).size(12.0),
+                                ))
+                                .clicked()
+                            {
+                                toggle_id = Some(entry.id);
+                            }
+                        });
                     });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(egui::Button::new(egui::RichText::new("\u{1F5D1}").color(egui::Color32::from_rgb(239, 68, 68)))).clicked() {
-                            remove_id = Some(entry.id);
-                        }
-                        let (label, color) = if entry.read_only {
-                            ("\u{1F512} Read Only", egui::Color32::from_rgb(34, 197, 94))
-                        } else {
-                            ("\u{1F513} Read & Write", egui::Color32::from_rgb(249, 115, 22))
-                        };
-                        if ui.add(egui::Button::new(egui::RichText::new(label).color(color).size(12.0))).clicked() {
-                            toggle_id = Some(entry.id);
-                        }
-                    });
-                });
-                ui.separator();
-            }
+                    ui.separator();
+                }
 
-            if let Some(id) = toggle_id {
-                let vm = vm_manager.clone();
-                runtime.spawn(async move { vm.toggle_read_only(id).await; });
-            }
-            if let Some(id) = remove_id {
-                let vm = vm_manager.clone();
-                runtime.spawn(async move { vm.remove_shared_folder(id).await; });
-            }
-        });
+                if let Some(id) = toggle_id {
+                    let vm = vm_manager.clone();
+                    runtime.spawn(async move {
+                        vm.toggle_read_only(id).await;
+                    });
+                }
+                if let Some(id) = remove_id {
+                    let vm = vm_manager.clone();
+                    runtime.spawn(async move {
+                        vm.remove_shared_folder(id).await;
+                    });
+                }
+            });
     }
 
     // Security notice
@@ -84,8 +130,17 @@ pub fn shared_folders_view(
             .inner_margin(egui::Margin::same(8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("\u{1F6E1}").color(egui::Color32::from_rgb(34, 197, 94)));
-                    ui.label(egui::RichText::new("Changes require VM restart. Write access must be explicitly granted.").size(11.0).color(egui::Color32::GRAY));
+                    ui.label(
+                        egui::RichText::new("\u{1F6E1}")
+                            .color(egui::Color32::from_rgb(34, 197, 94)),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Changes require VM restart. Write access must be explicitly granted.",
+                        )
+                        .size(11.0)
+                        .color(egui::Color32::GRAY),
+                    );
                 });
             });
     });

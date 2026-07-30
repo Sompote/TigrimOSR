@@ -5,7 +5,7 @@
 //! where each node is an agent call whose prompt can interpolate the outputs of
 //! its parents. Nodes with no unmet dependencies run concurrently.
 //!
-//! Six named patterns are built on top of it, because each is just a topology:
+//! Ten named patterns are built on top of it, because each is just a topology:
 //!
 //! | Pattern               | Topology                                          |
 //! |-----------------------|---------------------------------------------------|
@@ -15,6 +15,10 @@
 //! | Generate-And-Filter   | N generators → filter (rubric + dedupe)            |
 //! | Tournament            | attempts → pairwise judges → final                 |
 //! | Loop Until Done       | the graph re-run until a node reports nothing new  |
+//! | Debate                | N panelists × rounds → moderator                   |
+//! | Hierarchical          | director → N workers → director integrates         |
+//! | Sequential Pipeline   | stage 1 → stage 2 → … → stage N                    |
+//! | Mixture-of-Agents     | N proposers → N refiners → aggregator              |
 //!
 //! Execution is deliberately parameterised over a node-runner callback rather
 //! than calling the model directly, so the scheduling logic here is unit
@@ -154,8 +158,11 @@ pub struct WorkflowRun {
 impl WorkflowProfile {
     /// Nodes that nothing depends on — the graph's outputs.
     pub fn terminal_nodes(&self) -> Vec<String> {
-        let referenced: HashSet<&str> =
-            self.nodes.iter().flat_map(|n| n.inputs.iter().map(String::as_str)).collect();
+        let referenced: HashSet<&str> = self
+            .nodes
+            .iter()
+            .flat_map(|n| n.inputs.iter().map(String::as_str))
+            .collect();
         self.nodes
             .iter()
             .filter(|n| !referenced.contains(n.name.as_str()))
@@ -190,7 +197,10 @@ impl WorkflowProfile {
         for (i, n) in self.nodes.iter().enumerate() {
             for dep in &n.inputs {
                 let Some(&d) = index.get(dep.as_str()) else {
-                    return Err(format!("node '{}' references unknown input '{}'", n.name, dep));
+                    return Err(format!(
+                        "node '{}' references unknown input '{}'",
+                        n.name, dep
+                    ));
                 };
                 if d == i {
                     return Err(format!("node '{}' lists itself as an input", n.name));
@@ -201,8 +211,9 @@ impl WorkflowProfile {
         }
 
         let mut levels: Vec<Vec<usize>> = Vec::new();
-        let mut frontier: Vec<usize> =
-            (0..self.nodes.len()).filter(|&i| indegree[i] == 0).collect();
+        let mut frontier: Vec<usize> = (0..self.nodes.len())
+            .filter(|&i| indegree[i] == 0)
+            .collect();
         if frontier.is_empty() {
             return Err("workflow has no root node — every node depends on another (cycle)".into());
         }
@@ -231,7 +242,10 @@ impl WorkflowProfile {
                 .filter(|(i, _)| indegree[*i] > 0)
                 .map(|(_, n)| n.name.as_str())
                 .collect();
-            return Err(format!("workflow has a cycle involving: {}", stuck.join(", ")));
+            return Err(format!(
+                "workflow has a cycle involving: {}",
+                stuck.join(", ")
+            ));
         }
         Ok(levels)
     }
@@ -243,10 +257,17 @@ impl WorkflowProfile {
         // Also validates names, duplicates, unknown inputs and cycles.
         let levels = self.levels()?;
 
-        let index: HashMap<&str, usize> =
-            self.nodes.iter().enumerate().map(|(i, n)| (n.name.as_str(), i)).collect();
+        let index: HashMap<&str, usize> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.name.as_str(), i))
+            .collect();
         let resolve = |dep: &str| -> Result<usize, String> {
-            index.get(dep).copied().ok_or_else(|| format!("unknown input '{dep}'"))
+            index
+                .get(dep)
+                .copied()
+                .ok_or_else(|| format!("unknown input '{dep}'"))
         };
 
         let count = self.nodes.len();
@@ -276,7 +297,13 @@ impl WorkflowProfile {
             ancestors[i] = acc;
         }
 
-        Ok(Topology { dependents, parents, indegree, ancestors, order })
+        Ok(Topology {
+            dependents,
+            parents,
+            indegree,
+            ancestors,
+            order,
+        })
     }
 }
 
@@ -433,17 +460,25 @@ where
     let knobs = profile.loop_.clone().unwrap_or_default();
     let max_rounds = knobs
         .max_rounds
-        .unwrap_or(if profile.pattern == PATTERN_LOOP_UNTIL_DONE { 3 } else { 1 })
+        .unwrap_or(if profile.pattern == PATTERN_LOOP_UNTIL_DONE {
+            3
+        } else {
+            1
+        })
         .clamp(1, MAX_ROUNDS_CEILING);
     let check_node = knobs
         .check_node
-        .clone()
         .or_else(|| terminals.last().cloned())
         .unwrap_or_default();
-    let stop_marker = knobs.stop_marker.clone().unwrap_or_else(|| "NO_NEW_FINDINGS".to_string());
+    let stop_marker = knobs
+        .stop_marker
+        .unwrap_or_else(|| "NO_NEW_FINDINGS".to_string());
 
     let count = profile.nodes.len();
-    let cap = profile.max_parallel.filter(|c| *c > 0).unwrap_or(usize::MAX);
+    let cap = profile
+        .max_parallel
+        .filter(|c| *c > 0)
+        .unwrap_or(usize::MAX);
 
     let mut outcomes: Vec<NodeOutcome> = Vec::new();
     // What the previous round produced. Carried across rounds so a loop can
@@ -475,8 +510,8 @@ where
                 // one of its parents was itself skipped. A node with even one
                 // live parent still runs — that is what lets a collector node
                 // downstream of a router see the branch that did run.
-                let orphaned = !topo.parents[idx].is_empty()
-                    && topo.parents[idx].iter().all(|&p| skipped[p]);
+                let orphaned =
+                    !topo.parents[idx].is_empty() && topo.parents[idx].iter().all(|&p| skipped[p]);
                 if declined[idx] || orphaned {
                     skipped[idx] = true;
                     completed += 1;
@@ -519,7 +554,9 @@ where
 
             // Nothing running and nothing ready would mean a cycle, which
             // `levels()` already rejected. Bail rather than spin.
-            let Some((idx, req, res)) = inflight.next().await else { break };
+            let Some((idx, req, res)) = inflight.next().await else {
+                break;
+            };
             completed += 1;
 
             let outcome = match res {
@@ -635,16 +672,46 @@ pub const PATTERN_MIXTURE_OF_AGENTS: &str = "mixture_of_agents";
 /// Every built-in pattern, for populating a mode picker.
 pub fn pattern_catalog() -> Vec<(&'static str, &'static str)> {
     vec![
-        (PATTERN_CLASSIFY_AND_ACT, "Classify-And-Act — a classifier routes the task to one specialist"),
-        (PATTERN_FANOUT_SYNTHESIZE, "Fanout-And-Synthesize — N agents work in parallel, one synthesises"),
-        (PATTERN_ADVERSARIAL_VERIFY, "Adversarial Verification — verifiers try to refute the worker"),
-        (PATTERN_GENERATE_AND_FILTER, "Generate-And-Filter — many ideas, filtered by rubric and deduped"),
-        (PATTERN_TOURNAMENT, "Tournament — attempts compete via pairwise judges"),
-        (PATTERN_LOOP_UNTIL_DONE, "Loop Until Done — repeat until nothing new is found"),
-        (PATTERN_DEBATE, "Debate — a panel argues across rounds, then a moderator rules"),
-        (PATTERN_HIERARCHICAL, "Hierarchical — a director splits the work, then integrates it"),
-        (PATTERN_SEQUENTIAL_PIPELINE, "Sequential Pipeline — each stage refines the previous one"),
-        (PATTERN_MIXTURE_OF_AGENTS, "Mixture-of-Agents — proposals, cross-aware refinement, aggregation"),
+        (
+            PATTERN_CLASSIFY_AND_ACT,
+            "Classify-And-Act — a classifier routes the task to one specialist",
+        ),
+        (
+            PATTERN_FANOUT_SYNTHESIZE,
+            "Fanout-And-Synthesize — N agents work in parallel, one synthesises",
+        ),
+        (
+            PATTERN_ADVERSARIAL_VERIFY,
+            "Adversarial Verification — verifiers try to refute the worker",
+        ),
+        (
+            PATTERN_GENERATE_AND_FILTER,
+            "Generate-And-Filter — many ideas, filtered by rubric and deduped",
+        ),
+        (
+            PATTERN_TOURNAMENT,
+            "Tournament — attempts compete via pairwise judges",
+        ),
+        (
+            PATTERN_LOOP_UNTIL_DONE,
+            "Loop Until Done — repeat until nothing new is found",
+        ),
+        (
+            PATTERN_DEBATE,
+            "Debate — a panel argues across rounds, then a moderator rules",
+        ),
+        (
+            PATTERN_HIERARCHICAL,
+            "Hierarchical — a director splits the work, then integrates it",
+        ),
+        (
+            PATTERN_SEQUENTIAL_PIPELINE,
+            "Sequential Pipeline — each stage refines the previous one",
+        ),
+        (
+            PATTERN_MIXTURE_OF_AGENTS,
+            "Mixture-of-Agents — proposals, cross-aware refinement, aggregation",
+        ),
     ]
 }
 
@@ -662,13 +729,20 @@ fn node(name: &str, role: &str, inputs: &[&str], prompt: &str) -> WorkflowNode {
 /// topology (branches, workers, verifiers, generators, attempts).
 pub fn build_pattern(pattern: &str, width: usize) -> Result<WorkflowProfile, String> {
     let w = width.clamp(2, 12);
-    let mut p = WorkflowProfile { pattern: pattern.to_string(), ..Default::default() };
+    let mut p = WorkflowProfile {
+        pattern: pattern.to_string(),
+        ..Default::default()
+    };
 
     match pattern {
         PATTERN_CLASSIFY_AND_ACT => {
             p.name = "Classify-And-Act".into();
-            p.description = "A classifier picks the best specialist, and only that specialist runs.".into();
-            let branch_list = (1..=w).map(|i| format!("branch_{i}")).collect::<Vec<_>>().join(", ");
+            p.description =
+                "A classifier picks the best specialist, and only that specialist runs.".into();
+            let branch_list = (1..=w)
+                .map(|i| format!("branch_{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             let mut classifier = node("classifier", "classifier", &[],
                 &format!("Classify this task and name exactly ONE of [{branch_list}] best suited to it. \
 Reply with the chosen name on the first line, then one sentence of justification.\n\nTASK:\n{{{{task}}}}"));
@@ -678,21 +752,38 @@ Reply with the chosen name on the first line, then one sentence of justification
             classifier.handoff = true;
             p.nodes.push(classifier);
             for i in 1..=w {
-                p.nodes.push(node(&format!("branch_{i}"), "specialist", &["classifier"],
-                    &format!("You are specialist {i}, selected by the classifier for this task:\n\
-{{{{classifier}}}}\n\nComplete the task fully.\n\nTASK:\n{{{{task}}}}")));
+                p.nodes.push(node(
+                    &format!("branch_{i}"),
+                    "specialist",
+                    &["classifier"],
+                    &format!(
+                        "You are specialist {i}, selected by the classifier for this task:\n\
+{{{{classifier}}}}\n\nComplete the task fully.\n\nTASK:\n{{{{task}}}}"
+                    ),
+                ));
             }
             let inputs: Vec<String> = (1..=w).map(|i| format!("branch_{i}")).collect();
             let refs: Vec<&str> = inputs.iter().map(String::as_str).collect();
-            let body = inputs.iter().map(|n| format!("{n}:\n{{{{{n}}}}}")).collect::<Vec<_>>().join("\n\n");
-            p.nodes.push(node("result", "collector", &refs,
-                &format!("Exactly one branch below ran; the others were not selected and are marked as \
-such. Return the acting branch's answer verbatim, with no commentary.\n\n{body}")));
+            let body = inputs
+                .iter()
+                .map(|n| format!("{n}:\n{{{{{n}}}}}"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            p.nodes.push(node(
+                "result",
+                "collector",
+                &refs,
+                &format!(
+                    "Exactly one branch below ran; the others were not selected and are marked as \
+such. Return the acting branch's answer verbatim, with no commentary.\n\n{body}"
+                ),
+            ));
         }
 
         PATTERN_FANOUT_SYNTHESIZE => {
             p.name = "Fanout-And-Synthesize".into();
-            p.description = "N agents attack the task in parallel; a synthesiser merges their work.".into();
+            p.description =
+                "N agents attack the task in parallel; a synthesiser merges their work.".into();
             for i in 1..=w {
                 p.nodes.push(node(&format!("worker_{i}"), "worker", &[],
                     &format!("You are worker {i} of {w}. Approach this task from your own angle — do not \
@@ -700,31 +791,67 @@ hedge toward what others might say.\n\nTASK:\n{{{{task}}}}")));
             }
             let inputs: Vec<String> = (1..=w).map(|i| format!("worker_{i}")).collect();
             let refs: Vec<&str> = inputs.iter().map(String::as_str).collect();
-            let body = inputs.iter().map(|n| format!("--- {n} ---\n{{{{{n}}}}}")).collect::<Vec<_>>().join("\n\n");
-            p.nodes.push(node("synthesis", "synthesizer", &refs,
-                &format!("Merge these independent attempts into one answer. Keep what they agree on, \
+            let body = inputs
+                .iter()
+                .map(|n| format!("--- {n} ---\n{{{{{n}}}}}"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            p.nodes.push(node(
+                "synthesis",
+                "synthesizer",
+                &refs,
+                &format!(
+                    "Merge these independent attempts into one answer. Keep what they agree on, \
 resolve conflicts explicitly, and say when they disagree rather than averaging them away.\n\n\
-TASK:\n{{{{task}}}}\n\n{body}")));
+TASK:\n{{{{task}}}}\n\n{body}"
+                ),
+            ));
         }
 
         PATTERN_ADVERSARIAL_VERIFY => {
             p.name = "Adversarial Verification".into();
             p.description = "A worker answers; independent verifiers try to refute it.".into();
-            p.nodes.push(node("worker", "worker", &[], "Complete this task.\n\nTASK:\n{{task}}"));
-            let lenses = ["correctness", "security", "does-it-actually-reproduce", "edge cases",
-                          "performance", "maintainability", "spec compliance", "data integrity",
-                          "error handling", "concurrency", "API contract", "test coverage"];
+            p.nodes.push(node(
+                "worker",
+                "worker",
+                &[],
+                "Complete this task.\n\nTASK:\n{{task}}",
+            ));
+            let lenses = [
+                "correctness",
+                "security",
+                "does-it-actually-reproduce",
+                "edge cases",
+                "performance",
+                "maintainability",
+                "spec compliance",
+                "data integrity",
+                "error handling",
+                "concurrency",
+                "API contract",
+                "test coverage",
+            ];
             for i in 1..=w {
                 let lens = lenses[(i - 1) % lenses.len()];
-                p.nodes.push(node(&format!("verifier_{i}"), "verifier", &["worker"],
-                    &format!("Try to REFUTE the answer below, viewed through the '{lens}' lens. \
+                p.nodes.push(node(
+                    &format!("verifier_{i}"),
+                    "verifier",
+                    &["worker"],
+                    &format!(
+                        "Try to REFUTE the answer below, viewed through the '{lens}' lens. \
 Default to refuted=true when uncertain. State refuted=true or refuted=false on the first line, \
-then your evidence.\n\nTASK:\n{{{{task}}}}\n\nANSWER:\n{{{{worker}}}}")));
+then your evidence.\n\nTASK:\n{{{{task}}}}\n\nANSWER:\n{{{{worker}}}}"
+                    ),
+                ));
             }
             let inputs: Vec<String> = (1..=w).map(|i| format!("verifier_{i}")).collect();
             let mut refs: Vec<&str> = vec!["worker"];
             refs.extend(inputs.iter().map(String::as_str));
-            let body = inputs.iter().map(|n| format!("--- {n} ---\n{{{{{n}}}}}")).collect::<Vec<_>>().join("\n\n");
+            let body = inputs
+                .iter()
+                .map(|n| format!("--- {n} ---\n{{{{{n}}}}}"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
             p.nodes.push(node("verdict", "judge", &refs,
                 &format!("Count the verifiers reporting refuted=true. If a majority refuted the answer, \
 return a corrected answer. Otherwise return the original, noting any surviving caveats.\n\n\
@@ -733,7 +860,8 @@ ANSWER:\n{{{{worker}}}}\n\n{body}")));
 
         PATTERN_GENERATE_AND_FILTER => {
             p.name = "Generate-And-Filter".into();
-            p.description = "Many candidate ideas, cut down by an explicit rubric with deduplication.".into();
+            p.description =
+                "Many candidate ideas, cut down by an explicit rubric with deduplication.".into();
             for i in 1..=w {
                 p.nodes.push(node(&format!("generator_{i}"), "generator", &[],
                     &format!("You are generator {i} of {w}. Produce 3-5 DISTINCT candidate ideas for the \
@@ -741,17 +869,28 @@ task. Favour range over polish; do not self-censor.\n\nTASK:\n{{{{task}}}}")));
             }
             let inputs: Vec<String> = (1..=w).map(|i| format!("generator_{i}")).collect();
             let refs: Vec<&str> = inputs.iter().map(String::as_str).collect();
-            let body = inputs.iter().map(|n| format!("--- {n} ---\n{{{{{n}}}}}")).collect::<Vec<_>>().join("\n\n");
-            p.nodes.push(node("filter", "filter", &refs,
-                &format!("Merge every candidate below. First remove duplicates and near-duplicates, \
+            let body = inputs
+                .iter()
+                .map(|n| format!("--- {n} ---\n{{{{{n}}}}}"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            p.nodes.push(node(
+                "filter",
+                "filter",
+                &refs,
+                &format!(
+                    "Merge every candidate below. First remove duplicates and near-duplicates, \
 naming which you merged. Then score what remains against the task's real constraints and keep only \
 the strongest. State the rubric you applied, and list what you discarded and why.\n\n\
-TASK:\n{{{{task}}}}\n\n{body}")));
+TASK:\n{{{{task}}}}\n\n{body}"
+                ),
+            ));
         }
 
         PATTERN_TOURNAMENT => {
             p.name = "Tournament".into();
-            p.description = "Independent attempts compete through pairwise judges to a single winner.".into();
+            p.description =
+                "Independent attempts compete through pairwise judges to a single winner.".into();
             for i in 1..=w {
                 p.nodes.push(node(&format!("attempt_{i}"), "attempt", &[],
                     &format!("You are contender {i} of {w}. Produce your strongest complete answer.\n\nTASK:\n{{{{task}}}}")));
@@ -770,18 +909,23 @@ TASK:\n{{{{task}}}}\n\n{body}")));
                     bout += 1;
                     let name = format!("bout_{bout}");
                     let (a, b) = (&pair[0], &pair[1]);
-                    p.nodes.push(node(&name, "judge", &[a.as_str(), b.as_str()],
-                        &format!("Judge these two answers against the task. Pick the better one and \
+                    p.nodes.push(node(
+                        &name,
+                        "judge",
+                        &[a.as_str(), b.as_str()],
+                        &format!(
+                            "Judge these two answers against the task. Pick the better one and \
 return it VERBATIM, with a one-line justification prefixed 'WINNER:'. Do not blend them.\n\n\
-TASK:\n{{{{task}}}}\n\n--- A ---\n{{{{{a}}}}}\n\n--- B ---\n{{{{{b}}}}}")));
+TASK:\n{{{{task}}}}\n\n--- A ---\n{{{{{a}}}}}\n\n--- B ---\n{{{{{b}}}}}"
+                        ),
+                    ));
                     next.push(name);
                 }
                 current = next;
             }
-            if let Some(champion) = current.first() {
-                p.nodes.push(node("winner", "final", &[champion.as_str()],
-                    &format!("Return the winning answer below, cleaned of any judging commentary.\n\n{{{{{champion}}}}}")));
-            }
+            let champion = &current[0];
+            p.nodes.push(node("winner", "final", &[champion.as_str()],
+                &format!("Return the winning answer below, cleaned of any judging commentary.\n\n{{{{{champion}}}}}")));
         }
 
         PATTERN_LOOP_UNTIL_DONE => {
@@ -790,9 +934,13 @@ TASK:\n{{{{task}}}}\n\n--- A ---\n{{{{{a}}}}}\n\n--- B ---\n{{{{{b}}}}}")));
             p.nodes.push(node("agent", "worker", &[],
                 "Work the task. Previous rounds found:\n{{findings}}\n\nDo NOT repeat anything already \
 listed above — look for what earlier rounds missed.\n\nTASK:\n{{task}}"));
-            p.nodes.push(node("findings", "checker", &["agent"],
+            p.nodes.push(node(
+                "findings",
+                "checker",
+                &["agent"],
                 "List only findings from this round that are genuinely NEW versus earlier rounds. \
-If there are none, reply with exactly NO_NEW_FINDINGS.\n\nTHIS ROUND:\n{{agent}}"));
+If there are none, reply with exactly NO_NEW_FINDINGS.\n\nTHIS ROUND:\n{{agent}}",
+            ));
             p.loop_ = Some(LoopKnobs {
                 max_rounds: Some(3),
                 check_node: Some("findings".into()),
@@ -803,88 +951,160 @@ If there are none, reply with exactly NO_NEW_FINDINGS.\n\nTHIS ROUND:\n{{agent}}
         PATTERN_DEBATE => {
             p.name = "Debate".into();
             p.description =
-                "A panel argues in rounds, each round reading the last, then a moderator rules.".into();
+                "A panel argues in rounds, each round reading the last, then a moderator rules."
+                    .into();
             // Rounds are unrolled into the graph rather than looped, so the
             // transcript shows who said what when, and the moderator runs once.
             const ROUNDS: usize = 2;
             for i in 1..=w {
-                p.nodes.push(node(&format!("panelist_{i}_r1"), "panelist", &[],
-                    &format!("You are panelist {i} of {w}. State your position on the task and your \
-strongest supporting argument. Do not hedge toward what others might say.\n\nTASK:\n{{{{task}}}}")));
+                p.nodes.push(node(
+                    &format!("panelist_{i}_r1"),
+                    "panelist",
+                    &[],
+                    &format!(
+                        "You are panelist {i} of {w}. State your position on the task and your \
+strongest supporting argument. Do not hedge toward what others might say.\n\nTASK:\n{{{{task}}}}"
+                    ),
+                ));
             }
             for r in 2..=ROUNDS {
-                let prev: Vec<String> = (1..=w).map(|i| format!("panelist_{i}_r{}", r - 1)).collect();
+                let prev: Vec<String> = (1..=w)
+                    .map(|i| format!("panelist_{i}_r{}", r - 1))
+                    .collect();
                 let refs: Vec<&str> = prev.iter().map(String::as_str).collect();
-                let body = prev.iter()
+                let body = prev
+                    .iter()
                     .map(|n| format!("--- {n} ---\n{{{{{n}}}}}"))
                     .collect::<Vec<_>>()
                     .join("\n\n");
                 for i in 1..=w {
-                    p.nodes.push(node(&format!("panelist_{i}_r{r}"), "panelist", &refs,
-                        &format!("You are panelist {i}. Round {r}. Read every position below, then \
+                    p.nodes.push(node(
+                        &format!("panelist_{i}_r{r}"),
+                        "panelist",
+                        &refs,
+                        &format!(
+                            "You are panelist {i}. Round {r}. Read every position below, then \
 respond: concede what genuinely defeats your argument, and press what still stands. Do not restate \
-round {} verbatim.\n\nTASK:\n{{{{task}}}}\n\n{body}", r - 1)));
+round {} verbatim.\n\nTASK:\n{{{{task}}}}\n\n{body}",
+                            r - 1
+                        ),
+                    ));
                 }
             }
             let last: Vec<String> = (1..=w).map(|i| format!("panelist_{i}_r{ROUNDS}")).collect();
             let refs: Vec<&str> = last.iter().map(String::as_str).collect();
-            let body = last.iter()
+            let body = last
+                .iter()
                 .map(|n| format!("--- {n} ---\n{{{{{n}}}}}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            p.nodes.push(node("moderator", "judge", &refs,
-                &format!("Rule on this debate. Say what the panel converged on, what remains \
+            p.nodes.push(node(
+                "moderator",
+                "judge",
+                &refs,
+                &format!(
+                    "Rule on this debate. Say what the panel converged on, what remains \
 genuinely contested and why, and give the answer the evidence supports — do not split the \
-difference to seem balanced.\n\nTASK:\n{{{{task}}}}\n\n{body}")));
+difference to seem balanced.\n\nTASK:\n{{{{task}}}}\n\n{body}"
+                ),
+            ));
         }
 
         PATTERN_HIERARCHICAL => {
             p.name = "Hierarchical".into();
-            p.description = "A director decomposes the task, workers execute, the director integrates.".into();
-            let worker_list = (1..=w).map(|i| format!("worker_{i}")).collect::<Vec<_>>().join(", ");
-            p.nodes.push(node("director", "director", &[],
-                &format!("Decompose this task into exactly {w} independent sub-tasks, one for each of \
+            p.description =
+                "A director decomposes the task, workers execute, the director integrates.".into();
+            let worker_list = (1..=w)
+                .map(|i| format!("worker_{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            p.nodes.push(node(
+                "director",
+                "director",
+                &[],
+                &format!(
+                    "Decompose this task into exactly {w} independent sub-tasks, one for each of \
 [{worker_list}]. Sub-tasks must not overlap and must together cover the whole task. Address each \
-worker by name.\n\nTASK:\n{{{{task}}}}")));
+worker by name.\n\nTASK:\n{{{{task}}}}"
+                ),
+            ));
             for i in 1..=w {
-                p.nodes.push(node(&format!("worker_{i}"), "worker", &["director"],
-                    &format!("You are worker_{i}. Carry out ONLY the sub-task the director assigned to \
+                p.nodes.push(node(
+                    &format!("worker_{i}"),
+                    "worker",
+                    &["director"],
+                    &format!(
+                        "You are worker_{i}. Carry out ONLY the sub-task the director assigned to \
 you; ignore the others. If your assignment is unclear, say so plainly instead of inventing one.\n\n\
-DIRECTOR'S PLAN:\n{{{{director}}}}\n\nORIGINAL TASK:\n{{{{task}}}}")));
+DIRECTOR'S PLAN:\n{{{{director}}}}\n\nORIGINAL TASK:\n{{{{task}}}}"
+                    ),
+                ));
             }
             let mut refs: Vec<&str> = vec!["director"];
             let inputs: Vec<String> = (1..=w).map(|i| format!("worker_{i}")).collect();
             refs.extend(inputs.iter().map(String::as_str));
-            let body = inputs.iter()
+            let body = inputs
+                .iter()
                 .map(|n| format!("--- {n} ---\n{{{{{n}}}}}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            p.nodes.push(node("integration", "director", &refs,
-                &format!("You are the director again. Integrate the workers' results into one \
+            p.nodes.push(node(
+                "integration",
+                "director",
+                &refs,
+                &format!(
+                    "You are the director again. Integrate the workers' results into one \
 deliverable. Name any sub-task that came back incomplete rather than papering over it.\n\n\
-ORIGINAL TASK:\n{{{{task}}}}\n\nYOUR PLAN:\n{{{{director}}}}\n\n{body}")));
+ORIGINAL TASK:\n{{{{task}}}}\n\nYOUR PLAN:\n{{{{director}}}}\n\n{body}"
+                ),
+            ));
         }
 
         PATTERN_SEQUENTIAL_PIPELINE => {
             p.name = "Sequential Pipeline".into();
             p.description = "A relay: each stage improves on the stage before it.".into();
-            let jobs = ["draft it", "find everything wrong with it", "rewrite it against that critique",
-                        "check the rewrite against the original task", "tighten it", "fact-check every claim",
-                        "simplify without losing content", "final polish"];
-            let roles = ["drafter", "critic", "reviser", "checker", "editor", "fact-checker",
-                         "simplifier", "polisher"];
+            let jobs = [
+                "draft it",
+                "find everything wrong with it",
+                "rewrite it against that critique",
+                "check the rewrite against the original task",
+                "tighten it",
+                "fact-check every claim",
+                "simplify without losing content",
+                "final polish",
+            ];
+            let roles = [
+                "drafter",
+                "critic",
+                "reviser",
+                "checker",
+                "editor",
+                "fact-checker",
+                "simplifier",
+                "polisher",
+            ];
             for i in 1..=w {
                 let job = jobs[(i - 1) % jobs.len()];
                 let role = roles[(i - 1) % roles.len()];
                 if i == 1 {
-                    p.nodes.push(node("stage_1", role, &[],
-                        &format!("Stage 1 of {w}: {job}.\n\nTASK:\n{{{{task}}}}")));
+                    p.nodes.push(node(
+                        "stage_1",
+                        role,
+                        &[],
+                        &format!("Stage 1 of {w}: {job}.\n\nTASK:\n{{{{task}}}}"),
+                    ));
                 } else {
                     let prev = format!("stage_{}", i - 1);
-                    p.nodes.push(node(&format!("stage_{i}"), role, &[prev.as_str()],
-                        &format!("Stage {i} of {w}: {job}. Work from the previous stage's output — \
+                    p.nodes.push(node(
+                        &format!("stage_{i}"),
+                        role,
+                        &[prev.as_str()],
+                        &format!(
+                            "Stage {i} of {w}: {job}. Work from the previous stage's output — \
 carry forward what is already good rather than starting over.\n\nTASK:\n{{{{task}}}}\n\n\
-PREVIOUS STAGE:\n{{{{{prev}}}}}")));
+PREVIOUS STAGE:\n{{{{{prev}}}}}"
+                        ),
+                    ));
                 }
             }
         }
@@ -894,13 +1114,20 @@ PREVIOUS STAGE:\n{{{{{prev}}}}}")));
             p.description =
                 "Independent proposals, a refinement layer that reads all of them, then aggregation.".into();
             for i in 1..=w {
-                p.nodes.push(node(&format!("proposer_{i}"), "proposer", &[],
-                    &format!("You are proposer {i} of {w}. Answer the task independently and \
-completely.\n\nTASK:\n{{{{task}}}}")));
+                p.nodes.push(node(
+                    &format!("proposer_{i}"),
+                    "proposer",
+                    &[],
+                    &format!(
+                        "You are proposer {i} of {w}. Answer the task independently and \
+completely.\n\nTASK:\n{{{{task}}}}"
+                    ),
+                ));
             }
             let props: Vec<String> = (1..=w).map(|i| format!("proposer_{i}")).collect();
             let prop_refs: Vec<&str> = props.iter().map(String::as_str).collect();
-            let prop_body = props.iter()
+            let prop_body = props
+                .iter()
                 .map(|n| format!("--- {n} ---\n{{{{{n}}}}}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
@@ -912,14 +1139,21 @@ favourite.\n\nTASK:\n{{{{task}}}}\n\n{prop_body}")));
             }
             let refs_v: Vec<String> = (1..=w).map(|i| format!("refiner_{i}")).collect();
             let ref_refs: Vec<&str> = refs_v.iter().map(String::as_str).collect();
-            let ref_body = refs_v.iter()
+            let ref_body = refs_v
+                .iter()
                 .map(|n| format!("--- {n} ---\n{{{{{n}}}}}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            p.nodes.push(node("aggregator", "synthesizer", &ref_refs,
-                &format!("Produce the final answer from the refined candidates below. Where they still \
+            p.nodes.push(node(
+                "aggregator",
+                "synthesizer",
+                &ref_refs,
+                &format!(
+                    "Produce the final answer from the refined candidates below. Where they still \
 disagree, say which is better supported and why rather than averaging them.\n\n\
-TASK:\n{{{{task}}}}\n\n{ref_body}")));
+TASK:\n{{{{task}}}}\n\n{ref_body}"
+                ),
+            ));
         }
 
         other => return Err(format!("unknown workflow pattern: {other}")),
@@ -971,7 +1205,11 @@ pub async fn run_with_agent_loop(
                 p(format!(
                     "▶ **{}**{} starting…\n",
                     req.name,
-                    if req.role.is_empty() { String::new() } else { format!(" ({})", req.role) },
+                    if req.role.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", req.role)
+                    },
                 ));
             }
             // Precedence: what the node names > the roster entry for its role
@@ -987,8 +1225,16 @@ pub async fn run_with_agent_loop(
                     None => session.to_string(),
                 }
             };
-            let api_key = pick(req.api_key, roster.map(|r| r.api_key.as_str()), &ctx.api_key);
-            let api_url = pick(req.api_url, roster.map(|r| r.api_url.as_str()), &ctx.api_url);
+            let api_key = pick(
+                req.api_key,
+                roster.map(|r| r.api_key.as_str()),
+                &ctx.api_key,
+            );
+            let api_url = pick(
+                req.api_url,
+                roster.map(|r| r.api_url.as_str()),
+                &ctx.api_url,
+            );
             let model = pick(req.model, roster.map(|r| r.model.as_str()), &ctx.model);
             let effort = pick(req.effort, roster.map(|r| r.effort.as_str()), "");
 
@@ -996,7 +1242,11 @@ pub async fn run_with_agent_loop(
                 "You are the '{}' node of a multi-agent workflow{}. Return only the content this \
 node is responsible for — no preamble about being an AI or describing your role.",
                 req.name,
-                if req.role.is_empty() { String::new() } else { format!(" acting as the {}", req.role) },
+                if req.role.is_empty() {
+                    String::new()
+                } else {
+                    format!(" acting as the {}", req.role)
+                },
             );
 
             let sub_agent = SubAgentConfig {
@@ -1030,7 +1280,11 @@ node is responsible for — no preamble about being an AI or describing your rol
                 Err(format!("node '{}' returned no content", req.name))
             } else {
                 if let Some(p) = &progress {
-                    p(format!("✓ **{}** done ({} chars)\n", req.name, result.content.len()));
+                    p(format!(
+                        "✓ **{}** done ({} chars)\n",
+                        req.name,
+                        result.content.len()
+                    ));
                 }
                 Ok(result.content)
             }
@@ -1071,10 +1325,7 @@ mod tests {
     #[test]
     fn a_cycle_is_rejected_by_name_rather_than_deadlocking() {
         let p = WorkflowProfile {
-            nodes: vec![
-                node("a", "", &["b"], ""),
-                node("b", "", &["a"], ""),
-            ],
+            nodes: vec![node("a", "", &["b"], ""), node("b", "", &["a"], "")],
             ..Default::default()
         };
         let err = p.levels().unwrap_err();
@@ -1083,7 +1334,10 @@ mod tests {
 
     #[test]
     fn unknown_input_is_rejected() {
-        let p = WorkflowProfile { nodes: vec![node("a", "", &["ghost"], "")], ..Default::default() };
+        let p = WorkflowProfile {
+            nodes: vec![node("a", "", &["ghost"], "")],
+            ..Default::default()
+        };
         assert!(p.levels().unwrap_err().contains("unknown input"));
     }
 
@@ -1135,12 +1389,20 @@ mod tests {
     async fn a_failed_node_is_reported_and_its_error_reaches_dependents() {
         let p = simple();
         let run = |r: NodeRun| async move {
-            if r.name == "a" { Err("boom".to_string()) } else { Ok(r.prompt) }
+            if r.name == "a" {
+                Err("boom".to_string())
+            } else {
+                Ok(r.prompt)
+            }
         };
         let res = execute(&p, "TASK", run).await.unwrap();
         assert!(!res.ok);
         let c = res.outcomes.iter().find(|o| o.name == "c").unwrap();
-        assert!(c.output.contains("boom"), "dependent should see the failure: {}", c.output);
+        assert!(
+            c.output.contains("boom"),
+            "dependent should see the failure: {}",
+            c.output
+        );
     }
 
     #[tokio::test]
@@ -1154,25 +1416,39 @@ mod tests {
             }
         };
         let res = execute(&p, "TASK", run).await.unwrap();
-        assert_eq!(res.rounds, 2, "should stop on the round that reports nothing new");
+        assert_eq!(
+            res.rounds, 2,
+            "should stop on the round that reports nothing new"
+        );
     }
 
     #[tokio::test]
     async fn loop_until_done_respects_its_round_ceiling() {
         let mut p = build_pattern(PATTERN_LOOP_UNTIL_DONE, 2).unwrap();
-        p.loop_ = Some(LoopKnobs { max_rounds: Some(2), ..Default::default() });
+        p.loop_ = Some(LoopKnobs {
+            max_rounds: Some(2),
+            ..Default::default()
+        });
         let run = |_r: NodeRun| async move { Ok("still finding things".to_string()) };
         let res = execute(&p, "TASK", run).await.unwrap();
-        assert_eq!(res.rounds, 2, "must stop at max_rounds even when never done");
+        assert_eq!(
+            res.rounds, 2,
+            "must stop at max_rounds even when never done"
+        );
     }
 
     #[test]
     fn every_built_in_pattern_builds_a_valid_dag() {
         for (name, _) in pattern_catalog() {
             let p = build_pattern(name, 4).unwrap_or_else(|e| panic!("{name}: {e}"));
-            let levels = p.levels().unwrap_or_else(|e| panic!("{name} topology: {e}"));
+            let levels = p
+                .levels()
+                .unwrap_or_else(|e| panic!("{name} topology: {e}"));
             assert!(!levels.is_empty(), "{name} produced no levels");
-            assert!(!p.terminal_nodes().is_empty(), "{name} has no terminal node");
+            assert!(
+                !p.terminal_nodes().is_empty(),
+                "{name} has no terminal node"
+            );
         }
     }
 
@@ -1296,7 +1572,9 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
         let p = WorkflowProfile {
-            nodes: (1..=4).map(|i| node(&format!("n{i}"), "", &[], "")).collect(),
+            nodes: (1..=4)
+                .map(|i| node(&format!("n{i}"), "", &[], ""))
+                .collect(),
             max_parallel: Some(2),
             ..Default::default()
         };
@@ -1357,8 +1635,14 @@ mod tests {
 
         let prompts = seen.lock().unwrap().clone();
         assert_eq!(prompts.len(), 2, "both rounds should have run");
-        assert_eq!(prompts[0], "saw:{{x}}", "round 0 has no previous round to read");
-        assert_eq!(prompts[1], "saw:x-r0", "round 1 reads round 0's x, not round 1's");
+        assert_eq!(
+            prompts[0], "saw:{{x}}",
+            "round 0 has no previous round to read"
+        );
+        assert_eq!(
+            prompts[1], "saw:x-r0",
+            "round 1 reads round 0's x, not round 1's"
+        );
     }
 
     // --- the ported swarm topologies --------------------------------------
@@ -1425,12 +1709,21 @@ mod tests {
     fn every_pattern_constant_is_listed_in_the_catalog() {
         let listed: Vec<&str> = pattern_catalog().iter().map(|(id, _)| *id).collect();
         for id in [
-            PATTERN_CLASSIFY_AND_ACT, PATTERN_FANOUT_SYNTHESIZE, PATTERN_ADVERSARIAL_VERIFY,
-            PATTERN_GENERATE_AND_FILTER, PATTERN_TOURNAMENT, PATTERN_LOOP_UNTIL_DONE,
-            PATTERN_DEBATE, PATTERN_HIERARCHICAL, PATTERN_SEQUENTIAL_PIPELINE,
+            PATTERN_CLASSIFY_AND_ACT,
+            PATTERN_FANOUT_SYNTHESIZE,
+            PATTERN_ADVERSARIAL_VERIFY,
+            PATTERN_GENERATE_AND_FILTER,
+            PATTERN_TOURNAMENT,
+            PATTERN_LOOP_UNTIL_DONE,
+            PATTERN_DEBATE,
+            PATTERN_HIERARCHICAL,
+            PATTERN_SEQUENTIAL_PIPELINE,
             PATTERN_MIXTURE_OF_AGENTS,
         ] {
-            assert!(listed.contains(&id), "{id} is not reachable from any picker");
+            assert!(
+                listed.contains(&id),
+                "{id} is not reachable from any picker"
+            );
         }
     }
 
@@ -1457,7 +1750,10 @@ mod tests {
         reply: impl Fn(&str) -> Result<String, String> + Send + Sync + 'static,
     ) -> (
         std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-        impl Fn(NodeRun) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>,
+        impl Fn(
+            NodeRun,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>,
     ) {
         let ran = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let r = ran.clone();
@@ -1488,22 +1784,32 @@ mod tests {
         assert!(res.ok, "a branch that was not selected is not a failure");
 
         let ran = ran.lock().unwrap().clone();
-        assert!(ran.contains(&"branch_3".to_string()), "the chosen branch must run: {ran:?}");
+        assert!(
+            ran.contains(&"branch_3".to_string()),
+            "the chosen branch must run: {ran:?}"
+        );
         for i in [1, 2, 4] {
             assert!(
                 !ran.contains(&format!("branch_{i}")),
                 "branch_{i} was passed over and must never be dispatched: {ran:?}"
             );
         }
-        assert!(ran.contains(&"result".to_string()), "the collector still runs");
+        assert!(
+            ran.contains(&"result".to_string()),
+            "the collector still runs"
+        );
         assert_eq!(
             ran.len(),
             3,
             "routing to 1 of 4 should cost 3 calls (classifier, specialist, collector), not 6: {ran:?}"
         );
 
-        let skipped: Vec<&str> =
-            res.outcomes.iter().filter(|o| o.skipped).map(|o| o.name.as_str()).collect();
+        let skipped: Vec<&str> = res
+            .outcomes
+            .iter()
+            .filter(|o| o.skipped)
+            .map(|o| o.name.as_str())
+            .collect();
         assert_eq!(skipped, vec!["branch_1", "branch_2", "branch_4"]);
     }
 
@@ -1524,7 +1830,10 @@ mod tests {
         assert!(res.ok);
         let ran = ran.lock().unwrap().clone();
         for i in 1..=3 {
-            assert!(ran.contains(&format!("branch_{i}")), "expected a safe fan-out: {ran:?}");
+            assert!(
+                ran.contains(&format!("branch_{i}")),
+                "expected a safe fan-out: {ran:?}"
+            );
         }
         assert!(res.outcomes.iter().all(|o| !o.skipped));
     }
@@ -1567,7 +1876,10 @@ mod tests {
             Some(2),
             "branch_1 must not shadow branch_10"
         );
-        assert_eq!(choose_handoff_target(&p, &candidates, "go with branch_1"), Some(1));
+        assert_eq!(
+            choose_handoff_target(&p, &candidates, "go with branch_1"),
+            Some(1)
+        );
         assert_eq!(choose_handoff_target(&p, &candidates, "no opinion"), None);
     }
 
@@ -1589,7 +1901,11 @@ mod tests {
         p.nodes[0].handoff = true;
 
         let (ran, run) = recording_runner(|name| {
-            Ok(if name == "route" { "choose alpha".to_string() } else { format!("out-{name}") })
+            Ok(if name == "route" {
+                "choose alpha".to_string()
+            } else {
+                format!("out-{name}")
+            })
         });
 
         let res = execute(&p, "T", run).await.unwrap();
@@ -1599,11 +1915,21 @@ mod tests {
         assert_eq!(ran.len(), 4, "route, alpha, alpha_child, end: {ran:?}");
         assert!(ran.contains(&"alpha_child".to_string()));
         assert!(!ran.contains(&"beta".to_string()));
-        assert!(!ran.contains(&"beta_child".to_string()), "the dead branch's subtree dies with it");
-        assert!(ran.contains(&"end".to_string()), "a join with one live parent still runs");
+        assert!(
+            !ran.contains(&"beta_child".to_string()),
+            "the dead branch's subtree dies with it"
+        );
+        assert!(
+            ran.contains(&"end".to_string()),
+            "a join with one live parent still runs"
+        );
 
-        let skipped: Vec<&str> =
-            res.outcomes.iter().filter(|o| o.skipped).map(|o| o.name.as_str()).collect();
+        let skipped: Vec<&str> = res
+            .outcomes
+            .iter()
+            .filter(|o| o.skipped)
+            .map(|o| o.name.as_str())
+            .collect();
         assert_eq!(skipped, vec!["beta", "beta_child"]);
     }
 
@@ -1624,7 +1950,10 @@ mod tests {
     #[test]
     fn a_role_specific_entry_beats_a_wildcard_regardless_of_order() {
         // Wildcard listed first must not shadow the deliberate per-role pick.
-        let pool = vec![entry("general", "cheap", &[]), entry("judges", "strong", &["judge"])];
+        let pool = vec![
+            entry("general", "cheap", &[]),
+            entry("judges", "strong", &["judge"]),
+        ];
         assert_eq!(model_for_role(&pool, "judge").unwrap().model, "strong");
         assert_eq!(model_for_role(&pool, "worker").unwrap().model, "cheap");
     }

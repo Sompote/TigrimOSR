@@ -13,7 +13,11 @@ pub struct SetupView {
 
 impl Default for SetupView {
     fn default() -> Self {
-        Self { open: false, step: 0, agreed_to_security: false }
+        Self {
+            open: false,
+            step: 0,
+            agreed_to_security: false,
+        }
     }
 }
 
@@ -24,13 +28,16 @@ impl SetupView {
         vm_manager: &Arc<VmManager>,
         runtime: &tokio::runtime::Handle,
     ) {
-        if !self.open { return; }
+        if !self.open {
+            return;
+        }
 
         let mut still_open = self.open;
 
         egui::Window::new("AndrewOS Setup")
             .open(&mut still_open)
-            .resizable(false).collapsible(false)
+            .resizable(false)
+            .collapsible(false)
             .default_size([560.0, 480.0])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
@@ -44,15 +51,34 @@ impl SetupView {
                         } else {
                             egui::Color32::from_rgb(75, 85, 99)
                         };
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
                         ui.painter().circle_filled(rect.center(), 12.0, color);
-                        let label = if i < self.step { "\u{2713}".to_string() } else { format!("{}", i + 1) };
-                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, &label, egui::FontId::proportional(11.0), egui::Color32::WHITE);
+                        let label = if i < self.step {
+                            "\u{2713}".to_string()
+                        } else {
+                            format!("{}", i + 1)
+                        };
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            &label,
+                            egui::FontId::proportional(11.0),
+                            egui::Color32::WHITE,
+                        );
                         if i < 2 {
-                            let line_color = if i < self.step { egui::Color32::from_rgb(249, 115, 22) } else { egui::Color32::from_rgb(75, 85, 99) };
-                            let (lr, _) = ui.allocate_exact_size(egui::vec2(40.0, 24.0), egui::Sense::hover());
+                            let line_color = if i < self.step {
+                                egui::Color32::from_rgb(249, 115, 22)
+                            } else {
+                                egui::Color32::from_rgb(75, 85, 99)
+                            };
+                            let (lr, _) = ui
+                                .allocate_exact_size(egui::vec2(40.0, 24.0), egui::Sense::hover());
                             let y = lr.center().y;
-                            ui.painter().line_segment([egui::pos2(lr.left(), y), egui::pos2(lr.right(), y)], egui::Stroke::new(2.0, line_color));
+                            ui.painter().line_segment(
+                                [egui::pos2(lr.left(), y), egui::pos2(lr.right(), y)],
+                                egui::Stroke::new(2.0, line_color),
+                            );
                         }
                     }
                 });
@@ -74,17 +100,25 @@ impl SetupView {
 
                 // Navigation
                 ui.horizontal(|ui| {
-                    if self.step > 0 && ui.button("Back").clicked() { self.step -= 1; }
+                    if self.step > 0 && ui.button("Back").clicked() {
+                        self.step -= 1;
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.step < 2 {
                             let enabled = !(self.step == 1 && !self.agreed_to_security);
-                            if ui.add_enabled(enabled, egui::Button::new("Next")).clicked() { self.step += 1; }
+                            if ui.add_enabled(enabled, egui::Button::new("Next")).clicked() {
+                                self.step += 1;
+                            }
                         } else {
-                            let btn = egui::Button::new(egui::RichText::new("Start AndrewOS").size(15.0).strong())
-                                .fill(egui::Color32::from_rgb(34, 197, 94));
+                            let btn = egui::Button::new(
+                                egui::RichText::new("Start AndrewOS").size(15.0).strong(),
+                            )
+                            .fill(egui::Color32::from_rgb(34, 197, 94));
                             if ui.add(btn).clicked() {
                                 let vm = vm_manager.clone();
-                                runtime.spawn(async move { let _ = vm.start_vm().await; });
+                                runtime.spawn(async move {
+                                    let _ = vm.start_vm().await;
+                                });
                                 self.open = false;
                             }
                         }
@@ -106,13 +140,20 @@ impl SetupView {
         ui.add_space(16.0);
         for (icon, text) in [
             ("\u{1F6E1}", "Full VM isolation via QEMU"),
-            ("\u{1F512}", "Host files only accessible with your permission"),
+            (
+                "\u{1F512}",
+                "Host files only accessible with your permission",
+            ),
             ("\u{26A1}", "Native performance with HVF acceleration"),
             ("\u{2B07}", "~2GB download for Ubuntu base image"),
         ] {
             ui.horizontal(|ui| {
                 ui.add_space(40.0);
-                ui.label(egui::RichText::new(icon).size(16.0).color(egui::Color32::from_rgb(249, 115, 22)));
+                ui.label(
+                    egui::RichText::new(icon)
+                        .size(16.0)
+                        .color(egui::Color32::from_rgb(249, 115, 22)),
+                );
                 ui.label(text);
             });
             ui.add_space(4.0);
@@ -121,7 +162,11 @@ impl SetupView {
 
     fn security_step(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("\u{1F6E1}").size(48.0).color(egui::Color32::from_rgb(34, 197, 94)));
+            ui.label(
+                egui::RichText::new("\u{1F6E1}")
+                    .size(48.0)
+                    .color(egui::Color32::from_rgb(34, 197, 94)),
+            );
             ui.add_space(8.0);
             ui.label(egui::RichText::new("Security Model").size(22.0).strong());
         });
@@ -143,7 +188,10 @@ impl SetupView {
         }
         ui.horizontal(|ui| {
             ui.add_space(40.0);
-            ui.checkbox(&mut self.agreed_to_security, "I understand the security model");
+            ui.checkbox(
+                &mut self.agreed_to_security,
+                "I understand the security model",
+            );
         });
     }
 
@@ -152,7 +200,11 @@ impl SetupView {
         let port = VmConfig::VM_PORT;
 
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("\u{2705}").size(48.0).color(egui::Color32::from_rgb(34, 197, 94)));
+            ui.label(
+                egui::RichText::new("\u{2705}")
+                    .size(48.0)
+                    .color(egui::Color32::from_rgb(34, 197, 94)),
+            );
             ui.add_space(8.0);
             ui.label(egui::RichText::new("Ready to Go").size(22.0).strong());
             ui.label("AndrewOS will now:");
@@ -168,16 +220,33 @@ impl SetupView {
         for (i, text) in steps.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.add_space(40.0);
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-                ui.painter().circle_filled(rect.center(), 11.0, egui::Color32::from_rgb(249, 115, 22));
-                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, &format!("{}", i + 1), egui::FontId::proportional(11.0), egui::Color32::WHITE);
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+                ui.painter().circle_filled(
+                    rect.center(),
+                    11.0,
+                    egui::Color32::from_rgb(249, 115, 22),
+                );
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    &format!("{}", i + 1),
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::WHITE,
+                );
                 ui.label(text.as_str());
             });
             ui.add_space(4.0);
         }
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("First setup takes about 5-10 minutes.\nSubsequent starts are much faster.").size(12.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new(
+                    "First setup takes about 5-10 minutes.\nSubsequent starts are much faster.",
+                )
+                .size(12.0)
+                .color(egui::Color32::GRAY),
+            );
         });
     }
 }

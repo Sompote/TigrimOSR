@@ -125,7 +125,11 @@ async fn run_command(command: &str) -> Result<String, String> {
                 Ok(crate::util::truncate_utf8_ellipsis(&stdout, MAX_RESULT_LEN))
             } else {
                 let code = out.status.code().unwrap_or(-1);
-                let detail = if stderr.trim().is_empty() { &stdout } else { &stderr };
+                let detail = if stderr.trim().is_empty() {
+                    &stdout
+                } else {
+                    &stderr
+                };
                 Err(format!(
                     "exit {code}: {}",
                     crate::util::truncate_utf8_ellipsis(detail.trim(), MAX_RESULT_LEN)
@@ -180,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_cron_is_rejected(){
+    fn invalid_cron_is_rejected() {
         assert!(validate_cron("not a cron").is_err());
         assert!(validate_cron("99 * * * *").is_err());
         assert!(validate_cron("").is_err());

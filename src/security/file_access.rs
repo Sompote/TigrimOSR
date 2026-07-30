@@ -98,12 +98,20 @@ impl FileAccessControl {
 
     /// Revoke a previously granted access entry identified by its `id`.
     pub fn revoke_access(&mut self, id: Uuid) {
-        let path = self.access_entries.iter().find(|e| e.id == id).map(|e| e.path.clone());
+        let path = self
+            .access_entries
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.path.clone());
         if let Some(path) = path {
             if let Some(entry) = self.access_entries.iter_mut().find(|e| e.id == id) {
                 entry.revoked = true;
             }
-            self.log_audit("revoke_access", &path, &format!("Revoked access for entry {}", id));
+            self.log_audit(
+                "revoke_access",
+                &path,
+                &format!("Revoked access for entry {}", id),
+            );
             self.save();
         }
     }
@@ -130,8 +138,8 @@ impl FileAccessControl {
         Self::ensure_parent(&self.config_path);
         Self::ensure_parent(&self.audit_path);
 
-        let entries_json =
-            serde_json::to_string_pretty(&self.access_entries).expect("failed to serialize access entries");
+        let entries_json = serde_json::to_string_pretty(&self.access_entries)
+            .expect("failed to serialize access entries");
         fs::write(&self.config_path, entries_json).expect("failed to write access entries file");
 
         let audit_json =

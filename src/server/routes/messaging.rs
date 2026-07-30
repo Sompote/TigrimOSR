@@ -80,7 +80,9 @@ pub async fn line_webhook(headers: HeaderMap, body: Bytes) -> StatusCode {
     if let Ok(payload) = serde_json::from_slice::<Value>(&body) {
         // Ack immediately; LINE retries slow responses, which would double-run
         // the agent. Processing continues in the background.
-        tokio::spawn(crate::server::services::messaging::line::handle_events(payload));
+        tokio::spawn(crate::server::services::messaging::line::handle_events(
+            payload,
+        ));
     }
     StatusCode::OK
 }
@@ -94,7 +96,10 @@ async fn status_handler() -> Json<Value> {
     let tg = crate::server::services::messaging::telegram::get_status().await;
 
     let tunnel = crate::server::services::tunnel::get_tunnel_state().await;
-    let tunnel_running = tunnel.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
+    let tunnel_running = tunnel
+        .get("running")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let tunnel_url = tunnel
         .get("url")
         .and_then(|v| v.as_str())

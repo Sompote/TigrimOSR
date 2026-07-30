@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs;
 
-use crate::server::data::{self, data_dir, get_settings, get_skills, save_settings, save_skills, Skill};
+use crate::server::data::{
+    self, data_dir, get_settings, get_skills, save_settings, save_skills, Skill,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -139,11 +141,17 @@ pub async fn install_plugin(zip_bytes: &[u8]) -> Result<InstalledPlugin, String>
 
     // Security: check file count and total size
     if archive.len() > MAX_FILES {
-        return Err(format!("ZIP contains too many files ({} > {})", archive.len(), MAX_FILES));
+        return Err(format!(
+            "ZIP contains too many files ({} > {})",
+            archive.len(),
+            MAX_FILES
+        ));
     }
     let mut total_size: u64 = 0;
     for i in 0..archive.len() {
-        let file = archive.by_index(i).map_err(|e| format!("ZIP read error: {e}"))?;
+        let file = archive
+            .by_index(i)
+            .map_err(|e| format!("ZIP read error: {e}"))?;
         let name = file.name().to_string();
         // Security: no path traversal
         if name.contains("..") || name.starts_with('/') {
@@ -161,7 +169,10 @@ pub async fn install_plugin(zip_bytes: &[u8]) -> Result<InstalledPlugin, String>
     // Validate plugin ID
     let id_re = regex::Regex::new(r"^[a-z0-9][a-z0-9-]*$").unwrap();
     if !id_re.is_match(&manifest.id) {
-        return Err(format!("Invalid plugin ID '{}': must match [a-z0-9][a-z0-9-]*", manifest.id));
+        return Err(format!(
+            "Invalid plugin ID '{}': must match [a-z0-9][a-z0-9-]*",
+            manifest.id
+        ));
     }
 
     // Check for duplicate
@@ -179,7 +190,9 @@ pub async fn install_plugin(zip_bytes: &[u8]) -> Result<InstalledPlugin, String>
     let _ = fs::create_dir_all(&dest).await;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| format!("ZIP read error: {e}"))?;
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("ZIP read error: {e}"))?;
         let raw_name = file.name().to_string();
         if file.is_dir() {
             continue;
@@ -242,8 +255,14 @@ pub async fn install_plugin(zip_bytes: &[u8]) -> Result<InstalledPlugin, String>
         if !src.exists() {
             continue;
         }
-        let filename = format!("plugin_{}_{}", manifest.id,
-            Path::new(&comp.path).file_name().unwrap_or_default().to_string_lossy());
+        let filename = format!(
+            "plugin_{}_{}",
+            manifest.id,
+            Path::new(&comp.path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        );
         let dst = agents_dir.join(&filename);
         let _ = fs::copy(&src, &dst).await;
         agent_files.push(filename);
@@ -259,7 +278,11 @@ pub async fn install_plugin(zip_bytes: &[u8]) -> Result<InstalledPlugin, String>
         if let Ok(content) = std::fs::read_to_string(&config_path) {
             if let Ok(mut mcp_config) = serde_json::from_str::<Value>(&content) {
                 // Handle mcpServers map (Claude Desktop / .mcp.json format)
-                if let Some(servers) = mcp_config.get("mcpServers").and_then(|v| v.as_object()).cloned() {
+                if let Some(servers) = mcp_config
+                    .get("mcpServers")
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                {
                     for (srv_name, srv_config) in servers {
                         let mut cfg = srv_config.clone();
                         resolve_mcp_paths(&mut cfg, &dest);
@@ -271,7 +294,8 @@ pub async fn install_plugin(zip_bytes: &[u8]) -> Result<InstalledPlugin, String>
                 } else {
                     // Single MCP server config
                     resolve_mcp_paths(&mut mcp_config, &dest);
-                    let mcp_name = mcp_config.get("name")
+                    let mcp_name = mcp_config
+                        .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or(&comp.name)
                         .to_string();
@@ -300,7 +324,10 @@ pub async fn install_plugin(zip_bytes: &[u8]) -> Result<InstalledPlugin, String>
         }
         let config_path = dest.join("connector_config.json");
         if !config_path.exists() {
-            let _ = std::fs::write(&config_path, serde_json::to_string_pretty(&connector_configs).unwrap_or_default());
+            let _ = std::fs::write(
+                &config_path,
+                serde_json::to_string_pretty(&connector_configs).unwrap_or_default(),
+            );
         }
     }
 
@@ -343,8 +370,13 @@ pub async fn uninstall_plugin(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-async fn uninstall_plugin_inner(id: &str, plugins: &mut Vec<InstalledPlugin>) -> Result<(), String> {
-    let idx = plugins.iter().position(|p| p.id == id)
+async fn uninstall_plugin_inner(
+    id: &str,
+    plugins: &mut Vec<InstalledPlugin>,
+) -> Result<(), String> {
+    let idx = plugins
+        .iter()
+        .position(|p| p.id == id)
         .ok_or_else(|| format!("Plugin '{}' not found", id))?;
     let plugin = plugins.remove(idx);
 
@@ -387,7 +419,9 @@ async fn uninstall_plugin_inner(id: &str, plugins: &mut Vec<InstalledPlugin>) ->
 
 pub async fn toggle_plugin(id: &str, enabled: bool) -> Result<InstalledPlugin, String> {
     let mut plugins = get_plugins().await;
-    let plugin = plugins.iter_mut().find(|p| p.id == id)
+    let plugin = plugins
+        .iter_mut()
+        .find(|p| p.id == id)
         .ok_or_else(|| format!("Plugin '{}' not found", id))?;
     plugin.enabled = enabled;
 
@@ -453,23 +487,32 @@ pub async fn get_connector_config(plugin_id: &str, service: &str) -> Value {
     Value::Object(serde_json::Map::new())
 }
 
-pub async fn save_connector_config(plugin_id: &str, service: &str, config: Value) -> Result<(), String> {
+pub async fn save_connector_config(
+    plugin_id: &str,
+    service: &str,
+    config: Value,
+) -> Result<(), String> {
     let config_path = plugin_dir(plugin_id).join("connector_config.json");
-    let mut configs: HashMap<String, Value> = if let Ok(content) = fs::read_to_string(&config_path).await {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
+    let mut configs: HashMap<String, Value> =
+        if let Ok(content) = fs::read_to_string(&config_path).await {
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
     configs.insert(service.to_string(), config);
     let json = serde_json::to_string_pretty(&configs).map_err(|e| e.to_string())?;
-    fs::write(&config_path, json).await.map_err(|e| e.to_string())
+    fs::write(&config_path, json)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn find_and_parse_manifest(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>) -> Result<PluginManifest, String> {
+fn find_and_parse_manifest(
+    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+) -> Result<PluginManifest, String> {
     // Collect file names for detection
     let mut file_names: Vec<String> = Vec::new();
     for i in 0..archive.len() {
@@ -484,9 +527,10 @@ fn find_and_parse_manifest(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>
         let name = file.name().to_string();
         if name.ends_with("plugin.yaml") || name.ends_with("plugin.yml") {
             let mut buf = String::new();
-            file.read_to_string(&mut buf).map_err(|e| format!("Read error: {e}"))?;
-            let manifest: PluginManifest = serde_yaml::from_str(&buf)
-                .map_err(|e| format!("Invalid plugin.yaml: {e}"))?;
+            file.read_to_string(&mut buf)
+                .map_err(|e| format!("Read error: {e}"))?;
+            let manifest: PluginManifest =
+                serde_yaml::from_str(&buf).map_err(|e| format!("Invalid plugin.yaml: {e}"))?;
             return Ok(manifest);
         }
     }
@@ -543,13 +587,24 @@ fn read_zip_json(
 
 /// MCPB manifest.json → PluginManifest
 fn manifest_from_mcpb(json: &Value) -> PluginManifest {
-    let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-    let display_name = json.get("display_name").and_then(|v| v.as_str())
-        .unwrap_or_else(|| json.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown"))
+    let name = json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let display_name = json
+        .get("display_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            json.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown")
+        })
         .to_string();
     let id = slugify(&name);
 
-    let author = json.get("author")
+    let author = json
+        .get("author")
         .and_then(|a| a.get("name").and_then(|v| v.as_str()))
         .or_else(|| json.get("author").and_then(|v| v.as_str()))
         .unwrap_or("Unknown")
@@ -563,7 +618,10 @@ fn manifest_from_mcpb(json: &Value) -> PluginManifest {
             mcp_servers.push(ComponentRef {
                 path: "_generated_mcp.json".to_string(),
                 name: format!("{}-mcp", id),
-                description: json.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                description: json
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
             });
             // Store the config so install_plugin can write it
             // We embed it in a synthetic way — the actual writing happens in install_plugin
@@ -577,7 +635,11 @@ fn manifest_from_mcpb(json: &Value) -> PluginManifest {
         if !user_config.is_empty() {
             let mut config_fields = Vec::new();
             for (key, schema) in user_config {
-                let field_type = match schema.get("type").and_then(|v| v.as_str()).unwrap_or("string") {
+                let field_type = match schema
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("string")
+                {
                     "string" if schema.get("sensitive") == Some(&Value::Bool(true)) => "password",
                     "boolean" => "bool",
                     "number" => "number",
@@ -586,7 +648,11 @@ fn manifest_from_mcpb(json: &Value) -> PluginManifest {
                 };
                 config_fields.push(ConfigField {
                     key: key.clone(),
-                    label: schema.get("title").and_then(|v| v.as_str()).unwrap_or(key).to_string(),
+                    label: schema
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(key)
+                        .to_string(),
                     field_type: field_type.to_string(),
                     required: schema.get("required").and_then(|v| v.as_bool()),
                     default: schema.get("default").and_then(|v| match v {
@@ -601,7 +667,10 @@ fn manifest_from_mcpb(json: &Value) -> PluginManifest {
                 path: String::new(),
                 name: display_name.clone(),
                 service: id.clone(),
-                description: json.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                description: json
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
                 config_fields,
             });
         }
@@ -610,9 +679,17 @@ fn manifest_from_mcpb(json: &Value) -> PluginManifest {
     PluginManifest {
         id,
         name: display_name,
-        version: json.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_string(),
+        version: json
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0")
+            .to_string(),
         author,
-        description: json.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        description: json
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         category: Some("connector".to_string()),
         components: PluginComponents {
             skills: Vec::new(),
@@ -626,10 +703,15 @@ fn manifest_from_mcpb(json: &Value) -> PluginManifest {
 
 /// Claude Code .claude-plugin/plugin.json → PluginManifest
 fn manifest_from_claude_code_plugin(json: &Value, file_names: &[String]) -> PluginManifest {
-    let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+    let name = json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
     let id = slugify(&name);
 
-    let author = json.get("author")
+    let author = json
+        .get("author")
         .and_then(|a| a.get("name").and_then(|v| v.as_str()))
         .or_else(|| json.get("author").and_then(|v| v.as_str()))
         .unwrap_or("Unknown")
@@ -663,7 +745,10 @@ fn manifest_from_claude_code_plugin(json: &Value, file_names: &[String]) -> Plug
 
     // Detect MCP config: .mcp.json
     let mut mcp_servers = Vec::new();
-    if file_names.iter().any(|n| n.ends_with(".mcp.json") || n.ends_with("mcp.json")) {
+    if file_names
+        .iter()
+        .any(|n| n.ends_with(".mcp.json") || n.ends_with("mcp.json"))
+    {
         mcp_servers.push(ComponentRef {
             path: ".mcp.json".to_string(),
             name: format!("{}-mcp", id),
@@ -675,26 +760,43 @@ fn manifest_from_claude_code_plugin(json: &Value, file_names: &[String]) -> Plug
     let mut connectors = Vec::new();
     if let Some(user_config) = json.get("userConfig").and_then(|v| v.as_object()) {
         if !user_config.is_empty() {
-            let config_fields: Vec<ConfigField> = user_config.iter().map(|(key, schema)| {
-                let field_type = match schema.get("type").and_then(|v| v.as_str()).unwrap_or("string") {
-                    "string" => "text",
-                    "boolean" => "bool",
-                    "number" => "number",
-                    _ => "text",
-                };
-                ConfigField {
-                    key: key.clone(),
-                    label: schema.get("title").and_then(|v| v.as_str()).unwrap_or(key).to_string(),
-                    field_type: field_type.to_string(),
-                    required: schema.get("required").and_then(|v| v.as_bool()),
-                    default: schema.get("default").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                }
-            }).collect();
+            let config_fields: Vec<ConfigField> = user_config
+                .iter()
+                .map(|(key, schema)| {
+                    let field_type = match schema
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("string")
+                    {
+                        "string" => "text",
+                        "boolean" => "bool",
+                        "number" => "number",
+                        _ => "text",
+                    };
+                    ConfigField {
+                        key: key.clone(),
+                        label: schema
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(key)
+                            .to_string(),
+                        field_type: field_type.to_string(),
+                        required: schema.get("required").and_then(|v| v.as_bool()),
+                        default: schema
+                            .get("default")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                    }
+                })
+                .collect();
             connectors.push(ConnectorRef {
                 path: String::new(),
                 name: name.clone(),
                 service: id.clone(),
-                description: json.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                description: json
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
                 config_fields,
             });
         }
@@ -703,11 +805,24 @@ fn manifest_from_claude_code_plugin(json: &Value, file_names: &[String]) -> Plug
     PluginManifest {
         id,
         name,
-        version: json.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_string(),
+        version: json
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0")
+            .to_string(),
         author,
-        description: json.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        description: json
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         category: Some("toolkit".to_string()),
-        components: PluginComponents { skills, agents: Vec::new(), mcp_servers, connectors },
+        components: PluginComponents {
+            skills,
+            agents: Vec::new(),
+            mcp_servers,
+            connectors,
+        },
         permissions: Vec::new(),
     }
 }
@@ -733,19 +848,26 @@ fn manifest_from_desktop_config(json: &Value) -> PluginManifest {
             // If the server has env vars, create connector config fields for them
             if let Some(env_obj) = config.get("env").and_then(|v| v.as_object()) {
                 if !env_obj.is_empty() {
-                    let config_fields: Vec<ConfigField> = env_obj.keys().map(|key| {
-                        let is_sensitive = key.to_lowercase().contains("key")
-                            || key.to_lowercase().contains("secret")
-                            || key.to_lowercase().contains("token")
-                            || key.to_lowercase().contains("password");
-                        ConfigField {
-                            key: key.clone(),
-                            label: key.replace('_', " "),
-                            field_type: if is_sensitive { "password".to_string() } else { "text".to_string() },
-                            required: Some(true),
-                            default: None,
-                        }
-                    }).collect();
+                    let config_fields: Vec<ConfigField> = env_obj
+                        .keys()
+                        .map(|key| {
+                            let is_sensitive = key.to_lowercase().contains("key")
+                                || key.to_lowercase().contains("secret")
+                                || key.to_lowercase().contains("token")
+                                || key.to_lowercase().contains("password");
+                            ConfigField {
+                                key: key.clone(),
+                                label: key.replace('_', " "),
+                                field_type: if is_sensitive {
+                                    "password".to_string()
+                                } else {
+                                    "text".to_string()
+                                },
+                                required: Some(true),
+                                default: None,
+                            }
+                        })
+                        .collect();
                     connectors.push(ConnectorRef {
                         path: String::new(),
                         name: name.clone(),
@@ -761,7 +883,11 @@ fn manifest_from_desktop_config(json: &Value) -> PluginManifest {
     let combined_name = if names.len() == 1 {
         names[0].clone()
     } else {
-        format!("{} (+{})", names.first().cloned().unwrap_or_default(), names.len().saturating_sub(1))
+        format!(
+            "{} (+{})",
+            names.first().cloned().unwrap_or_default(),
+            names.len().saturating_sub(1)
+        )
     };
     let id = slugify(&combined_name);
 
@@ -784,29 +910,51 @@ fn manifest_from_desktop_config(json: &Value) -> PluginManifest {
 
 /// package.json with MCP dependencies → PluginManifest
 fn manifest_from_package_json(json: &Value) -> PluginManifest {
-    let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("mcp-server").to_string();
+    let name = json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mcp-server")
+        .to_string();
     let id = slugify(&name);
 
-    let author = json.get("author")
+    let author = json
+        .get("author")
         .and_then(|v| v.as_str())
-        .or_else(|| json.get("author").and_then(|a| a.get("name").and_then(|v| v.as_str())))
+        .or_else(|| {
+            json.get("author")
+                .and_then(|a| a.get("name").and_then(|v| v.as_str()))
+        })
         .unwrap_or("Unknown")
         .to_string();
 
     // Determine entry point
-    let main = json.get("main").and_then(|v| v.as_str()).unwrap_or("index.js");
+    let main = json
+        .get("main")
+        .and_then(|v| v.as_str())
+        .unwrap_or("index.js");
     let mcp_servers = vec![ComponentRef {
         path: "_generated_mcp.json".to_string(),
         name: format!("{}-mcp", id),
-        description: json.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        description: json
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     }];
 
     PluginManifest {
         id: id.clone(),
         name,
-        version: json.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_string(),
+        version: json
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0")
+            .to_string(),
         author,
-        description: json.get("description").and_then(|v| v.as_str()).unwrap_or("MCP server from npm package").to_string(),
+        description: json
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("MCP server from npm package")
+            .to_string(),
         category: Some("connector".to_string()),
         components: PluginComponents {
             skills: Vec::new(),
@@ -823,13 +971,24 @@ fn is_mcp_package(json: &Value) -> bool {
     // Check dependencies for @modelcontextprotocol/sdk
     let has_mcp_dep = |deps: Option<&Value>| -> bool {
         deps.and_then(|d| d.as_object())
-            .map(|m| m.keys().any(|k| k.contains("modelcontextprotocol") || k.contains("mcp")))
+            .map(|m| {
+                m.keys()
+                    .any(|k| k.contains("modelcontextprotocol") || k.contains("mcp"))
+            })
             .unwrap_or(false)
     };
     has_mcp_dep(json.get("dependencies"))
         || has_mcp_dep(json.get("devDependencies"))
-        || json.get("keywords").and_then(|v| v.as_array())
-            .map(|a| a.iter().any(|v| v.as_str().map(|s| s == "mcp" || s == "model-context-protocol").unwrap_or(false)))
+        || json
+            .get("keywords")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter().any(|v| {
+                    v.as_str()
+                        .map(|s| s == "mcp" || s == "model-context-protocol")
+                        .unwrap_or(false)
+                })
+            })
             .unwrap_or(false)
 }
 
@@ -860,7 +1019,13 @@ fn detect_zip_root(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>) -> Str
 fn slugify(name: &str) -> String {
     name.to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()
@@ -870,13 +1035,29 @@ fn slugify(name: &str) -> String {
 fn value_to_mcp_tool(name: &str, config: &Value) -> data::McpTool {
     data::McpTool {
         name: name.to_string(),
-        url: config.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-        enabled: config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
-        tool_type: config.get("type").or(config.get("tool_type"))
-            .and_then(|v| v.as_str()).map(|s| s.to_string()),
-        command: config.get("command").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        args: config.get("args").and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()),
+        url: config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        enabled: config
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        tool_type: config
+            .get("type")
+            .or(config.get("tool_type"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        command: config
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        args: config.get("args").and_then(|v| v.as_array()).map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        }),
         headers: None,
         env: config.get("env").and_then(|v| v.as_object()).map(|m| {
             m.iter()
@@ -888,10 +1069,7 @@ fn value_to_mcp_tool(name: &str, config: &Value) -> data::McpTool {
 
 /// After extraction, generate MCP JSON config files for Claude-format plugins.
 /// These are referenced by the synthetic ComponentRef entries created by the converters.
-fn generate_claude_mcp_configs(
-    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
-    dest: &Path,
-) {
+fn generate_claude_mcp_configs(archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, dest: &Path) {
     // Collect file names
     let mut file_names: Vec<String> = Vec::new();
     for i in 0..archive.len() {
@@ -906,7 +1084,10 @@ fn generate_claude_mcp_configs(
             if let Some(server) = json.get("server") {
                 if let Some(mcp_config) = server.get("mcp_config") {
                     let mut config = mcp_config.clone();
-                    let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("mcp-server");
+                    let name = json
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("mcp-server");
                     config["name"] = Value::String(format!("{}-mcp", slugify(name)));
                     config["enabled"] = Value::Bool(true);
                     if config.get("type").is_none() {
@@ -915,7 +1096,10 @@ fn generate_claude_mcp_configs(
                     // Replace ${__dirname} with actual plugin dir
                     substitute_dirname(&mut config, dest);
                     let out = dest.join("_generated_mcp.json");
-                    let _ = std::fs::write(&out, serde_json::to_string_pretty(&config).unwrap_or_default());
+                    let _ = std::fs::write(
+                        &out,
+                        serde_json::to_string_pretty(&config).unwrap_or_default(),
+                    );
                 }
             }
         }
@@ -934,7 +1118,10 @@ fn generate_claude_mcp_configs(
                 substitute_dirname(&mut config, dest);
                 let filename = format!("_mcp_{}.json", slugify(name));
                 let out = dest.join(&filename);
-                let _ = std::fs::write(&out, serde_json::to_string_pretty(&config).unwrap_or_default());
+                let _ = std::fs::write(
+                    &out,
+                    serde_json::to_string_pretty(&config).unwrap_or_default(),
+                );
             }
         }
     }
@@ -942,8 +1129,14 @@ fn generate_claude_mcp_configs(
     // 3. package.json MCP server → _generated_mcp.json
     if let Some(json) = read_zip_json(archive, "package.json", &file_names) {
         if is_mcp_package(&json) && !dest.join("_generated_mcp.json").exists() {
-            let name = json.get("name").and_then(|v| v.as_str()).unwrap_or("mcp-server");
-            let main = json.get("main").and_then(|v| v.as_str()).unwrap_or("index.js");
+            let name = json
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("mcp-server");
+            let main = json
+                .get("main")
+                .and_then(|v| v.as_str())
+                .unwrap_or("index.js");
             let config = serde_json::json!({
                 "name": format!("{}-mcp", slugify(name)),
                 "enabled": true,
@@ -952,7 +1145,10 @@ fn generate_claude_mcp_configs(
                 "args": [main]
             });
             let out = dest.join("_generated_mcp.json");
-            let _ = std::fs::write(&out, serde_json::to_string_pretty(&config).unwrap_or_default());
+            let _ = std::fs::write(
+                &out,
+                serde_json::to_string_pretty(&config).unwrap_or_default(),
+            );
         }
     }
 
@@ -973,7 +1169,10 @@ fn generate_claude_mcp_configs(
                     let filename = format!("_mcp_{}.json", slugify(name));
                     let mcp_out = dest.join(&filename);
                     // Also update the ComponentRef path to match
-                    let _ = std::fs::write(&mcp_out, serde_json::to_string_pretty(&config).unwrap_or_default());
+                    let _ = std::fs::write(
+                        &mcp_out,
+                        serde_json::to_string_pretty(&config).unwrap_or_default(),
+                    );
                 }
             }
         }
@@ -983,15 +1182,16 @@ fn generate_claude_mcp_configs(
 /// Replace ${__dirname} and ${HOME} template variables in MCP config values.
 fn substitute_dirname(config: &mut Value, plugin_dir: &Path) {
     let dir_str = plugin_dir.to_string_lossy().to_string();
-    let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let home = dirs::home_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
     substitute_value(config, &dir_str, &home);
 }
 
 fn substitute_value(val: &mut Value, dirname: &str, home: &str) {
     match val {
         Value::String(s) => {
-            *s = s.replace("${__dirname}", dirname)
-                .replace("${HOME}", home);
+            *s = s.replace("${__dirname}", dirname).replace("${HOME}", home);
         }
         Value::Array(arr) => {
             for item in arr.iter_mut() {
@@ -1012,24 +1212,35 @@ fn resolve_mcp_paths(config: &mut Value, plugin_dir: &Path) {
     if let Some(cmd) = config.get("command").and_then(|v| v.as_str()) {
         let cmd_path = Path::new(cmd);
         if cmd_path.is_relative()
-            && !cmd.starts_with("python") && !cmd.starts_with("node")
-            && !cmd.starts_with("npx") && !cmd.starts_with("uvx")
-            && !cmd.starts_with("uv") && !cmd.starts_with("docker")
+            && !cmd.starts_with("python")
+            && !cmd.starts_with("node")
+            && !cmd.starts_with("npx")
+            && !cmd.starts_with("uvx")
+            && !cmd.starts_with("uv")
+            && !cmd.starts_with("docker")
         {
             config["command"] = Value::String(plugin_dir.join(cmd).to_string_lossy().to_string());
         }
     }
     // Resolve relative args that look like file paths
     if let Some(args) = config.get("args").and_then(|v| v.as_array()).cloned() {
-        let resolved: Vec<Value> = args.into_iter().map(|v| {
-            if let Some(s) = v.as_str() {
-                let p = Path::new(s);
-                if p.is_relative() && (s.ends_with(".py") || s.ends_with(".js") || s.ends_with(".sh") || s.contains('/')) {
-                    return Value::String(plugin_dir.join(s).to_string_lossy().to_string());
+        let resolved: Vec<Value> = args
+            .into_iter()
+            .map(|v| {
+                if let Some(s) = v.as_str() {
+                    let p = Path::new(s);
+                    if p.is_relative()
+                        && (s.ends_with(".py")
+                            || s.ends_with(".js")
+                            || s.ends_with(".sh")
+                            || s.contains('/'))
+                    {
+                        return Value::String(plugin_dir.join(s).to_string_lossy().to_string());
+                    }
                 }
-            }
-            v
-        }).collect();
+                v
+            })
+            .collect();
         config["args"] = Value::Array(resolved);
     }
 }

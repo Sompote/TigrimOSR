@@ -15,7 +15,9 @@ use serde_json::json;
 use tokio::fs;
 use tower_http::cors::{Any, CorsLayer};
 
-use data::{generate_token, get_file_tokens, get_settings, is_valid_file_token, save_file_tokens, FileToken};
+use data::{
+    generate_token, get_file_tokens, get_settings, is_valid_file_token, save_file_tokens, FileToken,
+};
 
 // ---------------------------------------------------------------------------
 // Shared application state
@@ -42,17 +44,16 @@ fn extract_bearer(headers: &HeaderMap) -> Option<String> {
 
 fn extract_query_token(uri: &axum::http::Uri) -> Option<String> {
     uri.query().and_then(|q| {
-        q.split('&')
-            .find_map(|pair| {
-                let mut parts = pair.splitn(2, '=');
-                let key = parts.next()?;
-                let val = parts.next()?;
-                if key == "token" {
-                    Some(val.to_string())
-                } else {
-                    None
-                }
-            })
+        q.split('&').find_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next()?;
+            let val = parts.next()?;
+            if key == "token" {
+                Some(val.to_string())
+            } else {
+                None
+            }
+        })
     })
 }
 
@@ -150,7 +151,11 @@ async fn auth_middleware(
     // Browser cross-origin guard — applies to ALL requests, even when no
     // auth is configured: blocks drive-by websites POSTing to localhost.
     if !origin_allowed(req.headers()) {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "Cross-origin request rejected"}))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Cross-origin request rejected"})),
+        )
+            .into_response();
     }
 
     // Skip auth for verify endpoint (it does its own rate-limited check)
@@ -177,15 +182,22 @@ async fn auth_middleware(
     if auth_rate_limited() {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({"error": "Too many failed authentication attempts. Try again in a minute."})),
-        ).into_response();
+            Json(
+                json!({"error": "Too many failed authentication attempts. Try again in a minute."}),
+            ),
+        )
+            .into_response();
     }
 
     // Query-string tokens (?token=) are accepted ONLY for /api/files — they
     // exist for browser download/preview links. Everywhere else tokens must
     // travel in the Authorization header so they don't leak into access logs.
     let token = extract_bearer(req.headers()).or_else(|| {
-        if path.starts_with("/api/files") { extract_query_token(&uri) } else { None }
+        if path.starts_with("/api/files") {
+            extract_query_token(&uri)
+        } else {
+            None
+        }
     });
 
     if let Some(ref t) = token {
@@ -196,8 +208,11 @@ async fn auth_middleware(
         // REMOTE token — chat/agents/files, but not host-level control
         if let Some(ref rt) = remote_token {
             if ct_eq(t, rt) {
-                let remote_full = settings.extra.get("remoteFullAccess")
-                    .and_then(|v| v.as_bool()).unwrap_or(false);
+                let remote_full = settings
+                    .extra
+                    .get("remoteFullAccess")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if !remote_full {
                     if REMOTE_BLOCKED_PREFIXES.iter().any(|p| path.starts_with(p)) {
                         return (StatusCode::FORBIDDEN, Json(json!({
@@ -213,9 +228,13 @@ async fn auth_middleware(
                         && !path.starts_with("/api/settings/soul-identity")
                         && method != axum::http::Method::GET
                     {
-                        return (StatusCode::FORBIDDEN, Json(json!({
-                            "error": "Settings are read-only for remote access tokens."
-                        }))).into_response();
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(json!({
+                                "error": "Settings are read-only for remote access tokens."
+                            })),
+                        )
+                            .into_response();
                     }
                 }
                 return next.run(req).await;
@@ -228,7 +247,11 @@ async fn auth_middleware(
     }
 
     record_auth_fail();
-    (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error": "Unauthorized"})),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -354,9 +377,13 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     let web_ui = routes::web_ui::router();
 
     // API routes with auth middleware
-    let api_with_auth = Router::new()
-        .nest("/api", api_routes)
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+    let api_with_auth =
+        Router::new()
+            .nest("/api", api_routes)
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth_middleware,
+            ));
 
     let owner_token_set = !state.access_token.is_empty();
 
@@ -366,9 +393,10 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
         .merge(line_webhook)
         .merge(google_oauth)
         .nest("/web", web_ui.clone())
-        .route("/web/", axum::routing::get(|| async {
-            axum::response::Redirect::permanent("/web")
-        }))
+        .route(
+            "/web/",
+            axum::routing::get(|| async { axum::response::Redirect::permanent("/web") }),
+        )
         .merge(api_with_auth)
         .layer(cors)
         .with_state(state);
@@ -390,7 +418,11 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
     // "run over VPN" actually private rather than just adding a second path.
     let (settings_remote_ready, settings_vpn_enabled) = {
         let settings = get_settings().await;
-        let token_set = settings.remote_token.as_deref().map(|t| !t.is_empty()).unwrap_or(false);
+        let token_set = settings
+            .remote_token
+            .as_deref()
+            .map(|t| !t.is_empty())
+            .unwrap_or(false);
         let remote_ready = settings.remote_enabled == Some(true) && token_set;
         (remote_ready, settings.vpn_enabled == Some(true))
     };
@@ -595,7 +627,9 @@ async fn install_bundled_skills(data_dir: &str) {
         // Skip if already installed on disk
         if fs::metadata(&skill_md_path).await.is_ok() {
             // Still ensure registered in skills.json
-            let already_registered = skills.iter().any(|s| s["name"].as_str() == Some(bundled.name));
+            let already_registered = skills
+                .iter()
+                .any(|s| s["name"].as_str() == Some(bundled.name));
             if !already_registered {
                 skills.push(json!({
                     "id": uuid::Uuid::new_v4().to_string(),
@@ -630,7 +664,9 @@ async fn install_bundled_skills(data_dir: &str) {
         }
 
         // Register in skills.json
-        let already_registered = skills.iter().any(|s| s["name"].as_str() == Some(bundled.name));
+        let already_registered = skills
+            .iter()
+            .any(|s| s["name"].as_str() == Some(bundled.name));
         if !already_registered {
             skills.push(json!({
                 "id": uuid::Uuid::new_v4().to_string(),
@@ -647,6 +683,10 @@ async fn install_bundled_skills(data_dir: &str) {
     }
 
     if changed {
-        let _ = fs::write(&skills_json_path, serde_json::to_string_pretty(&skills).unwrap_or_default()).await;
+        let _ = fs::write(
+            &skills_json_path,
+            serde_json::to_string_pretty(&skills).unwrap_or_default(),
+        )
+        .await;
     }
 }

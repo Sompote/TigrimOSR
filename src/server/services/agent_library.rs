@@ -9,8 +9,6 @@
 //! matching how bundled skills are installed. An existing file is never
 //! overwritten — a team the user has edited is theirs.
 
-use std::path::PathBuf;
-
 use tracing::info;
 
 /// `(filename, contents)` for every bundled team.
@@ -46,14 +44,10 @@ pub const BUNDLED_TEAMS: &[(&str, &str)] = bundled_teams![
     "codex-13-llmops-evals-observability.yaml",
 ];
 
-fn agents_dir() -> PathBuf {
-    crate::server::data::data_dir().join("agents")
-}
-
 /// Write any bundled team that isn't already on disk. Returns how many were
 /// installed. Never overwrites: a team the user edited stays edited.
 pub async fn install_bundled_teams() -> usize {
-    let dir = agents_dir();
+    let dir = crate::server::data::data_dir().join("agents");
     if tokio::fs::create_dir_all(&dir).await.is_err() {
         return 0;
     }
@@ -68,7 +62,11 @@ pub async fn install_bundled_teams() -> usize {
         }
     }
     if installed > 0 {
-        info!("[init] Installed {} bundled agent teams into {}", installed, dir.display());
+        info!(
+            "[init] Installed {} bundled agent teams into {}",
+            installed,
+            dir.display()
+        );
     }
     installed
 }
@@ -90,7 +88,9 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{name} is not valid YAML: {e}"));
 
             assert!(
-                doc["system"]["name"].as_str().is_some_and(|s| !s.is_empty()),
+                doc["system"]["name"]
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty()),
                 "{name}: system.name missing"
             );
             assert_eq!(
@@ -99,18 +99,27 @@ mod tests {
                 "{name}: unexpected orchestration_mode"
             );
 
-            let agents = doc["agents"].as_sequence()
+            let agents = doc["agents"]
+                .as_sequence()
                 .unwrap_or_else(|| panic!("{name}: agents is not a list"));
-            assert!(agents.len() >= 3, "{name}: expected an orchestrator and workers");
+            assert!(
+                agents.len() >= 3,
+                "{name}: expected an orchestrator and workers"
+            );
 
             let mut seen_ids = std::collections::HashSet::new();
             let mut has_orchestrator = false;
             for a in agents {
-                let id = a["id"].as_str()
+                let id = a["id"]
+                    .as_str()
                     .unwrap_or_else(|| panic!("{name}: an agent has no id"));
-                assert!(seen_ids.insert(id.to_string()), "{name}: duplicate agent id '{id}'");
+                assert!(
+                    seen_ids.insert(id.to_string()),
+                    "{name}: duplicate agent id '{id}'"
+                );
 
-                let role = a["role"].as_str()
+                let role = a["role"]
+                    .as_str()
                     .unwrap_or_else(|| panic!("{name}: agent '{id}' has no role"));
                 match role {
                     "orchestrator" => has_orchestrator = true,
@@ -131,7 +140,10 @@ mod tests {
         }
 
         // Guards against the generator silently importing almost nothing.
-        assert!(specialists > 300, "expected 300+ specialists, got {specialists}");
+        assert!(
+            specialists > 300,
+            "expected 300+ specialists, got {specialists}"
+        );
     }
 
     #[test]

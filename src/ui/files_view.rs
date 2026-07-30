@@ -21,13 +21,13 @@ fn classify_file(name: &str) -> FileType {
         "png" | "jpg" | "jpeg" | "gif" | "svg" | "bmp" | "webp" | "ico" => FileType::Image,
         "md" | "markdown" => FileType::Markdown,
         "csv" => FileType::Csv,
-        "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "java" | "c" | "cpp" | "h" | "hpp"
-        | "go" | "rb" | "php" | "swift" | "kt" | "scala" | "lua" | "sh" | "bash" | "zsh"
-        | "fish" | "ps1" | "bat" | "cmd" | "asm" | "s" | "r" | "m" | "sql" | "html"
-        | "css" | "scss" | "sass" | "less" | "xml" | "json" | "yaml" | "yml" | "toml"
-        | "ini" | "cfg" | "conf" | "dockerfile" | "makefile" | "cmake" | "proto"
-        | "graphql" | "wasm" | "zig" | "nim" | "v" | "d" | "ex" | "exs" | "erl" | "hrl"
-        | "clj" | "cljs" | "hs" | "ml" | "mli" | "fs" | "fsx" | "el" | "vim" => FileType::Code,
+        "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "java" | "c" | "cpp" | "h" | "hpp" | "go"
+        | "rb" | "php" | "swift" | "kt" | "scala" | "lua" | "sh" | "bash" | "zsh" | "fish"
+        | "ps1" | "bat" | "cmd" | "asm" | "s" | "r" | "m" | "sql" | "html" | "css" | "scss"
+        | "sass" | "less" | "xml" | "json" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf"
+        | "dockerfile" | "makefile" | "cmake" | "proto" | "graphql" | "wasm" | "zig" | "nim"
+        | "v" | "d" | "ex" | "exs" | "erl" | "hrl" | "clj" | "cljs" | "hs" | "ml" | "mli"
+        | "fs" | "fsx" | "el" | "vim" => FileType::Code,
         "txt" | "log" | "env" | "gitignore" | "editorconfig" | "lock" => FileType::Text,
         "" => FileType::Text,
         _ => FileType::Binary,
@@ -35,7 +35,10 @@ fn classify_file(name: &str) -> FileType {
 }
 
 fn is_text_like(ft: &FileType) -> bool {
-    matches!(ft, FileType::Text | FileType::Code | FileType::Markdown | FileType::Csv)
+    matches!(
+        ft,
+        FileType::Text | FileType::Code | FileType::Markdown | FileType::Csv
+    )
 }
 
 // ── Sort mode ──
@@ -293,21 +296,18 @@ impl FilesView {
         if !is_text_like(&file_type) {
             let sandbox = self.sandbox_dir.clone();
             match data::validate_path(&sandbox, file_path) {
-                Ok(full_path) => {
-                    match std::fs::metadata(&full_path) {
-                        Ok(meta) => {
-                            self.file_content = format!(
-                                "[Binary file]\nSize: {}\nPath: {}",
-                                Self::format_size(meta.len()),
-                                full_path.display()
-                            );
-                        }
-                        Err(_) => {
-                            self.file_content =
-                                "[Binary file - unable to read metadata]".to_string();
-                        }
+                Ok(full_path) => match std::fs::metadata(&full_path) {
+                    Ok(meta) => {
+                        self.file_content = format!(
+                            "[Binary file]\nSize: {}\nPath: {}",
+                            Self::format_size(meta.len()),
+                            full_path.display()
+                        );
                     }
-                }
+                    Err(_) => {
+                        self.file_content = "[Binary file - unable to read metadata]".to_string();
+                    }
+                },
                 Err(e) => {
                     self.file_content = format!("[Error: {}]", e);
                 }
@@ -465,13 +465,11 @@ impl FilesView {
             match std::fs::read_to_string(&src) {
                 Ok(content) => {
                     let sandbox = self.sandbox_dir.clone();
-                    match runtime
-                        .block_on(data::write_file_content(&sandbox, &dest_rel, &content))
+                    match runtime.block_on(data::write_file_content(&sandbox, &dest_rel, &content))
                     {
                         Ok(()) => {
                             self.needs_refresh = true;
-                            self.status_message =
-                                Some((format!("Uploaded: {}", file_name), false));
+                            self.status_message = Some((format!("Uploaded: {}", file_name), false));
                         }
                         Err(e) => {
                             self.status_message =
@@ -489,16 +487,12 @@ impl FilesView {
                             {
                                 Ok(()) => {
                                     self.needs_refresh = true;
-                                    self.status_message = Some((
-                                        format!("Uploaded (binary): {}", file_name),
-                                        false,
-                                    ));
+                                    self.status_message =
+                                        Some((format!("Uploaded (binary): {}", file_name), false));
                                 }
                                 Err(e) => {
-                                    self.status_message = Some((
-                                        format!("Upload write failed: {}", e),
-                                        true,
-                                    ));
+                                    self.status_message =
+                                        Some((format!("Upload write failed: {}", e), true));
                                 }
                             }
                         }
@@ -515,11 +509,7 @@ impl FilesView {
     fn download_file(&mut self, runtime: &tokio::runtime::Handle) {
         if let Some(ref selected) = self.selected_file.clone() {
             let sandbox = self.sandbox_dir.clone();
-            let file_name = selected
-                .rsplit('/')
-                .next()
-                .unwrap_or(selected)
-                .to_string();
+            let file_name = selected.rsplit('/').next().unwrap_or(selected).to_string();
             if let Some(dest) = rfd::FileDialog::new()
                 .set_title("Save file as")
                 .set_file_name(&file_name)
@@ -529,14 +519,11 @@ impl FilesView {
                 match runtime.block_on(data::read_file_bytes(&sandbox, selected)) {
                     Ok(bytes) => match std::fs::write(&dest, &bytes) {
                         Ok(()) => {
-                            self.status_message = Some((
-                                format!("Downloaded to: {}", dest.display()),
-                                false,
-                            ));
+                            self.status_message =
+                                Some((format!("Downloaded to: {}", dest.display()), false));
                         }
                         Err(e) => {
-                            self.status_message =
-                                Some((format!("Download failed: {}", e), true));
+                            self.status_message = Some((format!("Download failed: {}", e), true));
                         }
                     },
                     Err(e) => {
@@ -728,16 +715,12 @@ impl FilesView {
         let c = rect.center();
         let folder_color = egui::Color32::from_rgb(164, 156, 144);
         // Folder body
-        let body = egui::Rect::from_min_size(
-            egui::pos2(c.x - 10.0, c.y - 5.0),
-            egui::vec2(20.0, 14.0),
-        );
+        let body =
+            egui::Rect::from_min_size(egui::pos2(c.x - 10.0, c.y - 5.0), egui::vec2(20.0, 14.0));
         ui.painter().rect_filled(body, 2.0, folder_color);
         // Folder tab
-        let tab = egui::Rect::from_min_size(
-            egui::pos2(c.x - 10.0, c.y - 8.0),
-            egui::vec2(10.0, 4.0),
-        );
+        let tab =
+            egui::Rect::from_min_size(egui::pos2(c.x - 10.0, c.y - 8.0), egui::vec2(10.0, 4.0));
         ui.painter().rect_filled(tab, 1.5, folder_color);
     }
 
@@ -745,23 +728,11 @@ impl FilesView {
         for line in text.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with("### ") {
-                ui.label(
-                    egui::RichText::new(&trimmed[4..])
-                        .size(15.0)
-                        .strong(),
-                );
+                ui.label(egui::RichText::new(&trimmed[4..]).size(15.0).strong());
             } else if trimmed.starts_with("## ") {
-                ui.label(
-                    egui::RichText::new(&trimmed[3..])
-                        .size(17.0)
-                        .strong(),
-                );
+                ui.label(egui::RichText::new(&trimmed[3..]).size(17.0).strong());
             } else if trimmed.starts_with("# ") {
-                ui.label(
-                    egui::RichText::new(&trimmed[2..])
-                        .size(20.0)
-                        .strong(),
-                );
+                ui.label(egui::RichText::new(&trimmed[2..]).size(20.0).strong());
             } else if trimmed.starts_with("- ") {
                 ui.horizontal(|ui| {
                     ui.label("  \u{2022} ");
@@ -883,11 +854,8 @@ impl FilesView {
         let text_normal = crate::ui::theme::text_primary_color();
         let accent = crate::ui::theme::accent_color();
 
-        ui.painter().rect_filled(
-            ui.available_rect_before_wrap(),
-            0.0,
-            sidebar_bg,
-        );
+        ui.painter()
+            .rect_filled(ui.available_rect_before_wrap(), 0.0, sidebar_bg);
 
         ui.add_space(12.0);
 
@@ -925,11 +893,7 @@ impl FilesView {
         // LIBRARY section
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.label(
-                egui::RichText::new("LIBRARY")
-                    .size(10.0)
-                    .color(text_dim),
-            );
+            ui.label(egui::RichText::new("LIBRARY").size(10.0).color(text_dim));
         });
         ui.add_space(4.0);
 
@@ -960,11 +924,7 @@ impl FilesView {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width() - 16.0);
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(*label)
-                                    .size(13.0)
-                                    .color(text_color),
-                            );
+                            ui.label(egui::RichText::new(*label).size(13.0).color(text_color));
                             if let Some(c) = count {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -990,11 +950,7 @@ impl FilesView {
         // PLACES section
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.label(
-                egui::RichText::new("PLACES")
-                    .size(10.0)
-                    .color(text_dim),
-            );
+            ui.label(egui::RichText::new("PLACES").size(10.0).color(text_dim));
         });
         ui.add_space(4.0);
 
@@ -1017,11 +973,7 @@ impl FilesView {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width() - 16.0);
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(dir_name)
-                                    .size(13.0)
-                                    .color(text_color),
-                            );
+                            ui.label(egui::RichText::new(dir_name).size(13.0).color(text_color));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
@@ -1083,11 +1035,8 @@ impl FilesView {
                 let max_storage = 10.0 * 1024.0 * 1024.0 * 1024.0; // 10 GB
                 let ratio = (used / max_storage).min(1.0) as f32;
                 let (_, bar_rect) = ui.allocate_space(egui::vec2(available_w, 4.0));
-                ui.painter().rect_filled(
-                    bar_rect,
-                    2.0,
-                    crate::ui::theme::border_color(),
-                );
+                ui.painter()
+                    .rect_filled(bar_rect, 2.0, crate::ui::theme::border_color());
                 let filled = egui::Rect::from_min_size(
                     bar_rect.min,
                     egui::vec2(bar_rect.width() * ratio, 4.0),
@@ -1100,11 +1049,7 @@ impl FilesView {
 
     // ── File viewer overlay ──
 
-    fn render_viewer_window(
-        &mut self,
-        ctx: &egui::Context,
-        runtime: &tokio::runtime::Handle,
-    ) {
+    fn render_viewer_window(&mut self, ctx: &egui::Context, runtime: &tokio::runtime::Handle) {
         if !self.show_viewer {
             return;
         }
@@ -1112,11 +1057,7 @@ impl FilesView {
             return;
         };
 
-        let file_name = selected
-            .rsplit('/')
-            .next()
-            .unwrap_or(selected)
-            .to_string();
+        let file_name = selected.rsplit('/').next().unwrap_or(selected).to_string();
         let file_type = classify_file(&file_name);
 
         let mut open = self.show_viewer;
@@ -1143,8 +1084,7 @@ impl FilesView {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    egui::RichText::new("Save")
-                                        .color(egui::Color32::WHITE),
+                                    egui::RichText::new("Save").color(egui::Color32::WHITE),
                                 )
                                 .fill(egui::Color32::from_rgb(34, 197, 94)),
                             )
@@ -1158,23 +1098,20 @@ impl FilesView {
                         }
                     }
 
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if ui
-                                .add(egui::Button::new(
-                                    egui::RichText::new("Delete")
-                                        .color(egui::Color32::from_rgb(239, 68, 68)),
-                                ))
-                                .clicked()
-                            {
-                                self.delete_selected(runtime);
-                            }
-                            if ui.button("Download").clicked() {
-                                self.download_file(runtime);
-                            }
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(egui::Button::new(
+                                egui::RichText::new("Delete")
+                                    .color(egui::Color32::from_rgb(239, 68, 68)),
+                            ))
+                            .clicked()
+                        {
+                            self.delete_selected(runtime);
+                        }
+                        if ui.button("Download").clicked() {
+                            self.download_file(runtime);
+                        }
+                    });
                 });
 
                 ui.separator();
@@ -1199,8 +1136,7 @@ impl FilesView {
                                     if let Ok(full_path) =
                                         data::validate_path(&sandbox_c, &selected_c)
                                     {
-                                        let uri =
-                                            format!("file://{}", full_path.display());
+                                        let uri = format!("file://{}", full_path.display());
                                         let image = egui::Image::new(&uri)
                                             .max_width(ui.available_width() - 20.0)
                                             .max_height(ui.available_height() - 20.0)
@@ -1235,12 +1171,10 @@ impl FilesView {
                                 }
                                 FileType::Text => {
                                     ui.add(
-                                        egui::TextEdit::multiline(
-                                            &mut self.file_content.as_str(),
-                                        )
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(f32::INFINITY)
-                                        .desired_rows(25),
+                                        egui::TextEdit::multiline(&mut self.file_content.as_str())
+                                            .font(egui::TextStyle::Monospace)
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(25),
                                     );
                                 }
                                 FileType::Binary => {
@@ -1287,8 +1221,7 @@ impl FilesView {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    egui::RichText::new("Delete")
-                                        .color(egui::Color32::WHITE),
+                                    egui::RichText::new("Delete").color(egui::Color32::WHITE),
                                 )
                                 .fill(egui::Color32::from_rgb(239, 68, 68)),
                             )
@@ -1372,12 +1305,8 @@ impl FilesView {
             // "Library" root
             if ui
                 .add(
-                    egui::Button::new(
-                        egui::RichText::new("Library")
-                            .size(14.0)
-                            .color(text_dim),
-                    )
-                    .frame(false),
+                    egui::Button::new(egui::RichText::new("Library").size(14.0).color(text_dim))
+                        .frame(false),
                 )
                 .clicked()
             {
@@ -1386,11 +1315,7 @@ impl FilesView {
             }
 
             if !self.current_path.is_empty() || true {
-                ui.label(
-                    egui::RichText::new("/")
-                        .size(14.0)
-                        .color(text_dim),
-                );
+                ui.label(egui::RichText::new("/").size(14.0).color(text_dim));
 
                 if self.current_path.is_empty() {
                     ui.label(
@@ -1404,9 +1329,7 @@ impl FilesView {
                     if ui
                         .add(
                             egui::Button::new(
-                                egui::RichText::new(&root_label)
-                                    .size(14.0)
-                                    .color(text_dim),
+                                egui::RichText::new(&root_label).size(14.0).color(text_dim),
                             )
                             .frame(false),
                         )
@@ -1419,11 +1342,7 @@ impl FilesView {
                     let segments: Vec<&str> = path_clone.split('/').collect();
                     let mut nav_target: Option<String> = None;
                     for (i, seg) in segments.iter().enumerate() {
-                        ui.label(
-                            egui::RichText::new("/")
-                                .size(14.0)
-                                .color(text_dim),
-                        );
+                        ui.label(egui::RichText::new("/").size(14.0).color(text_dim));
                         let partial: String = segments[..=i].join("/");
                         let is_last = i == segments.len() - 1;
                         if is_last {
@@ -1436,9 +1355,7 @@ impl FilesView {
                         } else if ui
                             .add(
                                 egui::Button::new(
-                                    egui::RichText::new(*seg)
-                                        .size(14.0)
-                                        .color(text_dim),
+                                    egui::RichText::new(*seg).size(14.0).color(text_dim),
                                 )
                                 .frame(false),
                             )
@@ -1478,42 +1395,46 @@ impl FilesView {
                 if new_btn.clicked() {
                     ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
                 }
-                egui::popup_below_widget(ui, new_menu_id, &new_btn, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                    ui.set_min_width(120.0);
-                    if ui.button("New File").clicked() {
-                        self.show_new_file = true;
-                        self.show_new_dir = false;
-                        self.new_file_name.clear();
-                        ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
-                    }
-                    if ui.button("New Folder").clicked() {
-                        self.show_new_dir = true;
-                        self.show_new_file = false;
-                        self.new_dir_name.clear();
-                        ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
-                    }
-                    if ui.button("Mount Folder").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .set_title("Select folder to mount")
-                            .pick_folder()
-                        {
-                            self.sandbox_dir = path.to_string_lossy().to_string();
-                            self.current_path.clear();
-                            self.selected_file = None;
-                            self.file_content.clear();
-                            self.needs_refresh = true;
+                egui::popup_below_widget(
+                    ui,
+                    new_menu_id,
+                    &new_btn,
+                    egui::PopupCloseBehavior::CloseOnClickOutside,
+                    |ui| {
+                        ui.set_min_width(120.0);
+                        if ui.button("New File").clicked() {
+                            self.show_new_file = true;
+                            self.show_new_dir = false;
+                            self.new_file_name.clear();
+                            ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
                         }
-                        ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
-                    }
-                });
+                        if ui.button("New Folder").clicked() {
+                            self.show_new_dir = true;
+                            self.show_new_file = false;
+                            self.new_dir_name.clear();
+                            ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
+                        }
+                        if ui.button("Mount Folder").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_title("Select folder to mount")
+                                .pick_folder()
+                            {
+                                self.sandbox_dir = path.to_string_lossy().to_string();
+                                self.current_path.clear();
+                                self.selected_file = None;
+                                self.file_content.clear();
+                                self.needs_refresh = true;
+                            }
+                            ui.memory_mut(|mem| mem.toggle_popup(new_menu_id));
+                        }
+                    },
+                );
 
                 // Upload button
                 if ui
                     .add(
                         egui::Button::new(
-                            egui::RichText::new("Upload")
-                                .size(12.0)
-                                .color(text_normal),
+                            egui::RichText::new("Upload").size(12.0).color(text_normal),
                         )
                         .corner_radius(6.0),
                     )
@@ -1569,8 +1490,7 @@ impl FilesView {
                         .fill(accent),
                     )
                     .clicked()
-                    || (response.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                 {
                     self.create_file(runtime);
                 }
@@ -1603,8 +1523,7 @@ impl FilesView {
                         .fill(accent),
                     )
                     .clicked()
-                    || (response.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                 {
                     self.create_directory(runtime);
                 }
@@ -1620,11 +1539,7 @@ impl FilesView {
         // ── Sort bar ──
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.label(
-                egui::RichText::new("SORT")
-                    .size(10.0)
-                    .color(text_dim),
-            );
+            ui.label(egui::RichText::new("SORT").size(10.0).color(text_dim));
             ui.add_space(8.0);
 
             let sort_labels = [
@@ -1664,7 +1579,6 @@ impl FilesView {
             }
 
             ui.add_space(12.0);
-
         });
 
         // ── Selection action bar ──
@@ -1724,24 +1638,21 @@ impl FilesView {
                             self.show_delete_confirm = true;
                         }
 
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if ui
-                                    .add(
-                                        egui::Button::new(
-                                            egui::RichText::new("Deselect all")
-                                                .size(11.0)
-                                                .color(text_dim),
-                                        )
-                                        .frame(false),
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("Deselect all")
+                                            .size(11.0)
+                                            .color(text_dim),
                                     )
-                                    .clicked()
-                                {
-                                    self.selected_set.clear();
-                                }
-                            },
-                        );
+                                    .frame(false),
+                                )
+                                .clicked()
+                            {
+                                self.selected_set.clear();
+                            }
+                        });
                     });
                 });
         }
@@ -1762,11 +1673,7 @@ impl FilesView {
         if let Some(ref msg) = self.drop_status.clone() {
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
-                ui.label(
-                    egui::RichText::new(msg)
-                        .size(11.0)
-                        .color(accent),
-                );
+                ui.label(egui::RichText::new(msg).size(11.0).color(accent));
             });
         }
 
@@ -1782,23 +1689,20 @@ impl FilesView {
             ui.add_space(24.0);
             // Icon/badge spacer
             ui.add_space(40.0);
-            ui.add_sized([name_w - 80.0, 16.0], egui::Label::new(
-                egui::RichText::new("NAME")
-                    .size(10.0)
-                    .color(text_dim),
-            ));
+            ui.add_sized(
+                [name_w - 80.0, 16.0],
+                egui::Label::new(egui::RichText::new("NAME").size(10.0).color(text_dim)),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(16.0);
-                ui.add_sized([80.0, 16.0], egui::Label::new(
-                    egui::RichText::new("MODIFIED")
-                        .size(10.0)
-                        .color(text_dim),
-                ));
-                ui.add_sized([60.0, 16.0], egui::Label::new(
-                    egui::RichText::new("SIZE")
-                        .size(10.0)
-                        .color(text_dim),
-                ));
+                ui.add_sized(
+                    [80.0, 16.0],
+                    egui::Label::new(egui::RichText::new("MODIFIED").size(10.0).color(text_dim)),
+                );
+                ui.add_sized(
+                    [60.0, 16.0],
+                    egui::Label::new(egui::RichText::new("SIZE").size(10.0).color(text_dim)),
+                );
             });
         });
 
@@ -1872,13 +1776,13 @@ impl FilesView {
                         ui.painter().rect_filled(
                             row_rect,
                             0.0,
-                            egui::Color32::from_rgb(225, 241, 239),
+                            crate::ui::theme::accent_color().gamma_multiply(0.14),
                         );
                     } else if hovered {
                         ui.painter().rect_filled(
                             row_rect,
                             0.0,
-                            crate::ui::theme::surface_color(),
+                            crate::ui::theme::hover_color(),
                         );
                     }
 

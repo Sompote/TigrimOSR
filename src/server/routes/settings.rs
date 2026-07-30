@@ -38,7 +38,10 @@ fn is_masked(v: &Value) -> bool {
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(get_settings_handler).put(put_settings_handler))
-        .route("/soul-identity", get(get_soul_identity).put(put_soul_identity))
+        .route(
+            "/soul-identity",
+            get(get_soul_identity).put(put_soul_identity),
+        )
         .route("/test-connection", post(test_connection))
         .route("/remote-token", get(get_remote_token))
         .route("/remote-token/regenerate", post(regenerate_remote_token))
@@ -46,7 +49,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/claude-code-oauth", get(get_claude_code_oauth))
         .route("/cli-models", get(get_cli_models))
         .route("/cli-models/refresh", post(refresh_cli_models))
-        .route("/file-tokens", get(list_file_tokens).post(create_file_token))
+        .route(
+            "/file-tokens",
+            get(list_file_tokens).post(create_file_token),
+        )
         .route("/file-tokens/{id}", delete(delete_file_token))
         .route("/file-tokens/{id}/regenerate", post(regenerate_file_token))
         .route("/mcp/status", get(mcp_status))
@@ -71,8 +77,12 @@ struct SoulIdentityBody {
 
 async fn get_soul_identity() -> Json<Value> {
     let dir = data_dir();
-    let soul = tokio::fs::read_to_string(dir.join("SOUL.md")).await.unwrap_or_default();
-    let identity = tokio::fs::read_to_string(dir.join("IDENTITY.md")).await.unwrap_or_default();
+    let soul = tokio::fs::read_to_string(dir.join("SOUL.md"))
+        .await
+        .unwrap_or_default();
+    let identity = tokio::fs::read_to_string(dir.join("IDENTITY.md"))
+        .await
+        .unwrap_or_default();
     Json(json!({ "ok": true, "soul": soul, "identity": identity }))
 }
 
@@ -261,7 +271,11 @@ async fn put_settings_handler(Json(body): Json<Value>) -> Json<Value> {
                 Some(v) if is_masked(v) => v.as_str().unwrap_or("").to_string(),
                 _ => continue,
             };
-            let entry_id = entry.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+            let entry_id = entry
+                .get("id")
+                .and_then(|i| i.as_str())
+                .unwrap_or("")
+                .to_string();
             let orig = current_pool
                 .iter()
                 .filter_map(|o| o.get("api_key").and_then(|k| k.as_str()))
@@ -286,7 +300,11 @@ async fn put_settings_handler(Json(body): Json<Value>) -> Json<Value> {
     ) {
         let mut restored_tools = body_tools.clone();
         for tool in restored_tools.iter_mut() {
-            let tool_name = tool.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+            let tool_name = tool
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
             let current_tool = current_tools
                 .iter()
                 .find(|t| t.get("name").and_then(|n| n.as_str()).unwrap_or("") == tool_name)
@@ -424,11 +442,15 @@ async fn test_connection(Json(body): Json<TestConnectionBody>) -> Json<Value> {
         match result {
             Ok(resp) => {
                 if resp.status().is_success() {
-                    Json(json!({"success": true, "message": "Connection successful (Anthropic API)"}))
+                    Json(
+                        json!({"success": true, "message": "Connection successful (Anthropic API)"}),
+                    )
                 } else {
                     let status = resp.status().as_u16();
                     let err_text = resp.text().await.unwrap_or_default();
-                    Json(json!({"success": false, "message": format!("Error {}: {}", status, err_text)}))
+                    Json(
+                        json!({"success": false, "message": format!("Error {}: {}", status, err_text)}),
+                    )
                 }
             }
             Err(e) => Json(json!({"success": false, "message": e.to_string()})),
@@ -446,8 +468,7 @@ async fn test_connection(Json(body): Json<TestConnectionBody>) -> Json<Value> {
             format!("{}/chat/completions", raw_url.trim_end_matches('/'))
         };
 
-        let is_kimi =
-            provider == "kimi" || raw_url.contains("api.kimi.com");
+        let is_kimi = provider == "kimi" || raw_url.contains("api.kimi.com");
 
         let mut req = client
             .post(&url)
@@ -485,7 +506,9 @@ async fn test_connection(Json(body): Json<TestConnectionBody>) -> Json<Value> {
                 } else {
                     let status = resp.status().as_u16();
                     let err_text = resp.text().await.unwrap_or_default();
-                    Json(json!({"success": false, "message": format!("Error {}: {}", status, err_text)}))
+                    Json(
+                        json!({"success": false, "message": format!("Error {}: {}", status, err_text)}),
+                    )
                 }
             }
             Err(e) => Json(json!({"success": false, "message": e.to_string()})),
@@ -530,7 +553,7 @@ async fn test_remote_instance(Json(body): Json<Value>) -> impl IntoResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Claude Code OAuth
+// CLI model discovery
 // ---------------------------------------------------------------------------
 // GET  /cli-models          — models + effort levels of the CLIs installed here
 // POST /cli-models/refresh  — same, bypassing the cache
@@ -556,6 +579,8 @@ async fn cli_models_payload(force: bool) -> Json<Value> {
     }))
 }
 
+// ---------------------------------------------------------------------------
+// Claude Code OAuth
 // ---------------------------------------------------------------------------
 
 async fn get_claude_code_oauth() -> Json<Value> {

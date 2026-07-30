@@ -1,6 +1,6 @@
+use eframe::egui;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use eframe::egui;
 
 // ---------------------------------------------------------------------------
 // OutputPanel — right-side panel showing AI-generated output files
@@ -87,16 +87,16 @@ impl Default for OutputPanel {
 
 // Default chart color palette
 const CHART_COLORS: &[(u8, u8, u8)] = &[
-    (99, 102, 241),   // indigo
-    (139, 92, 246),   // violet
-    (168, 85, 247),   // purple
-    (236, 72, 153),   // pink
-    (34, 197, 94),    // green
-    (59, 130, 246),   // blue
-    (245, 158, 11),   // amber
-    (239, 68, 68),    // red
-    (20, 184, 166),   // teal
-    (249, 115, 22),   // orange
+    (99, 102, 241), // indigo
+    (139, 92, 246), // violet
+    (168, 85, 247), // purple
+    (236, 72, 153), // pink
+    (34, 197, 94),  // green
+    (59, 130, 246), // blue
+    (245, 158, 11), // amber
+    (239, 68, 68),  // red
+    (20, 184, 166), // teal
+    (249, 115, 22), // orange
 ];
 
 fn chart_color(idx: usize) -> egui::Color32 {
@@ -129,7 +129,10 @@ impl OutputPanel {
     }
 
     fn is_excel(path: &str) -> bool {
-        matches!(Self::ext(path).to_lowercase().as_str(), "xls" | "xlsx" | "xlsm" | "xlsb" | "ods")
+        matches!(
+            Self::ext(path).to_lowercase().as_str(),
+            "xls" | "xlsx" | "xlsm" | "xlsb" | "ods"
+        )
     }
 
     fn is_markdown(path: &str) -> bool {
@@ -214,14 +217,23 @@ impl OutputPanel {
     }
 
     fn file_icon(path: &str) -> &'static str {
-        if Self::is_image(path)       { "\u{1F5BC}" }
-        else if Self::is_pdf(path)    { "\u{1F4C4}" }
-        else if Self::is_word(path)   { "\u{1F4DD}" }
-        else if Self::is_markdown(path){ "\u{1F4CB}" }
-        else if Self::is_html(path)   { "\u{1F310}" }
-        else if Self::is_csv(path)    { "\u{1F4CA}" }
-        else if Self::is_json(path)   { "\u{1F4BE}" }
-        else                          { "\u{1F4C1}" }
+        if Self::is_image(path) {
+            "\u{1F5BC}"
+        } else if Self::is_pdf(path) {
+            "\u{1F4C4}"
+        } else if Self::is_word(path) {
+            "\u{1F4DD}"
+        } else if Self::is_markdown(path) {
+            "\u{1F4CB}"
+        } else if Self::is_html(path) {
+            "\u{1F310}"
+        } else if Self::is_csv(path) {
+            "\u{1F4CA}"
+        } else if Self::is_json(path) {
+            "\u{1F4BE}"
+        } else {
+            "\u{1F4C1}"
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -229,15 +241,16 @@ impl OutputPanel {
     // -----------------------------------------------------------------------
 
     pub fn show(&mut self, ui: &mut egui::Ui, files: &[String]) {
-        let panel_bg   = crate::ui::theme::surface_color();  // warm canvas
-        let border     = crate::ui::theme::border_color();  // warm line
-        let text_dark  = crate::ui::theme::text_primary_color();     // warm ink
-        let text_muted = crate::ui::theme::text_secondary_color();  // warm muted
-        let accent     = crate::ui::theme::accent_color();   // teal
+        let panel_bg = crate::ui::theme::surface_color();
+        let border = crate::ui::theme::border_color();
+        let text_dark = crate::ui::theme::text_primary_color();
+        let text_muted = crate::ui::theme::text_secondary_color();
+        let accent = crate::ui::theme::accent_color();
 
         egui::Frame::new()
-            .fill(panel_bg)
-            .stroke(egui::Stroke::new(1.0, border))
+            // Glass panel: translucent surface so the ambient gradient shows.
+            .fill(crate::ui::theme::glass_fill(panel_bg, 205))
+            .stroke(crate::ui::theme::hairline_stroke())
             .inner_margin(egui::Margin::same(0))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
@@ -316,23 +329,39 @@ impl OutputPanel {
                         ui.add_space(8.0);
                         ui.set_width(ui.available_width());
 
-                        let images: Vec<&String> = files.iter().filter(|f| Self::is_image(f)).collect();
-                        let pdfs: Vec<&String>   = files.iter().filter(|f| Self::is_pdf(f)).collect();
-                        let excels: Vec<&String> = files.iter().filter(|f| Self::is_excel(f)).collect();
-                        let docs: Vec<&String>   = files.iter().filter(|f| Self::is_word(f)).collect();
-                        let mds: Vec<&String>    = files.iter().filter(|f| Self::is_markdown(f)).collect();
-                        let csvs: Vec<&String>   = files.iter().filter(|f| Self::is_csv(f)).collect();
-                        let jsons: Vec<&String>  = files.iter().filter(|f| Self::is_json(f)).collect();
-                        let htmls: Vec<&String>  = files.iter().filter(|f| Self::is_html(f)).collect();
-                        let reacts: Vec<&String> = files.iter().filter(|f| Self::is_react(f)).collect();
-                        let texts: Vec<&String>  = files.iter().filter(|f| Self::is_text(f)).collect();
-                        let others: Vec<&String> = files.iter().filter(|f| {
-                            !Self::is_image(f) && !Self::is_pdf(f) && !Self::is_word(f)
-                            && !Self::is_excel(f)
-                            && !Self::is_markdown(f) && !Self::is_html(f)
-                            && !Self::is_csv(f) && !Self::is_json(f) && !Self::is_text(f)
-                            && !Self::is_react(f)
-                        }).collect();
+                        let images: Vec<&String> =
+                            files.iter().filter(|f| Self::is_image(f)).collect();
+                        let pdfs: Vec<&String> = files.iter().filter(|f| Self::is_pdf(f)).collect();
+                        let excels: Vec<&String> =
+                            files.iter().filter(|f| Self::is_excel(f)).collect();
+                        let docs: Vec<&String> =
+                            files.iter().filter(|f| Self::is_word(f)).collect();
+                        let mds: Vec<&String> =
+                            files.iter().filter(|f| Self::is_markdown(f)).collect();
+                        let csvs: Vec<&String> = files.iter().filter(|f| Self::is_csv(f)).collect();
+                        let jsons: Vec<&String> =
+                            files.iter().filter(|f| Self::is_json(f)).collect();
+                        let htmls: Vec<&String> =
+                            files.iter().filter(|f| Self::is_html(f)).collect();
+                        let reacts: Vec<&String> =
+                            files.iter().filter(|f| Self::is_react(f)).collect();
+                        let texts: Vec<&String> =
+                            files.iter().filter(|f| Self::is_text(f)).collect();
+                        let others: Vec<&String> = files
+                            .iter()
+                            .filter(|f| {
+                                !Self::is_image(f)
+                                    && !Self::is_pdf(f)
+                                    && !Self::is_word(f)
+                                    && !Self::is_excel(f)
+                                    && !Self::is_markdown(f)
+                                    && !Self::is_html(f)
+                                    && !Self::is_csv(f)
+                                    && !Self::is_json(f)
+                                    && !Self::is_text(f)
+                                    && !Self::is_react(f)
+                            })
+                            .collect();
 
                         if !reacts.is_empty() {
                             Self::section_label(ui, "\u{1F4CA} Charts", accent);
@@ -444,12 +473,7 @@ impl OutputPanel {
     fn section_label(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.label(
-                egui::RichText::new(label)
-                    .size(11.0)
-                    .strong()
-                    .color(color),
-            );
+            ui.label(egui::RichText::new(label).size(11.0).strong().color(color));
         });
         ui.add_space(4.0);
     }
@@ -465,25 +489,23 @@ impl OutputPanel {
         if !self.textures.contains_key(rel_path) {
             if full.exists() {
                 match std::fs::read(&full) {
-                    Ok(data) => {
-                        match image::load_from_memory(&data) {
-                            Ok(img) => {
-                                let rgba = img.to_rgba8();
-                                let (w, h) = rgba.dimensions();
-                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                                    [w as usize, h as usize],
-                                    rgba.as_raw(),
-                                );
-                                let texture = ui.ctx().load_texture(
-                                    rel_path,
-                                    color_image,
-                                    egui::TextureOptions::LINEAR,
-                                );
-                                self.textures.insert(rel_path.to_string(), texture);
-                            }
-                            Err(e) => eprintln!("[OutputPanel] image decode error: {}", e),
+                    Ok(data) => match image::load_from_memory(&data) {
+                        Ok(img) => {
+                            let rgba = img.to_rgba8();
+                            let (w, h) = rgba.dimensions();
+                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                [w as usize, h as usize],
+                                rgba.as_raw(),
+                            );
+                            let texture = ui.ctx().load_texture(
+                                rel_path,
+                                color_image,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.textures.insert(rel_path.to_string(), texture);
                         }
-                    }
+                        Err(e) => eprintln!("[OutputPanel] image decode error: {}", e),
+                    },
                     Err(e) => eprintln!("[OutputPanel] file read error: {}", e),
                 }
             }
@@ -493,7 +515,7 @@ impl OutputPanel {
 
         egui::Frame::new()
             .fill(crate::ui::theme::card_color())
-            .corner_radius(8.0)
+            .corner_radius(crate::ui::theme::RADIUS_CARD)
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
@@ -555,7 +577,8 @@ impl OutputPanel {
         // Parse and cache chart data
         if !self.chart_cache.contains_key(rel_path) {
             let charts = Self::parse_react_charts(&content);
-            self.chart_cache.insert(rel_path.to_string(), ChartCache { charts });
+            self.chart_cache
+                .insert(rel_path.to_string(), ChartCache { charts });
         }
 
         // Extract title from __REACT_META__
@@ -579,8 +602,8 @@ impl OutputPanel {
         let chart_count = cached.map(|c| c.charts.len()).unwrap_or(0);
 
         egui::Frame::new()
-            .fill(egui::Color32::from_rgb(22, 27, 34))
-            .corner_radius(8.0)
+            .fill(crate::ui::theme::canvas_color())
+            .corner_radius(crate::ui::theme::RADIUS_SMALL)
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
@@ -590,12 +613,16 @@ impl OutputPanel {
                         egui::RichText::new(&title)
                             .size(13.0)
                             .strong()
-                            .color(crate::ui::theme::card_color()),
+                            .color(crate::ui::theme::text_primary_color()),
                     );
                     ui.label(
-                        egui::RichText::new(format!("({} chart{})", chart_count, if chart_count == 1 { "" } else { "s" }))
-                            .size(10.0)
-                            .color(egui::Color32::from_rgb(125, 133, 144)),
+                        egui::RichText::new(format!(
+                            "({} chart{})",
+                            chart_count,
+                            if chart_count == 1 { "" } else { "s" }
+                        ))
+                        .size(10.0)
+                        .color(egui::Color32::from_rgb(125, 133, 144)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Open in browser button
@@ -606,9 +633,16 @@ impl OutputPanel {
                         )
                         .fill(crate::ui::theme::accent_color())
                         .corner_radius(4.0);
-                        if ui.add(browser_btn).on_hover_text("Open interactive version in browser").clicked() {
+                        if ui
+                            .add(browser_btn)
+                            .on_hover_text("Open interactive version in browser")
+                            .clicked()
+                        {
                             let encoded_path = rel_path.replace(' ', "%20");
-                            let url = format!("http://localhost:3001/api/files/preview?path={}", encoded_path);
+                            let url = format!(
+                                "http://localhost:3001/api/files/preview?path={}",
+                                encoded_path
+                            );
                             let _ = open::that(&url);
                         }
 
@@ -617,7 +651,8 @@ impl OutputPanel {
                             egui::RichText::new(expand_label)
                                 .size(11.0)
                                 .color(egui::Color32::from_rgb(200, 210, 220)),
-                        ).fill(egui::Color32::TRANSPARENT);
+                        )
+                        .fill(egui::Color32::TRANSPARENT);
                         if ui.add(expand_btn).clicked() {
                             if is_expanded {
                                 self.expanded_react = None;
@@ -649,7 +684,9 @@ impl OutputPanel {
                         }
 
                         match chart.chart_type {
-                            ChartType::Pie => Self::render_pie_chart(ui, chart, chart_height, rel_path, ci),
+                            ChartType::Pie => {
+                                Self::render_pie_chart(ui, chart, chart_height, rel_path, ci)
+                            }
                             _ => Self::render_plot_chart(ui, chart, chart_height, rel_path, ci),
                         }
                     }
@@ -688,8 +725,7 @@ impl OutputPanel {
                         .iter()
                         .filter_map(|obj| {
                             let label = Self::get_label_from_obj(obj);
-                            let val = obj.get(key.as_str())
-                                .and_then(|v| v.as_f64())?;
+                            let val = obj.get(key.as_str()).and_then(|v| v.as_f64())?;
                             Some((label, val))
                         })
                         .collect();
@@ -716,9 +752,12 @@ impl OutputPanel {
         // If no chart refs found but we have data arrays, auto-detect
         if charts.is_empty() && !data_arrays.is_empty() {
             for (var_name, arr) in &data_arrays {
-                if arr.is_empty() { continue; }
+                if arr.is_empty() {
+                    continue;
+                }
                 let first = &arr[0];
-                let numeric_keys: Vec<String> = first.as_object()
+                let numeric_keys: Vec<String> = first
+                    .as_object()
                     .map(|obj| {
                         obj.iter()
                             .filter(|(_, v)| v.is_f64() || v.is_i64() || v.is_u64())
@@ -727,7 +766,9 @@ impl OutputPanel {
                     })
                     .unwrap_or_default();
 
-                if numeric_keys.is_empty() { continue; }
+                if numeric_keys.is_empty() {
+                    continue;
+                }
 
                 let mut datasets = Vec::new();
                 for (ki, key) in numeric_keys.iter().enumerate() {
@@ -735,12 +776,15 @@ impl OutputPanel {
                         .iter()
                         .filter_map(|obj| {
                             let label = Self::get_label_from_obj(obj);
-                            let val = obj.get(key.as_str())
-                                .and_then(|v| {
-                                    if v.is_f64() { v.as_f64() }
-                                    else if v.is_i64() { v.as_i64().map(|i| i as f64) }
-                                    else { v.as_u64().map(|u| u as f64) }
-                                })?;
+                            let val = obj.get(key.as_str()).and_then(|v| {
+                                if v.is_f64() {
+                                    v.as_f64()
+                                } else if v.is_i64() {
+                                    v.as_i64().map(|i| i as f64)
+                                } else {
+                                    v.as_u64().map(|u| u as f64)
+                                }
+                            })?;
                             Some((label, val))
                         })
                         .collect();
@@ -823,7 +867,8 @@ impl OutputPanel {
         }
 
         // Handle Pie separately — it uses data prop on <Pie> not <PieChart>
-        let pie_re = regex::Regex::new(r#"<Pie\s[^>]*data=\{(\w+)\}[^>]*dataKey=["'](\w+)["']"#).unwrap();
+        let pie_re =
+            regex::Regex::new(r#"<Pie\s[^>]*data=\{(\w+)\}[^>]*dataKey=["'](\w+)["']"#).unwrap();
         for cap in pie_re.captures_iter(content) {
             let data_var = cap[1].to_string();
             let data_key = cap[2].to_string();
@@ -855,7 +900,9 @@ impl OutputPanel {
     fn get_label_from_obj(obj: &serde_json::Value) -> String {
         if let Some(map) = obj.as_object() {
             // Try common label field names first
-            for key in &["name", "label", "month", "date", "year", "segment", "category", "x"] {
+            for key in &[
+                "name", "label", "month", "date", "year", "segment", "category", "x",
+            ] {
                 if let Some(v) = map.get(*key) {
                     if let Some(s) = v.as_str() {
                         return s.to_string();
@@ -904,7 +951,9 @@ impl OutputPanel {
                 continue;
             }
             if !in_string {
-                if ch == open { depth += 1; }
+                if ch == open {
+                    depth += 1;
+                }
                 if ch == close {
                     depth -= 1;
                     if depth == 0 {
@@ -927,7 +976,9 @@ impl OutputPanel {
         // Need multiple passes since replacements may overlap
         for _ in 0..5 {
             let new = re_key.replace_all(&s, r#"$1 "$2":"#).to_string();
-            if new == s { break; }
+            if new == s {
+                break;
+            }
             s = new;
         }
         // Replace single quotes with double quotes (outside existing double-quoted strings)
@@ -962,7 +1013,9 @@ impl OutputPanel {
                     i += 1;
                 }
                 result.push('"');
-                if i < chars.len() { i += 1; } // skip closing '
+                if i < chars.len() {
+                    i += 1;
+                } // skip closing '
             } else {
                 result.push(chars[i]);
                 i += 1;
@@ -993,9 +1046,15 @@ impl OutputPanel {
     // Render Bar/Line/Area chart using painter API (beautiful custom rendering)
     // -----------------------------------------------------------------------
 
-    fn render_plot_chart(ui: &mut egui::Ui, chart: &ParsedChart, height: f32, _id_base: &str, _idx: usize) {
+    fn render_plot_chart(
+        ui: &mut egui::Ui,
+        chart: &ParsedChart,
+        height: f32,
+        _id_base: &str,
+        _idx: usize,
+    ) {
         let is_bar = chart.chart_type == ChartType::Bar;
-        let bg = egui::Color32::from_rgb(15, 23, 42);     // slate-900
+        let bg = crate::ui::theme::canvas_color();
         let grid_color = egui::Color32::from_rgb(51, 65, 85); // slate-700
         let label_color = egui::Color32::from_rgb(148, 163, 184); // slate-400
 
@@ -1006,10 +1065,8 @@ impl OutputPanel {
             .show(ui, |ui| {
                 let avail_w = ui.available_width();
                 let total_h = height + 30.0; // extra for x-axis labels
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(avail_w, total_h),
-                    egui::Sense::hover(),
-                );
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(avail_w, total_h), egui::Sense::hover());
                 let painter = ui.painter_at(rect);
 
                 // Chart area with margins
@@ -1025,27 +1082,44 @@ impl OutputPanel {
                 let chart_h = chart_rect.height();
 
                 // Find data range
-                let all_values: Vec<f64> = chart.datasets.iter()
+                let all_values: Vec<f64> = chart
+                    .datasets
+                    .iter()
                     .flat_map(|ds| ds.points.iter().map(|(_, v)| *v))
                     .collect();
                 let y_min = 0.0_f64;
                 let y_max = all_values.iter().cloned().fold(0.0_f64, f64::max) * 1.15;
-                if y_max <= 0.0 { return; }
-                let n_points = chart.datasets.first().map(|ds| ds.points.len()).unwrap_or(0);
-                if n_points == 0 { return; }
+                if y_max <= 0.0 {
+                    return;
+                }
+                let n_points = chart
+                    .datasets
+                    .first()
+                    .map(|ds| ds.points.len())
+                    .unwrap_or(0);
+                if n_points == 0 {
+                    return;
+                }
 
                 // Draw grid lines (4 horizontal lines)
                 for i in 0..=4 {
                     let frac = i as f32 / 4.0;
                     let y = chart_rect.bottom() - frac * chart_h;
                     painter.line_segment(
-                        [egui::pos2(chart_rect.left(), y), egui::pos2(chart_rect.right(), y)],
+                        [
+                            egui::pos2(chart_rect.left(), y),
+                            egui::pos2(chart_rect.right(), y),
+                        ],
                         egui::Stroke::new(0.5, grid_color),
                     );
                     let val = y_min + (y_max - y_min) * frac as f64;
-                    let label = if val >= 1000.0 { format!("{:.0}k", val / 1000.0) }
-                                else if val >= 1.0 { format!("{:.0}", val) }
-                                else { format!("{:.1}", val) };
+                    let label = if val >= 1000.0 {
+                        format!("{:.0}k", val / 1000.0)
+                    } else if val >= 1.0 {
+                        format!("{:.0}", val)
+                    } else {
+                        format!("{:.1}", val)
+                    };
                     painter.text(
                         egui::pos2(chart_rect.left() - 6.0, y),
                         egui::Align2::RIGHT_CENTER,
@@ -1061,7 +1135,9 @@ impl OutputPanel {
                     // Bar chart — each data point gets one or more colored bars
                     let group_w = chart_w / n_points as f32;
                     let bar_gap = 3.0_f32;
-                    let bar_w = ((group_w - bar_gap * 2.0) / num_datasets as f32).min(40.0).max(6.0);
+                    let bar_w = ((group_w - bar_gap * 2.0) / num_datasets as f32)
+                        .min(40.0)
+                        .max(6.0);
 
                     for (di, ds) in chart.datasets.iter().enumerate() {
                         for (pi, (label, value)) in ds.points.iter().enumerate() {
@@ -1069,7 +1145,9 @@ impl OutputPanel {
                             let x_center = chart_rect.left() + group_w * (pi as f32 + 0.5);
                             let x_offset = if num_datasets > 1 {
                                 (di as f32 - (num_datasets - 1) as f32 / 2.0) * (bar_w + 2.0)
-                            } else { 0.0 };
+                            } else {
+                                0.0
+                            };
                             let bar_x = x_center + x_offset - bar_w / 2.0;
                             let bar_rect = egui::Rect::from_min_max(
                                 egui::pos2(bar_x, chart_rect.bottom() - bar_h),
@@ -1077,16 +1155,33 @@ impl OutputPanel {
                             );
 
                             // Use per-item color if only one dataset, else per-dataset color
-                            let color = if num_datasets == 1 { chart_color(pi) } else { ds.color };
+                            let color = if num_datasets == 1 {
+                                chart_color(pi)
+                            } else {
+                                ds.color
+                            };
 
                             // Rounded top corners
-                            painter.rect_filled(bar_rect, egui::CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 }, color);
+                            painter.rect_filled(
+                                bar_rect,
+                                egui::CornerRadius {
+                                    nw: 4,
+                                    ne: 4,
+                                    sw: 0,
+                                    se: 0,
+                                },
+                                color,
+                            );
 
                             // Value on top of bar
                             if bar_h > 20.0 {
-                                let val_text = if *value >= 1000.0 { format!("{:.0}k", value / 1000.0) }
-                                              else if *value == (*value as i64) as f64 { format!("{:.0}", value) }
-                                              else { format!("{:.1}", value) };
+                                let val_text = if *value >= 1000.0 {
+                                    format!("{:.0}k", value / 1000.0)
+                                } else if *value == (*value as i64) as f64 {
+                                    format!("{:.0}", value)
+                                } else {
+                                    format!("{:.1}", value)
+                                };
                                 painter.text(
                                     egui::pos2(x_center + x_offset, bar_rect.top() - 4.0),
                                     egui::Align2::CENTER_BOTTOM,
@@ -1111,9 +1206,13 @@ impl OutputPanel {
                 } else {
                     // Line / Area chart
                     for (_di, ds) in chart.datasets.iter().enumerate() {
-                        let screen_points: Vec<egui::Pos2> = ds.points.iter().enumerate()
+                        let screen_points: Vec<egui::Pos2> = ds
+                            .points
+                            .iter()
+                            .enumerate()
                             .map(|(i, (_, v))| {
-                                let x = chart_rect.left() + chart_w * (i as f32 / (n_points - 1).max(1) as f32);
+                                let x = chart_rect.left()
+                                    + chart_w * (i as f32 / (n_points - 1).max(1) as f32);
                                 let y = chart_rect.bottom() - (*v / y_max) as f32 * chart_h;
                                 egui::pos2(x, y)
                             })
@@ -1125,17 +1224,22 @@ impl OutputPanel {
                             fill_pts.push(egui::pos2(chart_rect.right(), chart_rect.bottom()));
                             fill_pts.push(egui::pos2(chart_rect.left(), chart_rect.bottom()));
                             let fill_color = egui::Color32::from_rgba_premultiplied(
-                                ds.color.r(), ds.color.g(), ds.color.b(), 40,
+                                ds.color.r(),
+                                ds.color.g(),
+                                ds.color.b(),
+                                40,
                             );
-                            painter.add(egui::Shape::convex_polygon(fill_pts, fill_color, egui::Stroke::NONE));
+                            painter.add(egui::Shape::convex_polygon(
+                                fill_pts,
+                                fill_color,
+                                egui::Stroke::NONE,
+                            ));
                         }
 
                         // Draw line segments
                         for pair in screen_points.windows(2) {
-                            painter.line_segment(
-                                [pair[0], pair[1]],
-                                egui::Stroke::new(2.5, ds.color),
-                            );
+                            painter
+                                .line_segment([pair[0], pair[1]], egui::Stroke::new(2.5, ds.color));
                         }
 
                         // Draw data points
@@ -1148,10 +1252,15 @@ impl OutputPanel {
                     // X-axis labels for line/area
                     if let Some(ds) = chart.datasets.first() {
                         let max_labels = 10;
-                        let step = if n_points > max_labels { n_points / max_labels } else { 1 };
+                        let step = if n_points > max_labels {
+                            n_points / max_labels
+                        } else {
+                            1
+                        };
                         for (i, (label, _)) in ds.points.iter().enumerate() {
                             if i % step == 0 || i == n_points - 1 {
-                                let x = chart_rect.left() + chart_w * (i as f32 / (n_points - 1).max(1) as f32);
+                                let x = chart_rect.left()
+                                    + chart_w * (i as f32 / (n_points - 1).max(1) as f32);
                                 painter.text(
                                     egui::pos2(x, chart_rect.bottom() + 14.0),
                                     egui::Align2::CENTER_CENTER,
@@ -1173,7 +1282,8 @@ impl OutputPanel {
                         let ly = rect.min.y + 6.0;
                         painter.rect_filled(
                             egui::Rect::from_min_size(egui::pos2(lx, ly), egui::vec2(8.0, 8.0)),
-                            2.0, ds.color,
+                            2.0,
+                            ds.color,
                         );
                         painter.text(
                             egui::pos2(lx + 12.0, ly + 4.0),
@@ -1188,8 +1298,9 @@ impl OutputPanel {
     }
 
     fn truncate_label(s: &str, max: usize) -> String {
-        if s.len() <= max { s.to_string() }
-        else {
+        if s.len() <= max {
+            s.to_string()
+        } else {
             let end = crate::util::floor_char_boundary(s, max.saturating_sub(2));
             format!("{}..", &s[..end])
         }
@@ -1199,13 +1310,23 @@ impl OutputPanel {
     // Render Pie / Donut chart using painter
     // -----------------------------------------------------------------------
 
-    fn render_pie_chart(ui: &mut egui::Ui, chart: &ParsedChart, height: f32, _id_base: &str, _idx: usize) {
-        if chart.datasets.is_empty() { return; }
+    fn render_pie_chart(
+        ui: &mut egui::Ui,
+        chart: &ParsedChart,
+        height: f32,
+        _id_base: &str,
+        _idx: usize,
+    ) {
+        if chart.datasets.is_empty() {
+            return;
+        }
         let ds = &chart.datasets[0];
         let total: f64 = ds.points.iter().map(|(_, v)| *v).sum();
-        if total <= 0.0 { return; }
+        if total <= 0.0 {
+            return;
+        }
 
-        let bg = egui::Color32::from_rgb(15, 23, 42);
+        let bg = crate::ui::theme::canvas_color();
         let label_color = egui::Color32::from_rgb(203, 213, 225);
 
         egui::Frame::new()
@@ -1219,10 +1340,8 @@ impl OutputPanel {
                 let center_x = avail_w * 0.35;
                 let center_y = height / 2.0;
 
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(avail_w, height),
-                    egui::Sense::hover(),
-                );
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(avail_w, height), egui::Sense::hover());
                 let painter = ui.painter_at(rect);
                 let center = rect.min + egui::vec2(center_x, center_y);
 
@@ -1304,23 +1423,34 @@ impl OutputPanel {
     // Text/Markdown card with styled rendering and expand toggle
     // -----------------------------------------------------------------------
 
-    fn render_text_card(&mut self, ui: &mut egui::Ui, rel_path: &str, border: egui::Color32, is_markdown: bool) {
+    fn render_text_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        rel_path: &str,
+        border: egui::Color32,
+        is_markdown: bool,
+    ) {
         let full = Self::full_path(rel_path);
         let filename = Self::filename(rel_path);
         let is_expanded = self.expanded_text.as_deref() == Some(rel_path);
         let max_h = if is_expanded { 520.0 } else { 220.0 };
-        let content = std::fs::read_to_string(&full).unwrap_or_else(|_| "(file not found)".to_string());
+        let content =
+            std::fs::read_to_string(&full).unwrap_or_else(|_| "(file not found)".to_string());
         let line_count = content.lines().count();
         let char_count = content.len();
 
         egui::Frame::new()
             .fill(crate::ui::theme::card_color())
-            .corner_radius(8.0)
+            .corner_radius(crate::ui::theme::RADIUS_CARD)
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let icon = if is_markdown { "\u{1F4CB}" } else { "\u{1F4C3}" };
+                    let icon = if is_markdown {
+                        "\u{1F4CB}"
+                    } else {
+                        "\u{1F4C3}"
+                    };
                     ui.label(egui::RichText::new(icon).size(14.0));
                     ui.label(
                         egui::RichText::new(filename)
@@ -1329,9 +1459,12 @@ impl OutputPanel {
                             .color(crate::ui::theme::text_primary_color()),
                     );
                     ui.label(
-                        egui::RichText::new(format!("({} lines, {} chars)", line_count, char_count))
-                            .size(10.0)
-                            .color(crate::ui::theme::text_secondary_color()),
+                        egui::RichText::new(format!(
+                            "({} lines, {} chars)",
+                            line_count, char_count
+                        ))
+                        .size(10.0)
+                        .color(crate::ui::theme::text_secondary_color()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Open").clicked() {
@@ -1376,7 +1509,9 @@ impl OutputPanel {
         for line in content.lines() {
             if line.trim_start().starts_with("```") {
                 in_code_block = !in_code_block;
-                if in_code_block { ui.add_space(2.0); }
+                if in_code_block {
+                    ui.add_space(2.0);
+                }
                 continue;
             }
             if in_code_block {
@@ -1385,85 +1520,120 @@ impl OutputPanel {
                     .inner_margin(egui::Margin::symmetric(6, 2))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.add(egui::Label::new(
-                            egui::RichText::new(line)
-                                .size(11.0)
-                                .monospace()
-                                .color(egui::Color32::from_rgb(180, 100, 40)),
-                        ).wrap());
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(line)
+                                    .size(11.0)
+                                    .monospace()
+                                    .color(egui::Color32::from_rgb(180, 100, 40)),
+                            )
+                            .wrap(),
+                        );
                     });
                 continue;
             }
             if line.starts_with("# ") {
                 ui.add_space(6.0);
-                ui.add(egui::Label::new(
-                    egui::RichText::new(&line[2..])
-                        .size(16.0)
-                        .strong()
-                        .color(egui::Color32::from_rgb(13, 17, 23)),
-                ).wrap());
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&line[2..])
+                            .size(16.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(13, 17, 23)),
+                    )
+                    .wrap(),
+                );
                 ui.add(egui::Separator::default().spacing(2.0));
             } else if line.starts_with("## ") {
                 ui.add_space(4.0);
-                ui.add(egui::Label::new(
-                    egui::RichText::new(&line[3..])
-                        .size(14.0)
-                        .strong()
-                        .color(crate::ui::theme::text_primary_color()),
-                ).wrap());
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&line[3..])
+                            .size(14.0)
+                            .strong()
+                            .color(crate::ui::theme::text_primary_color()),
+                    )
+                    .wrap(),
+                );
             } else if line.starts_with("### ") {
                 ui.add_space(2.0);
-                ui.add(egui::Label::new(
-                    egui::RichText::new(&line[4..])
-                        .size(13.0)
-                        .strong()
-                        .color(crate::ui::theme::accent_color()),
-                ).wrap());
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&line[4..])
+                            .size(13.0)
+                            .strong()
+                            .color(crate::ui::theme::accent_color()),
+                    )
+                    .wrap(),
+                );
             } else if line.starts_with("#### ") {
-                ui.add(egui::Label::new(
-                    egui::RichText::new(&line[5..])
-                        .size(12.0)
-                        .strong()
-                        .color(crate::ui::theme::text_secondary_color()),
-                ).wrap());
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&line[5..])
+                            .size(12.0)
+                            .strong()
+                            .color(crate::ui::theme::text_secondary_color()),
+                    )
+                    .wrap(),
+                );
             } else if line.starts_with("- ") || line.starts_with("* ") {
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
-                    ui.label(egui::RichText::new("\u{2022}").size(12.0).color(crate::ui::theme::accent_color()));
-                    ui.add_space(2.0);
-                    ui.add(egui::Label::new(
-                        egui::RichText::new(&line[2..])
+                    ui.label(
+                        egui::RichText::new("\u{2022}")
                             .size(12.0)
-                            .color(crate::ui::theme::text_primary_color()),
-                    ).wrap());
+                            .color(crate::ui::theme::accent_color()),
+                    );
+                    ui.add_space(2.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&line[2..])
+                                .size(12.0)
+                                .color(crate::ui::theme::text_primary_color()),
+                        )
+                        .wrap(),
+                    );
                 });
-            } else if line.trim_start_matches(|c: char| c.is_ascii_digit()).starts_with(". ") {
+            } else if line
+                .trim_start_matches(|c: char| c.is_ascii_digit())
+                .starts_with(". ")
+            {
                 let trimmed = line.trim_start();
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
                     let num_end = trimmed.find(". ").unwrap_or(0);
                     let num = &trimmed[..num_end];
-                    ui.label(egui::RichText::new(format!("{}.", num)).size(12.0).color(crate::ui::theme::accent_color()));
-                    ui.add_space(2.0);
-                    ui.add(egui::Label::new(
-                        egui::RichText::new(&trimmed[num_end + 2..])
+                    ui.label(
+                        egui::RichText::new(format!("{}.", num))
                             .size(12.0)
-                            .color(crate::ui::theme::text_primary_color()),
-                    ).wrap());
+                            .color(crate::ui::theme::accent_color()),
+                    );
+                    ui.add_space(2.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&trimmed[num_end + 2..])
+                                .size(12.0)
+                                .color(crate::ui::theme::text_primary_color()),
+                        )
+                        .wrap(),
+                    );
                 });
             } else if line.starts_with("---") || line.starts_with("===") {
                 ui.add(egui::Separator::default().spacing(4.0));
             } else if line.starts_with("> ") {
                 egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(225, 241, 239))
+                    .fill(crate::ui::theme::accent_color().gamma_multiply(0.12))
                     .inner_margin(egui::Margin::symmetric(8, 2))
                     .show(ui, |ui| {
-                        ui.add(egui::Label::new(
-                            egui::RichText::new(&line[2..])
-                                .size(12.0)
-                                .italics()
-                                .color(egui::Color32::from_rgb(10, 95, 90)),
-                        ).wrap());
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&line[2..])
+                                    .size(12.0)
+                                    .italics()
+                                    .color(crate::ui::theme::accent_color()),
+                            )
+                            .wrap(),
+                        );
                     });
             } else if line.is_empty() {
                 ui.add_space(4.0);
@@ -1471,9 +1641,14 @@ impl OutputPanel {
                 let display = line.replace("**", "").replace("__", "").replace('`', "");
                 let is_bold = line.contains("**") || line.contains("__");
                 let text = if is_bold {
-                    egui::RichText::new(display).size(12.0).strong().color(crate::ui::theme::text_primary_color())
+                    egui::RichText::new(display)
+                        .size(12.0)
+                        .strong()
+                        .color(crate::ui::theme::text_primary_color())
                 } else {
-                    egui::RichText::new(display).size(12.0).color(crate::ui::theme::text_primary_color())
+                    egui::RichText::new(display)
+                        .size(12.0)
+                        .color(crate::ui::theme::text_primary_color())
                 };
                 ui.add(egui::Label::new(text).wrap());
             }
@@ -1489,7 +1664,8 @@ impl OutputPanel {
         let filename = Self::filename(rel_path);
         let is_expanded = self.expanded_text.as_deref() == Some(rel_path);
         let content = std::fs::read_to_string(&full).unwrap_or_default();
-        let rows: Vec<Vec<&str>> = content.lines()
+        let rows: Vec<Vec<&str>> = content
+            .lines()
             .take(if is_expanded { 50 } else { 8 })
             .map(|line| line.split(',').collect())
             .collect();
@@ -1498,7 +1674,7 @@ impl OutputPanel {
 
         egui::Frame::new()
             .fill(crate::ui::theme::card_color())
-            .corner_radius(8.0)
+            .corner_radius(crate::ui::theme::RADIUS_CARD)
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
@@ -1511,9 +1687,13 @@ impl OutputPanel {
                             .color(crate::ui::theme::text_primary_color()),
                     );
                     ui.label(
-                        egui::RichText::new(format!("({} rows \u{00D7} {} cols)", total_rows.saturating_sub(1), col_count))
-                            .size(10.0)
-                            .color(crate::ui::theme::text_secondary_color()),
+                        egui::RichText::new(format!(
+                            "({} rows \u{00D7} {} cols)",
+                            total_rows.saturating_sub(1),
+                            col_count
+                        ))
+                        .size(10.0)
+                        .color(crate::ui::theme::text_secondary_color()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Open").clicked() {
@@ -1563,9 +1743,12 @@ impl OutputPanel {
                             });
                         if total_rows > (if is_expanded { 50 } else { 8 }) {
                             ui.label(
-                                egui::RichText::new(format!("... {} more rows", total_rows - (if is_expanded { 50 } else { 8 })))
-                                    .size(10.0)
-                                    .color(egui::Color32::GRAY),
+                                egui::RichText::new(format!(
+                                    "... {} more rows",
+                                    total_rows - (if is_expanded { 50 } else { 8 })
+                                ))
+                                .size(10.0)
+                                .color(egui::Color32::GRAY),
                             );
                         }
                     });
@@ -1589,7 +1772,9 @@ impl OutputPanel {
         let hash = format!("{:x}", {
             let s = pdf_path.display().to_string();
             let mut h: u64 = 5381;
-            for b in s.bytes() { h = h.wrapping_mul(33).wrapping_add(b as u64); }
+            for b in s.bytes() {
+                h = h.wrapping_mul(33).wrapping_add(b as u64);
+            }
             h
         });
         Self::pdf_cache_dir().join(format!("{}_{}.png", hash, page))
@@ -1684,7 +1869,10 @@ if doc:
         let current_page = *self.pdf_current_page.get(rel_path).unwrap_or(&0);
 
         // Kick off first page render if not started
-        if !self.pdf_pages.contains_key(rel_path) && !self.pdf_rendering.get(rel_path).copied().unwrap_or(false) && full.exists() {
+        if !self.pdf_pages.contains_key(rel_path)
+            && !self.pdf_rendering.get(rel_path).copied().unwrap_or(false)
+            && full.exists()
+        {
             self.pdf_rendering.insert(rel_path.to_string(), true);
             Self::spawn_pdf_page_render(ui.ctx().clone(), full.clone(), 0, rel_path.to_string());
         }
@@ -1692,15 +1880,18 @@ if doc:
         // Try to load rendered page image into texture cache
         let page_png = Self::render_pdf_page_path(&full, current_page);
         if page_png.exists() {
-            let entry = self.pdf_pages.entry(rel_path.to_string()).or_insert_with(|| {
-                // Read total page count from marker file
-                let count_file = format!("{}.count", page_png.display());
-                let total = std::fs::read_to_string(&count_file)
-                    .ok()
-                    .and_then(|s| s.trim().parse::<usize>().ok())
-                    .unwrap_or(1);
-                (total, HashMap::new())
-            });
+            let entry = self
+                .pdf_pages
+                .entry(rel_path.to_string())
+                .or_insert_with(|| {
+                    // Read total page count from marker file
+                    let count_file = format!("{}.count", page_png.display());
+                    let total = std::fs::read_to_string(&count_file)
+                        .ok()
+                        .and_then(|s| s.trim().parse::<usize>().ok())
+                        .unwrap_or(1);
+                    (total, HashMap::new())
+                });
             if !entry.1.contains_key(&current_page) {
                 if let Ok(data) = std::fs::read(&page_png) {
                     if let Ok(img) = image::load_from_memory(&data) {
@@ -1720,7 +1911,7 @@ if doc:
 
         egui::Frame::new()
             .fill(crate::ui::theme::card_color())
-            .corner_radius(8.0)
+            .corner_radius(crate::ui::theme::RADIUS_CARD)
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
@@ -1783,7 +1974,9 @@ if doc:
                 ui.add_space(4.0);
 
                 // Page image preview
-                let has_texture = self.pdf_pages.get(rel_path)
+                let has_texture = self
+                    .pdf_pages
+                    .get(rel_path)
                     .and_then(|(_, pages)| pages.get(&current_page))
                     .is_some();
 
@@ -1806,7 +1999,9 @@ if doc:
                                 .max_height(max_h)
                                 .id_salt(format!("pdf_page_{}", rel_path))
                                 .show(ui, |ui| {
-                                    ui.add(egui::Image::new(texture).fit_to_exact_size(display_size));
+                                    ui.add(
+                                        egui::Image::new(texture).fit_to_exact_size(display_size),
+                                    );
                                 });
                         });
 
@@ -1815,44 +2010,89 @@ if doc:
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             let prev_enabled = current_page > 0;
-                            if ui.add_enabled(prev_enabled, egui::Button::new("\u{25C0} Prev").small()).clicked() {
+                            if ui
+                                .add_enabled(
+                                    prev_enabled,
+                                    egui::Button::new("\u{25C0} Prev").small(),
+                                )
+                                .clicked()
+                            {
                                 let new_page = current_page.saturating_sub(1);
                                 self.pdf_current_page.insert(rel_path.to_string(), new_page);
                                 // Trigger render of new page if not cached
-                                if !self.pdf_pages.get(rel_path).map(|(_, p)| p.contains_key(&new_page)).unwrap_or(false) {
-                                    Self::spawn_pdf_page_render(ui.ctx().clone(), full.clone(), new_page, rel_path.to_string());
+                                if !self
+                                    .pdf_pages
+                                    .get(rel_path)
+                                    .map(|(_, p)| p.contains_key(&new_page))
+                                    .unwrap_or(false)
+                                {
+                                    Self::spawn_pdf_page_render(
+                                        ui.ctx().clone(),
+                                        full.clone(),
+                                        new_page,
+                                        rel_path.to_string(),
+                                    );
                                 }
                             }
                             let next_enabled = current_page + 1 < total;
-                            if ui.add_enabled(next_enabled, egui::Button::new("Next \u{25B6}").small()).clicked() {
+                            if ui
+                                .add_enabled(
+                                    next_enabled,
+                                    egui::Button::new("Next \u{25B6}").small(),
+                                )
+                                .clicked()
+                            {
                                 let new_page = current_page + 1;
                                 self.pdf_current_page.insert(rel_path.to_string(), new_page);
-                                if !self.pdf_pages.get(rel_path).map(|(_, p)| p.contains_key(&new_page)).unwrap_or(false) {
-                                    Self::spawn_pdf_page_render(ui.ctx().clone(), full.clone(), new_page, rel_path.to_string());
+                                if !self
+                                    .pdf_pages
+                                    .get(rel_path)
+                                    .map(|(_, p)| p.contains_key(&new_page))
+                                    .unwrap_or(false)
+                                {
+                                    Self::spawn_pdf_page_render(
+                                        ui.ctx().clone(),
+                                        full.clone(),
+                                        new_page,
+                                        rel_path.to_string(),
+                                    );
                                 }
                             }
                         });
                     }
                 } else {
                     // Check if render failed
-                    let err_path = format!("{}.error", Self::render_pdf_page_path(&full, current_page).display());
+                    let err_path = format!(
+                        "{}.error",
+                        Self::render_pdf_page_path(&full, current_page).display()
+                    );
                     if std::path::Path::new(&err_path).exists() {
                         let err_msg = std::fs::read_to_string(&err_path).unwrap_or_default();
                         // Fall back to text preview
                         if !self.pdf_cache.contains_key(rel_path) && full.exists() {
-                            let text = match std::panic::catch_unwind(|| pdf_extract::extract_text(&full)) {
-                                Ok(Ok(t)) => t,
-                                Ok(Err(e)) => format!("[Could not extract PDF text: {}]", e),
-                                Err(_) => "[PDF extraction crashed]".to_string(),
-                            };
+                            let text =
+                                match std::panic::catch_unwind(|| pdf_extract::extract_text(&full))
+                                {
+                                    Ok(Ok(t)) => t,
+                                    Ok(Err(e)) => format!("[Could not extract PDF text: {}]", e),
+                                    Err(_) => "[PDF extraction crashed]".to_string(),
+                                };
                             self.pdf_cache.insert(rel_path.to_string(), text);
                         }
                         if let Some(text) = self.pdf_cache.get(rel_path) {
                             ui.add_space(4.0);
-                            let preview = if is_expanded { text.clone() } else {
-                                let limit = text.char_indices().nth(800).map(|(i, _)| i).unwrap_or(text.len());
+                            let preview = if is_expanded {
+                                text.clone()
+                            } else {
+                                let limit = text
+                                    .char_indices()
+                                    .nth(800)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(text.len());
                                 let mut p = text[..limit].to_string();
-                                if limit < text.len() { p.push_str("\n\n... (click \u{25BC} to expand)"); }
+                                if limit < text.len() {
+                                    p.push_str("\n\n... (click \u{25BC} to expand)");
+                                }
                                 p
                             };
                             egui::Frame::new()
@@ -1868,15 +2108,18 @@ if doc:
                                             ui.label(
                                                 egui::RichText::new(&preview)
                                                     .size(11.5)
-                                                    .color(egui::Color32::from_rgb(40, 44, 52))
+                                                    .color(egui::Color32::from_rgb(40, 44, 52)),
                                             );
                                         });
                                 });
                         } else {
                             ui.label(
-                                egui::RichText::new(format!("PDF render failed: {}", err_msg.lines().next().unwrap_or("unknown")))
-                                    .size(10.0)
-                                    .color(egui::Color32::from_rgb(200, 60, 60)),
+                                egui::RichText::new(format!(
+                                    "PDF render failed: {}",
+                                    err_msg.lines().next().unwrap_or("unknown")
+                                ))
+                                .size(10.0)
+                                .color(egui::Color32::from_rgb(200, 60, 60)),
                             );
                         }
                     } else {
@@ -1901,7 +2144,7 @@ if doc:
     // -----------------------------------------------------------------------
 
     fn render_excel_card(&mut self, ui: &mut egui::Ui, rel_path: &str, border: egui::Color32) {
-        use calamine::{Reader, open_workbook_auto};
+        use calamine::{open_workbook_auto, Reader};
 
         let full = Self::full_path(rel_path);
         let filename = Self::filename(rel_path);
@@ -1916,15 +2159,19 @@ if doc:
                     if let Ok(range) = workbook.worksheet_range(name) {
                         let mut rows: Vec<Vec<String>> = Vec::new();
                         for row in range.rows() {
-                            let cells: Vec<String> = row.iter().map(|c| {
-                                match c {
+                            let cells: Vec<String> = row
+                                .iter()
+                                .map(|c| match c {
                                     calamine::Data::Empty => String::new(),
                                     calamine::Data::String(s) => s.clone(),
                                     calamine::Data::Float(f) => {
                                         if *f == (*f as i64) as f64 {
                                             format!("{}", *f as i64)
                                         } else {
-                                            format!("{:.4}", f).trim_end_matches('0').trim_end_matches('.').to_string()
+                                            format!("{:.4}", f)
+                                                .trim_end_matches('0')
+                                                .trim_end_matches('.')
+                                                .to_string()
                                         }
                                     }
                                     calamine::Data::Int(i) => i.to_string(),
@@ -1933,24 +2180,29 @@ if doc:
                                     calamine::Data::DateTime(dt) => format!("{}", dt),
                                     calamine::Data::DateTimeIso(s) => s.clone(),
                                     calamine::Data::DurationIso(s) => s.clone(),
-                                }
-                            }).collect();
+                                })
+                                .collect();
                             rows.push(cells);
                             // Limit rows to prevent huge memory use
-                            if rows.len() >= 500 { break; }
+                            if rows.len() >= 500 {
+                                break;
+                            }
                         }
                         sheets_data.push((name.clone(), rows));
                     }
                 }
             } else {
-                sheets_data.push(("Error".to_string(), vec![vec!["Could not open file".to_string()]]));
+                sheets_data.push((
+                    "Error".to_string(),
+                    vec![vec!["Could not open file".to_string()]],
+                ));
             }
             self.excel_cache.insert(rel_path.to_string(), sheets_data);
         }
 
         egui::Frame::new()
             .fill(crate::ui::theme::card_color())
-            .corner_radius(8.0)
+            .corner_radius(crate::ui::theme::RADIUS_CARD)
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {
@@ -2103,7 +2355,7 @@ if doc:
 
         egui::Frame::new()
             .fill(crate::ui::theme::card_color())
-            .corner_radius(8.0)
+            .corner_radius(crate::ui::theme::RADIUS_CARD)
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
@@ -2167,7 +2419,7 @@ if doc:
 
         egui::Frame::new()
             .fill(crate::ui::theme::card_color())
-            .corner_radius(8.0)
+            .corner_radius(crate::ui::theme::RADIUS_CARD)
             .stroke(egui::Stroke::new(1.0, border))
             .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
@@ -2202,9 +2454,13 @@ if doc:
     pub fn show_toggle_button(&mut self, ui: &mut egui::Ui, file_count: usize) {
         let accent = crate::ui::theme::accent_color();
         let btn = egui::Button::new(
-            egui::RichText::new(format!("\u{1F4E4} {} output{}", file_count, if file_count == 1 { "" } else { "s" }))
-                .size(12.0)
-                .color(egui::Color32::WHITE),
+            egui::RichText::new(format!(
+                "\u{1F4E4} {} output{}",
+                file_count,
+                if file_count == 1 { "" } else { "s" }
+            ))
+            .size(12.0)
+            .color(egui::Color32::WHITE),
         )
         .fill(accent)
         .corner_radius(6.0);

@@ -7,9 +7,8 @@ use crate::server::data::{
     ChatMessageFeedback, ChatSession, Project,
 };
 use crate::server::services::toolbox::{
-    call_with_tools, call_with_tools_realtime, force_create_architecture,
-    get_session_architecture, load_agent_yaml,
-    start_realtime_session, SubAgentConfig, ToolUpdate,
+    call_with_tools, call_with_tools_realtime, force_create_architecture, get_session_architecture,
+    load_agent_yaml, start_realtime_session, SubAgentConfig, ToolUpdate,
 };
 use crate::ui::output_panel::OutputPanel;
 
@@ -26,8 +25,8 @@ pub struct ChatSessionSummary {
     pub message_count: usize,
     pub updated_at: String,
     pub project_id: Option<String>,
-    pub last_message_preview: String,   // last AI or user message snippet
-    pub last_message_role: String,      // "user" or "assistant"
+    pub last_message_preview: String, // last AI or user message snippet
+    pub last_message_role: String,    // "user" or "assistant"
 }
 
 // -------------------------------------------------------------------------
@@ -79,7 +78,8 @@ impl StreamingState {
     }
 
     fn cancel(&self) {
-        self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         *self.done.lock().unwrap() = true;
         let mut err = self.error.lock().unwrap();
         if err.is_none() {
@@ -303,8 +303,8 @@ fn parse_inline_segments(text: &str, segments: &mut Vec<MdSegment>) {
 struct GraphicAgent {
     id: String,
     name: String,
-    role: String,     // orchestrator, worker, peer, human
-    status: String,   // idle, working, done
+    role: String,   // orchestrator, worker, peer, human
+    status: String, // idle, working, done
     x: f32,
     y: f32,
     color: egui::Color32,
@@ -326,24 +326,24 @@ struct GraphicEdge {
 struct GraphicSignal {
     from: String,
     to: String,
-    kind: String,     // delegate, direct, bus, spawn
+    kind: String, // delegate, direct, bus, spawn
     tool: String,
-    started_at: f64,  // seconds since epoch
+    started_at: f64, // seconds since epoch
 }
 
 // Color palette for agent nodes
 fn agent_node_color(index: usize) -> egui::Color32 {
     const PALETTE: &[(u8, u8, u8)] = &[
-        (99, 102, 241),   // indigo
-        (236, 72, 153),   // pink
-        (34, 197, 94),    // green
-        (245, 158, 11),   // amber
-        (6, 182, 212),    // cyan
-        (168, 85, 247),   // purple
-        (239, 68, 68),    // red
-        (59, 130, 246),   // blue
-        (16, 185, 129),   // emerald
-        (249, 115, 22),   // orange
+        (99, 102, 241), // indigo
+        (236, 72, 153), // pink
+        (34, 197, 94),  // green
+        (245, 158, 11), // amber
+        (6, 182, 212),  // cyan
+        (168, 85, 247), // purple
+        (239, 68, 68),  // red
+        (59, 130, 246), // blue
+        (16, 185, 129), // emerald
+        (249, 115, 22), // orange
     ];
     let (r, g, b) = PALETTE[index % PALETTE.len()];
     egui::Color32::from_rgb(r, g, b)
@@ -351,11 +351,11 @@ fn agent_node_color(index: usize) -> egui::Color32 {
 
 fn link_kind_color(kind: &str) -> egui::Color32 {
     match kind {
-        "delegate" => egui::Color32::from_rgb(245, 158, 11),  // amber
-        "direct"   => egui::Color32::from_rgb(219, 39, 119),  // pink
-        "bus"      => egui::Color32::from_rgb(8, 145, 178),   // cyan
-        "spawn"    => egui::Color32::from_rgb(124, 58, 237),  // purple
-        _          => crate::ui::theme::text_secondary_color(), // gray
+        "delegate" => egui::Color32::from_rgb(245, 158, 11), // amber
+        "direct" => egui::Color32::from_rgb(219, 39, 119),   // pink
+        "bus" => egui::Color32::from_rgb(8, 145, 178),       // cyan
+        "spawn" => egui::Color32::from_rgb(124, 58, 237),    // purple
+        _ => crate::ui::theme::text_secondary_color(),       // gray
     }
 }
 
@@ -378,7 +378,9 @@ pub struct ChatView {
     /// Models/effort tiers discovered from the CLIs installed on this machine,
     /// backing the composer's model picker. Loaded off-thread — probing spawns
     /// processes and must never block a UI frame.
-    cli_providers: std::sync::Arc<std::sync::Mutex<Option<Vec<crate::server::services::cli_models::CliProvider>>>>,
+    cli_providers: std::sync::Arc<
+        std::sync::Mutex<Option<Vec<crate::server::services::cli_models::CliProvider>>>,
+    >,
     cli_providers_loading: bool,
     sessions: Vec<ChatSessionSummary>,
     pub selected_session_id: Option<String>,
@@ -439,7 +441,8 @@ pub struct ChatView {
     graphic_zoom: f32,
     graphic_drag_start: Option<egui::Pos2>,
     graphic_last_reload: f64, // last auto-reload time (seconds)
-    graphic_live_statuses: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+    graphic_live_statuses:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
     graphic_status_poll_timer: std::time::Instant,
 }
 
@@ -499,7 +502,9 @@ impl ChatView {
             graphic_zoom: 1.0,
             graphic_drag_start: None,
             graphic_last_reload: 0.0,
-            graphic_live_statuses: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            graphic_live_statuses: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
             graphic_status_poll_timer: std::time::Instant::now(),
         }
     }
@@ -523,12 +528,21 @@ impl ChatView {
                 let last_message_preview = last
                     .map(|m| {
                         // Strip markdown/think tags for clean preview
-                        let raw = m.content
-                            .split("</think>").last().unwrap_or(&m.content)
+                        let raw = m
+                            .content
+                            .split("</think>")
+                            .last()
+                            .unwrap_or(&m.content)
                             .replace('\n', " ");
-                        let stripped = raw.trim_start_matches(|c: char| c.is_whitespace() || c == '#' || c == '*');
+                        let stripped = raw.trim_start_matches(|c: char| {
+                            c.is_whitespace() || c == '#' || c == '*'
+                        });
                         let clean: String = stripped.chars().take(80).collect();
-                        if stripped.len() > 80 { format!("{}…", clean) } else { clean.to_string() }
+                        if stripped.len() > 80 {
+                            format!("{}…", clean)
+                        } else {
+                            clean.to_string()
+                        }
                     })
                     .unwrap_or_default();
                 let last_message_role = last.map(|m| m.role.clone()).unwrap_or_default();
@@ -555,9 +569,17 @@ impl ChatView {
                 if let Some(found) = all_sessions.into_iter().find(|s| &s.id == sel_id) {
                     // Only guard message count when refreshing the SAME session
                     // (async save may still be in flight with newer messages)
-                    let same_session = self.selected_session.as_ref().map(|s| s.id == *sel_id).unwrap_or(false);
+                    let same_session = self
+                        .selected_session
+                        .as_ref()
+                        .map(|s| s.id == *sel_id)
+                        .unwrap_or(false);
                     if same_session {
-                        let mem_count = self.selected_session.as_ref().map(|s| s.messages.len()).unwrap_or(0);
+                        let mem_count = self
+                            .selected_session
+                            .as_ref()
+                            .map(|s| s.messages.len())
+                            .unwrap_or(0);
                         if found.messages.len() >= mem_count {
                             self.selected_session = Some(found);
                         }
@@ -579,7 +601,8 @@ impl ChatView {
             // Remote mode: create session via API
             let pid = self.selected_project_id.as_deref();
             let new_id = runtime.block_on(async {
-                crate::server::data::remote_create_chat_session("New Chat", pid).await
+                crate::server::data::remote_create_chat_session("New Chat", pid)
+                    .await
                     .map(|s| s.id)
             });
             if let Some(id) = new_id {
@@ -618,8 +641,7 @@ impl ChatView {
         let sid = session_id.to_string();
         runtime.block_on(async {
             let sessions = get_chat_history().await;
-            let filtered: Vec<ChatSession> =
-                sessions.into_iter().filter(|s| s.id != sid).collect();
+            let filtered: Vec<ChatSession> = sessions.into_iter().filter(|s| s.id != sid).collect();
             save_chat_history(&filtered).await;
             crate::server::data::delete_agent_history(&sid).await;
         });
@@ -663,7 +685,9 @@ impl ChatView {
         for file in &self.attached_files {
             // Store sandbox-relative path so OutputPanel::full_path can resolve it
             if !file.sandbox_path.is_empty() {
-                let rel = if let Some(stripped) = file.sandbox_path.strip_prefix(&format!("{}/", sandbox)) {
+                let rel = if let Some(stripped) =
+                    file.sandbox_path.strip_prefix(&format!("{}/", sandbox))
+                {
                     stripped.to_string()
                 } else if let Some(stripped) = file.sandbox_path.strip_prefix(&sandbox) {
                     stripped.trim_start_matches('/').to_string()
@@ -694,7 +718,11 @@ impl ChatView {
                 ));
             }
         }
-        let file_names_opt = if file_names.is_empty() { None } else { Some(file_names) };
+        let file_names_opt = if file_names.is_empty() {
+            None
+        } else {
+            Some(file_names)
+        };
 
         // Create local session in memory if needed
         let need_new = self.selected_session_id.is_none();
@@ -827,8 +855,11 @@ impl ChatView {
         let sandbox_dir = {
             // The project filter dropdown is the primary source of truth.
             // Also backfill the session's project_id if missing.
-            let active_project_id = self.selected_project_id.clone()
-                .or_else(|| self.selected_session.as_ref().and_then(|s| s.project_id.clone()));
+            let active_project_id = self.selected_project_id.clone().or_else(|| {
+                self.selected_session
+                    .as_ref()
+                    .and_then(|s| s.project_id.clone())
+            });
 
             // Backfill: if we have a project_id but the session doesn't (non-blocking)
             if let Some(ref pid) = active_project_id {
@@ -845,11 +876,15 @@ impl ChatView {
                 });
             }
 
-            let project_folder = active_project_id.as_ref().and_then(|pid| {
-                cached_projects.iter()
-                    .find(|p| &p.id == pid)
-                    .map(|p| p.working_folder.clone())
-            }).filter(|f| !f.is_empty());
+            let project_folder = active_project_id
+                .as_ref()
+                .and_then(|pid| {
+                    cached_projects
+                        .iter()
+                        .find(|p| &p.id == pid)
+                        .map(|p| p.working_folder.clone())
+                })
+                .filter(|f| !f.is_empty());
 
             if let Some(folder) = project_folder {
                 // Ensure project folder exists
@@ -895,7 +930,8 @@ impl ChatView {
 
         // Build messages array from in-memory session (no disk read needed)
         let sid = session_id.to_string();
-        let messages: Vec<serde_json::Value> = self.selected_session
+        let messages: Vec<serde_json::Value> = self
+            .selected_session
             .as_ref()
             .filter(|s| s.id == sid)
             .map(|s| {
@@ -913,30 +949,38 @@ impl ChatView {
             .unwrap_or_default();
 
         // Build sub-agent config from settings + active project
-        let sub_agent_mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "auto".to_string());
+        let sub_agent_mode = settings
+            .sub_agent_mode
+            .clone()
+            .unwrap_or_else(|| "auto".to_string());
 
         // A workflow pattern ("tournament", "debate", ...) runs as a DAG of
         // agent nodes rather than the sub-agent loop. Detected from the same
         // catalog the web UI uses, and dispatched at the tool-loop site below.
         // Like "graph" it must never reach SubAgentConfig.mode, which only
         // understands the swarm modes.
-        let workflow_pattern: Option<String> =
-            crate::server::services::workflow::pattern_catalog()
-                .iter()
-                .find(|(id, _)| *id == sub_agent_mode)
-                .map(|(id, _)| id.to_string());
+        let workflow_pattern: Option<String> = crate::server::services::workflow::pattern_catalog()
+            .iter()
+            .find(|(id, _)| *id == sub_agent_mode)
+            .map(|(id, _)| id.to_string());
         // Width sizes the parallel stage; reuses the swarm agent-count knob so
         // one setting governs both. build_pattern clamps it.
         let workflow_width: usize = settings
             .extra
             .get("autoAgentCount")
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .map(|n| n as usize)
             .unwrap_or(3);
         let workflow_model_pool = settings.model_pool.clone().unwrap_or_default();
         // Each node runs as its own single agent; the topology does the work.
-        let sub_agent_mode =
-            if workflow_pattern.is_some() { "single".to_string() } else { sub_agent_mode };
+        let sub_agent_mode = if workflow_pattern.is_some() {
+            "single".to_string()
+        } else {
+            sub_agent_mode
+        };
         // Graph gate activation — DEFAULT OFF. On when the "graph" mode is
         // explicitly selected, the agent-loop profile says `graph.enabled:
         // true`, or the global graphEnabled toggle is on (profile false
@@ -973,7 +1017,11 @@ impl ChatView {
             .unwrap_or_else(graph::default_profile);
             eprintln!(
                 "[Graph] Gate ON ({}): profile '{}', worker mode '{}', {} judge(s)",
-                if mode_graph { "graph mode" } else { "toggle/profile" },
+                if mode_graph {
+                    "graph mode"
+                } else {
+                    "toggle/profile"
+                },
                 resolved.name,
                 resolved.worker_mode(),
                 resolved.judges.len()
@@ -998,22 +1046,37 @@ impl ChatView {
         // their own per-agent pool models. For other modes orch_* == the main vars.
         let router_active = settings.sub_agent_enabled == Some(true) && sub_agent_mode == "router";
         let (orch_model, orch_api_url, orch_api_key) = match router_active
-            .then(|| settings.router_orchestrator_model.as_ref().filter(|s| !s.is_empty()))
+            .then(|| {
+                settings
+                    .router_orchestrator_model
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+            })
             .flatten()
         {
             Some(want) => {
                 // Typed model: if it matches a pool entry use that entry's
                 // endpoint/key; otherwise run it on the main endpoint/key.
-                match settings.model_pool.as_ref().and_then(|pool| pool.iter().find(|e| &e.model == want)) {
+                match settings
+                    .model_pool
+                    .as_ref()
+                    .and_then(|pool| pool.iter().find(|e| &e.model == want))
+                {
                     Some(e) => {
                         let u = if e.api_url.trim().is_empty() {
                             api_url.clone()
-                        } else if e.api_url == "claude-code" || e.api_url.ends_with("/chat/completions") {
+                        } else if e.api_url == "claude-code"
+                            || e.api_url.ends_with("/chat/completions")
+                        {
                             e.api_url.clone()
                         } else {
                             format!("{}/chat/completions", e.api_url.trim_end_matches('/'))
                         };
-                        let k = if e.api_key.trim().is_empty() { api_key.clone() } else { e.api_key.clone() };
+                        let k = if e.api_key.trim().is_empty() {
+                            api_key.clone()
+                        } else {
+                            e.api_key.clone()
+                        };
                         (e.model.clone(), u, k)
                     }
                     None => (want.clone(), api_url.clone(), api_key.clone()),
@@ -1063,20 +1126,36 @@ impl ChatView {
             // triages and builds its OWN team — each agent assigned a specific LLM
             // from the model pool — via create_architecture. So start with no
             // config file/agents and let the orchestrator route the LLMs.
-            let config_file = if sub_agent_mode == "router" { String::new() } else { config_file };
+            let config_file = if sub_agent_mode == "router" {
+                String::new()
+            } else {
+                config_file
+            };
 
             // fully_auto, auto_swarm and router don't need a config file upfront.
             // "auto" mode requires a YAML config — agents must come from the YAML.
             // (router triages: it answers directly or builds a team on demand.)
-            let needs_config = !matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm" | "router");
+            let needs_config = !matches!(
+                sub_agent_mode.as_str(),
+                "fully_auto" | "auto_swarm" | "router"
+            );
 
             // Debug: log why sub-agent config might be disabled
-            eprintln!("[SubAgent] enabled={}, mode={}, config_file='{}', needs_config={}, data_dir={:?}",
-                enabled, sub_agent_mode, config_file, needs_config, crate::server::data::data_dir());
+            eprintln!(
+                "[SubAgent] enabled={}, mode={}, config_file='{}', needs_config={}, data_dir={:?}",
+                enabled,
+                sub_agent_mode,
+                config_file,
+                needs_config,
+                crate::server::data::data_dir()
+            );
             if !enabled {
                 eprintln!("[SubAgent] DISABLED: settings.sub_agent_enabled is false or None");
             } else if needs_config && config_file.is_empty() {
-                eprintln!("[SubAgent] DISABLED: mode='{}' requires config file but none set", sub_agent_mode);
+                eprintln!(
+                    "[SubAgent] DISABLED: mode='{}' requires config file but none set",
+                    sub_agent_mode
+                );
             }
 
             if enabled && (!config_file.is_empty() || !needs_config) {
@@ -1094,7 +1173,10 @@ impl ChatView {
                     let cf2 = config_file.clone();
                     let ak2 = api_key.clone();
                     let au2 = api_url.clone();
-                    let m2 = settings.sub_agent_model.clone().unwrap_or_else(|| model.clone());
+                    let m2 = settings
+                        .sub_agent_model
+                        .clone()
+                        .unwrap_or_else(|| model.clone());
                     let sd2 = sandbox_dir.clone();
                     runtime.block_on(async move {
                         start_realtime_session(&sid2, &cf2, &ak2, &au2, &m2, &sd2).await;
@@ -1110,7 +1192,10 @@ impl ChatView {
                         .iter()
                         .filter_map(|e| serde_json::to_value(e).ok())
                         .collect::<Vec<_>>();
-                    let tier = settings.router_tier.clone().unwrap_or_else(|| "fast".into());
+                    let tier = settings
+                        .router_tier
+                        .clone()
+                        .unwrap_or_else(|| "fast".into());
                     (pool, tier)
                 } else {
                     (Vec::new(), String::new())
@@ -1123,7 +1208,10 @@ impl ChatView {
                     agent_ids,
                     api_key: api_key.clone(),
                     api_url: api_url.clone(),
-                    model: settings.sub_agent_model.clone().unwrap_or_else(|| model.clone()),
+                    model: settings
+                        .sub_agent_model
+                        .clone()
+                        .unwrap_or_else(|| model.clone()),
                     depth: 0,
                     session_id: sid.clone(),
                     agent_id: "main".to_string(),
@@ -1148,8 +1236,10 @@ impl ChatView {
         // Build system prompt: base + project context + sub-agent info
         let (sub_agent_prompt, research_instruction) = if sub_agent_config.enabled
             && (!sub_agent_config.agent_ids.is_empty()
-                || matches!(sub_agent_mode.as_str(), "fully_auto" | "auto_swarm" | "router"))
-        {
+                || matches!(
+                    sub_agent_mode.as_str(),
+                    "fully_auto" | "auto_swarm" | "router"
+                )) {
             let agents = sub_agent_config.agent_ids.join(", ");
             match sub_agent_mode.as_str() {
                 "fully_auto" => {
@@ -1159,15 +1249,23 @@ impl ChatView {
                     let orch = sub_agent_config.config_file.as_str();
                     let yaml_orch_mode = if !orch.is_empty() {
                         crate::server::services::toolbox::load_agent_yaml(orch)
-                            .and_then(|(y, _)| y.get("system")?.get("orchestration_mode")?.as_str().map(|s| s.to_string()))
+                            .and_then(|(y, _)| {
+                                y.get("system")?
+                                    .get("orchestration_mode")?
+                                    .as_str()
+                                    .map(|s| s.to_string())
+                            })
                             .unwrap_or_default()
-                    } else { String::new() };
+                    } else {
+                        String::new()
+                    };
 
                     let prompt = if agents.is_empty() {
                         "\n\nFULLY AUTO MODE: An agent team is being created for this task. \
 Use send_task/wait_result to delegate work once agents are ready. \
 If no agents are available yet, call create_architecture to design and boot a team. \
-Do NOT attempt to do work yourself — delegate everything to agents.".to_string()
+Do NOT attempt to do work yourself — delegate everything to agents."
+                            .to_string()
                     } else if yaml_orch_mode == "pipeline" {
                         format!(
                             "\n\nFULLY AUTO MODE (PIPELINE): An agent pipeline has been created and all agents are LIVE. \
@@ -1190,20 +1288,32 @@ If an orchestrator exists, send tasks ONLY to the orchestrator.",
                             agents
                         )
                     };
-                    (prompt, "Delegate ALL tasks to agents via send_task/wait_result.")
+                    (
+                        prompt,
+                        "Delegate ALL tasks to agents via send_task/wait_result.",
+                    )
                 }
                 "auto_swarm" => {
                     // List available YAML files for the LLM to pick from
                     let mut swarm_list = String::new();
-                    if let Ok(entries) = std::fs::read_dir(crate::server::data::data_dir().join("agents")) {
+                    if let Ok(entries) =
+                        std::fs::read_dir(crate::server::data::data_dir().join("agents"))
+                    {
                         for entry in entries.flatten() {
                             let name = entry.file_name().to_string_lossy().to_string();
                             if name.ends_with(".yaml") || name.ends_with(".yml") {
                                 if let Some((config, _)) = load_agent_yaml(&name) {
-                                    let sys_name = config["system"]["name"].as_str().unwrap_or(&name);
-                                    let mode = config["system"]["orchestration_mode"].as_str().unwrap_or("hierarchical");
-                                    let agent_count = config["agents"].as_array().map(|a| a.len()).unwrap_or(0);
-                                    swarm_list.push_str(&format!("\n  - \"{}\": {} [{}] ({} agents)", name, sys_name, mode, agent_count));
+                                    let sys_name =
+                                        config["system"]["name"].as_str().unwrap_or(&name);
+                                    let mode = config["system"]["orchestration_mode"]
+                                        .as_str()
+                                        .unwrap_or("hierarchical");
+                                    let agent_count =
+                                        config["agents"].as_array().map(|a| a.len()).unwrap_or(0);
+                                    swarm_list.push_str(&format!(
+                                        "\n  - \"{}\": {} [{}] ({} agents)",
+                                        name, sys_name, mode, agent_count
+                                    ));
                                 }
                             }
                         }
@@ -1215,15 +1325,25 @@ After selecting a swarm, all agents will be LIVE. Then use send_task/wait_result
 Do NOT attempt to do work yourself until a swarm is selected.",
                         if swarm_list.is_empty() { "\n  (No swarm configs found in data/agents/)".to_string() } else { swarm_list }
                     );
-                    (prompt, "Call select_swarm first, then delegate via send_task/wait_result.")
+                    (
+                        prompt,
+                        "Call select_swarm first, then delegate via send_task/wait_result.",
+                    )
                 }
                 "manual" => {
                     let orch = sub_agent_config.config_file.as_str();
                     let yaml_orch_mode = if !orch.is_empty() {
                         crate::server::services::toolbox::load_agent_yaml(orch)
-                            .and_then(|(y, _)| y.get("system")?.get("orchestration_mode")?.as_str().map(|s| s.to_string()))
+                            .and_then(|(y, _)| {
+                                y.get("system")?
+                                    .get("orchestration_mode")?
+                                    .as_str()
+                                    .map(|s| s.to_string())
+                            })
                             .unwrap_or_default()
-                    } else { String::new() };
+                    } else {
+                        String::new()
+                    };
 
                     let prompt = if yaml_orch_mode == "pipeline" {
                         format!(
@@ -1244,7 +1364,10 @@ Always delegate, even for simple tasks. If an orchestrator exists, send tasks ON
                             agents
                         )
                     };
-                    (prompt, "Use send_task/wait_result to delegate ALL tasks to agents.")
+                    (
+                        prompt,
+                        "Use send_task/wait_result to delegate ALL tasks to agents.",
+                    )
                 }
                 "router" => {
                     let tier = sub_agent_config.router_tier.as_str();
@@ -1333,17 +1456,25 @@ You have access to these tools: {}.{}",
             )
         };
         if let Some(sp) = profile_prompt.filter(|sp| !sp.replace_base) {
-            base_system.push_str(&format!("\n\n=== USER INSTRUCTIONS (agent-loop profile) ===\n{}", sp.text.trim()));
+            base_system.push_str(&format!(
+                "\n\n=== USER INSTRUCTIONS (agent-loop profile) ===\n{}",
+                sp.text.trim()
+            ));
         }
         let base_system = base_system;
         // Resolve project skill filter — if a project is selected and has skills assigned,
         // only those skills will be injected into the prompt.
-        let project_skill_ids: Option<Vec<String>> = self.selected_project_id.as_ref().and_then(|pid| {
-            let projects = runtime.block_on(crate::server::data::get_projects());
-            projects.iter().find(|p| &p.id == pid).and_then(|p| {
-                if p.skills.is_empty() { None } else { Some(p.skills.clone()) }
-            })
-        });
+        let project_skill_ids: Option<Vec<String>> =
+            self.selected_project_id.as_ref().and_then(|pid| {
+                let projects = runtime.block_on(crate::server::data::get_projects());
+                projects.iter().find(|p| &p.id == pid).and_then(|p| {
+                    if p.skills.is_empty() {
+                        None
+                    } else {
+                        Some(p.skills.clone())
+                    }
+                })
+            });
         // Profile skill filter narrows the block further (none / selected / all).
         let profile_skill_filter = loop_profile.as_deref().and_then(|p| p.skills.as_ref());
         let skills_block = match profile_skill_filter.map(|f| f.mode.as_str()) {
@@ -1351,21 +1482,27 @@ You have access to these tools: {}.{}",
             Some("selected") => {
                 let selected = &profile_skill_filter.unwrap().list;
                 let effective: Vec<String> = match project_skill_ids.as_deref() {
-                    Some(ps) => selected.iter().filter(|s| ps.iter().any(|p| p == *s)).cloned().collect(),
+                    Some(ps) => selected
+                        .iter()
+                        .filter(|s| ps.iter().any(|p| p == *s))
+                        .cloned()
+                        .collect(),
                     None => selected.clone(),
                 };
                 if effective.is_empty() {
                     String::new()
                 } else {
                     runtime.block_on(
-                        crate::server::services::toolbox::build_enabled_skills_block_pub(Some(&effective))
+                        crate::server::services::toolbox::build_enabled_skills_block_pub(Some(
+                            &effective,
+                        )),
                     )
                 }
             }
             _ => runtime.block_on(
                 crate::server::services::toolbox::build_enabled_skills_block_pub(
-                    project_skill_ids.as_deref()
-                )
+                    project_skill_ids.as_deref(),
+                ),
             ),
         };
         let base_system = if skills_block.is_empty() {
@@ -1379,12 +1516,18 @@ You have access to these tools: {}.{}",
         let mut soul_block = String::new();
         if let Ok(soul) = std::fs::read_to_string(data_dir.join("SOUL.md")) {
             if !soul.trim().is_empty() {
-                soul_block.push_str(&format!("\n\n=== SOUL.md (Internal Cognition & Behavioral Prior) ===\n{}", soul));
+                soul_block.push_str(&format!(
+                    "\n\n=== SOUL.md (Internal Cognition & Behavioral Prior) ===\n{}",
+                    soul
+                ));
             }
         }
         if let Ok(identity) = std::fs::read_to_string(data_dir.join("IDENTITY.md")) {
             if !identity.trim().is_empty() {
-                soul_block.push_str(&format!("\n\n=== IDENTITY.md (External Presentation) ===\n{}", identity));
+                soul_block.push_str(&format!(
+                    "\n\n=== IDENTITY.md (External Presentation) ===\n{}",
+                    identity
+                ));
             }
         }
         let base_system = if soul_block.is_empty() {
@@ -1418,12 +1561,15 @@ You have access to these tools: {}.{}",
         // Snapshot the in-memory session so we can persist it even if the user
         // switches to a different chat before this stream finishes.
         if let Some(ref session) = self.selected_session {
-            self.stream_session_snapshots.insert(sid.clone(), session.clone());
+            self.stream_session_snapshots
+                .insert(sid.clone(), session.clone());
         }
 
         // Register active chat session in the shared tasks list
         {
-            let title = self.selected_session.as_ref()
+            let title = self
+                .selected_session
+                .as_ref()
                 .map(|s| s.title.clone())
                 .unwrap_or_else(|| "Chat".to_string());
             let mut chats = crate::ui::tasks_view::active_chats().lock().unwrap();
@@ -1447,7 +1593,10 @@ You have access to these tools: {}.{}",
             let remote_msg = user_message.to_string();
             // Use the mode directly from settings — remote server validates config files itself
             let remote_agent_mode = if settings.sub_agent_enabled.unwrap_or(false) {
-                settings.sub_agent_mode.clone().unwrap_or_else(|| "single".to_string())
+                settings
+                    .sub_agent_mode
+                    .clone()
+                    .unwrap_or_else(|| "single".to_string())
             } else {
                 "single".to_string()
             };
@@ -1472,15 +1621,23 @@ You have access to these tools: {}.{}",
                 let poller = tokio::spawn(async move {
                     let mut last_len = 0usize;
                     loop {
-                        if poll_done2.load(std::sync::atomic::Ordering::Relaxed) { break; }
+                        if poll_done2.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
+                        }
                         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                        if poll_done2.load(std::sync::atomic::Ordering::Relaxed) { break; }
+                        if poll_done2.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
+                        }
 
                         if let Ok(resp) = poll_client
-                            .get(format!("{}/api/chat/sessions/{}/activity", poll_rb.url, poll_sid))
+                            .get(format!(
+                                "{}/api/chat/sessions/{}/activity",
+                                poll_rb.url, poll_sid
+                            ))
                             .bearer_auth(&poll_rb.token)
                             .timeout(std::time::Duration::from_secs(5))
-                            .send().await
+                            .send()
+                            .await
                         {
                             if let Ok(val) = resp.json::<serde_json::Value>().await {
                                 if let Some(content) = val["content"].as_str() {
@@ -1492,19 +1649,41 @@ You have access to these tools: {}.{}",
                                         let mut logs = poll_state.log_lines.lock().unwrap();
                                         for line in new_part.lines() {
                                             let trimmed = line.trim();
-                                            if trimmed.is_empty() { continue; }
+                                            if trimmed.is_empty() {
+                                                continue;
+                                            }
                                             if trimmed.contains("Calling **") {
-                                                let name = trimmed.split("**").nth(1).unwrap_or("tool").to_string();
-                                                let preview = trimmed.split(" — ").nth(1).unwrap_or("").to_string();
+                                                let name = trimmed
+                                                    .split("**")
+                                                    .nth(1)
+                                                    .unwrap_or("tool")
+                                                    .to_string();
+                                                let preview = trimmed
+                                                    .split(" — ")
+                                                    .nth(1)
+                                                    .unwrap_or("")
+                                                    .to_string();
                                                 calls.push(ToolCallDisplay {
-                                                    name, status: "calling...".to_string(),
-                                                    args_preview: preview, result_preview: String::new(),
+                                                    name,
+                                                    status: "calling...".to_string(),
+                                                    args_preview: preview,
+                                                    result_preview: String::new(),
                                                 });
                                             } else if trimmed.contains("** done") {
-                                                let name = trimmed.split("**").nth(1).unwrap_or("").to_string();
-                                                if let Some(c) = calls.iter_mut().rev().find(|c| c.name == name) {
+                                                let name = trimmed
+                                                    .split("**")
+                                                    .nth(1)
+                                                    .unwrap_or("")
+                                                    .to_string();
+                                                if let Some(c) =
+                                                    calls.iter_mut().rev().find(|c| c.name == name)
+                                                {
                                                     c.status = "done".to_string();
-                                                    c.result_preview = trimmed.split(" — ").nth(1).unwrap_or("").to_string();
+                                                    c.result_preview = trimmed
+                                                        .split(" — ")
+                                                        .nth(1)
+                                                        .unwrap_or("")
+                                                        .to_string();
                                                 }
                                             }
                                             logs.push(trimmed.to_string());
@@ -1526,9 +1705,13 @@ You have access to these tools: {}.{}",
                     .get(format!("{}/api/chat/sessions/{}", rb.url, remote_sid))
                     .bearer_auth(&rb.token)
                     .timeout(std::time::Duration::from_secs(10))
-                    .send().await
+                    .send()
+                    .await
                 {
-                    Ok(r) => r.json::<serde_json::Value>().await.ok()
+                    Ok(r) => r
+                        .json::<serde_json::Value>()
+                        .await
+                        .ok()
                         .and_then(|v| v["messages"].as_array().map(|a| a.len()))
                         .unwrap_or(0),
                     Err(_) => 0,
@@ -1541,10 +1724,14 @@ You have access to these tools: {}.{}",
                     "config_file": remote_config_file,
                 });
                 let result = client
-                    .post(format!("{}/api/chat/sessions/{}/messages", rb.url, remote_sid))
+                    .post(format!(
+                        "{}/api/chat/sessions/{}/messages",
+                        rb.url, remote_sid
+                    ))
                     .bearer_auth(&rb.token)
                     .json(&body)
-                    .send().await;
+                    .send()
+                    .await;
 
                 let apply_files = |val: &serde_json::Value| {
                     if let Some(files_arr) = val.get("files").and_then(|v| v.as_array()) {
@@ -1561,10 +1748,14 @@ You have access to these tools: {}.{}",
 
                 match result {
                     Ok(resp) => {
-                        let val = resp.json::<serde_json::Value>().await
+                        let val = resp
+                            .json::<serde_json::Value>()
+                            .await
                             .unwrap_or_else(|_| serde_json::json!({}));
-                        let processing = val.get("status").and_then(|v| v.as_str()) == Some("processing");
-                        let direct = val.get("content")
+                        let processing =
+                            val.get("status").and_then(|v| v.as_str()) == Some("processing");
+                        let direct = val
+                            .get("content")
                             .or_else(|| val.get("message"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
@@ -1578,8 +1769,8 @@ You have access to these tools: {}.{}",
                             // assistant reply is appended to the session when the
                             // run finishes — poll for it. The activity poller keeps
                             // streaming live progress meanwhile.
-                            let deadline = tokio::time::Instant::now()
-                                + std::time::Duration::from_secs(3600);
+                            let deadline =
+                                tokio::time::Instant::now() + std::time::Duration::from_secs(3600);
                             let mut final_msg: Option<serde_json::Value> = None;
                             while tokio::time::Instant::now() < deadline {
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1587,8 +1778,14 @@ You have access to these tools: {}.{}",
                                     .get(format!("{}/api/chat/sessions/{}", rb.url, remote_sid))
                                     .bearer_auth(&rb.token)
                                     .timeout(std::time::Duration::from_secs(10))
-                                    .send().await else { continue };
-                                let Ok(v) = r.json::<serde_json::Value>().await else { continue };
+                                    .send()
+                                    .await
+                                else {
+                                    continue;
+                                };
+                                let Ok(v) = r.json::<serde_json::Value>().await else {
+                                    continue;
+                                };
                                 if let Some(msgs) = v["messages"].as_array() {
                                     if msgs.len() > baseline_msgs {
                                         if let Some(last) = msgs.last() {
@@ -1602,7 +1799,8 @@ You have access to these tools: {}.{}",
                             }
                             match final_msg {
                                 Some(last) => {
-                                    let content = last["content"].as_str()
+                                    let content = last["content"]
+                                        .as_str()
                                         .filter(|s| !s.trim().is_empty())
                                         .unwrap_or("(empty response)");
                                     *remote_state.text.lock().unwrap() = content.to_string();
@@ -1611,12 +1809,16 @@ You have access to these tools: {}.{}",
                                 None => {
                                     *remote_state.error.lock().unwrap() = Some(
                                         "Remote run did not finish within 60 minutes — \
-                                         check the remote server's Tasks/Activity for status.".to_string()
+                                         check the remote server's Tasks/Activity for status."
+                                            .to_string(),
                                     );
                                 }
                             }
                         } else {
-                            let err = val.get("error").and_then(|v| v.as_str()).unwrap_or("(no response)");
+                            let err = val
+                                .get("error")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("(no response)");
                             *remote_state.text.lock().unwrap() = err.to_string();
                         }
                     }
@@ -2328,7 +2530,10 @@ You have access to these tools: {}.{}",
         let project = projects.iter().find(|p| &p.id == project_id)?;
 
         let mut prompt_parts: Vec<String> = Vec::new();
-        prompt_parts.push(format!("You are assisting with the project: {}", project.name));
+        prompt_parts.push(format!(
+            "You are assisting with the project: {}",
+            project.name
+        ));
 
         if !project.description.is_empty() {
             prompt_parts.push(format!("Project description: {}", project.description));
@@ -2375,7 +2580,9 @@ You have access to these tools: {}.{}",
         }
 
         // Collect finished streams
-        let finished_sids: Vec<String> = self.active_streams.iter()
+        let finished_sids: Vec<String> = self
+            .active_streams
+            .iter()
             .filter(|(_, state)| state.is_done())
             .map(|(sid, _)| sid.clone())
             .collect();
@@ -2415,14 +2622,21 @@ You have access to these tools: {}.{}",
             let final_content = if tool_calls.is_empty() {
                 base_content
             } else {
-                let tool_labels: Vec<String> = tool_calls.iter().map(|tc| Self::tool_label(&tc.name).to_string()).collect();
+                let tool_labels: Vec<String> = tool_calls
+                    .iter()
+                    .map(|tc| Self::tool_label(&tc.name).to_string())
+                    .collect();
                 let mut seen = std::collections::HashSet::new();
                 let unique_labels: Vec<&str> = tool_labels
                     .iter()
                     .filter(|n| seen.insert(n.as_str()))
                     .map(|n| n.as_str())
                     .collect();
-                format!("[Used tools: {}]\n\n{}", unique_labels.join(", "), base_content)
+                format!(
+                    "[Used tools: {}]\n\n{}",
+                    unique_labels.join(", "),
+                    base_content
+                )
             };
 
             // Update in-memory selected session directly so UI shows response immediately
@@ -2432,15 +2646,21 @@ You have access to these tools: {}.{}",
                         role: "assistant".to_string(),
                         content: final_content.clone(),
                         timestamp: chrono::Utc::now().to_rfc3339(),
-                        files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
+                        files: if output_files.is_empty() {
+                            None
+                        } else {
+                            Some(output_files.clone())
+                        },
                         feedback: None,
                     });
                     s.updated_at = chrono::Utc::now().to_rfc3339();
                     if s.title == "New Chat" {
                         if let Some(first_user) = s.messages.iter().find(|m| m.role == "user") {
                             let raw = &first_user.content;
-                            let title_source = raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
-                            s.title = truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
+                            let title_source =
+                                raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
+                            s.title =
+                                truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
                         }
                     }
                 }
@@ -2450,7 +2670,9 @@ You have access to these tools: {}.{}",
             let sid_clone = sid.clone();
             // Use the snapshot taken when streaming started — not self.selected_session,
             // which may point to a different chat if the user clicked "New Chat".
-            let mem_session = self.stream_session_snapshots.remove(sid)
+            let mem_session = self
+                .stream_session_snapshots
+                .remove(sid)
                 .or_else(|| self.selected_session.clone());
             // Save assistant message — non-blocking spawn to avoid UI stutter
             runtime.spawn(async move {
@@ -2471,7 +2693,11 @@ You have access to these tools: {}.{}",
                         role: "assistant".to_string(),
                         content: final_content,
                         timestamp: chrono::Utc::now().to_rfc3339(),
-                        files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
+                        files: if output_files.is_empty() {
+                            None
+                        } else {
+                            Some(output_files.clone())
+                        },
                         feedback: None,
                     });
                     s.updated_at = chrono::Utc::now().to_rfc3339();
@@ -2480,8 +2706,10 @@ You have access to these tools: {}.{}",
                     if s.title == "New Chat" {
                         if let Some(first_user) = s.messages.iter().find(|m| m.role == "user") {
                             let raw = &first_user.content;
-                            let title_source = raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
-                            s.title = truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
+                            let title_source =
+                                raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
+                            s.title =
+                                truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
                         }
                     }
                 } else if let Some(ref ms) = mem_session {
@@ -2491,15 +2719,23 @@ You have access to these tools: {}.{}",
                             role: "assistant".to_string(),
                             content: final_content,
                             timestamp: chrono::Utc::now().to_rfc3339(),
-                            files: if output_files.is_empty() { None } else { Some(output_files.clone()) },
+                            files: if output_files.is_empty() {
+                                None
+                            } else {
+                                Some(output_files.clone())
+                            },
                             feedback: None,
                         });
                         new_s.updated_at = chrono::Utc::now().to_rfc3339();
                         if new_s.title == "New Chat" {
-                            if let Some(first_user) = new_s.messages.iter().find(|m| m.role == "user") {
+                            if let Some(first_user) =
+                                new_s.messages.iter().find(|m| m.role == "user")
+                            {
                                 let raw = &first_user.content;
-                                let title_source = raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
-                                new_s.title = truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
+                                let title_source =
+                                    raw.split("\n\n--- Attached file:").next().unwrap_or(raw);
+                                new_s.title =
+                                    truncate_str(title_source.lines().next().unwrap_or("Chat"), 50);
                             }
                         }
                         sessions.push(new_s);
@@ -2585,10 +2821,8 @@ You have access to these tools: {}.{}",
         if dropped.is_empty() {
             return;
         }
-        let paths: Vec<std::path::PathBuf> = dropped
-            .iter()
-            .filter_map(|f| f.path.clone())
-            .collect();
+        let paths: Vec<std::path::PathBuf> =
+            dropped.iter().filter_map(|f| f.path.clone()).collect();
         if !paths.is_empty() {
             self.attach_paths(&paths);
         }
@@ -2616,7 +2850,9 @@ You have access to these tools: {}.{}",
         let _ = std::fs::create_dir_all(&uploads_dir);
 
         for path in paths {
-            if !path.exists() { continue; }
+            if !path.exists() {
+                continue;
+            }
 
             let name = path
                 .file_name()
@@ -2634,12 +2870,16 @@ You have access to these tools: {}.{}",
             };
 
             // Determine if binary by checking extension
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-            let binary_exts = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg",
-                "mp3", "mp4", "wav", "ogg", "avi", "mov", "mkv",
-                "zip", "tar", "gz", "bz2", "xz", "7z", "rar",
-                "exe", "dll", "so", "dylib", "bin", "dat",
-                "doc", "docx", "xls", "xlsx", "ppt", "pptx"];
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let binary_exts = [
+                "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "svg", "mp3", "mp4", "wav",
+                "ogg", "avi", "mov", "mkv", "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "exe",
+                "dll", "so", "dylib", "bin", "dat", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+            ];
             let is_binary = binary_exts.contains(&ext.as_str());
 
             let content = if is_binary {
@@ -2651,11 +2891,15 @@ You have access to these tools: {}.{}",
                     Err(_) => format!("[PDF extraction crashed for: {}]", name),
                 }
             } else {
-                std::fs::read_to_string(path).unwrap_or_else(|_| {
-                    format!("[Could not read file: {}]", path.display())
-                })
+                std::fs::read_to_string(path)
+                    .unwrap_or_else(|_| format!("[Could not read file: {}]", path.display()))
             };
-            self.attached_files.push(AttachedFile { name, content, sandbox_path, is_binary });
+            self.attached_files.push(AttachedFile {
+                name,
+                content,
+                sandbox_path,
+                is_binary,
+            });
         }
     }
 
@@ -2681,7 +2925,11 @@ You have access to these tools: {}.{}",
         self.create_session(runtime);
     }
 
-    pub fn delete_session_from_sidebar(&mut self, runtime: &tokio::runtime::Handle, session_id: &str) {
+    pub fn delete_session_from_sidebar(
+        &mut self,
+        runtime: &tokio::runtime::Handle,
+        session_id: &str,
+    ) {
         self.delete_session(runtime, session_id);
     }
 
@@ -2699,7 +2947,9 @@ You have access to these tools: {}.{}",
     /// Full-screen overlay showing a clicked inline image at full size.
     /// Click anywhere (or press Esc / the ✕) to dismiss.
     fn show_zoom_overlay(&mut self, ctx: &egui::Context) {
-        let Some(path) = self.zoom_image.clone() else { return };
+        let Some(path) = self.zoom_image.clone() else {
+            return;
+        };
         let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
 
         egui::Area::new(egui::Id::new("chat_zoom_overlay"))
@@ -2735,10 +2985,16 @@ You have access to these tools: {}.{}",
                 );
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(btn_rect), |ui| {
                     if ui
-                        .add(egui::Button::new(egui::RichText::new("✕").size(20.0).color(egui::Color32::WHITE))
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("✕")
+                                    .size(20.0)
+                                    .color(egui::Color32::WHITE),
+                            )
                             .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 30))
                             .corner_radius(18.0)
-                            .min_size(egui::vec2(36.0, 36.0)))
+                            .min_size(egui::vec2(36.0, 36.0)),
+                        )
                         .clicked()
                     {
                         close = true;
@@ -2754,7 +3010,9 @@ You have access to these tools: {}.{}",
     /// Inline viewer for a clicked file card: shows the file's content
     /// (rendered Markdown, image, or plain text) with Save-a-copy / Open buttons.
     fn show_file_overlay(&mut self, ctx: &egui::Context) {
-        let Some(path) = self.view_file.clone() else { return };
+        let Some(path) = self.view_file.clone() else {
+            return;
+        };
         let name = std::path::Path::new(&path)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -2775,7 +3033,8 @@ You have access to these tools: {}.{}",
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("\u{1F4BE} Save a copy\u{2026}").clicked() {
-                        if let Some(dest) = rfd::FileDialog::new().set_file_name(&name).save_file() {
+                        if let Some(dest) = rfd::FileDialog::new().set_file_name(&name).save_file()
+                        {
                             let _ = std::fs::copy(&full, &dest);
                         }
                     }
@@ -2805,7 +3064,11 @@ You have access to these tools: {}.{}",
                             match std::fs::read_to_string(&full) {
                                 Ok(content) => {
                                     if lower.ends_with(".md") || lower.ends_with(".markdown") {
-                                        render_markdown_content(ui, &content, super::theme::text_primary_color());
+                                        render_markdown_content(
+                                            ui,
+                                            &content,
+                                            super::theme::text_primary_color(),
+                                        );
                                     } else {
                                         ui.add(
                                             egui::Label::new(
@@ -2869,17 +3132,20 @@ You have access to these tools: {}.{}",
         }
         self.show_file_overlay(ui.ctx());
 
-        let _border_color   = crate::ui::theme::border_color();
+        let _border_color = crate::ui::theme::border_color();
 
         // Collect all output files from current session messages
         // Also include files from streaming state
         let current_sid = self.selected_session_id.clone().unwrap_or_default();
-        let streaming_files: Vec<String> = self.active_streams.get(&current_sid)
+        let streaming_files: Vec<String> = self
+            .active_streams
+            .get(&current_sid)
             .map(|s| s.get_files())
             .unwrap_or_default();
 
         let output_files: Vec<String> = {
-            let mut files: Vec<String> = self.selected_session
+            let mut files: Vec<String> = self
+                .selected_session
                 .as_ref()
                 .map(|s| {
                     s.messages
@@ -2905,14 +3171,16 @@ You have access to these tools: {}.{}",
         let full_rect = ui.available_rect_before_wrap();
 
         // ── Column rects (two-column: chat | output) ─────────────────
-        let output_drag_w  = if self.output_panel.open { 6.0 } else { 0.0 };
-        let right_w = if self.output_panel.open { self.output_panel.width } else { 0.0 };
-        let mid_w   = (full_rect.width() - right_w - output_drag_w).max(200.0);
+        let output_drag_w = if self.output_panel.open { 6.0 } else { 0.0 };
+        let right_w = if self.output_panel.open {
+            self.output_panel.width
+        } else {
+            0.0
+        };
+        let mid_w = (full_rect.width() - right_w - output_drag_w).max(200.0);
 
-        let mid_rect = egui::Rect::from_min_size(
-            full_rect.min,
-            egui::vec2(mid_w, full_rect.height()),
-        );
+        let mid_rect =
+            egui::Rect::from_min_size(full_rect.min, egui::vec2(mid_w, full_rect.height()));
         // Drag handle between chat and output panel
         let drag_rect = egui::Rect::from_min_size(
             egui::pos2(mid_rect.max.x, full_rect.min.y),
@@ -2924,9 +3192,10 @@ You have access to these tools: {}.{}",
         );
 
         // ── Chat panel ───────────────────────────────────────────────
+        // Translucent surface fill: the ambient gradient bleeds through (glass).
         let mut mid_ui = ui.new_child(egui::UiBuilder::new().max_rect(mid_rect));
         egui::Frame::new()
-            .fill(super::theme::surface_color())
+            .fill(super::theme::glass_fill(super::theme::surface_color(), 205))
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(&mut mid_ui, |ui| {
                 // Output toggle button in chat header area when panel is closed
@@ -2946,21 +3215,23 @@ You have access to these tools: {}.{}",
             let drag_response = ui.interact(drag_rect, drag_id, egui::Sense::drag());
             // Highlight on hover/drag
             let handle_color = if drag_response.hovered() || drag_response.dragged() {
-                crate::ui::theme::accent_color() // teal accent
+                crate::ui::theme::accent_color()
             } else {
-                crate::ui::theme::border_color() // warm line
+                crate::ui::theme::border_color()
             };
             ui.painter().rect_filled(drag_rect, 0.0, handle_color);
             if drag_response.dragged() {
                 // Dragging left increases panel width, right decreases
                 let delta = -drag_response.drag_delta().x;
-                self.output_panel.width = (self.output_panel.width + delta).clamp(260.0, full_rect.width() - 300.0);
+                self.output_panel.width =
+                    (self.output_panel.width + delta).clamp(260.0, full_rect.width() - 300.0);
             }
-            ui.ctx().set_cursor_icon(if drag_response.hovered() || drag_response.dragged() {
-                egui::CursorIcon::ResizeHorizontal
-            } else {
-                egui::CursorIcon::Default
-            });
+            ui.ctx()
+                .set_cursor_icon(if drag_response.hovered() || drag_response.dragged() {
+                    egui::CursorIcon::ResizeHorizontal
+                } else {
+                    egui::CursorIcon::Default
+                });
         }
 
         // ── Output panel ─────────────────────────────────────────────
@@ -2984,13 +3255,10 @@ You have access to these tools: {}.{}",
                     .default_width(500.0)
                     .show(ui.ctx(), |ui| {
                         ui.label(
-                            egui::RichText::new(format!(
-                                "The AI wants to execute: {}",
-                                tool_name
-                            ))
-                            .size(14.0)
-                            .strong()
-                            .color(egui::Color32::from_rgb(234, 179, 8)),
+                            egui::RichText::new(format!("The AI wants to execute: {}", tool_name))
+                                .size(14.0)
+                                .strong()
+                                .color(egui::Color32::from_rgb(234, 179, 8)),
                         );
                         ui.add_space(8.0);
                         egui::Frame::default()
@@ -3066,7 +3334,9 @@ You have access to these tools: {}.{}",
     fn sidebar(&mut self, ui: &mut egui::Ui, runtime: &tokio::runtime::Handle) {
         ui.horizontal(|ui| {
             let btn = egui::Button::new(
-                egui::RichText::new("+ New").size(12.0).color(egui::Color32::WHITE),
+                egui::RichText::new("+ New")
+                    .size(12.0)
+                    .color(egui::Color32::WHITE),
             )
             .fill(crate::ui::theme::accent_color())
             .corner_radius(6.0);
@@ -3195,28 +3465,33 @@ You have access to these tools: {}.{}",
                                                 crate::ui::theme::text_primary_color()
                                             }),
                                     );
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        // Delete X button on the right
-                                        let del_btn = ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new("x")
-                                                    .size(12.0)
-                                                    .strong()
-                                                    .color(egui::Color32::from_rgb(180, 186, 192)),
-                                            )
-                                            .fill(egui::Color32::TRANSPARENT)
-                                            .min_size(egui::vec2(18.0, 18.0)),
-                                        );
-                                        if del_btn.clicked() {
-                                            delete_id = Some(summary.id.clone());
-                                        }
-                                        del_btn.on_hover_text("Delete chat");
-                                        ui.label(
-                                            egui::RichText::new(&time_label)
-                                                .size(10.0)
-                                                .color(egui::Color32::from_rgb(150, 158, 168)),
-                                        );
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            // Delete X button on the right
+                                            let del_btn = ui.add(
+                                                egui::Button::new(
+                                                    egui::RichText::new("x")
+                                                        .size(12.0)
+                                                        .strong()
+                                                        .color(egui::Color32::from_rgb(
+                                                            180, 186, 192,
+                                                        )),
+                                                )
+                                                .fill(egui::Color32::TRANSPARENT)
+                                                .min_size(egui::vec2(18.0, 18.0)),
+                                            );
+                                            if del_btn.clicked() {
+                                                delete_id = Some(summary.id.clone());
+                                            }
+                                            del_btn.on_hover_text("Delete chat");
+                                            ui.label(
+                                                egui::RichText::new(&time_label)
+                                                    .size(10.0)
+                                                    .color(egui::Color32::from_rgb(150, 158, 168)),
+                                            );
+                                        },
+                                    );
                                 });
 
                                 // Message preview
@@ -3226,18 +3501,24 @@ You have access to these tools: {}.{}",
                                     } else {
                                         crate::ui::theme::text_secondary_color()
                                     };
-                                    ui.add(egui::Label::new(
-                                        egui::RichText::new(&summary.last_message_preview)
-                                            .size(11.0)
-                                            .color(preview_color),
-                                    ).wrap());
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&summary.last_message_preview)
+                                                .size(11.0)
+                                                .color(preview_color),
+                                        )
+                                        .wrap(),
+                                    );
                                 }
 
                                 // Message count badge
                                 ui.label(
-                                    egui::RichText::new(format!("{} messages", summary.message_count))
-                                        .size(10.0)
-                                        .color(egui::Color32::from_rgb(180, 186, 192)),
+                                    egui::RichText::new(format!(
+                                        "{} messages",
+                                        summary.message_count
+                                    ))
+                                    .size(10.0)
+                                    .color(egui::Color32::from_rgb(180, 186, 192)),
                                 );
                             });
                         });
@@ -3291,7 +3572,10 @@ You have access to these tools: {}.{}",
 
         // Show chat view if session exists OR if a session ID is set (chat was started)
         let has_session = self.selected_session.is_some() || self.selected_session_id.is_some();
-        let fallback_id = self.selected_session_id.clone().unwrap_or_else(|| "__new__".to_string());
+        let fallback_id = self
+            .selected_session_id
+            .clone()
+            .unwrap_or_else(|| "__new__".to_string());
         let session = self.selected_session.clone().unwrap_or_else(|| {
             // Dummy session — use the real session ID so streaming lookup works
             ChatSession {
@@ -3317,11 +3601,15 @@ You have access to these tools: {}.{}",
                     let top_pad = (welcome_height / 2.0 - 80.0).max(20.0);
                     ui.add_space(top_pad);
                     // Logo image — embed as bytes to preserve alpha transparency
-                    let logo_bytes = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/logo_andrewos.png"));
-                    let logo_image = egui::Image::from_bytes("bytes://logo_andrewos", logo_bytes.as_slice())
-                        .max_width(96.0)
-                        .max_height(96.0)
-                        .tint(super::theme::text_primary_color());
+                    let logo_bytes = include_bytes!(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/assets/logo_andrewos.png"
+                    ));
+                    let logo_image =
+                        egui::Image::from_bytes("bytes://logo_andrewos", logo_bytes.as_slice())
+                            .max_width(96.0)
+                            .max_height(96.0)
+                            .tint(super::theme::text_primary_color());
                     ui.add(logo_image);
                     ui.add_space(8.0);
                     ui.heading(
@@ -3352,9 +3640,22 @@ You have access to these tools: {}.{}",
                                 // Calculate total width of all chips for centering
                                 let spacing = ui.spacing().item_spacing.x;
                                 let font_id = egui::TextStyle::Button.resolve(ui.style());
-                                let total_w: f32 = suggestions.iter().map(|s| {
-                                    ui.fonts(|f| f.layout_no_wrap(s.to_string(), font_id.clone(), egui::Color32::BLACK).size().x) + 16.0 + spacing
-                                }).sum::<f32>() - spacing;
+                                let total_w: f32 = suggestions
+                                    .iter()
+                                    .map(|s| {
+                                        ui.fonts(|f| {
+                                            f.layout_no_wrap(
+                                                s.to_string(),
+                                                font_id.clone(),
+                                                egui::Color32::BLACK,
+                                            )
+                                            .size()
+                                            .x
+                                        }) + 16.0
+                                            + spacing
+                                    })
+                                    .sum::<f32>()
+                                    - spacing;
                                 let indent = ((ui.available_width() - total_w) / 2.0).max(0.0);
                                 ui.add_space(indent);
                                 for suggestion in &suggestions {
@@ -3365,7 +3666,10 @@ You have access to these tools: {}.{}",
                                                 .color(super::theme::text_primary_color()),
                                         )
                                         .fill(super::theme::hover_color())
-                                        .stroke(egui::Stroke::new(0.5, super::theme::border_color()))
+                                        .stroke(egui::Stroke::new(
+                                            0.5,
+                                            super::theme::border_color(),
+                                        ))
                                         .corner_radius(12.0),
                                     );
                                     if btn.clicked() {
@@ -3399,74 +3703,74 @@ You have access to these tools: {}.{}",
 
         // Only show session header, messages, etc. when a session is active (not start page)
         if has_session {
+            // Session header with project info
+            ui.horizontal(|ui| {
+                ui.heading(&session.title);
 
-        // Session header with project info
-        ui.horizontal(|ui| {
-            ui.heading(&session.title);
-
-            // Graph-gate badge: visible whenever the judge panel will review
-            // answers (settings toggle on, or sub-agent mode "graph"). Cached —
-            // settings.json is only re-read every few seconds.
-            let stale = self
-                .graph_badge_last_check
-                .map(|t| t.elapsed().as_secs() >= 3)
-                .unwrap_or(true);
-            if stale {
-                self.graph_badge_last_check = Some(std::time::Instant::now());
-                self.graph_badge_on = std::fs::read_to_string(
-                    crate::server::data::data_dir().join("settings.json"),
-                )
-                .ok()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .map(|v| {
-                    v["graphEnabled"].as_bool().unwrap_or(false)
-                        || v["subAgentMode"].as_str() == Some("graph")
-                })
-                .unwrap_or(false);
-            }
-            if self.graph_badge_on {
-                ui.add_space(8.0);
-                egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(147, 85, 200).gamma_multiply(0.12))
-                    .corner_radius(4.0)
-                    .inner_margin(egui::Margin::symmetric(6, 2))
-                    .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(147, 85, 200)))
-                    .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new("⬡ GRAPH")
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(147, 85, 200)),
-                        )
-                        .on_hover_text(
-                            "Graph gate is ON — a judge panel reviews final answers before \
-                             delivery (Settings > Graph). Agent-loop profiles can also turn \
-                             the gate on/off per profile.",
-                        );
-                    });
-            }
-
-            // Show project badge if assigned
-            if let Some(ref pid) = session.project_id {
-                if let Some(proj) = self.projects.iter().find(|p| &p.id == pid) {
+                // Graph-gate badge: visible whenever the judge panel will review
+                // answers (settings toggle on, or sub-agent mode "graph"). Cached —
+                // settings.json is only re-read every few seconds.
+                let stale = self
+                    .graph_badge_last_check
+                    .map(|t| t.elapsed().as_secs() >= 3)
+                    .unwrap_or(true);
+                if stale {
+                    self.graph_badge_last_check = Some(std::time::Instant::now());
+                    self.graph_badge_on = std::fs::read_to_string(
+                        crate::server::data::data_dir().join("settings.json"),
+                    )
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .map(|v| {
+                        v["graphEnabled"].as_bool().unwrap_or(false)
+                            || v["subAgentMode"].as_str() == Some("graph")
+                    })
+                    .unwrap_or(false);
+                }
+                if self.graph_badge_on {
                     ui.add_space(8.0);
                     egui::Frame::new()
-                        .fill(crate::ui::theme::accent_color().gamma_multiply(0.12))
+                        .fill(egui::Color32::from_rgb(147, 85, 200).gamma_multiply(0.12))
                         .corner_radius(4.0)
                         .inner_margin(egui::Margin::symmetric(6, 2))
-                        .stroke(egui::Stroke::new(0.5, crate::ui::theme::accent_color()))
+                        .stroke(egui::Stroke::new(
+                            0.5,
+                            egui::Color32::from_rgb(147, 85, 200),
+                        ))
                         .show(ui, |ui| {
                             ui.label(
-                                egui::RichText::new(&proj.name)
+                                egui::RichText::new("⬡ GRAPH")
                                     .size(11.0)
-                                    .color(crate::ui::theme::accent_color()),
+                                    .color(egui::Color32::from_rgb(147, 85, 200)),
+                            )
+                            .on_hover_text(
+                                "Graph gate is ON — a judge panel reviews final answers before \
+                             delivery (Settings > Graph). Agent-loop profiles can also turn \
+                             the gate on/off per profile.",
                             );
                         });
                 }
-            }
 
-            ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
+                // Show project badge if assigned
+                if let Some(ref pid) = session.project_id {
+                    if let Some(proj) = self.projects.iter().find(|p| &p.id == pid) {
+                        ui.add_space(8.0);
+                        egui::Frame::new()
+                            .fill(crate::ui::theme::accent_color().gamma_multiply(0.12))
+                            .corner_radius(4.0)
+                            .inner_margin(egui::Margin::symmetric(6, 2))
+                            .stroke(egui::Stroke::new(0.5, crate::ui::theme::accent_color()))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(&proj.name)
+                                        .size(11.0)
+                                        .color(crate::ui::theme::accent_color()),
+                                );
+                            });
+                    }
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Log button
                     let log_btn = egui::Button::new(
                         egui::RichText::new("\u{1F4CB} Log")
@@ -3476,7 +3780,11 @@ You have access to these tools: {}.{}",
                     .fill(crate::ui::theme::border_color())
                     .stroke(egui::Stroke::new(0.5, crate::ui::theme::border_color()))
                     .corner_radius(14.0);
-                    if ui.add(log_btn).on_hover_text("View agent activity log").clicked() {
+                    if ui
+                        .add(log_btn)
+                        .on_hover_text("View agent activity log")
+                        .clicked()
+                    {
                         self.show_log_panel = !self.show_log_panel;
                         self.log_tab = 0;
                         self.log_session_id = Some(session.id.clone());
@@ -3496,7 +3804,11 @@ You have access to these tools: {}.{}",
                     .fill(crate::ui::theme::border_color())
                     .stroke(egui::Stroke::new(0.5, crate::ui::theme::border_color()))
                     .corner_radius(14.0);
-                    if ui.add(gfx_btn).on_hover_text("View agent network diagram").clicked() {
+                    if ui
+                        .add(gfx_btn)
+                        .on_hover_text("View agent network diagram")
+                        .clicked()
+                    {
                         self.show_log_panel = true;
                         self.log_tab = 2;
                         self.log_session_id = Some(session_id_for_gfx.clone());
@@ -3508,133 +3820,183 @@ You have access to these tools: {}.{}",
                             .size(12.0)
                             .color(egui::Color32::GRAY),
                     );
-                },
-            );
-        });
+                });
+            });
 
-        // Architecture / Swarm info — moved to input card toolbar
-        if false {
-            let settings = runtime.block_on(get_settings());
-            let sub_enabled = settings.sub_agent_enabled.unwrap_or(false);
-            let mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "single".to_string());
-            let config_file = settings.sub_agent_config_file.clone().unwrap_or_default();
+            // Architecture / Swarm info — moved to input card toolbar
+            if false {
+                let settings = runtime.block_on(get_settings());
+                let sub_enabled = settings.sub_agent_enabled.unwrap_or(false);
+                let mode = settings
+                    .sub_agent_mode
+                    .clone()
+                    .unwrap_or_else(|| "single".to_string());
+                let config_file = settings.sub_agent_config_file.clone().unwrap_or_default();
 
-            // Check project-level override
-            let (arch_label, arch_file) = if let Some(ref pid) = session.project_id {
-                let projects = runtime.block_on(get_projects());
-                if let Some(p) = projects.iter().find(|p| p.id == *pid) {
-                    if let Some(ref ov) = p.agent_override {
-                        if ov.enabled.unwrap_or(false) {
-                            let f = ov.sub_agent_config_file.clone().unwrap_or_default();
-                            let name = f.rsplit('/').next().unwrap_or(&f).replace(".yaml", "").replace(".yml", "");
-                            (if name.is_empty() { "Default".to_string() } else { name }, f)
+                // Check project-level override
+                let (arch_label, arch_file) = if let Some(ref pid) = session.project_id {
+                    let projects = runtime.block_on(get_projects());
+                    if let Some(p) = projects.iter().find(|p| p.id == *pid) {
+                        if let Some(ref ov) = p.agent_override {
+                            if ov.enabled.unwrap_or(false) {
+                                let f = ov.sub_agent_config_file.clone().unwrap_or_default();
+                                let name = f
+                                    .rsplit('/')
+                                    .next()
+                                    .unwrap_or(&f)
+                                    .replace(".yaml", "")
+                                    .replace(".yml", "");
+                                (
+                                    if name.is_empty() {
+                                        "Default".to_string()
+                                    } else {
+                                        name
+                                    },
+                                    f,
+                                )
+                            } else {
+                                let name = config_file
+                                    .rsplit('/')
+                                    .next()
+                                    .unwrap_or(&config_file)
+                                    .replace(".yaml", "")
+                                    .replace(".yml", "");
+                                (
+                                    if name.is_empty() {
+                                        "None".to_string()
+                                    } else {
+                                        name
+                                    },
+                                    config_file.clone(),
+                                )
+                            }
                         } else {
-                            let name = config_file.rsplit('/').next().unwrap_or(&config_file).replace(".yaml", "").replace(".yml", "");
-                            (if name.is_empty() { "None".to_string() } else { name }, config_file.clone())
+                            let name = config_file
+                                .rsplit('/')
+                                .next()
+                                .unwrap_or(&config_file)
+                                .replace(".yaml", "")
+                                .replace(".yml", "");
+                            (
+                                if name.is_empty() {
+                                    "None".to_string()
+                                } else {
+                                    name
+                                },
+                                config_file.clone(),
+                            )
                         }
                     } else {
-                        let name = config_file.rsplit('/').next().unwrap_or(&config_file).replace(".yaml", "").replace(".yml", "");
-                        (if name.is_empty() { "None".to_string() } else { name }, config_file.clone())
+                        ("None".to_string(), String::new())
                     }
                 } else {
-                    ("None".to_string(), String::new())
-                }
-            } else {
-                let name = config_file.rsplit('/').next().unwrap_or(&config_file).replace(".yaml", "").replace(".yml", "");
-                (if name.is_empty() { "None".to_string() } else { name }, config_file.clone())
-            };
+                    let name = config_file
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&config_file)
+                        .replace(".yaml", "")
+                        .replace(".yml", "");
+                    (
+                        if name.is_empty() {
+                            "None".to_string()
+                        } else {
+                            name
+                        },
+                        config_file.clone(),
+                    )
+                };
 
-            let swarm_label = if !sub_enabled {
-                "Single Agent"
-            } else {
-                match mode.as_str() {
-                    "fully_auto" => "Fully Auto",
-                    "auto" => "Auto",
-                    "auto_swarm" => "Auto Swarm",
-                    "manual" => "Manual",
-                    "router" => "Router",
-                    _ => "Swarm",
-                }
-            };
+                let swarm_label = if !sub_enabled {
+                    "Single Agent"
+                } else {
+                    match mode.as_str() {
+                        "fully_auto" => "Fully Auto",
+                        "auto" => "Auto",
+                        "auto_swarm" => "Auto Swarm",
+                        "manual" => "Manual",
+                        "router" => "Router",
+                        _ => "Swarm",
+                    }
+                };
 
-            let mode_color = if !sub_enabled {
-                crate::ui::theme::text_secondary_color() // gray
-            } else {
-                match mode.as_str() {
-                    "fully_auto" => crate::ui::theme::accent_color(),  // blue
-                    "auto" => egui::Color32::from_rgb(34, 197, 94),         // green
-                    "auto_swarm" => egui::Color32::from_rgb(168, 85, 247),  // purple
-                    "manual" => egui::Color32::from_rgb(239, 68, 68),       // red
-                    "router" => egui::Color32::from_rgb(255, 140, 0),       // orange
-                    _ => crate::ui::theme::accent_color(),             // blue
-                }
-            };
+                let mode_color = if !sub_enabled {
+                    crate::ui::theme::text_secondary_color() // gray
+                } else {
+                    match mode.as_str() {
+                        "fully_auto" => crate::ui::theme::accent_color(), // blue
+                        "auto" => egui::Color32::from_rgb(34, 197, 94),   // green
+                        "auto_swarm" => egui::Color32::from_rgb(168, 85, 247), // purple
+                        "manual" => egui::Color32::from_rgb(239, 68, 68), // red
+                        "router" => egui::Color32::from_rgb(255, 140, 0), // orange
+                        _ => crate::ui::theme::accent_color(),            // blue
+                    }
+                };
 
-            egui::Frame::new()
-                .fill(crate::ui::theme::border_color())
-                .corner_radius(6.0)
-                .inner_margin(egui::Margin::symmetric(10, 4))
-                .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        // Swarm mode badge
-                        egui::Frame::new()
-                            .fill(mode_color)
-                            .corner_radius(4.0)
-                            .inner_margin(egui::Margin::symmetric(6, 2))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    egui::RichText::new(swarm_label)
-                                        .size(11.0)
-                                        .color(egui::Color32::WHITE)
-                                        .strong(),
-                                );
-                            });
-
-                        ui.add_space(6.0);
-
-                        // Architecture badge
-                        if sub_enabled && !arch_file.is_empty() {
-                            ui.label(
-                                egui::RichText::new("Arch:")
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(80, 85, 95)),
-                            );
+                egui::Frame::new()
+                    .fill(crate::ui::theme::border_color())
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(10, 4))
+                    .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // Swarm mode badge
                             egui::Frame::new()
-                                .fill(crate::ui::theme::accent_color())
+                                .fill(mode_color)
                                 .corner_radius(4.0)
                                 .inner_margin(egui::Margin::symmetric(6, 2))
                                 .show(ui, |ui| {
                                     ui.label(
-                                        egui::RichText::new(&arch_label)
+                                        egui::RichText::new(swarm_label)
                                             .size(11.0)
-                                            .color(egui::Color32::WHITE),
+                                            .color(egui::Color32::WHITE)
+                                            .strong(),
                                     );
                                 });
-                        }
 
-                        // Model info
-                        ui.add_space(6.0);
-                        ui.label(
-                            egui::RichText::new(format!("Model: {}", settings.tiger_bot_model))
-                                .size(10.0)
-                                .color(egui::Color32::from_rgb(100, 105, 115)),
-                        );
+                            ui.add_space(6.0);
+
+                            // Architecture badge
+                            if sub_enabled && !arch_file.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("Arch:")
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(80, 85, 95)),
+                                );
+                                egui::Frame::new()
+                                    .fill(crate::ui::theme::accent_color())
+                                    .corner_radius(4.0)
+                                    .inner_margin(egui::Margin::symmetric(6, 2))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new(&arch_label)
+                                                .size(11.0)
+                                                .color(egui::Color32::WHITE),
+                                        );
+                                    });
+                            }
+
+                            // Model info
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(format!("Model: {}", settings.tiger_bot_model))
+                                    .size(10.0)
+                                    .color(egui::Color32::from_rgb(100, 105, 115)),
+                            );
+                        });
                     });
-                });
 
-            ui.add_space(2.0);
-        }
+                ui.add_space(2.0);
+            }
 
-        // Log panel floating window
-        if self.show_log_panel {
-            if let Some(ref log_sid) = self.log_session_id.clone() {
-                // During streaming, pull live log
-                if let Some(ref s) = self.active_streams.get(log_sid) {
-                    self.log_content = s.get_log();
-                }
-                let mut open = self.show_log_panel;
-                egui::Window::new("\u{1F4CB} Agent Log")
+            // Log panel floating window
+            if self.show_log_panel {
+                if let Some(ref log_sid) = self.log_session_id.clone() {
+                    // During streaming, pull live log
+                    if let Some(ref s) = self.active_streams.get(log_sid) {
+                        self.log_content = s.get_log();
+                    }
+                    let mut open = self.show_log_panel;
+                    egui::Window::new("\u{1F4CB} Agent Log")
                     .open(&mut open)
                     .resizable(true)
                     .default_size([760.0, 520.0])
@@ -3837,79 +4199,85 @@ You have access to these tools: {}.{}",
                             });
                         } // close else (non-graphic tabs)
                     });
-                self.show_log_panel = open;
+                    self.show_log_panel = open;
+                }
             }
-        }
 
-        ui.separator();
+            ui.separator();
 
-        // Messages area - reserve space for Kimi-style input card
-        let messages_height = (ui.available_height() - input_bar_height).max(100.0);
+            // Messages area - reserve space for Kimi-style input card
+            let messages_height = (ui.available_height() - input_bar_height).max(100.0);
 
-        // Clone data needed for feedback actions
-        let _session_messages_len = session.messages.len();
+            // Clone data needed for feedback actions
+            let _session_messages_len = session.messages.len();
 
-        // Collect feedback actions to apply after borrow ends
-        let mut feedback_actions: Vec<(usize, String)> = Vec::new();
+            // Collect feedback actions to apply after borrow ends
+            let mut feedback_actions: Vec<(usize, String)> = Vec::new();
 
-        let scroll_id = ui.id().with("chat_scroll");
-        egui::ScrollArea::vertical()
-            .id_salt(scroll_id)
-            .max_height(messages_height.max(200.0))
-            .auto_shrink([false, false])
-            // Follow new messages / streaming automatically. egui stops sticking
-            // the moment the user scrolls up to read history, and resumes once
-            // they scroll back down.
-            .stick_to_bottom(true)
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-            .show(ui, |ui| {
-                if session.messages.is_empty() && !self.active_streams.contains_key(&session.id) {
-                    ui.add_space(40.0);
-                    ui.vertical_centered(|ui| {
-                        ui.label(
-                            egui::RichText::new("No messages yet. Type below to start chatting.")
+            let scroll_id = ui.id().with("chat_scroll");
+            egui::ScrollArea::vertical()
+                .id_salt(scroll_id)
+                .max_height(messages_height.max(200.0))
+                .auto_shrink([false, false])
+                // Follow new messages / streaming automatically. egui stops sticking
+                // the moment the user scrolls up to read history, and resumes once
+                // they scroll back down.
+                .stick_to_bottom(true)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                .show(ui, |ui| {
+                    if session.messages.is_empty() && !self.active_streams.contains_key(&session.id)
+                    {
+                        ui.add_space(40.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                egui::RichText::new(
+                                    "No messages yet. Type below to start chatting.",
+                                )
                                 .size(14.0)
                                 .color(egui::Color32::GRAY),
-                        );
-                    });
-                } else {
-                    ui.add_space(4.0);
-                    for (idx, msg) in session.messages.iter().enumerate() {
-                        if let Some(action) = self.render_message(ui, msg, idx) {
-                            feedback_actions.push(action);
+                            );
+                        });
+                    } else {
+                        ui.add_space(4.0);
+                        for (idx, msg) in session.messages.iter().enumerate() {
+                            if let Some(action) = self.render_message(ui, msg, idx) {
+                                feedback_actions.push(action);
+                            }
+                            ui.add_space(6.0);
                         }
-                        ui.add_space(6.0);
+
+                        // Show streaming response in progress
+                        if let Some(ref state) = self.active_streams.get(&session.id) {
+                            let streaming_text = state.get_text();
+                            let streaming_tool_calls = state.get_tool_calls();
+                            self.render_streaming_message(
+                                ui,
+                                &streaming_text,
+                                &streaming_tool_calls,
+                            );
+                            ui.add_space(6.0);
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Force a jump to the newest message on explicit events
+                        // (sending, switching/opening a chat) even if the user had
+                        // scrolled up — stick_to_bottom alone won't, once unstuck.
+                        if self.scroll_to_bottom {
+                            ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+                        }
                     }
+                });
 
-                    // Show streaming response in progress
-                    if let Some(ref state) = self.active_streams.get(&session.id) {
-                        let streaming_text = state.get_text();
-                        let streaming_tool_calls = state.get_tool_calls();
-                        self.render_streaming_message(ui, &streaming_text, &streaming_tool_calls);
-                        ui.add_space(6.0);
-                    }
+            // Apply feedback actions
+            for (idx, rating) in feedback_actions {
+                self.set_message_feedback(runtime, idx, &rating);
+            }
 
-                    ui.add_space(4.0);
+            // Reset scroll flag after one frame
+            self.scroll_to_bottom = false;
 
-                    // Force a jump to the newest message on explicit events
-                    // (sending, switching/opening a chat) even if the user had
-                    // scrolled up — stick_to_bottom alone won't, once unstuck.
-                    if self.scroll_to_bottom {
-                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
-                    }
-                }
-            });
-
-        // Apply feedback actions
-        for (idx, rating) in feedback_actions {
-            self.set_message_feedback(runtime, idx, &rating);
-        }
-
-        // Reset scroll flag after one frame
-        self.scroll_to_bottom = false;
-
-        ui.add_space(4.0);
-
+            ui.add_space(4.0);
         } // end if has_session — start page skips header/messages
 
         // ── Kimi-style input card ──────────────────────────────────
@@ -3923,17 +4291,21 @@ You have access to these tools: {}.{}",
             ui.vertical(|ui| {
                 ui.set_max_width(card_max_w);
                 egui::Frame::new()
-                    .fill(super::theme::card_color())
-                    .corner_radius(26.0)
-                    .stroke(egui::Stroke::new(1.0, super::theme::border_color()))
+                    // Glass composer: translucent card fill + soft cool shadow.
+                    .fill(super::theme::glass_fill(super::theme::card_color(), 225))
+                    .corner_radius(super::theme::RADIUS_PANEL)
+                    .stroke(super::theme::hairline_stroke())
+                    .shadow(super::theme::glass_shadow())
                     .inner_margin(egui::Margin::symmetric(16, 10))
                     .show(ui, |ui| {
                         // ── Text area (top part) ──
                         let edit_width = ui.available_width();
                         let max_input_height = 10.0 * line_height;
                         // Match the chat message font size (theme-driven).
-                        let input_font =
-                            egui::FontId::new(super::theme::chat_font_size(), egui::FontFamily::Proportional);
+                        let input_font = egui::FontId::new(
+                            super::theme::chat_font_size(),
+                            egui::FontFamily::Proportional,
+                        );
                         let response = if line_count > 10 {
                             let mut te_response: Option<egui::Response> = None;
                             egui::ScrollArea::vertical()
@@ -3968,9 +4340,9 @@ You have access to these tools: {}.{}",
                             }
                         }
 
-                        let can_send =
-                            (!self.input_text.trim().is_empty() || !self.attached_files.is_empty())
-                                && !is_streaming;
+                        let can_send = (!self.input_text.trim().is_empty()
+                            || !self.attached_files.is_empty())
+                            && !is_streaming;
 
                         // ── Toolbar row (bottom part) ──
                         // Controls sit on a common 28px height so the attach
@@ -3983,22 +4355,36 @@ You have access to these tools: {}.{}",
 
                             // (+) Attach button — circular
                             let attach_btn = egui::Button::new(
-                                egui::RichText::new("+").size(16.0).color(crate::ui::theme::text_secondary_color()),
+                                egui::RichText::new("+")
+                                    .size(16.0)
+                                    .color(crate::ui::theme::text_secondary_color()),
                             )
                             .fill(egui::Color32::TRANSPARENT)
                             .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
                             .corner_radius(14.0)
                             .min_size(egui::vec2(28.0, 28.0));
-                            if ui.add_enabled(!is_streaming, attach_btn).on_hover_text("Attach files").clicked() {
+                            if ui
+                                .add_enabled(!is_streaming, attach_btn)
+                                .on_hover_text("Attach files")
+                                .clicked()
+                            {
                                 self.pick_files();
                             }
 
                             // Agent mode pill — clickable to switch mode
                             {
-                                let settings = runtime.block_on(crate::server::data::get_settings());
+                                let settings =
+                                    runtime.block_on(crate::server::data::get_settings());
                                 let sub_enabled = settings.sub_agent_enabled.unwrap_or(false);
-                                let mode = settings.sub_agent_mode.clone().unwrap_or_else(|| "single".to_string());
-                                let current_mode = if !sub_enabled { "single" } else { mode.as_str() };
+                                let mode = settings
+                                    .sub_agent_mode
+                                    .clone()
+                                    .unwrap_or_else(|| "single".to_string());
+                                let current_mode = if !sub_enabled {
+                                    "single"
+                                } else {
+                                    mode.as_str()
+                                };
                                 let swarm_label = match current_mode {
                                     "fully_auto" => "Fully Auto",
                                     "auto" => "Auto",
@@ -4041,33 +4427,75 @@ You have access to these tools: {}.{}",
                                 if pill_resp.clicked() {
                                     ui.memory_mut(|mem| mem.toggle_popup(popup_id));
                                 }
-                                egui::popup_below_widget(ui, popup_id, &pill_resp, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                                    ui.set_min_width(140.0);
-                                    let modes: &[(&str, &str, egui::Color32)] = &[
-                                        ("single", "Single Agent", crate::ui::theme::text_secondary_color()),
-                                        ("fully_auto", "Fully Auto", crate::ui::theme::accent_color()),
-                                        ("auto", "Auto", egui::Color32::from_rgb(34, 197, 94)),
-                                        ("auto_swarm", "Auto Swarm", egui::Color32::from_rgb(168, 85, 247)),
-                                        ("manual", "Manual", egui::Color32::from_rgb(239, 68, 68)),
-                                        ("router", "Router", egui::Color32::from_rgb(255, 140, 0)),
-                                    ];
-                                    for &(mode_key, label, color) in modes {
-                                        let is_selected = current_mode == mode_key;
-                                        let text = egui::RichText::new(if is_selected { format!("\u{2713} {}", label) } else { label.to_string() })
+                                egui::popup_below_widget(
+                                    ui,
+                                    popup_id,
+                                    &pill_resp,
+                                    egui::PopupCloseBehavior::CloseOnClick,
+                                    |ui| {
+                                        ui.set_min_width(140.0);
+                                        let modes: &[(&str, &str, egui::Color32)] = &[
+                                            (
+                                                "single",
+                                                "Single Agent",
+                                                crate::ui::theme::text_secondary_color(),
+                                            ),
+                                            (
+                                                "fully_auto",
+                                                "Fully Auto",
+                                                crate::ui::theme::accent_color(),
+                                            ),
+                                            ("auto", "Auto", egui::Color32::from_rgb(34, 197, 94)),
+                                            (
+                                                "auto_swarm",
+                                                "Auto Swarm",
+                                                egui::Color32::from_rgb(168, 85, 247),
+                                            ),
+                                            (
+                                                "manual",
+                                                "Manual",
+                                                egui::Color32::from_rgb(239, 68, 68),
+                                            ),
+                                            (
+                                                "router",
+                                                "Router",
+                                                egui::Color32::from_rgb(255, 140, 0),
+                                            ),
+                                        ];
+                                        for &(mode_key, label, color) in modes {
+                                            let is_selected = current_mode == mode_key;
+                                            let text = egui::RichText::new(if is_selected {
+                                                format!("\u{2713} {}", label)
+                                            } else {
+                                                label.to_string()
+                                            })
                                             .size(12.0)
                                             .color(color);
-                                        if ui.add(egui::Button::new(text).fill(egui::Color32::TRANSPARENT).min_size(egui::vec2(130.0, 26.0))).clicked() {
-                                            let mut new_settings = settings.clone();
-                                            if mode_key == "single" {
-                                                new_settings.sub_agent_enabled = Some(false);
-                                            } else {
-                                                new_settings.sub_agent_enabled = Some(true);
-                                                new_settings.sub_agent_mode = Some(mode_key.to_string());
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(text)
+                                                        .fill(egui::Color32::TRANSPARENT)
+                                                        .min_size(egui::vec2(130.0, 26.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                let mut new_settings = settings.clone();
+                                                if mode_key == "single" {
+                                                    new_settings.sub_agent_enabled = Some(false);
+                                                } else {
+                                                    new_settings.sub_agent_enabled = Some(true);
+                                                    new_settings.sub_agent_mode =
+                                                        Some(mode_key.to_string());
+                                                }
+                                                runtime.block_on(
+                                                    crate::server::data::save_settings(
+                                                        &new_settings,
+                                                    ),
+                                                );
                                             }
-                                            runtime.block_on(crate::server::data::save_settings(&new_settings));
                                         }
-                                    }
-                                });
+                                    },
+                                );
                             }
 
                             // Attached file chips
@@ -4081,7 +4509,13 @@ You have access to these tools: {}.{}",
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                                ui.label(egui::RichText::new(&file.name).size(11.0).color(crate::ui::theme::text_primary_color()));
+                                                ui.label(
+                                                    egui::RichText::new(&file.name)
+                                                        .size(11.0)
+                                                        .color(
+                                                            crate::ui::theme::text_primary_color(),
+                                                        ),
+                                                );
                                                 if ui.small_button("x").clicked() {
                                                     remove_idx = Some(i);
                                                 }
@@ -4094,29 +4528,35 @@ You have access to these tools: {}.{}",
                             }
 
                             // Right side: model name + send/stop button
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
 
-                                // Send/Stop button — circular
-                                if is_streaming {
-                                    let stop_btn = egui::Button::new(
-                                        egui::RichText::new("\u{25A0}").size(14.0).color(egui::Color32::WHITE),
-                                    )
-                                    .fill(egui::Color32::from_rgb(220, 38, 38))
-                                    .corner_radius(16.0)
-                                    .min_size(egui::vec2(32.0, 32.0));
-                                    if ui.add(stop_btn).on_hover_text("Stop").clicked() {
-                                        if let Some(state) = self.active_streams.get(&session.id) {
-                                            state.cancel();
+                                    // Send/Stop button — circular
+                                    if is_streaming {
+                                        let stop_btn = egui::Button::new(
+                                            egui::RichText::new("\u{25A0}")
+                                                .size(14.0)
+                                                .color(egui::Color32::WHITE),
+                                        )
+                                        .fill(egui::Color32::from_rgb(220, 38, 38))
+                                        .corner_radius(16.0)
+                                        .min_size(egui::vec2(32.0, 32.0));
+                                        if ui.add(stop_btn).on_hover_text("Stop").clicked() {
+                                            if let Some(state) =
+                                                self.active_streams.get(&session.id)
+                                            {
+                                                state.cancel();
+                                            }
                                         }
-                                    }
-                                } else {
-                                    let send_color = if can_send {
-                                        crate::ui::theme::accent_color()
                                     } else {
-                                        crate::ui::theme::card_color()
-                                    };
-                                    let send_btn = egui::Button::new(
+                                        let send_color = if can_send {
+                                            crate::ui::theme::accent_color()
+                                        } else {
+                                            crate::ui::theme::card_color()
+                                        };
+                                        let send_btn = egui::Button::new(
                                         egui::RichText::new("\u{2191}") // ↑
                                             .size(16.0)
                                             .strong()
@@ -4131,20 +4571,24 @@ You have access to these tools: {}.{}",
                                     .fill(send_color)
                                     .corner_radius(16)
                                     .min_size(egui::vec2(32.0, 32.0));
-                                    if ui.add_enabled(can_send, send_btn).on_hover_text("Send").clicked()
-                                        || (enter_pressed && can_send)
-                                    {
-                                        let ctx = ui.ctx().clone();
-                                        self.send_message(runtime, &ctx);
-                                        response.request_focus();
+                                        if ui
+                                            .add_enabled(can_send, send_btn)
+                                            .on_hover_text("Send")
+                                            .clicked()
+                                            || (enter_pressed && can_send)
+                                        {
+                                            let ctx = ui.ctx().clone();
+                                            self.send_message(runtime, &ctx);
+                                            response.request_focus();
+                                        }
                                     }
-                                }
 
-                                // Model picker — pick the CLI provider, then a
-                                // model it actually reports, then an effort
-                                // tier that model actually supports.
-                                self.model_picker(ui, runtime);
-                            });
+                                    // Model picker — pick the CLI provider, then a
+                                    // model it actually reports, then an effort
+                                    // tier that model actually supports.
+                                    self.model_picker(ui, runtime);
+                                },
+                            );
                         });
                     });
             });
@@ -4162,7 +4606,11 @@ You have access to these tools: {}.{}",
 
         // Kick off discovery once; render from whatever has landed.
         if !self.cli_providers_loading
-            && self.cli_providers.lock().map(|g| g.is_none()).unwrap_or(false)
+            && self
+                .cli_providers
+                .lock()
+                .map(|g| g.is_none())
+                .unwrap_or(false)
         {
             self.cli_providers_loading = true;
             let slot = self.cli_providers.clone();
@@ -4178,7 +4626,11 @@ You have access to these tools: {}.{}",
         let current_model = settings.tiger_bot_model.clone();
         let current_effort = settings.reasoning_effort.clone().unwrap_or_default();
 
-        let label = if current_model.is_empty() { "Select model".to_string() } else { current_model.clone() };
+        let label = if current_model.is_empty() {
+            "Select model".to_string()
+        } else {
+            current_model.clone()
+        };
         let display: String = if label.chars().count() > 20 {
             format!("{}…", label.chars().take(20).collect::<String>())
         } else {
@@ -4213,7 +4665,9 @@ You have access to these tools: {}.{}",
         ui.visuals_mut().widgets.open.corner_radius = egui::CornerRadius::same(14);
 
         ui.menu_button(
-            egui::RichText::new(&display).size(11.5).color(crate::ui::theme::text_secondary_color()),
+            egui::RichText::new(&display)
+                .size(11.5)
+                .color(crate::ui::theme::text_secondary_color()),
             |ui| {
                 if providers.is_empty() {
                     ui.label(
@@ -4227,21 +4681,34 @@ You have access to these tools: {}.{}",
                     let sentinel = provider_sentinel_url(&p.id);
                     ui.menu_button(&p.name, |ui| {
                         for m in &p.models {
-                            let efforts = if m.efforts.is_empty() { &p.efforts } else { &m.efforts };
+                            let efforts = if m.efforts.is_empty() {
+                                &p.efforts
+                            } else {
+                                &m.efforts
+                            };
                             if efforts.is_empty() {
                                 if ui.button(&m.label).clicked() {
-                                    chosen = Some((sentinel.to_string(), m.id.clone(), String::new()));
+                                    chosen =
+                                        Some((sentinel.to_string(), m.id.clone(), String::new()));
                                     ui.close_menu();
                                 }
                             } else {
                                 ui.menu_button(&m.label, |ui| {
                                     if ui.button("(CLI default)").clicked() {
-                                        chosen = Some((sentinel.to_string(), m.id.clone(), String::new()));
+                                        chosen = Some((
+                                            sentinel.to_string(),
+                                            m.id.clone(),
+                                            String::new(),
+                                        ));
                                         ui.close_menu();
                                     }
                                     for e in efforts {
                                         if ui.button(e).clicked() {
-                                            chosen = Some((sentinel.to_string(), m.id.clone(), e.clone()));
+                                            chosen = Some((
+                                                sentinel.to_string(),
+                                                m.id.clone(),
+                                                e.clone(),
+                                            ));
                                             ui.close_menu();
                                         }
                                     }
@@ -4257,7 +4724,11 @@ You have access to these tools: {}.{}",
             let mut s = settings;
             s.tiger_bot_model = model;
             s.tiger_bot_api_url = Some(api_url);
-            s.reasoning_effort = if effort.is_empty() { None } else { Some(effort) };
+            s.reasoning_effort = if effort.is_empty() {
+                None
+            } else {
+                Some(effort)
+            };
             runtime.block_on(crate::server::data::save_settings(&s));
         }
     }
@@ -4299,18 +4770,35 @@ You have access to these tools: {}.{}",
             // width, so it widens on large windows instead of capping at a fixed
             // pixel width.
             let max_bubble_width = ui.available_width() * 0.66;
-            let bubble_stroke = egui::Stroke::NONE;
+            // Glass bubbles: the AI bubble gets a hairline rim, both get a soft
+            // cool-tinted elevation shadow.
+            let bubble_stroke = if is_user {
+                egui::Stroke::NONE
+            } else {
+                super::theme::hairline_stroke()
+            };
 
             // Asymmetric corners: AI = 6/20/20/20, User = 20/6/20/20
             let bubble_radius = if is_user {
-                egui::CornerRadius { nw: 20, ne: 6, sw: 20, se: 20 }
+                egui::CornerRadius {
+                    nw: 20,
+                    ne: 6,
+                    sw: 20,
+                    se: 20,
+                }
             } else {
-                egui::CornerRadius { nw: 6, ne: 20, sw: 20, se: 20 }
+                egui::CornerRadius {
+                    nw: 6,
+                    ne: 20,
+                    sw: 20,
+                    se: 20,
+                }
             };
             egui::Frame::new()
                 .fill(bg_color)
                 .corner_radius(bubble_radius)
                 .stroke(bubble_stroke)
+                .shadow(super::theme::glass_shadow())
                 .inner_margin(egui::Margin::symmetric(18, 14))
                 .show(ui, |ui| {
                     // Fix the bubble to ~2/3 of the window width (both min and max)
@@ -4320,165 +4808,208 @@ You have access to these tools: {}.{}",
                     ui.set_min_width(max_bubble_width);
                     // Force vertical layout inside bubble (parent is left_to_right for alignment)
                     ui.vertical(|ui| {
-                    // Role label
-                    ui.label(
-                        egui::RichText::new(icon)
-                            .size(11.0)
-                            .strong()
-                            .color(if is_user {
-                                text_color.gamma_multiply(0.75)
-                            } else {
-                                crate::ui::theme::text_secondary_color()
-                            }),
-                    );
+                        // Role label
+                        ui.label(
+                            egui::RichText::new(icon)
+                                .size(11.0)
+                                .strong()
+                                .color(if is_user {
+                                    text_color.gamma_multiply(0.75)
+                                } else {
+                                    crate::ui::theme::text_secondary_color()
+                                }),
+                        );
 
-                    // Show attached files. In "embed" mode, images render inline
-                    // as clickable thumbnails (click to view full size); other
-                    // files (and panel mode) show as compact cards.
-                    let embed = super::theme::embed_files_in_chat();
-                    if let Some(ref files) = msg.files {
-                        if !files.is_empty() {
-                            for fname in files {
-                                let short_name = std::path::Path::new(fname.as_str())
-                                    .file_name()
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| fname.clone());
+                        // Show attached files. In "embed" mode, images render inline
+                        // as clickable thumbnails (click to view full size); other
+                        // files (and panel mode) show as compact cards.
+                        let embed = super::theme::embed_files_in_chat();
+                        if let Some(ref files) = msg.files {
+                            if !files.is_empty() {
+                                for fname in files {
+                                    let short_name = std::path::Path::new(fname.as_str())
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| fname.clone());
 
-                                if embed && is_image_file(fname) {
-                                    ui.add_space(2.0);
-                                    let img = egui::Image::new(format!("file://{}", fname))
-                                        .max_width(max_bubble_width - 40.0)
-                                        .max_height(320.0)
-                                        .corner_radius(8.0)
-                                        .fit_to_original_size(1.0)
-                                        .sense(egui::Sense::click());
-                                    let resp = ui.add(img).on_hover_text("Click to view full size");
-                                    if resp.clicked() {
+                                    if embed && is_image_file(fname) {
+                                        ui.add_space(2.0);
+                                        let img = egui::Image::new(format!("file://{}", fname))
+                                            .max_width(max_bubble_width - 40.0)
+                                            .max_height(320.0)
+                                            .corner_radius(8.0)
+                                            .fit_to_original_size(1.0)
+                                            .sense(egui::Sense::click());
+                                        let resp =
+                                            ui.add(img).on_hover_text("Click to view full size");
+                                        if resp.clicked() {
+                                            ui.ctx().data_mut(|d| {
+                                                d.insert_temp(
+                                                    egui::Id::new("chat_zoom_image_request"),
+                                                    fname.clone(),
+                                                )
+                                            });
+                                        }
+                                        ui.add_space(4.0);
+                                        continue;
+                                    }
+
+                                    // Clickable file card → opens an inline viewer.
+                                    let card_resp = egui::Frame::new()
+                                        .fill(super::theme::hover_color())
+                                        .corner_radius(super::theme::RADIUS_SMALL)
+                                        .stroke(egui::Stroke::new(
+                                            0.5,
+                                            super::theme::border_color(),
+                                        ))
+                                        .inner_margin(egui::Margin::symmetric(8, 5))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(format!(
+                                                        "\u{1F4C4} {}",
+                                                        short_name
+                                                    ))
+                                                    .size(11.0)
+                                                    .color(super::theme::accent_color()),
+                                                );
+                                            });
+                                        })
+                                        .response
+                                        .interact(egui::Sense::click())
+                                        .on_hover_text(format!("Open {}", fname));
+                                    if card_resp.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+                                    if card_resp.clicked() {
                                         ui.ctx().data_mut(|d| {
                                             d.insert_temp(
-                                                egui::Id::new("chat_zoom_image_request"),
+                                                egui::Id::new("chat_open_file_request"),
                                                 fname.clone(),
                                             )
                                         });
                                     }
-                                    ui.add_space(4.0);
-                                    continue;
+                                    ui.add_space(2.0);
                                 }
-
-                                // Clickable file card → opens an inline viewer.
-                                let card_resp = egui::Frame::new()
-                                    .fill(super::theme::hover_color())
-                                    .corner_radius(4.0)
-                                    .stroke(egui::Stroke::new(0.5, super::theme::border_color()))
-                                    .inner_margin(egui::Margin::symmetric(8, 5))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(format!("\u{1F4C4} {}", short_name))
-                                                    .size(11.0)
-                                                    .color(super::theme::accent_color()),
-                                            );
-                                        });
-                                    })
-                                    .response
-                                    .interact(egui::Sense::click())
-                                    .on_hover_text(format!("Open {}", fname));
-                                if card_resp.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                                if card_resp.clicked() {
-                                    ui.ctx().data_mut(|d| {
-                                        d.insert_temp(
-                                            egui::Id::new("chat_open_file_request"),
-                                            fname.clone(),
-                                        )
-                                    });
-                                }
-                                ui.add_space(2.0);
                             }
                         }
-                    }
 
-                    // Rich message content
-                    if is_user {
-                        let display_text = msg
-                            .content
-                            .split("\n\n--- Attached file:")
-                            .next()
-                            .unwrap_or(&msg.content);
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(display_text)
-                                    .size(super::theme::chat_font_size())
-                                    .color(text_color),
-                            )
-                            .wrap(),
+                        // Rich message content
+                        if is_user {
+                            let display_text = msg
+                                .content
+                                .split("\n\n--- Attached file:")
+                                .next()
+                                .unwrap_or(&msg.content);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(display_text)
+                                        .size(super::theme::chat_font_size())
+                                        .color(text_color),
+                                )
+                                .wrap(),
+                            );
+                        } else {
+                            render_markdown_content(ui, &msg.content, text_color);
+                        }
+
+                        // Timestamp
+                        let ts_display = format_timestamp(&msg.timestamp);
+                        ui.label(
+                            egui::RichText::new(ts_display)
+                                .size(10.0)
+                                .color(if is_user {
+                                    text_color.gamma_multiply(0.6)
+                                } else {
+                                    crate::ui::theme::text_secondary_color()
+                                }),
                         );
-                    } else {
-                        render_markdown_content(ui, &msg.content, text_color);
-                    }
 
-                    // Timestamp
-                    let ts_display = format_timestamp(&msg.timestamp);
-                    ui.label(
-                        egui::RichText::new(ts_display)
-                            .size(10.0)
-                            .color(if is_user {
-                                text_color.gamma_multiply(0.6)
-                            } else {
-                                crate::ui::theme::text_secondary_color()
-                            }),
-                    );
+                        // Feedback buttons — outline icon style (matching template)
+                        if !is_user {
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let current_rating =
+                                    msg.feedback.as_ref().and_then(|f| f.rating.as_deref());
 
-                    // Feedback buttons — outline icon style (matching template)
-                    if !is_user {
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            let current_rating = msg
-                                .feedback
-                                .as_ref()
-                                .and_then(|f| f.rating.as_deref());
+                                let default_color = crate::ui::theme::text_secondary_color();
 
-                            let default_color = crate::ui::theme::text_secondary_color();
+                                // Thumbs up
+                                let up_color = if current_rating == Some("up") {
+                                    crate::ui::theme::accent_color() // teal active
+                                } else {
+                                    default_color
+                                };
+                                let up_bg = if current_rating == Some("up") {
+                                    crate::ui::theme::accent_color().gamma_multiply(0.15) // accent-soft
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                };
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("\u{25B3}")
+                                                .size(14.0)
+                                                .color(up_color),
+                                        ) // △
+                                        .fill(up_bg)
+                                        .corner_radius(9.0)
+                                        .min_size(egui::vec2(32.0, 32.0)),
+                                    )
+                                    .on_hover_text("Helpful")
+                                    .clicked()
+                                {
+                                    feedback_action = Some((index, "up".to_string()));
+                                }
 
-                            // Thumbs up
-                            let up_color = if current_rating == Some("up") {
-                                crate::ui::theme::accent_color() // teal active
-                            } else { default_color };
-                            let up_bg = if current_rating == Some("up") {
-                                egui::Color32::from_rgb(225, 241, 239) // accent-soft
-                            } else { egui::Color32::TRANSPARENT };
-                            if ui.add(
-                                egui::Button::new(egui::RichText::new("\u{25B3}").size(14.0).color(up_color)) // △
-                                    .fill(up_bg).corner_radius(9.0).min_size(egui::vec2(32.0, 32.0))
-                            ).on_hover_text("Helpful").clicked() {
-                                feedback_action = Some((index, "up".to_string()));
-                            }
+                                // Thumbs down
+                                let down_color = if current_rating == Some("down") {
+                                    egui::Color32::from_rgb(201, 85, 78) // warm red
+                                } else {
+                                    default_color
+                                };
+                                let down_bg = if current_rating == Some("down") {
+                                    egui::Color32::from_rgb(201, 85, 78).gamma_multiply(0.15) // red-soft
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                };
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("\u{25BD}")
+                                                .size(14.0)
+                                                .color(down_color),
+                                        ) // ▽
+                                        .fill(down_bg)
+                                        .corner_radius(9.0)
+                                        .min_size(egui::vec2(32.0, 32.0)),
+                                    )
+                                    .on_hover_text("Not helpful")
+                                    .clicked()
+                                {
+                                    feedback_action = Some((index, "down".to_string()));
+                                }
 
-                            // Thumbs down
-                            let down_color = if current_rating == Some("down") {
-                                egui::Color32::from_rgb(201, 85, 78) // warm red
-                            } else { default_color };
-                            let down_bg = if current_rating == Some("down") {
-                                egui::Color32::from_rgb(247, 229, 227) // red-soft
-                            } else { egui::Color32::TRANSPARENT };
-                            if ui.add(
-                                egui::Button::new(egui::RichText::new("\u{25BD}").size(14.0).color(down_color)) // ▽
-                                    .fill(down_bg).corner_radius(9.0).min_size(egui::vec2(32.0, 32.0))
-                            ).on_hover_text("Not helpful").clicked() {
-                                feedback_action = Some((index, "down".to_string()));
-                            }
-
-                            // Copy button
-                            if ui.add(
-                                egui::Button::new(egui::RichText::new("\u{2750}").size(14.0).color(default_color)) // ❐
-                                    .fill(egui::Color32::TRANSPARENT).corner_radius(9.0).min_size(egui::vec2(32.0, 32.0))
-                            ).on_hover_text("Copy").clicked() {
-                                ui.ctx().copy_text(msg.content.clone());
-                            }
-                        });
-                    }
+                                // Copy button
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("\u{2750}")
+                                                .size(14.0)
+                                                .color(default_color),
+                                        ) // ❐
+                                        .fill(egui::Color32::TRANSPARENT)
+                                        .corner_radius(9.0)
+                                        .min_size(egui::vec2(32.0, 32.0)),
+                                    )
+                                    .on_hover_text("Copy")
+                                    .clicked()
+                                {
+                                    ui.ctx().copy_text(msg.content.clone());
+                                }
+                            });
+                        }
                     }); // close ui.vertical
                 });
         });
@@ -4506,7 +5037,12 @@ You have access to these tools: {}.{}",
         }
     }
 
-    fn render_streaming_message(&self, ui: &mut egui::Ui, text: &str, tool_calls: &[ToolCallDisplay]) {
+    fn render_streaming_message(
+        &self,
+        ui: &mut egui::Ui,
+        text: &str,
+        tool_calls: &[ToolCallDisplay],
+    ) {
         let bg_color = super::theme::chat_ai_bubble();
         let text_color = super::theme::chat_ai_text();
 
@@ -4517,7 +5053,8 @@ You have access to these tools: {}.{}",
             egui::Frame::new()
                 .fill(bg_color)
                 .corner_radius(egui::CornerRadius { nw: 6, ne: 20, sw: 20, se: 20 })
-                .stroke(egui::Stroke::new(1.0, crate::ui::theme::border_color()))
+                .stroke(crate::ui::theme::hairline_stroke())
+                .shadow(crate::ui::theme::glass_shadow())
                 .inner_margin(egui::Margin::symmetric(18, 14))
                 .show(ui, |ui| {
                     // Fix streaming bubble to the same ~2/3 width as finished messages.
@@ -4619,8 +5156,7 @@ You have access to these tools: {}.{}",
                         self.renaming_session_id = None;
                     }
                     if ui.button("Save").clicked()
-                        || (response.lost_focus()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                        || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
                         let title = self.rename_text.trim().to_string();
                         if !title.is_empty() {
@@ -4660,12 +5196,10 @@ You have access to these tools: {}.{}",
                         self.confirm_delete_id = None;
                     }
                     if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new("Delete")
-                                    .color(egui::Color32::from_rgb(239, 68, 68)),
-                            ),
-                        )
+                        .add(egui::Button::new(
+                            egui::RichText::new("Delete")
+                                .color(egui::Color32::from_rgb(239, 68, 68)),
+                        ))
                         .clicked()
                     {
                         self.delete_session(runtime, &session_id);
@@ -4690,7 +5224,10 @@ You have access to these tools: {}.{}",
             let log_text = if let Some(s) = self.active_streams.get(session_id) {
                 s.get_log()
             } else {
-                self.remote_activity_logs.get(session_id).cloned().unwrap_or_default()
+                self.remote_activity_logs
+                    .get(session_id)
+                    .cloned()
+                    .unwrap_or_default()
             };
             self.load_graphic_data_from_activity_log(session_id, &log_text);
             return;
@@ -4730,10 +5267,7 @@ You have access to these tools: {}.{}",
             let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
             };
-            let event = entry
-                .get("event")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let event = entry.get("event").and_then(|v| v.as_str()).unwrap_or("");
             let data = entry.get("data");
 
             match event {
@@ -4744,19 +5278,35 @@ You have access to these tools: {}.{}",
                         .unwrap_or("")
                         .to_string();
                     // Extract YAML connections with label + protocol
-                    if let Some(conns) = data.and_then(|d| d.get("connections")).and_then(|v| v.as_array()) {
+                    if let Some(conns) = data
+                        .and_then(|d| d.get("connections"))
+                        .and_then(|v| v.as_array())
+                    {
                         for conn in conns {
                             let from = conn.get("from").and_then(|v| v.as_str()).unwrap_or("");
                             let to = conn.get("to").and_then(|v| v.as_str()).unwrap_or("");
                             let label = conn.get("label").and_then(|v| v.as_str()).unwrap_or("");
-                            let protocol = conn.get("protocol").and_then(|v| v.as_str()).unwrap_or("tcp");
-                            if !from.is_empty() && !to.is_empty() && from != "human" && to != "human" {
-                                yaml_edges.push((from.to_string(), to.to_string(), label.to_string(), protocol.to_string()));
+                            let protocol = conn
+                                .get("protocol")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("tcp");
+                            if !from.is_empty()
+                                && !to.is_empty()
+                                && from != "human"
+                                && to != "human"
+                            {
+                                yaml_edges.push((
+                                    from.to_string(),
+                                    to.to_string(),
+                                    label.to_string(),
+                                    protocol.to_string(),
+                                ));
                             }
                         }
                     }
                     // Extract pipeline order from workflow.sequence
-                    if let Some(seq) = data.and_then(|d| d.get("workflow"))
+                    if let Some(seq) = data
+                        .and_then(|d| d.get("workflow"))
                         .and_then(|w| w.get("sequence"))
                         .and_then(|s| s.as_array())
                     {
@@ -4811,11 +5361,9 @@ You have access to these tools: {}.{}",
                         .unwrap_or("")
                         .to_string();
 
-                    agent_map
-                        .entry(agent_id.to_string())
-                        .or_insert_with(|| {
-                            ("worker".to_string(), "working".to_string(), Vec::new())
-                        });
+                    agent_map.entry(agent_id.to_string()).or_insert_with(|| {
+                        ("worker".to_string(), "working".to_string(), Vec::new())
+                    });
                     if let Some(e) = agent_map.get_mut(agent_id) {
                         e.2.push(tool.to_string());
                         e.1 = "working".to_string();
@@ -4882,14 +5430,13 @@ You have access to these tools: {}.{}",
                             if let Some(target) = res_val.get("agentId").and_then(|v| v.as_str()) {
                                 edge_set.insert((agent_id.to_string(), target.to_string()));
                                 // Also register the target agent
-                                agent_map
-                                    .entry(target.to_string())
-                                    .or_insert_with(|| {
-                                        let name = res_val.get("agentName")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or(target);
-                                        (name.to_string(), "working".to_string(), Vec::new())
-                                    });
+                                agent_map.entry(target.to_string()).or_insert_with(|| {
+                                    let name = res_val
+                                        .get("agentName")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or(target);
+                                    (name.to_string(), "working".to_string(), Vec::new())
+                                });
                             }
                         }
                     }
@@ -4917,15 +5464,26 @@ You have access to these tools: {}.{}",
             for line in hist.lines() {
                 if let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) {
                     if entry.get("event").and_then(|v| v.as_str()) == Some("SUBAGENT_SPAWN") {
-                        let name = entry.get("data").and_then(|d| d.get("agent_name")).and_then(|v| v.as_str()).unwrap_or("");
-                        let parent = entry.get("data").and_then(|d| d.get("parent")).and_then(|v| v.as_str()).unwrap_or("main");
+                        let name = entry
+                            .get("data")
+                            .and_then(|d| d.get("agent_name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let parent = entry
+                            .get("data")
+                            .and_then(|d| d.get("parent"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("main");
                         if !name.is_empty() {
                             edge_set.insert((parent.to_string(), name.to_string()));
                         }
                     }
                 }
             }
-            edge_set.into_iter().map(|(f, t)| (f, t, String::new(), "delegate".to_string())).collect()
+            edge_set
+                .into_iter()
+                .map(|(f, t)| (f, t, String::new(), "delegate".to_string()))
+                .collect()
         };
 
         // Determine layout mode
@@ -4969,9 +5527,11 @@ You have access to these tools: {}.{}",
             let spacing_x = canvas_w / (pipeline_count as f32 + 1.0);
 
             for (i, name) in names.iter().enumerate() {
-                let (ref role, ref status, ref _tools) = agent_map.get(name)
-                    .cloned()
-                    .unwrap_or(("worker".to_string(), "idle".to_string(), Vec::new()));
+                let (ref role, ref status, ref _tools) = agent_map.get(name).cloned().unwrap_or((
+                    "worker".to_string(),
+                    "idle".to_string(),
+                    Vec::new(),
+                ));
 
                 let (x, y) = if name == "main" {
                     // Main at top-left, connected to first pipeline stage
@@ -4986,7 +5546,10 @@ You have access to these tools: {}.{}",
 
                 self.graphic_agents.push(GraphicAgent {
                     id: name.clone(),
-                    name: display_names.get(name).cloned().unwrap_or_else(|| name.clone()),
+                    name: display_names
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| name.clone()),
                     role: role.clone(),
                     status: status.clone(),
                     x,
@@ -4997,18 +5560,26 @@ You have access to these tools: {}.{}",
             }
         } else {
             // Default layout: orchestrator at top, workers in grid
-            let worker_count = names.iter().filter(|n| {
-                agent_map.get(*n).map(|e| e.0 != "orchestrator").unwrap_or(true)
-            }).count();
+            let worker_count = names
+                .iter()
+                .filter(|n| {
+                    agent_map
+                        .get(*n)
+                        .map(|e| e.0 != "orchestrator")
+                        .unwrap_or(true)
+                })
+                .count();
             let cols = (worker_count as f32).sqrt().ceil().max(1.0) as usize;
             let spacing_x = canvas_w / (cols as f32 + 1.0);
             let mut row = 0usize;
             let mut col = 0usize;
 
             for (i, name) in names.iter().enumerate() {
-                let (ref role, ref status, ref _tools) = agent_map.get(name)
-                    .cloned()
-                    .unwrap_or(("worker".to_string(), "idle".to_string(), Vec::new()));
+                let (ref role, ref status, ref _tools) = agent_map.get(name).cloned().unwrap_or((
+                    "worker".to_string(),
+                    "idle".to_string(),
+                    Vec::new(),
+                ));
                 let is_orch = role == "orchestrator";
 
                 if is_orch {
@@ -5083,28 +5654,39 @@ You have access to these tools: {}.{}",
             std::collections::HashSet::new();
 
         // Always add main orchestrator
-        agent_map.entry("main".to_string())
+        agent_map
+            .entry("main".to_string())
             .or_insert_with(|| ("orchestrator".to_string(), "idle".to_string(), Vec::new()));
 
         for line in log_text.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
+            if trimmed.is_empty() {
+                continue;
+            }
 
             // Pattern: > **AgentName** delegating task to target_agent
             if trimmed.contains("delegating task to ") {
                 if let Some(agent) = trimmed.split("**").nth(1) {
                     let agent = agent.trim();
-                    let agent_id = if agent == "Orchestrator" { "main" } else { agent };
-                    agent_map.entry(agent_id.to_string())
-                        .or_insert_with(|| {
-                            let role = if agent == "Orchestrator" { "orchestrator" } else { "worker" };
-                            (role.to_string(), "working".to_string(), Vec::new())
-                        });
+                    let agent_id = if agent == "Orchestrator" {
+                        "main"
+                    } else {
+                        agent
+                    };
+                    agent_map.entry(agent_id.to_string()).or_insert_with(|| {
+                        let role = if agent == "Orchestrator" {
+                            "orchestrator"
+                        } else {
+                            "worker"
+                        };
+                        (role.to_string(), "working".to_string(), Vec::new())
+                    });
                     if let Some(target) = trimmed.rsplit("delegating task to ").next() {
                         let target = target.trim();
                         if !target.is_empty() {
-                            agent_map.entry(target.to_string())
-                                .or_insert_with(|| ("worker".to_string(), "working".to_string(), Vec::new()));
+                            agent_map.entry(target.to_string()).or_insert_with(|| {
+                                ("worker".to_string(), "working".to_string(), Vec::new())
+                            });
                             edge_set.insert((agent_id.to_string(), target.to_string()));
                         }
                     }
@@ -5116,7 +5698,11 @@ You have access to these tools: {}.{}",
             if trimmed.contains("waiting for ") && trimmed.starts_with(">") {
                 if let Some(agent) = trimmed.split("**").nth(1) {
                     let agent = agent.trim();
-                    let agent_id = if agent == "Orchestrator" { "main" } else { agent };
+                    let agent_id = if agent == "Orchestrator" {
+                        "main"
+                    } else {
+                        agent
+                    };
                     if let Some(source) = trimmed.rsplit("waiting for ").next() {
                         let source = source.trim();
                         if !source.is_empty() {
@@ -5138,10 +5724,15 @@ You have access to these tools: {}.{}",
                 if parts.len() >= 4 && trimmed.contains("** **") {
                     // Proto: agent is parts[3]
                     let agent = parts[3].trim();
-                    let agent_id = if agent == "Orchestrator" { "main" } else { agent };
+                    let agent_id = if agent == "Orchestrator" {
+                        "main"
+                    } else {
+                        agent
+                    };
                     let tool = trimmed.split('`').nth(1).unwrap_or("").to_string();
-                    agent_map.entry(agent_id.to_string())
-                        .or_insert_with(|| ("worker".to_string(), "working".to_string(), Vec::new()));
+                    agent_map.entry(agent_id.to_string()).or_insert_with(|| {
+                        ("worker".to_string(), "working".to_string(), Vec::new())
+                    });
                     if let Some(e) = agent_map.get_mut(agent_id) {
                         e.2.push(tool);
                         e.1 = "working".to_string();
@@ -5149,10 +5740,15 @@ You have access to these tools: {}.{}",
                 } else if parts.len() >= 2 {
                     // Normal tool call
                     let agent = parts[1].trim();
-                    let agent_id = if agent == "Orchestrator" { "main" } else { agent };
+                    let agent_id = if agent == "Orchestrator" {
+                        "main"
+                    } else {
+                        agent
+                    };
                     let tool = trimmed.split('`').nth(1).unwrap_or("").to_string();
-                    agent_map.entry(agent_id.to_string())
-                        .or_insert_with(|| ("worker".to_string(), "working".to_string(), Vec::new()));
+                    agent_map.entry(agent_id.to_string()).or_insert_with(|| {
+                        ("worker".to_string(), "working".to_string(), Vec::new())
+                    });
                     if let Some(e) = agent_map.get_mut(agent_id) {
                         e.2.push(tool);
                         e.1 = "working".to_string();
@@ -5179,18 +5775,26 @@ You have access to these tools: {}.{}",
             oa.cmp(&ob).then(a.cmp(b))
         });
 
-        let worker_count = names.iter().filter(|n| {
-            agent_map.get(*n).map(|e| e.0 != "orchestrator").unwrap_or(true)
-        }).count();
+        let worker_count = names
+            .iter()
+            .filter(|n| {
+                agent_map
+                    .get(*n)
+                    .map(|e| e.0 != "orchestrator")
+                    .unwrap_or(true)
+            })
+            .count();
         let cols = (worker_count as f32).sqrt().ceil().max(1.0) as usize;
         let spacing_x = canvas_w / (cols as f32 + 1.0);
         let mut row = 0usize;
         let mut col = 0usize;
 
         for (i, name) in names.iter().enumerate() {
-            let (ref role, ref status, ref tools) = agent_map.get(name)
-                .cloned()
-                .unwrap_or(("worker".to_string(), "idle".to_string(), Vec::new()));
+            let (ref role, ref status, ref tools) = agent_map.get(name).cloned().unwrap_or((
+                "worker".to_string(),
+                "idle".to_string(),
+                Vec::new(),
+            ));
             let is_orch = role == "orchestrator";
 
             let (x, y) = if is_orch {
@@ -5199,7 +5803,10 @@ You have access to these tools: {}.{}",
                 let x = spacing_x * (col as f32 + 1.0) - 50.0;
                 let y = 140.0 + row as f32 * 100.0;
                 col += 1;
-                if col >= cols { col = 0; row += 1; }
+                if col >= cols {
+                    col = 0;
+                    row += 1;
+                }
                 (x, y)
             };
 
@@ -5241,9 +5848,11 @@ You have access to these tools: {}.{}",
                 );
                 ui.add_space(8.0);
                 ui.label(
-                    egui::RichText::new("Send a message with sub-agents to see the network diagram.")
-                        .size(11.0)
-                        .color(egui::Color32::from_rgb(120, 120, 120)),
+                    egui::RichText::new(
+                        "Send a message with sub-agents to see the network diagram.",
+                    )
+                    .size(11.0)
+                    .color(egui::Color32::from_rgb(120, 120, 120)),
                 );
             });
             return;
@@ -5267,7 +5876,9 @@ You have access to these tools: {}.{}",
         // "idle" agents that have already done work (have signals) are shown as "done".
         let resolved_statuses: std::collections::HashMap<String, String> = {
             let live = self.graphic_live_statuses.lock().unwrap();
-            let session_active = self.active_streams.contains_key(&self.graphic_loaded_config);
+            let session_active = self
+                .active_streams
+                .contains_key(&self.graphic_loaded_config);
             let mut map = std::collections::HashMap::new();
             for agent in &self.graphic_agents {
                 let has_done_work = self.graphic_signals.iter().any(|s| s.from == agent.id);
@@ -5294,7 +5905,10 @@ You have access to these tools: {}.{}",
                 agent.status = status.clone();
             }
             // Update last_tool from the most recent signal for this agent
-            if let Some(latest) = self.graphic_signals.iter().rev()
+            if let Some(latest) = self
+                .graphic_signals
+                .iter()
+                .rev()
                 .find(|s| s.from == agent.id && !s.tool.is_empty())
             {
                 agent.last_tool = latest.tool.clone();
@@ -5304,8 +5918,10 @@ You have access to these tools: {}.{}",
         let time = ui.input(|i| i.time);
 
         // Collect tool counts and connections for summary
-        let mut tool_counts: std::collections::HashMap<String, std::collections::HashMap<String, usize>> =
-            std::collections::HashMap::new();
+        let mut tool_counts: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, usize>,
+        > = std::collections::HashMap::new();
         for sig in &self.graphic_signals {
             *tool_counts
                 .entry(sig.from.clone())
@@ -5323,26 +5939,53 @@ You have access to these tools: {}.{}",
         }
 
         let total = self.graphic_agents.len();
-        let working = self.graphic_agents.iter().filter(|a| a.status == "working").count();
-        let done = self.graphic_agents.iter().filter(|a| a.status == "done").count();
+        let working = self
+            .graphic_agents
+            .iter()
+            .filter(|a| a.status == "working")
+            .count();
+        let done = self
+            .graphic_agents
+            .iter()
+            .filter(|a| a.status == "done")
+            .count();
         let idle = total - working - done;
 
         // ── Top toolbar ──
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if ui.add(egui::Button::new(
-                egui::RichText::new("\u{21BB} Reload").size(11.0)
-            ).corner_radius(4.0).fill(crate::ui::theme::surface_color())).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new("\u{21BB} Reload").size(11.0))
+                        .corner_radius(4.0)
+                        .fill(crate::ui::theme::surface_color()),
+                )
+                .clicked()
+            {
                 let sid = self.graphic_loaded_config.clone();
                 self.load_graphic_data(&sid);
             }
             ui.separator();
-            if ui.add(egui::Button::new(egui::RichText::new("+").size(12.0).strong())
-                .corner_radius(4.0).fill(crate::ui::theme::surface_color()).min_size(egui::vec2(24.0, 20.0))).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new("+").size(12.0).strong())
+                        .corner_radius(4.0)
+                        .fill(crate::ui::theme::surface_color())
+                        .min_size(egui::vec2(24.0, 20.0)),
+                )
+                .clicked()
+            {
                 self.graphic_zoom = (self.graphic_zoom + 0.15).min(3.0);
             }
-            if ui.add(egui::Button::new(egui::RichText::new("\u{2212}").size(12.0).strong())
-                .corner_radius(4.0).fill(crate::ui::theme::surface_color()).min_size(egui::vec2(24.0, 20.0))).clicked() {
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new("\u{2212}").size(12.0).strong())
+                        .corner_radius(4.0)
+                        .fill(crate::ui::theme::surface_color())
+                        .min_size(egui::vec2(24.0, 20.0)),
+                )
+                .clicked()
+            {
                 self.graphic_zoom = (self.graphic_zoom - 0.15).max(0.3);
             }
             ui.separator();
@@ -5350,14 +5993,18 @@ You have access to these tools: {}.{}",
             let pill = |ui: &mut egui::Ui, label: &str, count: usize, color: egui::Color32| {
                 let text = format!("{} {}", count, label);
                 ui.add(egui::Label::new(
-                    egui::RichText::new(text).size(10.5).color(color)
+                    egui::RichText::new(text).size(10.5).color(color),
                 ));
             };
             pill(ui, "Working", working, egui::Color32::from_rgb(34, 197, 94));
             pill(ui, "Done", done, crate::ui::theme::text_secondary_color());
             pill(ui, "Idle", idle, egui::Color32::from_rgb(120, 130, 140));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(format!("{} agents", total)).size(10.5).color(egui::Color32::from_rgb(100, 110, 120)));
+                ui.label(
+                    egui::RichText::new(format!("{} agents", total))
+                        .size(10.5)
+                        .color(egui::Color32::from_rgb(100, 110, 120)),
+                );
             });
         });
         ui.add_space(2.0);
@@ -5372,13 +6019,13 @@ You have access to these tools: {}.{}",
         let panel_h = (available_h - 4.0).max(180.0);
 
         // Allocate the full rect, then split into left/right
-        let (full_rect, _) = ui.allocate_exact_size(
-            egui::vec2(available_w, panel_h), egui::Sense::hover());
-        let diagram_rect = egui::Rect::from_min_size(
-            full_rect.min, egui::vec2(diagram_w, panel_h));
+        let (full_rect, _) =
+            ui.allocate_exact_size(egui::vec2(available_w, panel_h), egui::Sense::hover());
+        let diagram_rect = egui::Rect::from_min_size(full_rect.min, egui::vec2(diagram_w, panel_h));
         let activity_rect = egui::Rect::from_min_size(
             egui::pos2(full_rect.min.x + diagram_w + gap, full_rect.min.y),
-            egui::vec2(activity_w, panel_h));
+            egui::vec2(activity_w, panel_h),
+        );
 
         // ── LEFT: Diagram area ──
         ui.allocate_ui_at_rect(diagram_rect, |ui| {
@@ -5404,7 +6051,10 @@ You have access to these tools: {}.{}",
                         let mut x = canvas_rect.min.x;
                         while x < canvas_rect.max.x {
                             painter.line_segment(
-                                [egui::pos2(x, canvas_rect.min.y), egui::pos2(x, canvas_rect.max.y)],
+                                [
+                                    egui::pos2(x, canvas_rect.min.y),
+                                    egui::pos2(x, canvas_rect.max.y),
+                                ],
                                 egui::Stroke::new(0.5, grid_color),
                             );
                             x += grid_size;
@@ -5412,7 +6062,10 @@ You have access to these tools: {}.{}",
                         let mut y = canvas_rect.min.y;
                         while y < canvas_rect.max.y {
                             painter.line_segment(
-                                [egui::pos2(canvas_rect.min.x, y), egui::pos2(canvas_rect.max.x, y)],
+                                [
+                                    egui::pos2(canvas_rect.min.x, y),
+                                    egui::pos2(canvas_rect.max.x, y),
+                                ],
                                 egui::Stroke::new(0.5, grid_color),
                             );
                             y += grid_size;
@@ -5427,16 +6080,21 @@ You have access to these tools: {}.{}",
                     let node_h = 60.0 * zoom;
 
                     let positions: std::collections::HashMap<String, egui::Pos2> = self
-                        .graphic_agents.iter()
+                        .graphic_agents
+                        .iter()
                         .map(|a| {
                             let pos = egui::pos2(origin.x + a.x * zoom, origin.y + a.y * zoom);
                             (a.id.clone(), pos)
                         })
                         .collect();
 
-                    let node_rects: std::collections::HashMap<String, egui::Rect> = positions.iter()
+                    let node_rects: std::collections::HashMap<String, egui::Rect> = positions
+                        .iter()
                         .map(|(id, &pos)| {
-                            (id.clone(), egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h)))
+                            (
+                                id.clone(),
+                                egui::Rect::from_min_size(pos, egui::vec2(node_w, node_h)),
+                            )
                         })
                         .collect();
 
@@ -5444,28 +6102,46 @@ You have access to these tools: {}.{}",
                         let center = rect.center();
                         let dx = target.x - center.x;
                         let dy = target.y - center.y;
-                        if dx.abs() < 0.001 && dy.abs() < 0.001 { return center; }
+                        if dx.abs() < 0.001 && dy.abs() < 0.001 {
+                            return center;
+                        }
                         let hw = rect.width() / 2.0;
                         let hh = rect.height() / 2.0;
-                        let sx = if dx.abs() > 0.001 { hw / dx.abs() } else { f32::MAX };
-                        let sy = if dy.abs() > 0.001 { hh / dy.abs() } else { f32::MAX };
+                        let sx = if dx.abs() > 0.001 {
+                            hw / dx.abs()
+                        } else {
+                            f32::MAX
+                        };
+                        let sy = if dy.abs() > 0.001 {
+                            hh / dy.abs()
+                        } else {
+                            f32::MAX
+                        };
                         let s = sx.min(sy);
                         egui::pos2(center.x + dx * s, center.y + dy * s)
                     };
 
-                    let active_agent_ids: std::collections::HashSet<&str> = self.graphic_agents.iter()
+                    let active_agent_ids: std::collections::HashSet<&str> = self
+                        .graphic_agents
+                        .iter()
                         .filter(|a| a.status == "working")
                         .map(|a| a.id.as_str())
                         .collect();
-                    let done_agent_ids: std::collections::HashSet<&str> = self.graphic_agents.iter()
+                    let done_agent_ids: std::collections::HashSet<&str> = self
+                        .graphic_agents
+                        .iter()
                         .filter(|a| a.status == "done")
                         .map(|a| a.id.as_str())
                         .collect();
 
                     // ── Draw edges ──
                     for edge in &self.graphic_edges {
-                        let Some(from_rect) = node_rects.get(&edge.from) else { continue };
-                        let Some(to_rect) = node_rects.get(&edge.to) else { continue };
+                        let Some(from_rect) = node_rects.get(&edge.from) else {
+                            continue;
+                        };
+                        let Some(to_rect) = node_rects.get(&edge.to) else {
+                            continue;
+                        };
                         let from_pt = edge_point(from_rect, to_rect.center());
                         let to_pt = edge_point(to_rect, from_rect.center());
 
@@ -5477,9 +6153,9 @@ You have access to these tools: {}.{}",
                         let both_done = from_done && to_done;
 
                         let base_edge_color = match edge.protocol.as_str() {
-                            "tcp"        => crate::ui::theme::accent_color(),
-                            "queue"      => egui::Color32::from_rgb(245, 158, 11),
-                            "bus"        => egui::Color32::from_rgb(168, 85, 247),
+                            "tcp" => crate::ui::theme::accent_color(),
+                            "queue" => egui::Color32::from_rgb(245, 158, 11),
+                            "bus" => egui::Color32::from_rgb(168, 85, 247),
                             "blackboard" => egui::Color32::from_rgb(34, 197, 94),
                             _ => crate::ui::theme::accent_color(),
                         };
@@ -5489,49 +6165,70 @@ You have access to these tools: {}.{}",
                         } else if both_done {
                             crate::ui::theme::text_secondary_color()
                         } else {
-                            egui::Color32::from_rgb(220, 212, 198)
+                            crate::ui::theme::border_color() // cool hairline grey (was warm 220,212,198)
                         };
                         let thickness = if is_active { 2.5 * zoom } else { 1.2 * zoom };
 
-                        painter.line_segment([from_pt, to_pt], egui::Stroke::new(thickness, edge_color));
+                        painter.line_segment(
+                            [from_pt, to_pt],
+                            egui::Stroke::new(thickness, edge_color),
+                        );
 
                         let dir = (to_pt - from_pt).normalized();
                         let perp = egui::vec2(-dir.y, dir.x);
                         let arrow_len = 10.0 * zoom;
                         let tip = to_pt;
                         painter.add(egui::Shape::convex_polygon(
-                            vec![tip, tip - dir * arrow_len + perp * 5.0 * zoom, tip - dir * arrow_len - perp * 5.0 * zoom],
+                            vec![
+                                tip,
+                                tip - dir * arrow_len + perp * 5.0 * zoom,
+                                tip - dir * arrow_len - perp * 5.0 * zoom,
+                            ],
                             edge_color,
                             egui::Stroke::NONE,
                         ));
 
                         if !edge.label.is_empty() {
-                            let mid = egui::pos2((from_pt.x + to_pt.x) / 2.0, (from_pt.y + to_pt.y) / 2.0);
-                            let label_text = if edge.protocol.is_empty() || edge.protocol == "delegate" {
-                                edge.label.clone()
-                            } else {
-                                format!("{} ({})", edge.label, edge.protocol)
-                            };
+                            let mid = egui::pos2(
+                                (from_pt.x + to_pt.x) / 2.0,
+                                (from_pt.y + to_pt.y) / 2.0,
+                            );
+                            let label_text =
+                                if edge.protocol.is_empty() || edge.protocol == "delegate" {
+                                    edge.label.clone()
+                                } else {
+                                    format!("{} ({})", edge.label, edge.protocol)
+                                };
                             painter.text(
                                 mid + egui::vec2(0.0, -8.0 * zoom),
                                 egui::Align2::CENTER_BOTTOM,
                                 &label_text,
                                 egui::FontId::proportional(9.0 * zoom),
-                                if is_active { crate::ui::theme::text_primary_color() } else { crate::ui::theme::text_secondary_color() },
+                                if is_active {
+                                    crate::ui::theme::text_primary_color()
+                                } else {
+                                    crate::ui::theme::text_secondary_color()
+                                },
                             );
                         }
                     }
 
                     // Signal lines without explicit edges
                     for signal in &self.graphic_signals {
-                        if signal.from.is_empty() || signal.to.is_empty() { continue; }
-                        let has_edge = self.graphic_edges.iter().any(|e|
-                            (e.from == signal.from && e.to == signal.to) ||
-                            (e.from == signal.to && e.to == signal.from)
-                        );
+                        if signal.from.is_empty() || signal.to.is_empty() {
+                            continue;
+                        }
+                        let has_edge = self.graphic_edges.iter().any(|e| {
+                            (e.from == signal.from && e.to == signal.to)
+                                || (e.from == signal.to && e.to == signal.from)
+                        });
                         if !has_edge {
-                            let Some(from_rect) = node_rects.get(&signal.from) else { continue };
-                            let Some(to_rect) = node_rects.get(&signal.to) else { continue };
+                            let Some(from_rect) = node_rects.get(&signal.from) else {
+                                continue;
+                            };
+                            let Some(to_rect) = node_rects.get(&signal.to) else {
+                                continue;
+                            };
                             let from_pt = edge_point(from_rect, to_rect.center());
                             let to_pt = edge_point(to_rect, from_rect.center());
                             let from_working = active_agent_ids.contains(signal.from.as_str());
@@ -5545,17 +6242,24 @@ You have access to these tools: {}.{}",
                             } else if both_done {
                                 crate::ui::theme::text_secondary_color()
                             } else {
-                                egui::Color32::from_rgb(220, 212, 198)
+                                crate::ui::theme::border_color() // cool hairline grey (was warm 220,212,198)
                             };
                             let thickness = if is_active { 2.0 * zoom } else { 1.2 * zoom };
-                            painter.line_segment([from_pt, to_pt], egui::Stroke::new(thickness, color));
+                            painter.line_segment(
+                                [from_pt, to_pt],
+                                egui::Stroke::new(thickness, color),
+                            );
 
                             let dir = (to_pt - from_pt).normalized();
                             let perp = egui::vec2(-dir.y, dir.x);
                             let arrow_len = 8.0 * zoom;
                             let tip = to_pt;
                             painter.add(egui::Shape::convex_polygon(
-                                vec![tip, tip - dir * arrow_len + perp * 4.0 * zoom, tip - dir * arrow_len - perp * 4.0 * zoom],
+                                vec![
+                                    tip,
+                                    tip - dir * arrow_len + perp * 4.0 * zoom,
+                                    tip - dir * arrow_len - perp * 4.0 * zoom,
+                                ],
                                 color,
                                 egui::Stroke::NONE,
                             ));
@@ -5564,26 +6268,31 @@ You have access to these tools: {}.{}",
 
                     // ── Draw agent nodes ──
                     for agent in &self.graphic_agents {
-                        let Some(&pos) = positions.get(&agent.id) else { continue };
+                        let Some(&pos) = positions.get(&agent.id) else {
+                            continue;
+                        };
                         let center = egui::pos2(pos.x + node_w / 2.0, pos.y + node_h / 2.0);
-                        let node_rect = egui::Rect::from_center_size(center, egui::vec2(node_w, node_h));
-                        if !canvas_rect.intersects(node_rect) { continue; }
+                        let node_rect =
+                            egui::Rect::from_center_size(center, egui::vec2(node_w, node_h));
+                        if !canvas_rect.intersects(node_rect) {
+                            continue;
+                        }
 
                         let base_color = match agent.role.as_str() {
-                            "human"        => crate::ui::theme::text_secondary_color(),
+                            "human" => crate::ui::theme::text_secondary_color(),
                             "orchestrator" => crate::ui::theme::accent_color(),
-                            "worker"       => egui::Color32::from_rgb(34, 197, 94),
-                            "checker"      => egui::Color32::from_rgb(245, 158, 11),
-                            "reporter"     => egui::Color32::from_rgb(168, 85, 247),
-                            "researcher"   => egui::Color32::from_rgb(6, 182, 212),
-                            "peer"         => egui::Color32::from_rgb(236, 72, 153),
+                            "worker" => egui::Color32::from_rgb(34, 197, 94),
+                            "checker" => egui::Color32::from_rgb(245, 158, 11),
+                            "reporter" => egui::Color32::from_rgb(168, 85, 247),
+                            "researcher" => egui::Color32::from_rgb(6, 182, 212),
+                            "peer" => egui::Color32::from_rgb(236, 72, 153),
                             _ => egui::Color32::from_rgb(100, 100, 100),
                         };
 
                         let fill_color = match agent.status.as_str() {
                             "working" => base_color.gamma_multiply(1.3),
-                            "idle"    => base_color.gamma_multiply(0.7),
-                            _         => base_color,
+                            "idle" => base_color.gamma_multiply(0.7),
+                            _ => base_color,
                         };
 
                         painter.rect_filled(
@@ -5596,8 +6305,12 @@ You have access to these tools: {}.{}",
                         if agent.status == "working" {
                             let pulse = (0.4 + 0.3 * (time * 3.0).sin() as f32).max(0.0);
                             painter.rect_stroke(
-                                node_rect.expand(2.0 * zoom), 12.0 * zoom,
-                                egui::Stroke::new(2.0 * zoom, egui::Color32::WHITE.gamma_multiply(pulse)),
+                                node_rect.expand(2.0 * zoom),
+                                12.0 * zoom,
+                                egui::Stroke::new(
+                                    2.0 * zoom,
+                                    egui::Color32::WHITE.gamma_multiply(pulse),
+                                ),
                                 egui::epaint::StrokeKind::Outside,
                             );
                         }
@@ -5641,7 +6354,10 @@ You have access to these tools: {}.{}",
 
                         if agent.status == "done" {
                             painter.text(
-                                egui::pos2(node_rect.right() - 8.0 * zoom, node_rect.top() + 4.0 * zoom),
+                                egui::pos2(
+                                    node_rect.right() - 8.0 * zoom,
+                                    node_rect.top() + 4.0 * zoom,
+                                ),
                                 egui::Align2::RIGHT_TOP,
                                 "\u{2713}",
                                 egui::FontId::proportional(12.0 * zoom),
@@ -5651,12 +6367,18 @@ You have access to these tools: {}.{}",
 
                         if !agent.last_tool.is_empty() && agent.status == "working" {
                             let tool_display = if agent.last_tool.len() > 16 {
-                                format!("{}..", &agent.last_tool[..floor_char_boundary(&agent.last_tool, 14)])
+                                format!(
+                                    "{}..",
+                                    &agent.last_tool[..floor_char_boundary(&agent.last_tool, 14)]
+                                )
                             } else {
                                 agent.last_tool.clone()
                             };
                             painter.text(
-                                egui::pos2(node_rect.right() - 6.0 * zoom, node_rect.bottom() - 6.0 * zoom),
+                                egui::pos2(
+                                    node_rect.right() - 6.0 * zoom,
+                                    node_rect.bottom() - 6.0 * zoom,
+                                ),
                                 egui::Align2::RIGHT_BOTTOM,
                                 &tool_display,
                                 egui::FontId::proportional(7.5 * zoom),
@@ -5665,7 +6387,6 @@ You have access to these tools: {}.{}",
                         }
                     }
                 });
-
         });
 
         // ── RIGHT: Agent Activity panel (same theme as main chat) ──
@@ -5695,14 +6416,25 @@ You have access to these tools: {}.{}",
                             ui.set_min_width(activity_w - 30.0);
 
                             for (i, agent) in self.graphic_agents.iter().enumerate() {
-                                if i > 0 { ui.add_space(5.0); }
+                                if i > 0 {
+                                    ui.add_space(5.0);
+                                }
 
                                 let tool_summary = tool_counts.get(&agent.id).map(|tools| {
                                     let total: usize = tools.values().sum();
-                                    let mut sorted_tools: Vec<(&String, &usize)> = tools.iter().collect();
+                                    let mut sorted_tools: Vec<(&String, &usize)> =
+                                        tools.iter().collect();
                                     sorted_tools.sort_by(|a, b| b.1.cmp(a.1));
-                                    let top: Vec<String> = sorted_tools.iter().take(3)
-                                        .map(|(t, c)| if **c > 1 { format!("{}\u{00D7}{}", t, c) } else { (*t).clone() })
+                                    let top: Vec<String> = sorted_tools
+                                        .iter()
+                                        .take(3)
+                                        .map(|(t, c)| {
+                                            if **c > 1 {
+                                                format!("{}\u{00D7}{}", t, c)
+                                            } else {
+                                                (*t).clone()
+                                            }
+                                        })
                                         .collect();
                                     (total, top.join(", "))
                                 });
@@ -5710,7 +6442,9 @@ You have access to these tools: {}.{}",
                                 let conns = connections.get(&agent.id);
 
                                 // Current action line — what the agent is doing RIGHT NOW
-                                let current_action = if agent.status == "working" && !agent.last_tool.is_empty() {
+                                let current_action = if agent.status == "working"
+                                    && !agent.last_tool.is_empty()
+                                {
                                     match agent.last_tool.as_str() {
                                         "send_task" => {
                                             if let Some(c) = conns {
@@ -5723,7 +6457,9 @@ You have access to these tools: {}.{}",
                                         "check_agents" => "Checking agent status...".to_string(),
                                         "run_python" => "Running Python code...".to_string(),
                                         "web_search" => "Searching the web...".to_string(),
-                                        "search_papers" => "Searching papers on OpenAlex...".to_string(),
+                                        "search_papers" => {
+                                            "Searching papers on OpenAlex...".to_string()
+                                        }
                                         "fetch_url" => "Fetching URL...".to_string(),
                                         "read_file" => "Reading file...".to_string(),
                                         "write_file" => "Writing file...".to_string(),
@@ -5746,7 +6482,10 @@ You have access to these tools: {}.{}",
                                     }
                                     "done" => {
                                         if let Some((total, ref top_tools)) = tool_summary {
-                                            format!("Completed \u{2014} {} tools ({})", total, top_tools)
+                                            format!(
+                                                "Completed \u{2014} {} tools ({})",
+                                                total, top_tools
+                                            )
                                         } else {
                                             "Completed".to_string()
                                         }
@@ -5758,13 +6497,13 @@ You have access to these tools: {}.{}",
                                 let dot_color = match agent.status.as_str() {
                                     "working" => egui::Color32::from_rgb(34, 197, 94),
                                     "done" => crate::ui::theme::text_secondary_color(),
-                                    _ => egui::Color32::from_rgb(210, 202, 188),
+                                    _ => crate::ui::theme::text_secondary_color().gamma_multiply(0.6),
                                 };
 
                                 // Agent card
                                 egui::Frame::new()
                                     .fill(if agent.status == "working" {
-                                        egui::Color32::from_rgb(225, 241, 239) // #E1F1EF teal-soft tint for active
+                                        crate::ui::theme::accent_color().gamma_multiply(0.14) // teal tint for active
                                     } else {
                                         crate::ui::theme::border_color()
                                     })
@@ -5774,27 +6513,47 @@ You have access to these tools: {}.{}",
                                         // Name row: dot + icon + name
                                         ui.horizontal_wrapped(|ui| {
                                             let (dot_rect, _) = ui.allocate_exact_size(
-                                                egui::vec2(8.0, 8.0), egui::Sense::hover());
-                                            ui.painter().circle_filled(dot_rect.center(), 3.5, dot_color);
+                                                egui::vec2(8.0, 8.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            ui.painter().circle_filled(
+                                                dot_rect.center(),
+                                                3.5,
+                                                dot_color,
+                                            );
 
                                             let role_icon = match agent.role.as_str() {
                                                 "orchestrator" => "\u{2605} ",
-                                                "researcher"   => "\u{1F50D} ",
-                                                "reporter"     => "\u{1F4DD} ",
-                                                "worker"       => "\u{2699} ",
+                                                "researcher" => "\u{1F50D} ",
+                                                "reporter" => "\u{1F4DD} ",
+                                                "worker" => "\u{2699} ",
                                                 _ => "",
                                             };
-                                            ui.label(egui::RichText::new(format!("{}{}", role_icon, agent.name))
-                                                .size(11.0).strong().color(crate::ui::theme::text_primary_color()));
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{}{}",
+                                                    role_icon, agent.name
+                                                ))
+                                                .size(11.0)
+                                                .strong()
+                                                .color(crate::ui::theme::text_primary_color()),
+                                            );
                                         });
                                         // Current action — prominent, only when working
                                         if !current_action.is_empty() {
-                                            ui.label(egui::RichText::new(&current_action)
-                                                .size(10.5).color(egui::Color32::from_rgb(34, 120, 80)).italics());
+                                            ui.label(
+                                                egui::RichText::new(&current_action)
+                                                    .size(10.5)
+                                                    .color(crate::ui::theme::accent_color())
+                                                    .italics(),
+                                            );
                                         }
                                         // Summary — tool counts
-                                        ui.label(egui::RichText::new(&summary)
-                                            .size(10.0).color(egui::Color32::from_rgb(100, 110, 125)));
+                                        ui.label(
+                                            egui::RichText::new(&summary)
+                                                .size(10.0)
+                                                .color(egui::Color32::from_rgb(100, 110, 125)),
+                                        );
                                     });
                             }
                         });
@@ -5907,7 +6666,7 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
             ui.add_space(4.0);
             egui::Frame::new()
                 .fill(super::theme::canvas_color())
-                .corner_radius(6.0)
+                .corner_radius(super::theme::RADIUS_SMALL)
                 .stroke(egui::Stroke::new(1.0, super::theme::border_color()))
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
@@ -6012,25 +6771,43 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
         // Headings
         if trimmed.starts_with("### ") {
             ui.add_space(2.0);
-            ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(&trimmed[4..])).strong().size(base + 1.0).color(default_color),
-            ).wrap());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(clean_inline_md(&trimmed[4..]))
+                        .strong()
+                        .size(base + 1.0)
+                        .color(default_color),
+                )
+                .wrap(),
+            );
             ui.add_space(2.0);
             continue;
         }
         if trimmed.starts_with("## ") {
             ui.add_space(4.0);
-            ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(&trimmed[3..])).strong().size(base + 2.0).color(default_color),
-            ).wrap());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(clean_inline_md(&trimmed[3..]))
+                        .strong()
+                        .size(base + 2.0)
+                        .color(default_color),
+                )
+                .wrap(),
+            );
             ui.add_space(2.0);
             continue;
         }
         if trimmed.starts_with("# ") {
             ui.add_space(4.0);
-            ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(&trimmed[2..])).strong().size(base + 4.0).color(default_color),
-            ).wrap());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(clean_inline_md(&trimmed[2..]))
+                        .strong()
+                        .size(base + 4.0)
+                        .color(default_color),
+                )
+                .wrap(),
+            );
             ui.add_space(2.0);
             continue;
         }
@@ -6043,24 +6820,30 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
                 .stroke(egui::Stroke::new(2.0, crate::ui::theme::accent_color()))
                 .corner_radius(4.0)
                 .show(ui, |ui| {
-                    ui.add(egui::Label::new(
-                        egui::RichText::new(clean_inline_md(&trimmed[2..]))
-                            .size(base)
-                            .italics()
-                            .color(crate::ui::theme::text_secondary_color()),
-                    ).wrap());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(clean_inline_md(&trimmed[2..]))
+                                .size(base)
+                                .italics()
+                                .color(crate::ui::theme::text_secondary_color()),
+                        )
+                        .wrap(),
+                    );
                 });
             continue;
         }
 
         // Bullet list
         if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-            ui.add(egui::Label::new(
-                egui::RichText::new(format!("  \u{2022} {}", clean_inline_md(&trimmed[2..])))
-                    .size(base)
-                    .line_height(lh)
-                    .color(default_color),
-            ).wrap());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(format!("  \u{2022} {}", clean_inline_md(&trimmed[2..])))
+                        .size(base)
+                        .line_height(lh)
+                        .color(default_color),
+                )
+                .wrap(),
+            );
             continue;
         }
 
@@ -6068,12 +6851,15 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
         if let Some(dot_pos) = trimmed.find(". ") {
             let num_part = &trimmed[..dot_pos];
             if !num_part.is_empty() && num_part.chars().all(|c| c.is_ascii_digit()) {
-                ui.add(egui::Label::new(
-                    egui::RichText::new(format!("  {}", clean_inline_md(trimmed)))
-                        .size(base)
-                        .line_height(lh)
-                        .color(default_color),
-                ).wrap());
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!("  {}", clean_inline_md(trimmed)))
+                            .size(base)
+                            .line_height(lh)
+                            .color(default_color),
+                    )
+                    .wrap(),
+                );
                 continue;
             }
         }
@@ -6088,25 +6874,35 @@ fn render_markdown_content(ui: &mut egui::Ui, content: &str, default_color: egui
                     if *is_math {
                         super::math_render::render_math_equation(ui, content, false, default_color);
                     } else if !content.is_empty() {
-                        ui.add(egui::Label::new(
-                            egui::RichText::new(clean_inline_md(content)).size(base).line_height(lh).color(default_color),
-                        ).wrap());
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(clean_inline_md(content))
+                                    .size(base)
+                                    .line_height(lh)
+                                    .color(default_color),
+                            )
+                            .wrap(),
+                        );
                     }
                 }
             });
         } else {
-            ui.add(egui::Label::new(
-                egui::RichText::new(clean_inline_md(trimmed)).size(base).line_height(lh).color(default_color),
-            ).wrap());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(clean_inline_md(trimmed))
+                        .size(base)
+                        .line_height(lh)
+                        .color(default_color),
+                )
+                .wrap(),
+            );
         }
     }
 }
 
 /// Clean inline markdown markers (**bold**, *italic*, `code`, etc.) for plain display
 fn clean_inline_md(text: &str) -> String {
-    text.replace("**", "")
-        .replace("__", "")
-        .replace("~~", "")
+    text.replace("**", "").replace("__", "").replace("~~", "")
 }
 
 /// Parse a markdown table line into cells
@@ -6121,12 +6917,10 @@ fn parse_table_row(line: &str) -> Vec<String> {
 /// Check if a table line is a separator (|---|---|)
 fn is_table_separator(line: &str) -> bool {
     let trimmed = line.trim().trim_start_matches('|').trim_end_matches('|');
-    trimmed
-        .split('|')
-        .all(|cell| {
-            let c = cell.trim();
-            !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':' || ch == ' ')
-        })
+    trimmed.split('|').all(|cell| {
+        let c = cell.trim();
+        !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':' || ch == ' ')
+    })
 }
 
 /// Render a markdown table as a formatted grid
@@ -6165,14 +6959,14 @@ fn render_markdown_table(ui: &mut egui::Ui, lines: &[&str], default_color: egui:
     ui.add_space(4.0);
 
     let header_bg = crate::ui::theme::accent_color().gamma_multiply(0.12);
-    let even_bg = egui::Color32::WHITE;
+    let even_bg = crate::ui::theme::card_color();
     let odd_bg = crate::ui::theme::surface_color();
     let border_color = crate::ui::theme::border_color();
     let header_text_color = crate::ui::theme::accent_color();
 
     egui::Frame::new()
         .fill(even_bg)
-        .corner_radius(6.0)
+        .corner_radius(crate::ui::theme::RADIUS_SMALL)
         .stroke(egui::Stroke::new(1.0, border_color))
         .inner_margin(egui::Margin::same(1))
         .show(ui, |ui| {

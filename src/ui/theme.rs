@@ -52,21 +52,19 @@ fn load_color(slot: &AtomicU32, fallback: Color32) -> Color32 {
 }
 
 /// Fill color for the user's chat bubble (theme accent).
-// Fallback tracks `ThemeColors::default().accent` (#35D6C4). It was left on the
-// pre-theme accent (#1FB9A8, now only `accent_hover`), so any frame rendered
-// before `Theme::apply` ran showed the old teal.
+// Fallback matches `ThemeColors::default().accent`.
 pub fn chat_user_bubble() -> Color32 {
     load_color(&CHAT_USER_BUBBLE, Color32::from_rgb(53, 214, 196))
 }
 
 /// Fill color for the AI's chat bubble (theme card color).
 pub fn chat_ai_bubble() -> Color32 {
-    load_color(&CHAT_AI_BUBBLE, Color32::from_rgb(26, 31, 41))
+    load_color(&CHAT_AI_BUBBLE, Color32::from_rgb(23, 29, 39))
 }
 
 /// Text color for the AI's chat bubble (theme primary text).
 pub fn chat_ai_text() -> Color32 {
-    load_color(&CHAT_AI_TEXT, Color32::from_rgb(236, 239, 244))
+    load_color(&CHAT_AI_TEXT, Color32::from_rgb(237, 241, 247))
 }
 
 /// Readable text color for the user's chat bubble (auto-contrasted to the
@@ -87,21 +85,130 @@ static T_TEXT_SECONDARY: AtomicU32 = AtomicU32::new(0);
 static T_ACCENT: AtomicU32 = AtomicU32::new(0);
 
 /// Surface color (main window / panel background).
-pub fn surface_color() -> Color32 { load_color(&T_SURFACE, Color32::from_rgb(17, 21, 28)) }
+pub fn surface_color() -> Color32 {
+    load_color(&T_SURFACE, Color32::from_rgb(16, 20, 27))
+}
 /// Canvas color (inputs / recessed areas).
-pub fn canvas_color() -> Color32 { load_color(&T_CANVAS, Color32::from_rgb(11, 13, 18)) }
+pub fn canvas_color() -> Color32 {
+    load_color(&T_CANVAS, Color32::from_rgb(8, 10, 15))
+}
 /// Card color (cards / input bar).
-pub fn card_color() -> Color32 { load_color(&T_CARD, Color32::from_rgb(26, 31, 41)) }
+pub fn card_color() -> Color32 {
+    load_color(&T_CARD, Color32::from_rgb(23, 29, 39))
+}
 /// Hover / rail color (sidebar background).
-pub fn hover_color() -> Color32 { load_color(&T_HOVER, Color32::from_rgb(33, 39, 50)) }
+pub fn hover_color() -> Color32 {
+    load_color(&T_HOVER, Color32::from_rgb(31, 38, 50))
+}
 /// Border / hairline color.
-pub fn border_color() -> Color32 { load_color(&T_BORDER, Color32::from_rgb(46, 53, 65)) }
+pub fn border_color() -> Color32 {
+    load_color(&T_BORDER, Color32::from_rgb(42, 50, 64))
+}
 /// Primary text color.
-pub fn text_primary_color() -> Color32 { load_color(&T_TEXT_PRIMARY, Color32::from_rgb(236, 239, 244)) }
+pub fn text_primary_color() -> Color32 {
+    load_color(&T_TEXT_PRIMARY, Color32::from_rgb(237, 241, 247))
+}
 /// Secondary / muted text color.
-pub fn text_secondary_color() -> Color32 { load_color(&T_TEXT_SECONDARY, Color32::from_rgb(166, 174, 188)) }
+pub fn text_secondary_color() -> Color32 {
+    load_color(&T_TEXT_SECONDARY, Color32::from_rgb(154, 165, 181))
+}
 /// Accent color.
-pub fn accent_color() -> Color32 { load_color(&T_ACCENT, Color32::from_rgb(53, 214, 196)) }
+pub fn accent_color() -> Color32 {
+    load_color(&T_ACCENT, Color32::from_rgb(53, 214, 196))
+}
+
+// ---------------------------------------------------------------------------
+// Liquid-glass design tokens
+//
+// egui has no backdrop blur, so glass is simulated: translucent fills layered
+// over the ambient background, a 1px top edge highlight (fake specular
+// refraction), a cool-tinted soft shadow for elevation, and generous radii.
+// ---------------------------------------------------------------------------
+
+/// Corner radius for outer containers / panels.
+pub const RADIUS_PANEL: u8 = 16;
+/// Corner radius for cards and the chat input bar.
+pub const RADIUS_CARD: u8 = 14;
+/// Corner radius for buttons.
+pub const RADIUS_BUTTON: u8 = 11;
+/// Corner radius for small chips / inline elements.
+pub const RADIUS_SMALL: u8 = 8;
+
+/// Translucent version of `base` for glass layering. Bases that already carry
+/// transparency (e.g. the "Transparent" preset) are returned unchanged.
+pub fn glass_fill(base: Color32, alpha: u8) -> Color32 {
+    if base.a() < 255 {
+        base
+    } else {
+        Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha)
+    }
+}
+
+/// 1px top-edge highlight stroke — a faint white line that fakes the specular
+/// reflection on the upper rim of a glass panel.
+pub fn specular_stroke() -> egui::Stroke {
+    egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 20))
+}
+
+/// Soft elevation shadow with a cool navy tint (never pure black).
+pub fn glass_shadow() -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: [0, 6],
+        blur: 18,
+        spread: 0,
+        color: Color32::from_rgba_unmultiplied(3, 6, 14, 110),
+    }
+}
+
+/// Hairline border stroke from the active theme.
+pub fn hairline_stroke() -> egui::Stroke {
+    egui::Stroke::new(1.0, border_color())
+}
+
+/// Paint the full-window ambient background: a dark vertical base gradient
+/// (surface at the top deepening to canvas at the bottom) plus a faint
+/// teal-tinted radial glow near the top-left corner. Two cheap meshes per
+/// frame; everything else paints on top. Colors come from the active theme so
+/// translucent presets keep their alpha.
+pub fn paint_ambient(painter: &egui::Painter, rect: egui::Rect) {
+    use egui::epaint::{Vertex, WHITE_UV};
+
+    // Vertical base gradient: surface -> canvas.
+    let top = surface_color();
+    let bottom = canvas_color();
+    let mut mesh = egui::Mesh::default();
+    mesh.vertices.push(Vertex { pos: rect.left_top(), uv: WHITE_UV, color: top });
+    mesh.vertices.push(Vertex { pos: rect.right_top(), uv: WHITE_UV, color: top });
+    mesh.vertices.push(Vertex { pos: rect.right_bottom(), uv: WHITE_UV, color: bottom });
+    mesh.vertices.push(Vertex { pos: rect.left_bottom(), uv: WHITE_UV, color: bottom });
+    mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+    painter.add(egui::Shape::mesh(mesh));
+
+    // Teal radial glow near the top-left corner (triangle fan, alpha fades to 0).
+    let accent = accent_color();
+    let center = rect.left_top() + egui::vec2(rect.width() * 0.16, rect.height() * 0.08);
+    let radius = rect.width().max(rect.height()) * 0.55;
+    let segments = 24;
+    let mut glow = egui::Mesh::default();
+    glow.vertices.push(Vertex {
+        pos: center,
+        uv: WHITE_UV,
+        color: Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 14),
+      });
+    for i in 0..=segments {
+        let angle = i as f32 / segments as f32 * std::f32::consts::TAU;
+        glow.vertices.push(Vertex {
+            pos: center + egui::vec2(angle.cos() * radius, angle.sin() * radius),
+            uv: WHITE_UV,
+            color: Color32::TRANSPARENT,
+        });
+    }
+    for i in 0..segments {
+        glow.indices
+            .extend_from_slice(&[0, 1 + i as u32, 2 + i as u32]);
+    }
+    painter.add(egui::Shape::mesh(glow));
+}
 
 // How AI output files (graphs/pictures) are presented: false = side output
 // panel (default), true = embedded inline in chat with click-to-zoom.
@@ -186,17 +293,17 @@ pub struct ThemeFonts {
 
 impl Default for ThemeColors {
     fn default() -> Self {
-        // AndrewOS dark glass. Surfaces step up in luminance the closer they
-        // sit to the user (canvas → surface → card), which is what reads as
-        // depth once the accent is the only saturated thing on screen.
+        // AndrewOS dark liquid-glass palette: a cool navy-charcoal ramp that
+        // steps luminance smoothly canvas -> surface -> card -> hover, with a
+        // brand teal accent.
         Self {
-            surface: "#11151C".to_string(),
-            canvas: "#0B0D12".to_string(),
-            card: "#1A1F29".to_string(),
-            hover: "#212732".to_string(),
-            border: "#2E3541".to_string(),
-            text_primary: "#ECEFF4".to_string(),
-            text_secondary: "#A6AEBC".to_string(),
+            surface: "#10141B".to_string(),
+            canvas: "#080A0F".to_string(),
+            card: "#171D27".to_string(),
+            hover: "#1F2632".to_string(),
+            border: "#2A3240".to_string(),
+            text_primary: "#EDF1F7".to_string(),
+            text_secondary: "#9AA5B5".to_string(),
             accent: "#35D6C4".to_string(),
             accent_hover: "#1FB9A8".to_string(),
             user_bubble: String::new(),
@@ -211,9 +318,9 @@ impl Default for ThemeFonts {
             small: 12.9,
             body: 15.2,
             button: 13.7,
-            heading: 21.2,
+            heading: 22.6,
             monospace: 14.7,
-            chat: DEFAULT_CHAT_FONT_SIZE, // 15.0
+            chat: DEFAULT_CHAT_FONT_SIZE, // 14.5
         }
     }
 }
@@ -332,16 +439,30 @@ pub fn preset_names() -> &'static [&'static str] {
 
 #[allow(clippy::too_many_arguments)]
 fn mk_colors(
-    surface: &str, canvas: &str, card: &str, hover: &str, border: &str,
-    text_primary: &str, text_secondary: &str, accent: &str, accent_hover: &str,
-    user_bubble: &str, ai_bubble: &str,
+    surface: &str,
+    canvas: &str,
+    card: &str,
+    hover: &str,
+    border: &str,
+    text_primary: &str,
+    text_secondary: &str,
+    accent: &str,
+    accent_hover: &str,
+    user_bubble: &str,
+    ai_bubble: &str,
 ) -> ThemeColors {
     ThemeColors {
-        surface: surface.into(), canvas: canvas.into(), card: card.into(),
-        hover: hover.into(), border: border.into(),
-        text_primary: text_primary.into(), text_secondary: text_secondary.into(),
-        accent: accent.into(), accent_hover: accent_hover.into(),
-        user_bubble: user_bubble.into(), ai_bubble: ai_bubble.into(),
+        surface: surface.into(),
+        canvas: canvas.into(),
+        card: card.into(),
+        hover: hover.into(),
+        border: border.into(),
+        text_primary: text_primary.into(),
+        text_secondary: text_secondary.into(),
+        accent: accent.into(),
+        accent_hover: accent_hover.into(),
+        user_bubble: user_bubble.into(),
+        ai_bubble: ai_bubble.into(),
     }
 }
 
@@ -350,28 +471,37 @@ pub fn preset_colors(name: &str) -> Option<ThemeColors> {
     Some(match name {
         // Warm neutral surfaces with a teal accent (the original look).
         "Default" => mk_colors(
-            "#FBF7F1", "#F4EEE5", "#FFFFFF", "#EFE7DA", "#E6DCCC",
-            "#34302A", "#7C7368", "#129A91", "#0C817A", "", "",
+            "#FBF7F1", "#F4EEE5", "#FFFFFF", "#EFE7DA", "#E6DCCC", "#34302A", "#7C7368", "#129A91",
+            "#0C817A", "", "",
         ),
         // Dark mode.
         "Dark" => mk_colors(
-            "#1B1B1F", "#141417", "#26262C", "#30303A", "#3A3A44",
-            "#ECE9E4", "#9A938A", "#4FD1C5", "#38B2AC", "", "#26262C",
+            "#1B1B1F", "#141417", "#26262C", "#30303A", "#3A3A44", "#ECE9E4", "#9A938A", "#4FD1C5",
+            "#38B2AC", "", "#26262C",
         ),
         // Clean, ChatGPT-style light: white surface, soft gray bubbles, green accent.
         "Minimal" => mk_colors(
-            "#FFFFFF", "#F7F7F8", "#F7F7F8", "#ECECEC", "#E5E5E5",
-            "#202123", "#6E7681", "#10A37F", "#0E8C6D", "#ECECEC", "#F7F7F8",
+            "#FFFFFF", "#F7F7F8", "#F7F7F8", "#ECECEC", "#E5E5E5", "#202123", "#6E7681", "#10A37F",
+            "#0E8C6D", "#ECECEC", "#F7F7F8",
         ),
         // Translucent surfaces (needs window transparency, enabled in main.rs).
         "Transparent" => mk_colors(
-            "#F4EEE5C0", "#EAE3D6B0", "#FFFFFFCC", "#EFE7DAC0", "#E6DCCCB0",
-            "#34302A", "#7C7368", "#129A91", "#0C817A", "#129A91E0", "#FFFFFFCC",
+            "#F4EEE5C0",
+            "#EAE3D6B0",
+            "#FFFFFFCC",
+            "#EFE7DAC0",
+            "#E6DCCCB0",
+            "#34302A",
+            "#7C7368",
+            "#129A91",
+            "#0C817A",
+            "#129A91E0",
+            "#FFFFFFCC",
         ),
         // Vibrant violet palette.
         "Colorful" => mk_colors(
-            "#F5F3FF", "#EDE9FE", "#FFFFFF", "#E0E7FF", "#DDD6FE",
-            "#2E1065", "#6D28D9", "#8B5CF6", "#7C3AED", "#8B5CF6", "#FFFFFF",
+            "#F5F3FF", "#EDE9FE", "#FFFFFF", "#E0E7FF", "#DDD6FE", "#2E1065", "#6D28D9", "#8B5CF6",
+            "#7C3AED", "#8B5CF6", "#FFFFFF",
         ),
         _ => return None,
     })
@@ -382,7 +512,10 @@ impl Theme {
     /// Returns `false` if the preset name is unknown.
     pub fn apply_preset(&mut self, name: &str) -> bool {
         match preset_colors(name) {
-            Some(c) => { self.colors = c; true }
+            Some(c) => {
+                self.colors = c;
+                true
+            }
             None => false,
         }
     }
@@ -408,15 +541,38 @@ impl Theme {
     }
 
     // --- color accessors (hex string -> Color32, with safe fallbacks) ---
-    fn surface(&self) -> Color32 { hex_to_color(&self.colors.surface, Color32::from_rgb(251, 247, 241)) }
-    fn canvas(&self) -> Color32 { hex_to_color(&self.colors.canvas, Color32::from_rgb(244, 238, 229)) }
-    fn card(&self) -> Color32 { hex_to_color(&self.colors.card, Color32::WHITE) }
-    fn hover(&self) -> Color32 { hex_to_color(&self.colors.hover, Color32::from_rgb(239, 231, 218)) }
-    fn border(&self) -> Color32 { hex_to_color(&self.colors.border, Color32::from_rgb(230, 220, 204)) }
-    fn text_primary(&self) -> Color32 { hex_to_color(&self.colors.text_primary, Color32::from_rgb(52, 48, 42)) }
-    fn text_secondary(&self) -> Color32 { hex_to_color(&self.colors.text_secondary, Color32::from_rgb(124, 115, 104)) }
-    fn accent(&self) -> Color32 { hex_to_color(&self.colors.accent, Color32::from_rgb(18, 154, 145)) }
-    fn accent_hover(&self) -> Color32 { hex_to_color(&self.colors.accent_hover, Color32::from_rgb(12, 129, 122)) }
+    // Fallbacks mirror the dark liquid-glass defaults so a malformed YAML value
+    // degrades to the intended palette instead of punching light holes.
+    fn surface(&self) -> Color32 {
+        hex_to_color(&self.colors.surface, Color32::from_rgb(16, 20, 27))
+    }
+    fn canvas(&self) -> Color32 {
+        hex_to_color(&self.colors.canvas, Color32::from_rgb(8, 10, 15))
+    }
+    fn card(&self) -> Color32 {
+        hex_to_color(&self.colors.card, Color32::from_rgb(23, 29, 39))
+    }
+    fn hover(&self) -> Color32 {
+        hex_to_color(&self.colors.hover, Color32::from_rgb(31, 38, 50))
+    }
+    fn border(&self) -> Color32 {
+        hex_to_color(&self.colors.border, Color32::from_rgb(42, 50, 64))
+    }
+    fn text_primary(&self) -> Color32 {
+        hex_to_color(&self.colors.text_primary, Color32::from_rgb(237, 241, 247))
+    }
+    fn text_secondary(&self) -> Color32 {
+        hex_to_color(
+            &self.colors.text_secondary,
+            Color32::from_rgb(154, 165, 181),
+        )
+    }
+    fn accent(&self) -> Color32 {
+        hex_to_color(&self.colors.accent, Color32::from_rgb(53, 214, 196))
+    }
+    fn accent_hover(&self) -> Color32 {
+        hex_to_color(&self.colors.accent_hover, Color32::from_rgb(31, 185, 168))
+    }
     /// User bubble fill: explicit `user_bubble`, else the accent color.
     fn user_bubble(&self) -> Color32 {
         if self.colors.user_bubble.trim().is_empty() {
@@ -473,26 +629,46 @@ impl Theme {
         let mut primary_registered = false;
         if !custom.is_empty() {
             if let Ok(data) = std::fs::read(custom) {
-                add(&mut fonts, "PrimaryFont", egui::FontData::from_owned(data),
-                    &[(prop.clone(), true)]);
+                add(
+                    &mut fonts,
+                    "PrimaryFont",
+                    egui::FontData::from_owned(data),
+                    &[(prop.clone(), true)],
+                );
                 primary_registered = true;
             }
         }
         if !primary_registered {
             let bytes = bundled_font_bytes(&self.font_family).unwrap_or(FONT_JAKARTA);
-            add(&mut fonts, "PrimaryFont", egui::FontData::from_static(bytes),
-                &[(prop.clone(), true)]);
+            add(
+                &mut fonts,
+                "PrimaryFont",
+                egui::FontData::from_static(bytes),
+                &[(prop.clone(), true)],
+            );
         }
 
         // 2. Plus Jakarta Sans as a Latin fallback + bold coverage (appended).
-        add(&mut fonts, "JakartaSans", egui::FontData::from_static(FONT_JAKARTA),
-            &[(prop.clone(), false)]);
-        add(&mut fonts, "JakartaSansBold", egui::FontData::from_static(FONT_JAKARTA_BOLD),
-            &[(prop.clone(), false)]);
+        add(
+            &mut fonts,
+            "JakartaSans",
+            egui::FontData::from_static(FONT_JAKARTA),
+            &[(prop.clone(), false)],
+        );
+        add(
+            &mut fonts,
+            "JakartaSansBold",
+            egui::FontData::from_static(FONT_JAKARTA_BOLD),
+            &[(prop.clone(), false)],
+        );
 
         // 3. Monospace primary: bundled JetBrains Mono.
-        add(&mut fonts, "JetBrainsMono", egui::FontData::from_static(FONT_JETBRAINS_MONO),
-            &[(mono.clone(), true)]);
+        add(
+            &mut fonts,
+            "JetBrainsMono",
+            egui::FontData::from_static(FONT_JETBRAINS_MONO),
+            &[(mono.clone(), true)],
+        );
 
         // 4a. Thai fallback — appended to both families.
         // Prefer an OS-installed Thai face (nicer native look on macOS), then
@@ -509,18 +685,30 @@ impl Theme {
         ];
         for path in &thai_paths {
             if let Ok(data) = std::fs::read(path) {
-                add(&mut fonts, "ThaiFallback", egui::FontData::from_owned(data),
-                    &[(prop.clone(), false), (mono.clone(), false)]);
+                add(
+                    &mut fonts,
+                    "ThaiFallback",
+                    egui::FontData::from_owned(data),
+                    &[(prop.clone(), false), (mono.clone(), false)],
+                );
                 break;
             }
         }
         // Bundled Thai coverage (always present, lowest Thai priority).
-        add(&mut fonts, "NotoSansThai", egui::FontData::from_static(FONT_NOTO_THAI),
-            &[(prop.clone(), false), (mono.clone(), false)]);
+        add(
+            &mut fonts,
+            "NotoSansThai",
+            egui::FontData::from_static(FONT_NOTO_THAI),
+            &[(prop.clone(), false), (mono.clone(), false)],
+        );
 
         // 4b. Emoji fallback (bundled monochrome Noto Emoji).
-        add(&mut fonts, "NotoEmoji", egui::FontData::from_static(FONT_NOTO_EMOJI),
-            &[(prop.clone(), false), (mono.clone(), false)]);
+        add(
+            &mut fonts,
+            "NotoEmoji",
+            egui::FontData::from_static(FONT_NOTO_EMOJI),
+            &[(prop.clone(), false), (mono.clone(), false)],
+        );
 
         // 4c. Symbol fallback for sidebar icons.
         let symbol_paths = [
@@ -532,8 +720,12 @@ impl Theme {
         ];
         for path in &symbol_paths {
             if let Ok(data) = std::fs::read(path) {
-                add(&mut fonts, "SymbolFallback", egui::FontData::from_owned(data),
-                    &[(prop.clone(), false), (mono.clone(), false)]);
+                add(
+                    &mut fonts,
+                    "SymbolFallback",
+                    egui::FontData::from_owned(data),
+                    &[(prop.clone(), false), (mono.clone(), false)],
+                );
                 break;
             }
         }
@@ -546,7 +738,11 @@ impl Theme {
     /// controls colors, spacing and font *sizes*.
     pub fn apply(&self, ctx: &egui::Context) {
         // Publish the chat base font size for the chat markdown renderers.
-        let chat = if self.fonts.chat > 0.0 { self.fonts.chat } else { DEFAULT_CHAT_FONT_SIZE };
+        let chat = if self.fonts.chat > 0.0 {
+            self.fonts.chat
+        } else {
+            DEFAULT_CHAT_FONT_SIZE
+        };
         CHAT_FONT_SIZE.store(chat.to_bits(), Ordering::Relaxed);
 
         // Publish chat bubble colors so the chat renderers track the theme.
@@ -581,76 +777,78 @@ impl Theme {
         // Use a dark base when the surface is dark, so egui's built-in defaults
         // (scrollbars, code backgrounds, etc.) match the theme.
         let dark = readable_on(bg_surface) == Color32::WHITE;
-        let mut visuals = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
+        let mut visuals = if dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
 
         visuals.panel_fill = bg_surface;
-        visuals.window_fill = bg_surface;
+        visuals.window_fill = glass_fill(bg_surface, 242);
+        visuals.window_corner_radius = egui::CornerRadius::same(RADIUS_PANEL);
         visuals.extreme_bg_color = bg_light;
-        visuals.faint_bg_color = bg_light;
+        visuals.faint_bg_color = glass_fill(bg_card, 140);
 
-        // `bg_fill` alone is not enough. egui paints Button/ComboBox/menu_button
-        // backgrounds from `weak_bg_fill`, so leaving it unset left every
-        // default-styled button in the app on egui's stock grey (from_gray(60))
-        // no matter what the theme said. Set both, every state.
-        visuals.widgets.noninteractive.bg_fill = bg_card;
-        visuals.widgets.noninteractive.weak_bg_fill = bg_card;
+        // Hairline that brightens on hover (subtle, not the full accent).
+        let border_bright = border.gamma_multiply(1.4);
+
+        // egui paints Button/ComboBox/menu_button backgrounds from
+        // `weak_bg_fill`, not `bg_fill` — set both on every state.
+        // Fills are slightly translucent so the ambient background bleeds
+        // through and reads as glass.
+        visuals.widgets.noninteractive.bg_fill = glass_fill(bg_card, 235);
+        visuals.widgets.noninteractive.weak_bg_fill = glass_fill(bg_card, 235);
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_secondary);
         visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, border);
         visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(10);
 
-        visuals.widgets.inactive.bg_fill = bg_light;
-        // A button at rest reads as a raised card, not the recessed canvas.
-        visuals.widgets.inactive.weak_bg_fill = bg_card;
+        visuals.widgets.inactive.bg_fill = glass_fill(bg_light, 235);
+        // A button at rest reads as a raised glass card, not the recessed canvas.
+        visuals.widgets.inactive.weak_bg_fill = glass_fill(bg_card, 235);
         visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, text_primary);
         visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.5, border);
-        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(RADIUS_BUTTON);
 
         visuals.widgets.hovered.bg_fill = bg_hover;
         visuals.widgets.hovered.weak_bg_fill = bg_hover;
         visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, text_primary);
-        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent);
-        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, border_bright);
+        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(RADIUS_BUTTON);
 
         visuals.widgets.active.bg_fill = accent;
         visuals.widgets.active.weak_bg_fill = accent;
-        // The pressed state fills with the accent, so hard-coding white text
-        // makes the label wash out exactly while the user is pressing it — on
-        // the default teal #35D6C4 that is 1.82:1, far below any usable
-        // threshold. `readable_on` picks near-black or white against the actual
-        // fill (8.88:1 here) and keeps working if the user re-themes the accent.
+        // White text washes out on the accent fill; readable_on picks a
+        // contrasting label color and keeps working if the accent is re-themed.
         visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, readable_on(accent));
         visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent_hover);
-        visuals.widgets.active.corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.active.corner_radius = egui::CornerRadius::same(RADIUS_BUTTON);
 
         visuals.widgets.open.bg_fill = bg_hover;
         visuals.widgets.open.weak_bg_fill = bg_hover;
         visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, text_primary);
         visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, accent);
-        visuals.widgets.open.corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.open.corner_radius = egui::CornerRadius::same(RADIUS_BUTTON);
 
+        // Accent-tinted translucent selection (unmultiplied — premultiplied
+        // channels may not exceed alpha).
         visuals.selection.bg_fill =
-            egui::Color32::from_rgba_premultiplied(accent.r(), accent.g(), accent.b(), 50);
+            egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 60);
         visuals.selection.stroke = egui::Stroke::new(1.0, accent);
         visuals.hyperlink_color = accent;
 
         visuals.window_stroke = egui::Stroke::new(1.0, border);
-        visuals.window_shadow = egui::epaint::Shadow {
-            offset: [0, 2],
-            blur: 8,
-            spread: 0,
-            color: egui::Color32::from_rgba_premultiplied(0, 0, 0, 20),
-        };
+        // Cool navy-tinted elevation shadow (never pure black).
+        visuals.window_shadow = glass_shadow();
         visuals.popup_shadow = visuals.window_shadow;
         visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
-        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, border);
 
         ctx.set_visuals(visuals);
 
         // Spacing / global style
         let mut style = (*ctx.style()).clone();
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-        style.spacing.window_margin = egui::Margin::same(12);
-        style.spacing.button_padding = egui::vec2(12.0, 6.0);
+        style.spacing.window_margin = egui::Margin::same(14);
+        style.spacing.button_padding = egui::vec2(14.0, 7.0);
         style.spacing.scroll = egui::style::ScrollStyle {
             bar_width: 6.0,
             ..style.spacing.scroll
@@ -658,11 +856,26 @@ impl Theme {
 
         use egui::{FontFamily, FontId, TextStyle};
         style.text_styles = [
-            (TextStyle::Small, FontId::new(self.fonts.small, FontFamily::Proportional)),
-            (TextStyle::Body, FontId::new(self.fonts.body, FontFamily::Proportional)),
-            (TextStyle::Button, FontId::new(self.fonts.button, FontFamily::Proportional)),
-            (TextStyle::Heading, FontId::new(self.fonts.heading, FontFamily::Proportional)),
-            (TextStyle::Monospace, FontId::new(self.fonts.monospace, FontFamily::Monospace)),
+            (
+                TextStyle::Small,
+                FontId::new(self.fonts.small, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Body,
+                FontId::new(self.fonts.body, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Button,
+                FontId::new(self.fonts.button, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Heading,
+                FontId::new(self.fonts.heading, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Monospace,
+                FontId::new(self.fonts.monospace, FontFamily::Monospace),
+            ),
         ]
         .into();
 
