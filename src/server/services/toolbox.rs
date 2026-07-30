@@ -2527,8 +2527,7 @@ pub async fn exec_check_agents(session_id: &str) -> Value {
 
 /// Load agent system YAML and return parsed Value + list of agent IDs
 pub fn load_agent_yaml(filename: &str) -> Option<(Value, Vec<String>)> {
-    let dir = crate::server::data::data_dir().join("agents");
-    let fp = dir.join(filename);
+    let fp = crate::server::data::resolve_config_file(&format!("agents/{}", filename));
     let content = std::fs::read_to_string(&fp).ok()?;
     let parsed: Value = serde_yaml::from_str(&content).ok()?;
     let ids = parsed

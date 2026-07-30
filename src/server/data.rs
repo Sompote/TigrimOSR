@@ -246,7 +246,69 @@ async fn remote_get_result<T: serde::de::DeserializeOwned>(rb: &RemoteBackend, p
 // JSON file helpers
 // ---------------------------------------------------------------------------
 
+/// CLI mode pins the global data dir explicitly so the `./data`-exists
+/// heuristic below can't hijack a project folder that happens to contain
+/// a `data/` directory. Never set by the desktop/headless binary.
+static GLOBAL_DATA_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Project-local config dir (`<cwd>/.tigrimos`), set only by the `tigrim`
+/// CLI binary at startup. When set, project files overlay the global data
+/// dir: config is resolved project-first, and per-folder state files
+/// (chat history, CLI state) live here exclusively.
+static PROJECT_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_global_data_dir(p: PathBuf) {
+    let _ = std::fs::create_dir_all(&p);
+    let _ = GLOBAL_DATA_DIR_OVERRIDE.set(p);
+}
+
+pub fn set_project_dir(p: PathBuf) {
+    let _ = PROJECT_DIR.set(p);
+}
+
+pub fn project_dir() -> Option<&'static PathBuf> {
+    PROJECT_DIR.get()
+}
+
+/// Files that must be per-project when running in CLI mode, so each folder
+/// keeps its own history/session state instead of sharing the global one.
+const PROJECT_LOCAL_FILES: &[&str] = &["chat_history.json", "cli_state.json"];
+
+/// Resolve a config file (e.g. "agent_loops/foo.yaml") project-first with
+/// global fallback. If the file exists under the project dir, that path is
+/// returned; otherwise the global path (whether or not it exists, so error
+/// messages point at the canonical location).
+pub fn resolve_config_file(rel: &str) -> PathBuf {
+    if let Some(proj) = project_dir() {
+        let candidate = proj.join(rel);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    data_dir().join(rel)
+}
+
+/// Existing directories for a config subdir, project-first then global —
+/// for union listings (project entries shadow same-named global ones).
+pub fn overlay_dirs(rel: &str) -> Vec<PathBuf> {
+    let mut dirs_out = Vec::new();
+    if let Some(proj) = project_dir() {
+        let d = proj.join(rel);
+        if d.is_dir() {
+            dirs_out.push(d);
+        }
+    }
+    let g = data_dir().join(rel);
+    if g.is_dir() {
+        dirs_out.push(g);
+    }
+    dirs_out
+}
+
 pub fn data_dir() -> PathBuf {
+    if let Some(p) = GLOBAL_DATA_DIR_OVERRIDE.get() {
+        return p.clone();
+    }
     // When running as a .app bundle or from any directory, use a stable location.
     // If a local "data" folder exists (dev mode), use it. Otherwise use ~/Library/Application Support/TigrimOS/data (macOS)
     // or ~/.local/share/TigrimOS/data (Linux) or %APPDATA%/TigrimOS/data (Windows).
@@ -262,8 +324,19 @@ pub fn data_dir() -> PathBuf {
     app_dir
 }
 
+/// Where a top-level data file lives: project dir for per-folder state files
+/// in CLI mode, global data dir for everything else.
+fn resolve_data_file(file: &str) -> PathBuf {
+    if PROJECT_LOCAL_FILES.contains(&file) {
+        if let Some(proj) = project_dir() {
+            return proj.join(file);
+        }
+    }
+    data_dir().join(file)
+}
+
 pub async fn read_json<T: serde::de::DeserializeOwned + Default>(file: &str) -> T {
-    let fp = data_dir().join(file);
+    let fp = resolve_data_file(file);
     match fs::read_to_string(&fp).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => T::default(),
@@ -271,7 +344,7 @@ pub async fn read_json<T: serde::de::DeserializeOwned + Default>(file: &str) -> 
 }
 
 pub async fn write_json<T: Serialize>(file: &str, data: &T) {
-    let fp = data_dir().join(file);
+    let fp = resolve_data_file(file);
     let json = serde_json::to_string_pretty(data).expect("serialize");
     let _ = fs::write(&fp, json).await;
 }
@@ -645,7 +718,7 @@ pub async fn get_settings() -> Settings {
         }
         return remote_get_cached(&rb, "/api/settings", 15).await;
     }
-    let mut settings: Settings = read_json("settings.json").await;
+    let mut settings: Settings = load_settings_with_project_overlay().await;
     if settings.skill_auto_update_enabled.is_none() {
         settings.skill_auto_update_enabled = Some(true);
     }
@@ -702,6 +775,34 @@ pub async fn get_settings() -> Settings {
     settings
 }
 
+/// Global settings, shallow-merged with an optional project-local
+/// `.tigrimos/settings.json` (project keys win). The merge happens on raw
+/// JSON values — merging deserialized structs would let `None` fields in the
+/// project file clobber configured globals. Only top-level keys present in
+/// the project file override.
+async fn load_settings_with_project_overlay() -> Settings {
+    let global: Settings = read_json("settings.json").await;
+    let Some(proj) = project_dir() else {
+        return global;
+    };
+    let proj_path = proj.join("settings.json");
+    let Ok(content) = fs::read_to_string(&proj_path).await else {
+        return global;
+    };
+    let Ok(serde_json::Value::Object(overlay)) = serde_json::from_str::<serde_json::Value>(&content) else {
+        eprintln!("[cli] Ignoring invalid project settings: {}", proj_path.display());
+        return global;
+    };
+    let mut merged = match serde_json::to_value(&global) {
+        Ok(serde_json::Value::Object(m)) => m,
+        _ => return global,
+    };
+    for (k, v) in overlay {
+        merged.insert(k, v);
+    }
+    serde_json::from_value(serde_json::Value::Object(merged)).unwrap_or(global)
+}
+
 pub async fn save_settings(settings: &Settings) {
     if let Some(rb) = get_remote_backend() {
         remote_cache_invalidate("/api/settings");
@@ -713,6 +814,13 @@ pub async fn save_settings(settings: &Settings) {
 
 /// Synchronous sandbox dir accessor for UI code.
 pub fn get_sandbox_dir_sync() -> String {
+    // CLI mode: the agent's workspace is the folder the binary was launched
+    // in (the parent of .tigrimos), Claude Code semantics.
+    if let Some(proj) = project_dir() {
+        if let Some(cwd) = proj.parent() {
+            return cwd.to_string_lossy().to_string();
+        }
+    }
     // Read settings from the correct data_dir (works from .app bundle too)
     let settings_path = data_dir().join("settings.json");
     if let Ok(content) = std::fs::read_to_string(&settings_path) {

@@ -440,6 +440,7 @@ pub async fn start_run(chat_key: &str, text: &str) -> Result<RunEvents, String> 
         graph_profile: None,
         config_file: None,
         project_id: None,
+        model: None,
     };
     let cb: Arc<dyn Fn(ToolUpdate) + Send + Sync> = Arc::new(move |u| {
         let _ = raw_tx.send(u);

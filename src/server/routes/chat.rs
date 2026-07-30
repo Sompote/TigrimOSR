@@ -364,6 +364,7 @@ async fn send_message(
             .or_else(|| body.get("project_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        model: None,
     };
     match start_agent_run(req, None, None).await {
         Ok(()) => (
@@ -389,6 +390,8 @@ pub struct AgentRunRequest {
     pub graph_profile: Option<String>,
     pub config_file: Option<String>,
     pub project_id: Option<String>,
+    /// Model id override for this run (CLI `--model`); empty/None = settings model.
+    pub model: Option<String>,
 }
 
 /// Run one agent turn against a chat session, headless. Extracted from the
@@ -462,10 +465,10 @@ pub async fn start_agent_run(
     // Load settings for API credentials
     let settings = get_settings().await;
     let api_key = settings.tiger_bot_api_key.clone();
-    let model = if settings.tiger_bot_model.is_empty() {
-        "deepseek-chat".to_string()
-    } else {
-        settings.tiger_bot_model.clone()
+    let model = match req.model.as_deref().filter(|m| !m.trim().is_empty()) {
+        Some(m) => m.to_string(),
+        None if settings.tiger_bot_model.is_empty() => "deepseek-chat".to_string(),
+        None => settings.tiger_bot_model.clone(),
     };
     let raw_url = settings
         .tiger_bot_api_url

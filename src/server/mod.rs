@@ -232,12 +232,15 @@ async fn auth_middleware(
 // Server bootstrap
 // ---------------------------------------------------------------------------
 
-pub async fn start_server(sandbox_dir: String, access_token: String) {
+/// Data-directory bootstrap shared by the server and the `tigrim` CLI:
+/// creates dirs, seeds default data files/profiles/skills, and connects MCP
+/// servers. Does NOT start the scheduler, messaging bots, or HTTP listener.
+pub async fn bootstrap_data(sandbox_dir: &str) {
     let data_dir = data::data_dir().to_string_lossy().to_string();
 
     // Ensure directories
     let dirs = [
-        sandbox_dir.clone(),
+        sandbox_dir.to_string(),
         data_dir.clone(),
         "skills".to_string(),
         format!("{}/output_file", sandbox_dir),
@@ -250,7 +253,7 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
 
     // Ensure data files
     let default_settings = serde_json::to_string_pretty(&json!({
-        "sandboxDir": &sandbox_dir,
+        "sandboxDir": sandbox_dir,
         "tigerBotApiKey": "",
         "tigerBotModel": "TigerBot-70B-Chat",
         "mcpTools": [],
@@ -301,6 +304,11 @@ pub async fn start_server(sandbox_dir: String, access_token: String) {
 
     // Initialize MCP server connections from settings
     services::mcp::init_mcp_servers().await;
+}
+
+pub async fn start_server(sandbox_dir: String, access_token: String) {
+    bootstrap_data(&sandbox_dir).await;
+    let data_dir = data::data_dir().to_string_lossy().to_string();
 
     // Start the cron scheduler for enabled scheduled tasks
     services::scheduler::init_scheduler().await;

@@ -330,7 +330,10 @@ pub fn load_profile(name: &str) -> Option<AgentLoopProfile> {
     if trimmed.is_empty() {
         return None;
     }
-    let path = agent_loops_dir().join(normalize_filename(trimmed));
+    let path = crate::server::data::resolve_config_file(&format!(
+        "agent_loops/{}",
+        normalize_filename(trimmed)
+    ));
     let content = std::fs::read_to_string(&path).ok()?;
     match serde_yaml::from_str::<AgentLoopProfile>(&content) {
         Ok(p) => Some(p),

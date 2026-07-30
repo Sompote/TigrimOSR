@@ -154,7 +154,10 @@ pub fn load_profile(name: &str) -> Option<GraphProfile> {
     if trimmed.is_empty() || !is_safe_filename(trimmed) {
         return None;
     }
-    let path = graph_dir().join(normalize_filename(trimmed));
+    let path = crate::server::data::resolve_config_file(&format!(
+        "graph/{}",
+        normalize_filename(trimmed)
+    ));
     let content = std::fs::read_to_string(&path).ok()?;
     match serde_yaml::from_str::<GraphProfile>(&content) {
         Ok(p) => Some(p),
@@ -172,7 +175,10 @@ pub fn load_rules_file(name: &str) -> Option<String> {
     if trimmed.is_empty() || !is_safe_filename(trimmed) {
         return None;
     }
-    let path = rules_dir().join(normalize_filename(trimmed));
+    let path = crate::server::data::resolve_config_file(&format!(
+        "graph/rules/{}",
+        normalize_filename(trimmed)
+    ));
     match std::fs::read_to_string(&path) {
         Ok(s) => Some(s),
         Err(_) => {
