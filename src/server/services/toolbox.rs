@@ -4305,6 +4305,53 @@ fn secret_read_deny_rules() -> String {
     rules
 }
 
+/// The Apple `container` CLI is absent on most Macs; falling back to
+/// sandbox-exec is the normal path there — say so once, not per tool call.
+fn warn_container_fallback_once() {
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    LOGGED.call_once(|| {
+        warn!(
+            "[sandbox] Apple container CLI not available — using sandbox-exec \
+             (normal on macOS without the container runtime; logged once)"
+        )
+    });
+}
+
+/// Shared matplotlib config/font-cache dir. Must be GLOBAL (data dir), not
+/// per-sandbox: the font-cache build can take >60s — longer than the
+/// run_python timeout — so a fresh cache per sandbox folder makes every
+/// first run_python in a new folder time out forever.
+pub(crate) fn mpl_config_dir() -> std::path::PathBuf {
+    let d = crate::server::data::data_dir().join(".mpl_config");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
+/// Build the matplotlib font cache in the background at startup so the first
+/// run_python doesn't pay the (potentially >60s) build inside its own timeout.
+/// Runs our own fixed one-liner unsandboxed; no-op when a cache exists or
+/// matplotlib isn't installed.
+pub fn warm_matplotlib_cache() {
+    let mpl_dir = mpl_config_dir();
+    if let Ok(entries) = std::fs::read_dir(&mpl_dir) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("fontlist-") {
+                return; // cache already built
+            }
+        }
+    }
+    tokio::spawn(async move {
+        let _ = tokio::process::Command::new(find_python())
+            .args(["-c", "import matplotlib.font_manager"])
+            .env("MPLCONFIGDIR", &mpl_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await;
+    });
+}
+
 /// Check if code/command contains dangerous patterns
 fn check_dangerous(code: &str) -> Option<String> {
     let lower = code.to_lowercase();
@@ -4403,9 +4450,8 @@ async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
     }
 
     // Prepend matplotlib non-interactive setup so plt.show() saves files instead of opening GUI
-    // Set MPLCONFIGDIR inside sandbox to avoid ~/.matplotlib permission errors
-    let mpl_config_dir = std::path::Path::new(sandbox_dir).join(".mpl_config");
-    let _ = std::fs::create_dir_all(&mpl_config_dir);
+    // MPLCONFIGDIR is the GLOBAL shared cache dir — see mpl_config_dir().
+    let mpl_config_dir = mpl_config_dir();
     let output_sub = std::path::Path::new(sandbox_dir).join("output_file");
     let _ = std::fs::create_dir_all(&output_sub);
     let matplotlib_prelude = format!(r#"
@@ -4495,7 +4541,7 @@ def save_output(filename, content=None, mode='w'):
             r // container ran (or timed out inside the container) — final
         } else {
             // Fallback 1: sandbox-exec (macOS legacy)
-            warn!("[sandbox] container CLI not available, trying sandbox-exec");
+            warn_container_fallback_once();
             let sandbox_profile = format!(
                 r#"(version 1)
 (deny default)
@@ -4503,6 +4549,7 @@ def save_output(filename, content=None, mode='w'):
 (allow process-fork)
 (allow file-read*)
 {denies}(allow file-write* (subpath "{sandbox}"))
+(allow file-write* (subpath "{mpl}"))
 (allow file-write* (subpath "/tmp"))
 (allow file-write* (subpath "/private/tmp"))
 (allow file-write* (subpath "/dev/null"))
@@ -4513,7 +4560,8 @@ def save_output(filename, content=None, mode='w'):
 (allow network-inbound)
 (allow signal)"#,
                 denies = secret_read_deny_rules(),
-                sandbox = abs_sandbox.display()
+                sandbox = abs_sandbox.display(),
+                mpl = mpl_config_dir.display()
             );
             let r2 = run_guarded(
                 Command::new("/usr/bin/sandbox-exec")
@@ -4703,7 +4751,7 @@ pub(crate) async fn exec_run_shell(args: &Value, sandbox_dir: &str) -> Value {
             r // container ran (or timed out inside the container) — final
         } else {
             // Fallback 1: sandbox-exec (macOS legacy)
-            warn!("[sandbox] container CLI not available, trying sandbox-exec");
+            warn_container_fallback_once();
             let sandbox_profile = format!(
                 r#"(version 1)
 (deny default)

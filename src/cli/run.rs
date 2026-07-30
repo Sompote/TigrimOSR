@@ -100,8 +100,22 @@ pub async fn run_turn(state: &mut CliState, message: &str, opts: &RunOpts) -> Re
                 Some(ToolUpdate::ToolCall { name, args }) => {
                     progress_line(opts, &format!("{}⚙ {} {}{}", DIM, name, args_preview(&args), RESET));
                 }
-                Some(ToolUpdate::ToolResult { name, .. }) => {
-                    progress_line(opts, &format!("{}✓ {}{}", DIM, name, RESET));
+                Some(ToolUpdate::ToolResult { name, result }) => {
+                    let failure = result
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .map(|s| s.to_string())
+                        .or_else(|| {
+                            (result.get("ok").and_then(|o| o.as_bool()) == Some(false))
+                                .then(|| "failed".to_string())
+                        });
+                    match failure {
+                        Some(e) => progress_line(
+                            opts,
+                            &format!("{}✗ {} — {}{}", RED, name, crate::util::truncate_utf8(&e, 160), RESET),
+                        ),
+                        None => progress_line(opts, &format!("{}✓ {}{}", DIM, name, RESET)),
+                    }
                 }
                 Some(ToolUpdate::Error(e)) => {
                     progress_line(opts, &format!("{}✗ {}{}", RED, e, RESET));
@@ -155,8 +169,10 @@ pub async fn run_turn(state: &mut CliState, message: &str, opts: &RunOpts) -> Re
                 println!();
             }
             // The persisted answer can differ from the streamed text (graph
-            // gate rewrites, post-processing) — show it when it does.
-            if !final_text.is_empty() && final_text.trim() != streamed.trim() {
+            // gate rewrites, post-processing). The stream usually contains
+            // reasoning + the answer, so only reprint when the answer is NOT
+            // already the tail of what streamed.
+            if !final_text.is_empty() && !streamed.trim_end().ends_with(final_text.trim()) {
                 println!("{}", final_text);
             }
         }

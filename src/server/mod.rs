@@ -304,6 +304,10 @@ pub async fn bootstrap_data(sandbox_dir: &str) {
 
     // Initialize MCP server connections from settings
     services::mcp::init_mcp_servers().await;
+
+    // Warm the shared matplotlib font cache in the background — a cold build
+    // can exceed the run_python timeout and make every plot call time out.
+    services::toolbox::warm_matplotlib_cache();
 }
 
 pub async fn start_server(sandbox_dir: String, access_token: String) {

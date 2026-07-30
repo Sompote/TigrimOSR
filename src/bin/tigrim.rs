@@ -175,9 +175,10 @@ fn main() {
         );
     }
 
-    // Quiet logs — the REPL is the interface, not the tracing output.
+    // Quiet logs on stderr — stdout belongs to answers (-p pipes depend on it).
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
+        .with_writer(std::io::stderr)
         .init();
 
     if let Some(ref dir) = args.cwd {
