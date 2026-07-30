@@ -1,16 +1,17 @@
-# TigrimOSR v0.7.1
+# TigrimOSR v0.7.2
 
 **TigrimOSR** is a native Rust AI agent platform in a single self-contained binary. Orchestrate swarms of specialist agents, and **build your own agent loop** — which tools, models, skills and MCP servers each agent uses — in simple YAML, editable from the desktop app, any browser, or your phone.
 
 Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three clicks, search **250M+ scholarly papers** with one tool, chat with your agents from **Telegram or LINE**, and let an independent **tool-using judge** verify the work is really done before the answer reaches you.
 
 **⬇️ Install in under a minute — no build needed:**
-[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1.dmg) ·
-[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1-x64.msi) ·
+[macOS (DMG)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/TigrimOS-0.7.2.dmg) ·
+[Windows (MSI)](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/TigrimOS-0.7.2-x64.msi) ·
 [all releases](https://github.com/Sompote/TigrimOSR/releases/latest) — or [run in Docker](#install-in-docker).
 
 **What's new (July 2026):**
 
+- ⌨️ **[CLI mode — `tigrim`](#cli-mode-tigrim)** — a Claude Code-style terminal agent: copy one binary into any folder and run it there. The folder becomes the agent's workspace, `.tigrimos/` holds project-local YAML agents and profiles, and slash commands (`/agents`, `/model`, `/mode`, `/loop`, `/graph`, …) drive everything from the terminal — plus a `tigrim -p "prompt"` one-shot mode for scripts.
 - 🕸️ **[Graph mode — judge panel](#graph-mode-judge-panel)** — evaluator-optimizer gate: a panel of one or more **judge agents** reviews the final answer against your YAML rules *before* it reaches you, and sends a structured verdict back for revision until it passes. Off by default — flip one toggle, pick the **Graph (judged)** mode, or add two lines to an agent-loop profile.
 - 🧩 **[Custom tools in YAML](#custom-tools-yaml)** — add brand-new agent tools by dropping a `.yaml` file in `data/tools/` — an HTTP/REST call or a sandboxed shell command — no Rust, no rebuild. They honor per-tool config, approval, and timeouts like built-ins.
 - 🛠️ **[Tool management UI](#tool-management-settings--tools)** — a new **Settings → Tools** screen (desktop *and* web/mobile): a Catalog of every tool with live status chips, plus a Custom Tools editor to create, edit, validate, and **test-run** your YAML tools without invoking the model.
@@ -29,7 +30,7 @@ Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three cl
 - **Your Google, connected** — three-click **Gmail / Calendar / Drive** access; tokens stay on your machine — see [Connect Google](#connect-google-gmail--calendar--drive).
 - **Browser control** — the agent drives a real browser (Chrome/Chromium, or the Node-free Rust **[Obscura](https://github.com/h4ckf0r0day/obscura)** engine) — no paid search API. Opt-in, off by default.
 - **Plugin system** — zip plugins bundling skills, MCP servers, agents and connectors. Claude Desktop/Code and npm MCP compatible.
-- **Run it your way** — native desktop app, headless, or Docker — then connect from any browser or phone via the built-in web UI.
+- **Run it your way** — native desktop app, headless, Docker, or the **[`tigrim` CLI](#cli-mode-tigrim)** right in your terminal — then connect from any browser or phone via the built-in web UI.
 - **Telegram & LINE bots** — chat and drive the agent with slash commands, live progress, and approve/deny buttons — see [Telegram & LINE Bots](#telegram--line-bots).
 - **Private remote access (VPN)** — reach a remote host over your own [Tailscale](https://tailscale.com) tailnet instead of a public tunnel.
 - **Built in Rust** — single binary, no Node/Python. App + embedded server + **a live embedded browser** idle at **~270 MB RAM** — see [Memory footprint](#memory-footprint).
@@ -84,6 +85,88 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
   <img src="assets/screenshot_mobile_remote_2.jpg" width="300" alt="Mobile Remote Chart">
 </p>
 
+## CLI mode (tigrim)
+
+**New in v0.7.2** — TigrimOS in your terminal, Claude Code-style. Copy the `tigrim` binary into any folder and run it there: that folder becomes the agent's workspace, a `.tigrimos/` directory holds your project-local YAML agents, agent-loop profiles and graph profiles (with fallback to your global TigrimOS settings, so a fresh folder needs zero setup), and every major feature is a slash command away — `/agents`, `/model`, `/mode`, `/loop`, `/graph`, `/skills`, `/mcp` and more. Type a message to chat with streaming answers, tool-call progress and y/n approval prompts; or script it with `tigrim -p "prompt"` for one-shot runs in CI and pipelines. The desktop app and headless server are unchanged — all three share the same engine, settings and profiles.
+
+```bash
+cd my-project
+tigrim                      # interactive agent REPL in this folder
+tigrim -p "summarize the CSV files here"   # one-shot: answer on stdout
+```
+
+<details>
+<summary>⌨️ Full CLI guide — setup, slash commands, project folder, one-shot flags</summary>
+
+### Setup
+
+`tigrim` is built alongside the desktop binary — no extra install:
+
+```bash
+cargo build --release --bins        # produces target/release/tigrim (and tigrimos)
+cp target/release/tigrim ~/bin/     # or anywhere on your PATH — it's one file
+```
+
+Run it in any folder. On the very first run (if no global API key is configured yet) it asks for your API base URL, key and model once and saves them **globally** — every other folder is then zero-config. If you already use the desktop app, `tigrim` picks up your existing key, model, MCP servers and skills automatically.
+
+### The `.tigrimos/` project folder
+
+Created automatically where you run `tigrim` (like Claude Code's `.claude/`):
+
+```
+my-project/
+├── .tigrimos/
+│   ├── agents/           # project-local agent team YAMLs (shadow global ones)
+│   ├── agent_loops/      # project-local agent-loop profiles
+│   ├── graph/            # project-local graph (judge panel) profiles
+│   ├── settings.json     # optional PARTIAL settings override (top-level keys)
+│   ├── chat_history.json # this folder's own conversations (gitignored)
+│   └── cli_state.json    # session/mode/profile state (gitignored)
+└── ... your files — this folder is the agent's workspace
+```
+
+Resolution is **project-first, global fallback**: a profile named `review.yaml` in `.tigrimos/agent_loops/` wins over a global one; anything not present locally comes from the global data dir. `/loop`, `/graph` and `/agents` listings mark project-local entries with `(project)`. A `.tigrimos/settings.json` containing e.g. `{"tigerBotModel": "gpt-5.2"}` overrides just that key, just in this folder. API keys stay global — never committed to your repo (a `.gitignore` for the state files is created for you).
+
+### Slash commands
+
+| Command | What it does |
+|---|---|
+| `/agents` | List agent team configs (project + global) |
+| `/agent <file>` / `/agent off` | Select a team config (switches to `auto` mode) / clear it |
+| `/model [id]` | Show or set the global model (+ model pool listing) |
+| `/mode [m]` | Sub-agent mode: `single` `auto` `manual` `fully_auto` `router` `graph` |
+| `/loop [name]` / `/loop off` | Agent-loop profile for this folder / back to default |
+| `/graph [name]` / `/graph off` | Graph judge-panel profile (activates graph mode) |
+| `/skills` | List installed skills |
+| `/mcp` | MCP servers + live connection status |
+| `/settings` | Effective settings: model, masked key, workspace, overlay status |
+| `/new` | Start a fresh session (history stays in this folder) |
+| `/stop` | Kill the running task and its processes |
+| `/status` | Model, mode, profiles, session, running state |
+| `/tasks` | Running chats + scheduled cron tasks |
+| `/clear` `/help` `/exit` | Clear screen · help · quit (Ctrl-D works too) |
+
+Anything that isn't a slash command is sent to the agent. While a run streams you'll see dim `⚙ tool` lines for tool calls; dangerous tools (shell, Python, file delete — per your approval settings) pause with an `Allow tool …? [y/N]` prompt. **Ctrl-C once** cancels the run (process tree included), **twice** force-quits.
+
+### One-shot mode (`-p`) — for scripts and CI
+
+```bash
+tigrim -p "run the tests and summarize failures" --yes
+tigrim -p "draft release notes from git log" --model kimi-k3 > notes.md
+tigrim -p "audit this folder" --loop strict_review --graph default
+```
+
+Only the **final answer** goes to stdout; progress and tool lines go to stderr — safe to pipe. Flags: `--mode`, `--loop`, `--graph`, `--agent <team.yaml>`, `--model` (transient overrides), `--session <id>` / `--new` (session control), `--yes` (auto-approve tools), `--cwd <dir>`. Exit codes: `0` success · `1` run failed · `2` usage/config error · `130` interrupted.
+
+### Notes
+
+- The CLI runs the agent **in-process** — no server, no port, nothing to start first. MCP servers connect at launch just like the desktop app.
+- Sub-agent swarms, router mode, graph judging, skills, browser control and custom YAML tools all work exactly as they do in the desktop app — same engine.
+- Each folder keeps its **own chat history**; your global/desktop history is untouched.
+- A folder containing a `data/` directory is safe: the CLI always pins the real global data dir and never mistakes project files for it.
+
+</details>
+
 ## Features
 
 Everything TigrimOSR can do — orchestration, tools, remote access, theming — in one list.
@@ -91,6 +174,7 @@ Everything TigrimOSR can do — orchestration, tools, remote access, theming —
 <details>
 <summary>📋 Full feature list</summary>
 
+- **CLI mode (`tigrim`)** — Claude Code-style terminal agent: run the single binary in any folder, project-local `.tigrimos/` YAML config with global fallback, slash commands for every major feature, streaming output with tool approvals, and a `-p` one-shot mode for scripts — see [CLI mode](#cli-mode-tigrim)
 - **Multi-agent system** — hierarchical, mesh, hybrid, pipeline, P2P, and P2P orchestrator modes via YAML config
 - **Agent loop profiles** — user-defined YAML profiles controlling the agent loop: tool allowlist/denylist plus **per-tool config** (hide a tool, per-tool approval override, parameter defaults & pins, description override, timeout / result caps — built-in and MCP tools alike), MCP server & skill selection, model/system-prompt override, loop knobs (rounds, temperature, reflection, step verification), **job evaluation (outer loop, tool-using judge)** and context compaction — see [Agent Loop Profiles](#agent-loop-profiles-custom-agent-loop)
 - **Graph mode (judge panel)** — evaluator-optimizer gate: single- or multi-judge panel reviews the final answer against YAML rule files before delivery, returns a structured YAML verdict, and loops the main agent through revisions until it passes (`all_pass` / `majority` / `weighted_average` aggregation). Off by default; toggleable globally, per agent-loop profile, or by selecting the **Graph (judged)** mode — see [Graph mode](#graph-mode-judge-panel)
@@ -145,7 +229,7 @@ running in under a minute.
 ### macOS
 
 **Desktop app (DMG):** download
-[`TigrimOS-0.7.1.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1.dmg),
+[`TigrimOS-0.7.2.dmg`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/TigrimOS-0.7.2.dmg),
 open it, and drag **TigrimOS** into **Applications**.
 
 > **First launch:** the app isn't notarized with Apple yet, so macOS may block it.
@@ -159,18 +243,18 @@ open it, and drag **TigrimOS** into **Applications**.
 
 ```bash
 # Apple Silicon (M1–M4)
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/tigrimos-0.7.1-macos-arm64.tar.gz | tar xz
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrimos-0.7.2-macos-arm64.tar.gz | tar xz
 ./tigrimos
 
 # Intel Macs
-curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/tigrimos-0.7.1-macos-x86_64.tar.gz | tar xz
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrimos-0.7.2-macos-x86_64.tar.gz | tar xz
 ./tigrimos
 ```
 
 ### Windows
 
 Download and run
-[`TigrimOS-0.7.1-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.1/TigrimOS-0.7.1-x64.msi)
+[`TigrimOS-0.7.2-x64.msi`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/TigrimOS-0.7.2-x64.msi)
 — it installs TigrimOS to Program Files and adds a **Start Menu** shortcut.
 
 > If **SmartScreen** shows "Windows protected your PC", click **More info** →
@@ -2269,7 +2353,7 @@ What changed in each release, latest first.
 <details>
 <summary>🗒 Version history</summary>
 
-### v0.7.1
+### v0.7.2
 
 - **Graph mode — evaluator-optimizer judge panel** — New graph gate wires the agent as worker node → judge panel → human: a panel of one or more **judge agents** reviews the final answer against user-defined YAML rule files *before* it reaches you, returns a **structured YAML verdict** (score, satisfied, per-rule results, concrete `revise` instructions), and on failure feeds it back to the main loop for bounded revision cycles until the panel passes it. Judges can each run on their **own model/endpoint/key** (avoid self-grading), verify claimed artifacts with read-only tools (visible as `judge:<name>:*` in the activity log), and combine under **all_pass** (default), **majority**, or **weighted_average** aggregation with per-judge weights/thresholds. Judges **fail open** — a broken judge can never trap an answer — and iteration/fix-round caps are hard-clamped. Configuration is plain YAML on disk: graph profiles in `data/graph/*.yaml` (with a `worker.mode` so the gate can wrap any existing agent mode) and judge rules in `data/graph/rules/*.yaml` (`severity: blocker` vs `warn`), seeded with sensible defaults on first use. See [Graph mode](#graph-mode-judge-panel).
 - **Gate on/off — default OFF, three switches** — The gate is **off by default** and activates via (1) the new **Graph (judged)** agent mode (also `/mode graph` in Telegram/LINE), (2) a global **Enable graph gate** toggle (`graphEnabled`) that judges answers in *every* mode, or (3) a per-profile `graph: { enabled: true, profile: strict.yaml }` section in agent-loop YAML — profile `enabled: false` overrides the global toggle. When active, a **⬡ GRAPH** badge shows in the desktop chat header and next to the web/mobile mode chip (tap it to open the settings pane), and the Graph settings tab shows a **GATE ON/OFF** tag.
