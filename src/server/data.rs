@@ -772,6 +772,7 @@ pub async fn get_settings() -> Settings {
     // browser_headless intentionally left None by default: None = follow the
     // process --headless flag (legacy). Only an explicit Some(false)/Some(true)
     // overrides the browser's headless mode independently of the server UI.
+    apply_env_overrides(&mut settings);
     settings
 }
 
@@ -801,6 +802,33 @@ async fn load_settings_with_project_overlay() -> Settings {
         merged.insert(k, v);
     }
     serde_json::from_value(serde_json::Value::Object(merged)).unwrap_or(global)
+}
+
+/// Environment overrides for the API credentials — the safe way to configure
+/// per-folder/per-shell without ever writing a key to a committable file
+/// (loaded from `.env` by both binaries via dotenvy). Applied LAST, on top of
+/// settings.json and the project overlay; never persisted by save_settings.
+fn apply_env_overrides(settings: &mut Settings) {
+    if let Ok(v) = std::env::var("TIGRIMOS_API_KEY") {
+        if !v.trim().is_empty() {
+            settings.tiger_bot_api_key = v.trim().to_string();
+        }
+    }
+    if let Ok(v) = std::env::var("TIGRIMOS_MODEL") {
+        if !v.trim().is_empty() {
+            settings.tiger_bot_model = v.trim().to_string();
+        }
+    }
+    if let Ok(v) = std::env::var("TIGRIMOS_API_URL") {
+        if !v.trim().is_empty() {
+            settings.tiger_bot_api_url = Some(v.trim().to_string());
+        }
+    }
+}
+
+/// True when TIGRIMOS_API_KEY is driving the credentials (for UI display).
+pub fn api_key_from_env() -> bool {
+    std::env::var("TIGRIMOS_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false)
 }
 
 pub async fn save_settings(settings: &Settings) {

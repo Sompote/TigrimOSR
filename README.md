@@ -123,7 +123,19 @@ curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7
 
 The same file works from anywhere — it always uses the **current directory** as the workspace, so you can also keep one copy on your `PATH` (`cp tigrim /usr/local/bin/`) instead of one per folder. Building from source works too: `cargo build --release --bins` produces `target/release/tigrim`.
 
-On the very first run (if no global API key is configured yet) it asks for your API base URL, key and model once and saves them **globally** — every other folder is then zero-config. If you already use the desktop app, `tigrim` picks up your existing key, model, MCP servers and skills automatically.
+### Setup file: `.env` (keys never touch git)
+
+The folder's setup file is a **`.env`** — copy the seeded `.tigrimos/.env.example` to `.tigrimos/.env` (or a `.env` in the project root) and fill it in:
+
+```bash
+TIGRIMOS_API_KEY=sk-your-key-here
+TIGRIMOS_API_URL=https://api.deepseek.com/v1
+TIGRIMOS_MODEL=deepseek-chat
+```
+
+These override the global settings for anything run from this folder, and they are the **safe place for credentials**: `.tigrimos/.gitignore` excludes `.env` *and* `settings.json`, so a `git add .` can never commit your key. If you already use the desktop app, you don't need a `.env` at all — `tigrim` picks up your existing key, model, MCP servers and skills automatically; and with nothing configured anywhere, the first run asks once and saves globally.
+
+> ⚠️ Never put an API key in `.tigrimos/settings.json` or an agent YAML in a git repo — use `.env` (gitignored) or the global settings.
 
 ### The `.tigrimos/` project folder
 
@@ -132,14 +144,17 @@ Created automatically where you run `tigrim` (like Claude Code's `.claude/`):
 ```
 my-project/
 ├── .tigrimos/
-│   ├── agents/           # project-local agent team YAMLs (shadow global ones)
-│   ├── agent_loops/      # project-local agent-loop profiles
-│   ├── graph/            # project-local graph (judge panel) profiles
-│   ├── settings.json     # optional PARTIAL settings override (top-level keys)
+│   ├── .env.example      # setup template — copy to .env, add your key (gitignored)
+│   ├── agents/           # agent team YAMLs (example_team.yaml seeded, editable)
+│   ├── agent_loops/      # agent-loop profiles (default.yaml seeded, editable)
+│   ├── graph/            # graph judge profiles (default.yaml + rules seeded)
+│   ├── settings.json     # optional PARTIAL settings override (gitignored — no keys!)
 │   ├── chat_history.json # this folder's own conversations (gitignored)
 │   └── cli_state.json    # session/mode/profile state (gitignored)
 └── ... your files — this folder is the agent's workspace
 ```
+
+The seeded YAMLs are live starting points: `agent_loops/default.yaml` mirrors your current loop settings, `graph/default.yaml` is the judge-panel gate, and `agents/example_team.yaml` is a two-agent team you can select right away with `/agent example_team` — edit any of them and the project copy shadows the global one.
 
 Resolution is **project-first, global fallback**: a profile named `review.yaml` in `.tigrimos/agent_loops/` wins over a global one; anything not present locally comes from the global data dir. `/loop`, `/graph` and `/agents` listings mark project-local entries with `(project)`. A `.tigrimos/settings.json` containing e.g. `{"tigerBotModel": "gpt-5.2"}` overrides just that key, just in this folder. API keys stay global — never committed to your repo (a `.gitignore` for the state files is created for you).
 

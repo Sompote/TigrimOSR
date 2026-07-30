@@ -187,7 +187,10 @@ fn main() {
         }
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    project::init_project(&cwd);
+    let proj = project::init_project(&cwd);
+    // Project-local .env is the folder's setup file (API key/url/model as
+    // TIGRIMOS_* vars) — loaded after the global/cwd .env so it wins.
+    let _ = dotenvy::from_path_override(proj.join(".env"));
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
@@ -201,6 +204,9 @@ fn main() {
         .to_string_lossy()
         .to_string();
     runtime.block_on(server::bootstrap_data(&global_sandbox));
+    // Copy editable starter YAMLs (loop/graph/team) into empty project dirs
+    // now that the global defaults exist.
+    project::seed_examples(&proj);
 
     if !runtime.block_on(first_run_wizard()) {
         std::process::exit(2);

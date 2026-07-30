@@ -376,11 +376,16 @@ pub async fn execute(state: &mut CliState, cmd: CliCommand) -> Outcome {
             let overlay = data::project_dir()
                 .map(|p| p.join("settings.json").exists())
                 .unwrap_or(false);
+            let key_display = if data::api_key_from_env() {
+                format!("{} (from TIGRIMOS_API_KEY in .env)", mask_key(&s.tiger_bot_api_key))
+            } else {
+                mask_key(&s.tiger_bot_api_key)
+            };
             Reply(format!(
                 "Model: {}\nAPI URL: {}\nAPI key: {}\nWorkspace: {}\nGlobal data dir: {}\nProject dir: {}{}\nMode: {}\nLoop profile: {}\nGraph profile: {}\nAgent config: {}",
                 s.tiger_bot_model,
                 s.tiger_bot_api_url.as_deref().unwrap_or("(default)"),
-                mask_key(&s.tiger_bot_api_key),
+                key_display,
                 data::get_sandbox_dir_sync(),
                 data::data_dir().display(),
                 proj,
