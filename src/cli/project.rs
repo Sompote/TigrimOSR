@@ -51,7 +51,10 @@ YAML config here shadows the global data directory (YAML/skills only):
   agents/*.yaml       agent team definitions (example_team.yaml seeded)
   agent_loops/*.yaml  agent-loop profiles (default.yaml seeded — edit freely)
   graph/*.yaml        graph (judge panel) profiles (default.yaml seeded)
-  settings.json       this folder's settings (written by /model etc. — NO keys)
+  settings.json       EVERY system setting, seeded with defaults — same
+                      camelCase keys as the desktop Settings UI (approvals,
+                      browser control, MCP servers, model pool, sub-agent
+                      mode, loop knobs, …). NO keys here — use .env.
   SOUL.md             optional agent persona for THIS folder (global one is
   IDENTITY.md         never used in CLI mode; omit both for a neutral agent)
 
@@ -121,6 +124,66 @@ pub fn init_project(cwd: &Path) -> PathBuf {
     }
     crate::server::data::set_project_dir(proj.clone());
     proj
+}
+
+/// Seed a COMPLETE `.tigrimos/settings.json` — every setting the desktop
+/// Settings UI can write, materialized with its default value, so the folder
+/// has one visible, editable file covering the whole system. Same camelCase
+/// keys as the desktop app. Credentials are deliberately blanked: they belong
+/// in `.env` (gitignored), and env vars override this file at load time.
+pub async fn seed_settings_file(proj: &Path) {
+    let fp = proj.join("settings.json");
+    if fp.exists() {
+        return;
+    }
+    let settings = crate::server::data::get_settings().await;
+    let mut map = match serde_json::to_value(&settings) {
+        Ok(serde_json::Value::Object(m)) => m,
+        _ => return,
+    };
+    let fill: &[(&str, serde_json::Value)] = &[
+        // Provider (prefer .env for the key/url/model — env wins over this file)
+        ("tigerBotApiKey", serde_json::json!("")),
+        ("tigerBotApiUrl", serde_json::json!("")),
+        ("tigerBotModel", serde_json::json!("")),
+        ("modelPool", serde_json::json!([])),
+        // Sub-agents / orchestration
+        ("subAgentMode", serde_json::json!("single")),
+        ("subAgentConfigFile", serde_json::json!("")),
+        ("graphEnabled", serde_json::json!(false)),
+        // Tools & integrations
+        ("mcpTools", serde_json::json!([])),
+        ("webSearchEnabled", serde_json::json!(false)),
+        ("sandboxDir", serde_json::json!("")),
+        // Agent-loop knobs (same keys the desktop Settings UI writes; the
+        // folder's agent_loops/default.yaml takes precedence when set)
+        ("agentMaxToolRounds", serde_json::json!(15)),
+        ("agentMaxToolCalls", serde_json::json!(25)),
+        ("agentTemperature", serde_json::json!(0.7)),
+        ("agentMaxTokens", serde_json::json!(81920)),
+        ("agentReflectionEnabled", serde_json::json!(false)),
+        ("agentReflectionThreshold", serde_json::json!(0.7)),
+        ("agentMaxReflectionRetries", serde_json::json!(2)),
+        ("agentCheckpointEnabled", serde_json::json!(true)),
+        ("agentMaxConsecutiveErrors", serde_json::json!(3)),
+        ("agentMaxErrorRecoveries", serde_json::json!(5)),
+        ("agentCompressionInterval", serde_json::json!(5)),
+        ("agentCompressionWindow", serde_json::json!(10)),
+        ("agentMaxContextTokens", serde_json::json!(100000)),
+        ("agentToolResultMaxLen", serde_json::json!(6000)),
+        ("agentEvaluationEnabled", serde_json::json!(false)),
+        ("agentEvaluationThreshold", serde_json::json!(0.75)),
+        ("agentEvaluationMaxJudgeRounds", serde_json::json!(3)),
+        ("agentAllowUnsandboxedExec", serde_json::json!(false)),
+    ];
+    for (k, default) in fill {
+        map.entry(k.to_string()).or_insert(default.clone());
+    }
+    // Never write credentials here, even when .env already supplied them —
+    // this file documents settings; .env holds secrets.
+    map.insert("tigerBotApiKey".to_string(), serde_json::json!(""));
+    let pretty = serde_json::to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default();
+    let _ = std::fs::write(&fp, pretty);
 }
 
 /// Seed editable starter YAMLs into empty project config dirs. Called AFTER

@@ -386,8 +386,11 @@ pub async fn execute(state: &mut CliState, cmd: CliCommand) -> Outcome {
             } else {
                 mask_key(&s.tiger_bot_api_key)
             };
+            let settings_file = data::project_dir()
+                .map(|p| p.join("settings.json").display().to_string())
+                .unwrap_or_else(|| data::data_dir().join("settings.json").display().to_string());
             Reply(format!(
-                "Model: {}\nAPI URL: {}\nAPI key: {}\nWorkspace: {}\nGlobal data dir: {}\nProject dir: {}{}\nMode: {}\nLoop profile: {}\nGraph profile: {}\nAgent config: {}",
+                "Settings file: {settings_file}\nCredentials file: .tigrimos/.env (overrides settings)\nModel: {}\nAPI URL: {}\nAPI key: {}\nWorkspace: {}\nGlobal data dir: {}\nProject dir: {}{}\nMode: {}\nLoop profile: {}\nGraph profile: {}\nAgent config: {}",
                 s.tiger_bot_model,
                 s.tiger_bot_api_url.as_deref().unwrap_or("(default)"),
                 key_display,

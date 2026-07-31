@@ -219,6 +219,8 @@ fn main() {
     // Skills are folder-local in CLI mode — seed the bundled essentials
     // (web-search, pdf, excel, …) into this project's registry. Idempotent.
     runtime.block_on(server::install_bundled_skills(&proj.to_string_lossy()));
+    // Seed the complete, editable settings file (every desktop-UI setting).
+    runtime.block_on(project::seed_settings_file(&proj));
 
     if !runtime.block_on(first_run_wizard(&proj)) {
         std::process::exit(2);
