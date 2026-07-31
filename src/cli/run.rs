@@ -28,6 +28,96 @@ const DIM: &str = "\x1b[2m";
 const RED: &str = "\x1b[31m";
 const RESET: &str = "\x1b[0m";
 
+/// Raw-mode stdin watcher so a bare ESC keypress can cancel the running
+/// agent (Claude Code-style) without waiting for Enter. Unix-only; restores
+/// the terminal on drop so rustyline gets a sane tty back.
+#[cfg(unix)]
+mod esc_watch {
+    pub struct RawGuard {
+        fd: i32,
+        orig_termios: libc::termios,
+        orig_flags: i32,
+    }
+
+    impl RawGuard {
+        pub fn new() -> Option<Self> {
+            let fd = 0;
+            if unsafe { libc::isatty(fd) } != 1 {
+                return None;
+            }
+            let mut orig: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(fd, &mut orig) } != 0 {
+                return None;
+            }
+            let orig_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if orig_flags < 0 {
+                return None;
+            }
+            let guard = Self { fd, orig_termios: orig, orig_flags };
+            guard.enter_raw();
+            Some(guard)
+        }
+
+        fn enter_raw(&self) {
+            let mut raw = self.orig_termios;
+            raw.c_lflag &= !(libc::ICANON | libc::ECHO);
+            raw.c_cc[libc::VMIN] = 0;
+            raw.c_cc[libc::VTIME] = 0;
+            unsafe {
+                libc::tcsetattr(self.fd, libc::TCSANOW, &raw);
+                libc::fcntl(self.fd, libc::F_SETFL, self.orig_flags | libc::O_NONBLOCK);
+            }
+        }
+
+        fn restore(&self) {
+            unsafe {
+                libc::tcsetattr(self.fd, libc::TCSANOW, &self.orig_termios);
+                libc::fcntl(self.fd, libc::F_SETFL, self.orig_flags);
+            }
+        }
+
+        /// Non-blocking poll: true when a lone ESC keypress is pending.
+        /// Arrow/function keys arrive as multi-byte 0x1b sequences — ignored.
+        pub fn esc_pressed(&self) -> bool {
+            let mut buf = [0u8; 16];
+            let n = unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            n == 1 && buf[0] == 0x1b
+        }
+
+        /// Temporarily hand the terminal back (cooked, blocking) for a y/n
+        /// approval prompt, then re-enter raw mode.
+        pub fn cooked<T>(&self, f: impl FnOnce() -> T) -> T {
+            self.restore();
+            let out = f();
+            self.enter_raw();
+            out
+        }
+    }
+
+    impl Drop for RawGuard {
+        fn drop(&mut self) {
+            self.restore();
+        }
+    }
+}
+
+/// Windows stub — ESC cancel is unix-only for now; Ctrl-C still works.
+#[cfg(not(unix))]
+mod esc_watch {
+    pub struct RawGuard;
+    impl RawGuard {
+        pub fn new() -> Option<Self> {
+            None
+        }
+        pub fn esc_pressed(&self) -> bool {
+            false
+        }
+        pub fn cooked<T>(&self, f: impl FnOnce() -> T) -> T {
+            f()
+        }
+    }
+}
+
 fn progress_line(opts: &RunOpts, line: &str) {
     if opts.print_mode {
         eprintln!("{}", line);
@@ -86,7 +176,18 @@ pub async fn run_turn(state: &mut CliState, message: &str, opts: &RunOpts) -> Re
     let mut rx_open = true;
     let mut cancel_requested = false;
 
+    // ESC cancels the run and drops back to the prompt (tty only).
+    let esc_guard = esc_watch::RawGuard::new();
+    let mut esc_tick = tokio::time::interval(std::time::Duration::from_millis(120));
+
     let final_text = loop {
+        if let Some(ref g) = esc_guard {
+            if g.esc_pressed() && !cancel_requested {
+                cancel_requested = true;
+                eprintln!("\n(esc — cancelling the run…)");
+                chat::kill_session_by_id(&session_id).await;
+            }
+        }
         tokio::select! {
             update = rx.recv(), if rx_open => match update {
                 None => rx_open = false,
@@ -135,7 +236,16 @@ pub async fn run_turn(state: &mut CliState, message: &str, opts: &RunOpts) -> Re
                             print!("{}", prompt);
                             let _ = std::io::stdout().flush();
                         }
-                        let answer = read_stdin_line().await;
+                        // Raw mode is active for ESC detection — hand the
+                        // terminal back (cooked, blocking) for the y/n line.
+                        let answer = match esc_guard {
+                            Some(ref g) => g.cooked(|| {
+                                let mut line = String::new();
+                                let _ = std::io::stdin().read_line(&mut line);
+                                line.trim().to_string()
+                            }),
+                            None => read_stdin_line().await,
+                        };
                         let approved = matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes");
                         toolbox::respond_tool_approval(approved).await;
                         if !approved {
@@ -147,6 +257,9 @@ pub async fn run_turn(state: &mut CliState, message: &str, opts: &RunOpts) -> Re
             result = &mut done_rx => {
                 break result.unwrap_or_default();
             }
+            // Periodic wake so the ESC poll at the top of the loop runs even
+            // while no tool/text events are arriving.
+            _ = esc_tick.tick(), if esc_guard.is_some() => {}
             _ = tokio::signal::ctrl_c() => {
                 if cancel_requested {
                     eprintln!("\nforce quit");
@@ -184,7 +297,13 @@ pub async fn run_turn(state: &mut CliState, message: &str, opts: &RunOpts) -> Re
     }
     if final_text.is_empty() {
         if let Some(e) = last_error {
-            return Err(e);
+            // The REPL already showed the ✗ line — don't print the same
+            // error a second time. -p keeps the full text for scripts.
+            return Err(if opts.print_mode {
+                e
+            } else {
+                "run failed — see the error above".to_string()
+            });
         }
     }
     Ok(final_text)

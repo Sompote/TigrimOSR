@@ -303,10 +303,23 @@ fn main() {
                 .unwrap_or_else(|| "(built-in)".to_string()),
         )
     });
+    let model_src = if std::env::var("TIGRIMOS_MODEL").map(|v| !v.trim().is_empty()).unwrap_or(false)
+        || data::api_key_from_env()
+    {
+        ".env"
+    } else {
+        "global settings"
+    };
     println!("TigrimOS CLI v{}", env!("CARGO_PKG_VERSION"));
-    println!("Model: {}   Mode: {}   Loop: {}", model, mode, loop_profile);
+    println!("Model: {} ({})   Mode: {}   Loop: {}", model, model_src, mode, loop_profile);
     println!("Workspace: {}", cwd.display());
-    println!("Type a message to chat, /help for commands.\n");
+    if !proj.join(".env").exists() && model_src == "global settings" {
+        println!(
+            "{}Setup: copy .tigrimos/.env.example → .tigrimos/.env to set a per-folder model/API key{}",
+            "\x1b[2m", "\x1b[0m"
+        );
+    }
+    println!("Type a message to chat, /help for commands. ESC or Ctrl-C cancels a run.\n");
 
     let code = repl::run_repl(&runtime);
     std::process::exit(code);
