@@ -41,15 +41,17 @@ settings.json
 const README: &str = "\
 TigrimOS project folder (like Claude Code's .claude/).
 
+The CLI is folder-local: it never reads the desktop app's global settings.
 Setup — put your API credentials in `.env` here (or in the project root):
-copy `.env.example` to `.env` and fill it in. NEVER commit a real key;
-`.env` and `settings.json` are gitignored for exactly that reason.
+copy `.env.example` to `.env` and fill it in (the first interactive run does
+this for you). NEVER commit a real key; `.env` and `settings.json` are
+gitignored for exactly that reason.
 
-Config here overlays the global data directory — same-named files win:
+YAML config here shadows the global data directory (YAML/skills only):
   agents/*.yaml       agent team definitions (example_team.yaml seeded)
   agent_loops/*.yaml  agent-loop profiles (default.yaml seeded — edit freely)
   graph/*.yaml        graph (judge panel) profiles (default.yaml seeded)
-  settings.json       partial settings override (top-level keys, NO keys here)
+  settings.json       this folder's settings (written by /model etc. — NO keys)
 
 State kept per folder (gitignored): chat_history.json, cli_state.json,
 repl_history.
@@ -59,7 +61,8 @@ const ENV_EXAMPLE: &str = "\
 # TigrimOS CLI setup — copy this file to `.env` (same folder, or the project
 # root) and fill in your values. `.env` is gitignored; never commit real keys.
 #
-# These override the global settings for anything run from this folder.
+# The CLI uses ONLY this folder's configuration (never the desktop app's
+# global settings), so every folder sets its own provider here.
 TIGRIMOS_API_KEY=sk-your-key-here
 TIGRIMOS_API_URL=https://api.deepseek.com/v1
 TIGRIMOS_MODEL=deepseek-chat

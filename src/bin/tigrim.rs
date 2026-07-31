@@ -119,22 +119,23 @@ fn prompt_line(label: &str, default: &str) -> String {
     }
 }
 
-/// Interactive API setup when no key is configured anywhere. Secrets are
-/// saved to the GLOBAL settings so every future folder is zero-config;
-/// `.tigrimos/settings.json` stays for per-project tweaks.
-async fn first_run_wizard() -> bool {
+/// Interactive setup when this FOLDER has no API key. The CLI is folder-local
+/// by design — it never reads the desktop app's global settings — so the
+/// wizard saves credentials to `.tigrimos/.env` (gitignored) in this folder.
+async fn first_run_wizard(proj: &std::path::Path) -> bool {
     let settings = data::get_settings().await;
     if !settings.tiger_bot_api_key.is_empty() {
-        return true;
+        return true; // configured via .env or .tigrimos/settings.json
     }
+    let env_path = proj.join(".env");
     if !is_tty() {
         eprintln!(
-            "tigrim: no API key configured. Run `tigrim` interactively once, or set tigerBotApiKey in {}",
-            data::data_dir().join("settings.json").display()
+            "tigrim: no API key configured for this folder. Create {} with:\n  TIGRIMOS_API_KEY=sk-...\n  TIGRIMOS_API_URL=https://api.deepseek.com/v1\n  TIGRIMOS_MODEL=deepseek-chat",
+            env_path.display()
         );
         return false;
     }
-    println!("Welcome to TigrimOS CLI — one-time setup (saved globally).");
+    println!("Welcome to TigrimOS CLI — setup for THIS folder (saved to .tigrimos/.env, gitignored).");
     let api_url = prompt_line("API base URL", "https://api.deepseek.com/v1");
     let api_key = prompt_line("API key", "");
     if api_key.is_empty() {
@@ -142,12 +143,19 @@ async fn first_run_wizard() -> bool {
         return false;
     }
     let model = prompt_line("Model id", "deepseek-chat");
-    let mut s = data::get_settings().await;
-    s.tiger_bot_api_url = Some(api_url);
-    s.tiger_bot_api_key = api_key;
-    s.tiger_bot_model = model;
-    data::save_settings(&s).await;
-    println!("Saved. Change anytime with /model, /settings, or the desktop app.\n");
+    let env_content = format!(
+        "# TigrimOS CLI setup for this folder — gitignored, never commit keys.\nTIGRIMOS_API_KEY={}\nTIGRIMOS_API_URL={}\nTIGRIMOS_MODEL={}\n",
+        api_key, api_url, model
+    );
+    if let Err(e) = std::fs::write(&env_path, env_content) {
+        eprintln!("tigrim: could not write {}: {}", env_path.display(), e);
+        return false;
+    }
+    // Make the values live for this session too.
+    std::env::set_var("TIGRIMOS_API_KEY", &api_key);
+    std::env::set_var("TIGRIMOS_API_URL", &api_url);
+    std::env::set_var("TIGRIMOS_MODEL", &model);
+    println!("Saved to {} — edit it anytime.\n", env_path.display());
     true
 }
 
@@ -208,7 +216,7 @@ fn main() {
     // now that the global defaults exist.
     project::seed_examples(&proj);
 
-    if !runtime.block_on(first_run_wizard()) {
+    if !runtime.block_on(first_run_wizard(&proj)) {
         std::process::exit(2);
     }
 
@@ -308,17 +316,12 @@ fn main() {
     {
         ".env"
     } else {
-        "global settings"
+        "folder settings"
     };
+    let model_display = if model.is_empty() { "deepseek-chat (default)".to_string() } else { model };
     println!("TigrimOS CLI v{}", env!("CARGO_PKG_VERSION"));
-    println!("Model: {} ({})   Mode: {}   Loop: {}", model, model_src, mode, loop_profile);
+    println!("Model: {} ({})   Mode: {}   Loop: {}", model_display, model_src, mode, loop_profile);
     println!("Workspace: {}", cwd.display());
-    if !proj.join(".env").exists() && model_src == "global settings" {
-        println!(
-            "{}Setup: copy .tigrimos/.env.example → .tigrimos/.env to set a per-folder model/API key{}",
-            "\x1b[2m", "\x1b[0m"
-        );
-    }
     println!("Type a message to chat, /help for commands. ESC or Ctrl-C cancels a run.\n");
 
     let code = repl::run_repl(&runtime);

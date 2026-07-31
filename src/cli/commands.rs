@@ -240,14 +240,19 @@ pub async fn execute(state: &mut CliState, cmd: CliCommand) -> Outcome {
                     lines.push(format!("• {} ({})", e.label, e.model));
                 }
             }
-            lines.push("\nUse /model <model-id> to switch — applies globally.".to_string());
+            lines.push("\nUse /model <model-id> to switch — saved for this folder.".to_string());
             Reply(lines.join("\n"))
         }
         CliCommand::Model(Some(m)) => {
+            if std::env::var("TIGRIMOS_MODEL").map(|v| !v.trim().is_empty()).unwrap_or(false) {
+                return Reply(
+                    "TIGRIMOS_MODEL is set in .env and overrides this — edit .tigrimos/.env instead.".to_string(),
+                );
+            }
             let mut s = data::get_settings().await;
             s.tiger_bot_model = m.clone();
             data::save_settings(&s).await;
-            Reply(format!("Model set to {} (global settings).", m))
+            Reply(format!("Model set to {} (this folder's settings).", m))
         }
 
         CliCommand::Mode(None) => Reply(format!(

@@ -271,8 +271,11 @@ pub fn project_dir() -> Option<&'static PathBuf> {
 }
 
 /// Files that must be per-project when running in CLI mode, so each folder
-/// keeps its own history/session state instead of sharing the global one.
-const PROJECT_LOCAL_FILES: &[&str] = &["chat_history.json", "cli_state.json"];
+/// keeps its own history/session/settings instead of sharing the global
+/// ones. settings.json included: the CLI never reads or writes the desktop
+/// app's settings — a folder is configured only by its own .env and
+/// .tigrimos/settings.json.
+const PROJECT_LOCAL_FILES: &[&str] = &["chat_history.json", "cli_state.json", "settings.json"];
 
 /// Resolve a config file (e.g. "agent_loops/foo.yaml") project-first with
 /// global fallback. If the file exists under the project dir, that path is
@@ -718,7 +721,9 @@ pub async fn get_settings() -> Settings {
         }
         return remote_get_cached(&rb, "/api/settings", 15).await;
     }
-    let mut settings: Settings = load_settings_with_project_overlay().await;
+    // In CLI mode read_json resolves settings.json to the PROJECT dir —
+    // folder settings only, never the desktop app's global settings.
+    let mut settings: Settings = read_json("settings.json").await;
     if settings.skill_auto_update_enabled.is_none() {
         settings.skill_auto_update_enabled = Some(true);
     }
@@ -774,34 +779,6 @@ pub async fn get_settings() -> Settings {
     // overrides the browser's headless mode independently of the server UI.
     apply_env_overrides(&mut settings);
     settings
-}
-
-/// Global settings, shallow-merged with an optional project-local
-/// `.tigrimos/settings.json` (project keys win). The merge happens on raw
-/// JSON values — merging deserialized structs would let `None` fields in the
-/// project file clobber configured globals. Only top-level keys present in
-/// the project file override.
-async fn load_settings_with_project_overlay() -> Settings {
-    let global: Settings = read_json("settings.json").await;
-    let Some(proj) = project_dir() else {
-        return global;
-    };
-    let proj_path = proj.join("settings.json");
-    let Ok(content) = fs::read_to_string(&proj_path).await else {
-        return global;
-    };
-    let Ok(serde_json::Value::Object(overlay)) = serde_json::from_str::<serde_json::Value>(&content) else {
-        eprintln!("[cli] Ignoring invalid project settings: {}", proj_path.display());
-        return global;
-    };
-    let mut merged = match serde_json::to_value(&global) {
-        Ok(serde_json::Value::Object(m)) => m,
-        _ => return global,
-    };
-    for (k, v) in overlay {
-        merged.insert(k, v);
-    }
-    serde_json::from_value(serde_json::Value::Object(merged)).unwrap_or(global)
 }
 
 /// Environment overrides for the API credentials — the safe way to configure

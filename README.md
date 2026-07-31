@@ -123,9 +123,9 @@ curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7
 
 The same file works from anywhere — it always uses the **current directory** as the workspace, so you can also keep one copy on your `PATH` (`cp tigrim /usr/local/bin/`) instead of one per folder. Building from source works too: `cargo build --release --bins` produces `target/release/tigrim`.
 
-### Setup file: `.env` (keys never touch git)
+### Setup file: `.env` (folder-local, keys never touch git)
 
-The folder's setup file is a **`.env`** — copy the seeded `.tigrimos/.env.example` to `.tigrimos/.env` (or a `.env` in the project root) and fill it in:
+The CLI is **folder-local by design** — it never reads the desktop app's global settings, so each folder configures its own provider. The setup file is a **`.env`**: the first interactive run asks for your API URL/key/model and writes `.tigrimos/.env` for you, or copy the seeded `.tigrimos/.env.example` yourself:
 
 ```bash
 TIGRIMOS_API_KEY=sk-your-key-here
@@ -133,9 +133,9 @@ TIGRIMOS_API_URL=https://api.deepseek.com/v1
 TIGRIMOS_MODEL=deepseek-chat
 ```
 
-These override the global settings for anything run from this folder, and they are the **safe place for credentials**: `.tigrimos/.gitignore` excludes `.env` *and* `settings.json`, so a `git add .` can never commit your key. If you already use the desktop app, you don't need a `.env` at all — `tigrim` picks up your existing key, model, MCP servers and skills automatically; and with nothing configured anywhere, the first run asks once and saves globally.
+This is the **safe place for credentials**: `.tigrimos/.gitignore` excludes `.env` *and* `settings.json`, so a `git add .` can never commit your key. Non-secret preferences you change with `/model` are saved to the folder's own `.tigrimos/settings.json`. Skills and YAML profiles are still shared from the global data directory (with project-local copies shadowing them); only *settings and credentials* are strictly per-folder.
 
-> ⚠️ Never put an API key in `.tigrimos/settings.json` or an agent YAML in a git repo — use `.env` (gitignored) or the global settings.
+> ⚠️ Never put an API key in `.tigrimos/settings.json` or an agent YAML in a git repo — use `.env` (gitignored).
 
 ### The `.tigrimos/` project folder
 
