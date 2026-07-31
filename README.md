@@ -33,7 +33,7 @@ Add **your own tools** in YAML, connect **Gmail / Calendar / Drive** in three cl
 - **Run it your way** — native desktop app, headless, Docker, or the **[`tigrim` CLI](#cli-mode-tigrim)** right in your terminal — then connect from any browser or phone via the built-in web UI.
 - **Telegram & LINE bots** — chat and drive the agent with slash commands, live progress, and approve/deny buttons — see [Telegram & LINE Bots](#telegram--line-bots).
 - **Private remote access (VPN)** — reach a remote host over your own [Tailscale](https://tailscale.com) tailnet instead of a public tunnel.
-- **Built in Rust** — single binary, no Node/Python. App + embedded server + **a live embedded browser** idle at **~270 MB RAM** — see [Memory footprint](#memory-footprint).
+- **Built in Rust** — single binary, no Node/Python. App + embedded server + **a live embedded browser** idle at **~270 MB RAM**; the **`tigrim` CLI runs the same engine in under 10 MB** — see [Memory footprint](#memory-footprint).
 
 ### Native Rust desktop app
 
@@ -45,10 +45,24 @@ Install it on your machine and run the UI as a **native Rust app** — a single,
 
 ### Memory footprint
 
-App + embedded server + **a live embedded browser** idle at **~270 MB RAM** — a fraction of a Chromium/Electron stack. Numbers and comparison below.
+App + embedded server + **a live embedded browser** idle at **~270 MB RAM** — a fraction of a Chromium/Electron stack. The **[`tigrim` CLI](#cli-mode-tigrim)** and headless server run the same agent engine in **under 10 MB**. Numbers and comparison below.
 
 <details>
 <summary>📉 Measured numbers & comparison</summary>
+
+#### The same engine, three sizes
+
+All three run modes share one agent engine — what you pay for is the interface on top. Measured resident memory (RSS) on macOS, release builds, after full startup:
+
+| Mode | Idle | During an agent run |
+|---|---|---|
+| **CLI (`tigrim`)** | **≈ 4 MB** | **≈ 10 MB peak** *(live LLM run with a tool call)* |
+| **Headless server** (`--headless`) | ≈ 7 MB | grows with sessions; same engine as CLI |
+| **Desktop app** | ≈ 190 MB | + conversation/swarm state |
+
+The desktop's ~190 MB is almost entirely the GUI rendering stack (window surface, font atlases, GPU textures) — the agent engine itself is single-digit megabytes, which is why the CLI and headless modes are ~45× lighter. Tool children are extra while they run (a Python matplotlib process is typically 100–150 MB, then exits), and long sessions with large contexts add a few tens of MB — the `tigrim` process itself stays in the single digits, so it runs comfortably on the smallest VPS.
+
+#### Desktop with a live embedded browser
 
 Because TigrimOS is native Rust end-to-end — the app **and** its [Obscura](https://github.com/h4ckf0r0day/obscura) browser engine — the whole stack stays remarkably light. On an idle desktop session **with browser control on and a live browser attached**, measured resident memory is:
 
@@ -199,6 +213,7 @@ Only the **final answer** goes to stdout; progress and tool lines go to stderr �
 
 ### Notes
 
+- **Tiny footprint** — ≈ 4 MB RSS idle, ≈ 10 MB during an agent run ([measurements](#memory-footprint)); fine for the smallest VPS or CI runner.
 - The CLI runs the agent **in-process** — no server, no port, nothing to start first. MCP servers connect at launch just like the desktop app.
 - Sub-agent swarms, router mode, graph judging, skills, browser control and custom YAML tools all work exactly as they do in the desktop app — same engine.
 - Each folder keeps its **own chat history**; your global/desktop history is untouched.
