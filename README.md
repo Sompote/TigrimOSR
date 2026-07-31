@@ -130,6 +130,13 @@ curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7
 ./tigrim
 ```
 
+**Linux (x64, glibc — Ubuntu 22.04+/Debian 12+):**
+
+```bash
+curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7.2-linux-x86_64.tar.gz | tar xz
+./tigrim
+```
+
 **Windows 10/11 (x64):** download [`tigrim-0.7.2-windows-x64.zip`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7.2-windows-x64.zip), unzip `tigrim.exe` into the folder you want the agent to work in, and run it from a terminal:
 
 ```powershell
