@@ -116,6 +116,14 @@ curl -L https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7
 ./tigrim
 ```
 
+**Windows 10/11 (x64):** download [`tigrim-0.7.2-windows-x64.zip`](https://github.com/Sompote/TigrimOSR/releases/download/v0.7.2/tigrim-0.7.2-windows-x64.zip), unzip `tigrim.exe` into the folder you want the agent to work in, and run it from a terminal:
+
+```powershell
+.\tigrim.exe
+```
+
+> On Windows, ESC-to-cancel is not available yet — use Ctrl-C to cancel a run.
+
 > **macOS first run:** like any unsigned download, macOS may quarantine it. Clear it once:
 > ```bash
 > xattr -d com.apple.quarantine ./tigrim
