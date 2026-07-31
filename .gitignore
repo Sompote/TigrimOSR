@@ -61,3 +61,5 @@ dist/
 # Local orchestrator persona files
 data/IDENTITY.md
 data/SOUL.md
+target-linux/
+data/.mpl_config/
