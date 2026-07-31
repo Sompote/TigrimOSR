@@ -615,14 +615,23 @@ pub async fn start_agent_run(
         return Err(err);
     }
 
-    // Build message history for LLM
+    // Build message history for LLM. Skip assistant turns that are error
+    // placeholders ("Error: API error: …", "⚠️ The run finished without…"):
+    // they are UI artifacts, not model output — models few-shot imitate them
+    // and start replying with the old error verbatim (a dead provider's quota
+    // message kept "answering" in a session even after switching providers).
     let sessions_snap = get_chat_history().await;
     let session_snap = sessions_snap.iter().find(|s| s.id == id);
     let llm_messages: Vec<Value> = session_snap
         .map(|s| {
-            s.messages.iter().map(|m| {
-                json!({ "role": m.role, "content": m.content })
-            }).collect()
+            s.messages.iter()
+                .filter(|m| {
+                    !(m.role == "assistant"
+                        && (m.content.starts_with("Error: ") || m.content.starts_with("⚠️")))
+                })
+                .map(|m| {
+                    json!({ "role": m.role, "content": m.content })
+                }).collect()
         })
         .unwrap_or_default();
 
@@ -1076,14 +1085,18 @@ You have access to these tools: {}.{}",
             base.push_str(&skills_block);
         }
 
-        // Inject Soul & Identity from data dir
-        let data_dir = crate::server::data::data_dir();
-        if let Ok(soul) = std::fs::read_to_string(data_dir.join("SOUL.md")) {
+        // Inject Soul & Identity. Folder-local ONLY in CLI mode: a project
+        // uses its own .tigrimos/SOUL.md (or none) — the desktop app's global
+        // persona must not leak into every CLI folder.
+        let persona_dir = crate::server::data::project_dir()
+            .cloned()
+            .unwrap_or_else(crate::server::data::data_dir);
+        if let Ok(soul) = std::fs::read_to_string(persona_dir.join("SOUL.md")) {
             if !soul.trim().is_empty() {
                 base.push_str(&format!("\n\n=== SOUL.md (Internal Cognition & Behavioral Prior) ===\n{}", soul));
             }
         }
-        if let Ok(identity) = std::fs::read_to_string(data_dir.join("IDENTITY.md")) {
+        if let Ok(identity) = std::fs::read_to_string(persona_dir.join("IDENTITY.md")) {
             if !identity.trim().is_empty() {
                 base.push_str(&format!("\n\n=== IDENTITY.md (External Presentation) ===\n{}", identity));
             }

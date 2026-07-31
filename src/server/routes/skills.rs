@@ -123,7 +123,7 @@ fn find_skill_file(skill: &Skill) -> Option<PathBuf> {
     };
 
     let candidates = [
-        crate::server::data::data_dir().join("skills").join(&slug).join("SKILL.md"),
+        crate::server::data::skills_root().join(&slug).join("SKILL.md"),
         PathBuf::from("Tiger_bot")
             .join("skills")
             .join(&slug)
@@ -140,7 +140,7 @@ fn find_skill_file(skill: &Skill) -> Option<PathBuf> {
     let name_slug = slugify(&skill.name);
     if name_slug != slug {
         let candidates2 = [
-            crate::server::data::data_dir().join("skills").join(&name_slug).join("SKILL.md"),
+            crate::server::data::skills_root().join(&name_slug).join("SKILL.md"),
             PathBuf::from("Tiger_bot")
                 .join("skills")
                 .join(&name_slug)
@@ -276,7 +276,7 @@ async fn uninstall_skill(Path(id): Path<String>) -> Json<Value> {
     if let Some(skill) = skills.iter().find(|s| s.id == id) {
         let slug: String = skill.name.to_lowercase()
             .chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
-        let dir = data_dir().join("skills").join(slug.trim_matches('-'));
+        let dir = crate::server::data::skills_root().join(slug.trim_matches('-'));
         if dir.is_dir() {
             let _ = tokio::fs::remove_dir_all(&dir).await;
         }
@@ -371,7 +371,7 @@ async fn upload_skill(mut multipart: Multipart) -> impl IntoResponse {
             name = original_name.trim_end_matches(".zip").to_string();
         }
         let sanitized = slugify(&name);
-        let skill_dir = crate::server::data::data_dir().join("skills").join(&sanitized);
+        let skill_dir = crate::server::data::skills_root().join(&sanitized);
         let _ = tokio::fs::create_dir_all(&skill_dir).await;
 
         // Extract all files from the ZIP into the skill directory
@@ -447,7 +447,7 @@ async fn upload_skill(mut multipart: Multipart) -> impl IntoResponse {
     }
 
     let sanitized = slugify(&name);
-    let skill_dir = crate::server::data::data_dir().join("skills").join(&sanitized);
+    let skill_dir = crate::server::data::skills_root().join(&sanitized);
     let _ = tokio::fs::create_dir_all(&skill_dir).await;
     let skill_file = skill_dir.join("SKILL.md");
     let _ = tokio::fs::write(&skill_file, &content).await;

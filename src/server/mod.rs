@@ -584,7 +584,9 @@ const BUNDLED_SKILLS: &[BundledSkill] = &[
 ];
 
 /// Install bundled skills on first run (embedded in the binary via include_str!)
-async fn install_bundled_skills(data_dir: &str) {
+/// Public: also used by the tigrim CLI to seed bundled skills into a
+/// project folder (pass the .tigrimos dir).
+pub async fn install_bundled_skills(data_dir: &str) {
     let skills_json_path = format!("{}/skills.json", data_dir);
     let mut skills: Vec<serde_json::Value> = fs::read_to_string(&skills_json_path)
         .await

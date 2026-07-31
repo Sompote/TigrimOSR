@@ -170,9 +170,8 @@ fn main() {
         .join("data");
     data::set_global_data_dir(global_data.clone());
 
-    // .env: global data dir first, then the working directory.
-    let _ = dotenvy::from_path(global_data.join(".env"));
-    let _ = dotenvy::dotenv();
+    // .env loading happens after project init below — precedence: shell env
+    // > project .tigrimos/.env > cwd .env > global data-dir .env.
 
     // Keep agent subprocess spawning working from any launch context.
     let current_path = std::env::var("PATH").unwrap_or_default();
@@ -196,9 +195,11 @@ fn main() {
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let proj = project::init_project(&cwd);
-    // Project-local .env is the folder's setup file (API key/url/model as
-    // TIGRIMOS_* vars) — loaded after the global/cwd .env so it wins.
-    let _ = dotenvy::from_path_override(proj.join(".env"));
+    // dotenvy never overwrites already-set vars, so load order = priority:
+    // explicit shell env wins, then project .env, cwd .env, global .env.
+    let _ = dotenvy::from_path(proj.join(".env"));
+    let _ = dotenvy::dotenv();
+    let _ = dotenvy::from_path(global_data.join(".env"));
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
@@ -215,6 +216,9 @@ fn main() {
     // Copy editable starter YAMLs (loop/graph/team) into empty project dirs
     // now that the global defaults exist.
     project::seed_examples(&proj);
+    // Skills are folder-local in CLI mode — seed the bundled essentials
+    // (web-search, pdf, excel, …) into this project's registry. Idempotent.
+    runtime.block_on(server::install_bundled_skills(&proj.to_string_lossy()));
 
     if !runtime.block_on(first_run_wizard(&proj)) {
         std::process::exit(2);

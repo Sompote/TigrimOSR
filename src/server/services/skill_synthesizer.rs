@@ -184,7 +184,7 @@ fn skills_dir() -> PathBuf {
     // Must match where the rest of the app reads/writes skills. The old
     // current_dir()-based path broke the whole feature when launched from an
     // .app bundle (cwd = "/", so it silently targeted /data/skills).
-    crate::server::data::data_dir().join("skills")
+    crate::server::data::skills_root()
 }
 
 fn sanitize_slug(name: &str) -> String {

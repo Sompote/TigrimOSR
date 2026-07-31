@@ -275,7 +275,24 @@ pub fn project_dir() -> Option<&'static PathBuf> {
 /// ones. settings.json included: the CLI never reads or writes the desktop
 /// app's settings — a folder is configured only by its own .env and
 /// .tigrimos/settings.json.
-const PROJECT_LOCAL_FILES: &[&str] = &["chat_history.json", "cli_state.json", "settings.json"];
+const PROJECT_LOCAL_FILES: &[&str] =
+    &["chat_history.json", "cli_state.json", "settings.json", "skills.json"];
+
+/// Public path resolver for top-level data files read without read_json
+/// (direct fs reads must honor the same project routing).
+pub fn data_file_path(file: &str) -> PathBuf {
+    resolve_data_file(file)
+}
+
+/// Root directory for skill packages (<root>/<slug>/SKILL.md). Folder-local
+/// in CLI mode — a project sees only its own skills (bundled ones are seeded
+/// at init), never the desktop app's global library.
+pub fn skills_root() -> PathBuf {
+    if let Some(proj) = project_dir() {
+        return proj.join("skills");
+    }
+    data_dir().join("skills")
+}
 
 /// Resolve a config file (e.g. "agent_loops/foo.yaml") project-first with
 /// global fallback. If the file exists under the project dir, that path is

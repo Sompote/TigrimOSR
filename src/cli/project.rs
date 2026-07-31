@@ -52,6 +52,8 @@ YAML config here shadows the global data directory (YAML/skills only):
   agent_loops/*.yaml  agent-loop profiles (default.yaml seeded — edit freely)
   graph/*.yaml        graph (judge panel) profiles (default.yaml seeded)
   settings.json       this folder's settings (written by /model etc. — NO keys)
+  SOUL.md             optional agent persona for THIS folder (global one is
+  IDENTITY.md         never used in CLI mode; omit both for a neutral agent)
 
 State kept per folder (gitignored): chat_history.json, cli_state.json,
 repl_history.

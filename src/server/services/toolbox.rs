@@ -1189,8 +1189,7 @@ const SUBAGENT_SKILLS_PERSONA: &str =
 /// and realtime-agent prompts so they can discover available skills without
 /// having to call `list_skills` first.  Mirrors TS `buildEnabledSkillsBlock`.
 async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Option<&[String]>) -> String {
-    let data = crate::server::data::data_dir();
-    let skills_path = data.join("skills.json");
+    let skills_path = crate::server::data::data_file_path("skills.json");
     let registry: Vec<Value> = match tokio::fs::read_to_string(&skills_path).await {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => vec![],
@@ -1211,8 +1210,8 @@ async fn build_enabled_skills_block(persona: Option<&str>, project_skills: Optio
         })
         .collect();
 
-    // Also scan data/skills/ directory for custom skills with SKILL.md
-    let skills_dir = data.join("skills");
+    // Also scan the skills root for custom skills with SKILL.md
+    let skills_dir = crate::server::data::skills_root();
     let mut custom_skills: Vec<(String, String, Vec<String>)> = Vec::new(); // (name, description, files)
     if let Ok(mut entries) = tokio::fs::read_dir(&skills_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -5121,16 +5120,15 @@ fn skill_candidates(skill_name: &str, registry_entry: Option<&Value>) -> Vec<Str
 }
 
 fn skills_search_dirs() -> Vec<(std::path::PathBuf, &'static str)> {
-    let data = crate::server::data::data_dir();
     vec![
-        (data.join("skills"), "custom"),
+        (crate::server::data::skills_root(), "custom"),
         (std::path::PathBuf::from("Tiger_bot/skills"), "clawhub"),
         (std::path::PathBuf::from("skills"), "custom"),
     ]
 }
 
 fn read_skills_registry() -> Vec<Value> {
-    let path = crate::server::data::data_dir().join("skills.json");
+    let path = crate::server::data::data_file_path("skills.json");
     match std::fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => vec![],
