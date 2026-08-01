@@ -36,7 +36,6 @@ mod esc_watch {
     pub struct RawGuard {
         fd: i32,
         orig_termios: libc::termios,
-        orig_flags: i32,
     }
 
     impl RawGuard {
@@ -49,30 +48,29 @@ mod esc_watch {
             if unsafe { libc::tcgetattr(fd, &mut orig) } != 0 {
                 return None;
             }
-            let orig_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-            if orig_flags < 0 {
-                return None;
-            }
-            let guard = Self { fd, orig_termios: orig, orig_flags };
+            let guard = Self { fd, orig_termios: orig };
             guard.enter_raw();
             Some(guard)
         }
 
         fn enter_raw(&self) {
+            // VMIN=0/VTIME=0 makes read() poll (return 0 when idle) without
+            // O_NONBLOCK. Never set O_NONBLOCK here: stdin/stdout/stderr share
+            // one tty open file description, so it makes print!/eprintln!
+            // fail with EAGAIN when the tty buffer fills mid-stream — which
+            // panics the whole CLI, silently (the panic write fails too).
             let mut raw = self.orig_termios;
             raw.c_lflag &= !(libc::ICANON | libc::ECHO);
             raw.c_cc[libc::VMIN] = 0;
             raw.c_cc[libc::VTIME] = 0;
             unsafe {
                 libc::tcsetattr(self.fd, libc::TCSANOW, &raw);
-                libc::fcntl(self.fd, libc::F_SETFL, self.orig_flags | libc::O_NONBLOCK);
             }
         }
 
         fn restore(&self) {
             unsafe {
                 libc::tcsetattr(self.fd, libc::TCSANOW, &self.orig_termios);
-                libc::fcntl(self.fd, libc::F_SETFL, self.orig_flags);
             }
         }
 

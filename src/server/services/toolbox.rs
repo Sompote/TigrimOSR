@@ -2812,7 +2812,13 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "run_python",
-                "description": "Execute Python code in the project folder. CWD is the project directory. plt.show() auto-saves figures to output_file/. Use save_output('name.csv', data) to save files to output_file/. Variable _project_dir holds the project path.",
+                "description": if crate::server::data::project_dir().is_some() {
+                    // CLI mode: the sandbox IS the user's folder — work in place,
+                    // no output_file/ staging subdir.
+                    "Execute Python code in the project folder. CWD is the project directory (the user's current folder) — create and save files directly there. plt.show() auto-saves figures to the current folder. Variable _project_dir holds the project path."
+                } else {
+                    "Execute Python code in the project folder. CWD is the project directory. plt.show() auto-saves figures to output_file/. Use save_output('name.csv', data) to save files to output_file/. Variable _project_dir holds the project path."
+                },
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -2856,11 +2862,15 @@ pub fn tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "write_file",
-                "description": "Write content to a file. Use RELATIVE paths (e.g. 'model.py', 'output_file/result.csv') to save inside the project folder. Plots and output should go in 'output_file/' subdirectory.",
+                "description": if crate::server::data::project_dir().is_some() {
+                    "Write content to a file. Use RELATIVE paths (e.g. 'model.py', 'index.html') to save directly in the project folder (the user's current folder). Do NOT create an output_file/ subdirectory — put files where the user expects them."
+                } else {
+                    "Write content to a file. Use RELATIVE paths (e.g. 'model.py', 'output_file/result.csv') to save inside the project folder. Plots and output should go in 'output_file/' subdirectory."
+                },
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": { "type": "string", "description": "File path (relative to project folder preferred, e.g. 'script.py' or 'output_file/data.csv')" },
+                        "path": { "type": "string", "description": "File path (relative to project folder preferred, e.g. 'script.py')" },
                         "content": { "type": "string", "description": "Content to write" },
                         "append": { "type": "boolean", "description": "Append instead of overwrite (default false)" }
                     },
@@ -4451,14 +4461,20 @@ async fn exec_run_python(args: &Value, sandbox_dir: &str) -> Value {
     // Prepend matplotlib non-interactive setup so plt.show() saves files instead of opening GUI
     // MPLCONFIGDIR is the GLOBAL shared cache dir — see mpl_config_dir().
     let mpl_config_dir = mpl_config_dir();
-    let output_sub = std::path::Path::new(sandbox_dir).join("output_file");
-    let _ = std::fs::create_dir_all(&output_sub);
+    // CLI mode: the sandbox IS the user's folder — figures and save_output()
+    // land directly in it, no output_file/ staging subdir.
+    let cli_mode = crate::server::data::project_dir().is_some();
+    if !cli_mode {
+        let output_sub = std::path::Path::new(sandbox_dir).join("output_file");
+        let _ = std::fs::create_dir_all(&output_sub);
+    }
+    let output_dir_expr = if cli_mode { "_project_dir" } else { "os.path.join(_project_dir, 'output_file')" };
     let matplotlib_prelude = format!(r#"
 import sys, os, uuid
 os.environ['MPLCONFIGDIR'] = '{mpl_dir}'
 os.environ['HOME'] = os.getcwd()
 _project_dir = os.getcwd()
-_output_dir = os.path.join(_project_dir, 'output_file')
+_output_dir = {output_dir_expr}
 os.makedirs(_output_dir, exist_ok=True)
 try:
     import matplotlib
@@ -5173,9 +5189,9 @@ async fn exec_list_skills(_args: &Value, _sandbox_dir: &str) -> Value {
         .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
         .collect();
 
-    // Also check data/skills/ directory for SKILL.md files
+    // Also check the skills root (folder-local in CLI mode) for SKILL.md files
     let mut dir_skills = vec![];
-    let skills_scan_dir = crate::server::data::data_dir().join("skills");
+    let skills_scan_dir = crate::server::data::skills_root();
     if let Ok(mut entries) = tokio::fs::read_dir(&skills_scan_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             if entry
@@ -5232,7 +5248,7 @@ async fn exec_save_skill(args: &Value) -> Value {
     }
 
     let slug = crate::server::routes::skills::slugify(&name);
-    let skill_dir = crate::server::data::data_dir().join("skills").join(&slug);
+    let skill_dir = crate::server::data::skills_root().join(&slug);
     if let Err(e) = tokio::fs::create_dir_all(&skill_dir).await {
         return json!({ "ok": false, "error": format!("Failed to create skill directory: {e}") });
     }
@@ -5394,7 +5410,7 @@ async fn exec_load_skill(args: &Value, _sandbox_dir: &str) -> Value {
             if script.contains('\n') && script.len() > 50 {
                 // script field contains the actual SKILL.md content — save it to disk
                 let slug = slugify_skill_name(skill_name);
-                let skill_dir = crate::server::data::data_dir().join("skills").join(&slug);
+                let skill_dir = crate::server::data::skills_root().join(&slug);
                 let _ = std::fs::create_dir_all(&skill_dir);
                 let skill_file = skill_dir.join("SKILL.md");
                 if std::fs::write(&skill_file, script).is_ok() {

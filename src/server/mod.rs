@@ -238,15 +238,20 @@ async fn auth_middleware(
 pub async fn bootstrap_data(sandbox_dir: &str) {
     let data_dir = data::data_dir().to_string_lossy().to_string();
 
-    // Ensure directories
-    let dirs = [
+    // Ensure directories. In CLI mode the sandbox is the user's folder —
+    // don't scatter output_file/ (or a cwd-relative skills/) into it; skills
+    // live at skills_root() (.tigrimos/skills for CLI, data/skills global).
+    let cli_mode = data::project_dir().is_some();
+    let mut dirs = vec![
         sandbox_dir.to_string(),
         data_dir.clone(),
-        "skills".to_string(),
-        format!("{}/output_file", sandbox_dir),
+        data::skills_root().to_string_lossy().to_string(),
         format!("{}/agents", data_dir),
         format!("{}/plugins", data_dir),
     ];
+    if !cli_mode {
+        dirs.push(format!("{}/output_file", sandbox_dir));
+    }
     for dir in &dirs {
         let _ = fs::create_dir_all(dir).await;
     }

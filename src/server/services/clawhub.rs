@@ -125,8 +125,8 @@ pub async fn clawhub_info(slug: &str) -> Value {
 
 /// List installed skills with version info from data/skills.json and skill directories
 pub async fn list_installed_skills() -> Value {
-    // Read from data/skills.json
-    let skills: Vec<Value> = match tokio::fs::read_to_string(crate::server::data::data_dir().join("skills.json")).await {
+    // Read from skills.json (project-local in CLI mode)
+    let skills: Vec<Value> = match tokio::fs::read_to_string(crate::server::data::data_file_path("skills.json")).await {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => vec![],
     };

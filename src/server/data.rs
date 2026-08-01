@@ -358,7 +358,21 @@ fn resolve_data_file(file: &str) -> PathBuf {
 pub async fn read_json<T: serde::de::DeserializeOwned + Default>(file: &str) -> T {
     let fp = resolve_data_file(file);
     match fs::read_to_string(&fp).await {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Ok(content) => match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                // A malformed file must not be silently replaced by defaults —
+                // the user edited it and thinks their settings apply. Warn
+                // once per file per run (settings are re-read on every tool
+                // call; repeating the warning would flood the CLI).
+                static WARNED: OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+                let warned = WARNED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+                if warned.lock().map(|mut s| s.insert(fp.clone())).unwrap_or(false) {
+                    tracing::warn!("{}: invalid JSON ({e}) — file IGNORED, using defaults. Fix the syntax to restore your settings.", fp.display());
+                }
+                T::default()
+            }
+        },
         Err(_) => T::default(),
     }
 }
