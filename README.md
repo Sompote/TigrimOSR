@@ -103,6 +103,8 @@ Run TigrimOS **anywhere** — as a native desktop app, headless on a machine, or
 
 **New in v0.7.2** — TigrimOS in your terminal, Claude Code-style. **No installation**: download the single `tigrim` file, copy it into the folder you want the agent to work in, and run it. That folder becomes the agent's workspace, a `.tigrimos/` directory holds your project-local YAML agents, agent-loop profiles and graph profiles (with fallback to your global TigrimOS settings, so a fresh folder needs zero setup), and every major feature is a slash command away — `/agents`, `/model`, `/mode`, `/loop`, `/graph`, `/skills`, `/mcp` and more. Type a message to chat with streaming answers, tool-call progress and y/n approval prompts; or script it with `./tigrim -p "prompt"` for one-shot runs in CI and pipelines. The desktop app and headless server are unchanged — all three share the same engine, settings and profiles.
 
+📖 **[detail_CLI.md](detail_CLI.md)** — the complete CLI reference: every flag, slash command, `settings.json` key, and every field of the agent-loop, agent-team, and graph YAML files.
+
 ```bash
 cd my-project        # the folder you want the agent to work in
 
@@ -161,6 +163,42 @@ TIGRIMOS_API_KEY=sk-your-key-here
 TIGRIMOS_API_URL=https://api.deepseek.com/v1
 TIGRIMOS_MODEL=deepseek-chat
 ```
+
+Any OpenAI-compatible endpoint works. Quick reference for popular providers — put the matching `TIGRIMOS_API_URL` / `TIGRIMOS_MODEL` pair in your `.env`:
+
+| Provider | `TIGRIMOS_API_URL` | Example `TIGRIMOS_MODEL` |
+|---|---|---|
+| **Anthropic (Claude)** | `https://api.anthropic.com/v1` | `claude-opus-5` |
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-5.2`, `o4-mini` |
+| **Kimi (Moonshot)** | `https://api.kimi.com/coding/v1` | `kimi-k3` |
+| **MiniMax** | `https://api.minimax.io/v1` | `MiniMax-M3` |
+| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-chat` |
+
+For example, to use Claude (model `claude-opus-5`):
+
+```bash
+TIGRIMOS_API_KEY=sk-ant-your-key-here
+TIGRIMOS_API_URL=https://api.anthropic.com/v1
+TIGRIMOS_MODEL=claude-opus-5
+```
+
+or Kimi (model `kimi-k3`):
+
+```bash
+TIGRIMOS_API_KEY=sk-your-key-here
+TIGRIMOS_API_URL=https://api.kimi.com/coding/v1
+TIGRIMOS_MODEL=kimi-k3
+```
+
+or MiniMax (model `MiniMax-M3`):
+
+```bash
+TIGRIMOS_API_KEY=your-minimax-key-here
+TIGRIMOS_API_URL=https://api.minimax.io/v1
+TIGRIMOS_MODEL=MiniMax-M3
+```
+
+> Anthropic keys use the native Claude API automatically; the rest go through the OpenAI-compatible protocol. Kimi and MiniMax reasoning models always run at temperature 1.0 (provider requirement) — the CLI handles this for you.
 
 This is the **safe place for credentials**: `.tigrimos/.gitignore` excludes `.env` *and* `settings.json`, so a `git add .` can never commit your key. Non-secret preferences you change with `/model` are saved to the folder's own `.tigrimos/settings.json`. Skills and YAML profiles are still shared from the global data directory (with project-local copies shadowing them); only *settings and credentials* are strictly per-folder.
 
@@ -225,6 +263,7 @@ Only the **final answer** goes to stdout; progress and tool lines go to stderr �
 - Sub-agent swarms, router mode, graph judging, skills, browser control and custom YAML tools all work exactly as they do in the desktop app — same engine.
 - Each folder keeps its **own chat history**; your global/desktop history is untouched.
 - A folder containing a `data/` directory is safe: the CLI always pins the real global data dir and never mistakes project files for it.
+- **Full reference:** [detail_CLI.md](detail_CLI.md) documents every setting — all `settings.json` keys, every field of the agent-loop / agent-team / graph YAML files, judge rules, flags and slash commands.
 
 </details>
 
